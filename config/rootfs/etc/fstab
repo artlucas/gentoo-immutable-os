@@ -1,0 +1,6 @@
+# Root is mounted by the initrd from the UKI cmdline (root=PARTLABEL=root_<version>).
+# /etc overlay is mounted by the etc-overlay dracut module, NOT here (plan/01: overlay
+# upperdir paths would not be /sysroot-prefixed by the fstab generator in the initrd).
+PARTLABEL=var  /var  ext4   defaults,x-initrd.mount,x-systemd.growfs  0 2
+PARTLABEL=esp  /efi  vfat   umask=0077,noauto,x-systemd.automount     0 2
+tmpfs          /tmp  tmpfs  nosuid,nodev                              0 0

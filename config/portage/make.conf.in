@@ -1,0 +1,29 @@
+# Target make.conf — used via emerge --config-root for everything merged into the image.
+# Rendered by stage 20 (@TOKENS@ replaced from build.conf / runtime).
+
+CHOST="x86_64-pc-linux-gnu"
+COMMON_FLAGS="-march=x86-64 -O2 -pipe"   # generic baseline: no AVX2 floor (see plan/03)
+CFLAGS="${COMMON_FLAGS}"
+CXXFLAGS="${COMMON_FLAGS}"
+MAKEOPTS="-j@JOBS@"
+
+USE="wayland pipewire screencast bluetooth vulkan vaapi \
+     -doc -examples -test -handbook -webengine -semantic-desktop"
+
+VIDEO_CARDS="amdgpu radeonsi intel nouveau virgl nvidia"
+INPUT_DEVICES="libinput"
+L10N="@L10N@"
+
+ACCEPT_LICENSE="-* @FREE"
+# proprietary exceptions live in package.license/
+
+FEATURES="nodoc noinfo noman buildpkg getbinpkg"
+PORTAGE_BINHOST="@BINHOST_URI@"
+PKGDIR="/cache/binpkgs"
+DISTDIR="/cache/distfiles"
+
+# Never merged into the image at all (plan/06 layer 2):
+INSTALL_MASK="/usr/include /usr/share/doc /usr/share/info /usr/share/man \
+  /usr/share/gtk-doc /usr/share/devhelp /usr/share/aclocal \
+  /usr/lib64/pkgconfig /usr/share/pkgconfig /usr/lib64/cmake \
+  /usr/share/zsh"

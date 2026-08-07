@@ -1,0 +1,13 @@
+[Unit]
+Description=Self-reporting boot test (runs ONLY under the injected QEMU test credential)
+ConditionCredential=@DISTRO_ID@.test
+After=multi-user.target graphical.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ImportCredential=@DISTRO_ID@.*
+ExecStart=/usr/lib/image-test/test-report.sh
+
+[Install]
+WantedBy=multi-user.target

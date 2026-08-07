@@ -1,0 +1,17 @@
+# Root filesystem A/B transfer (plan/05): downloads the versioned EROFS image and
+# writes it to the inactive root slot, relabeling the partition as the final step.
+[Transfer]
+Verify=@VERIFY@
+
+[Source]
+Type=url-file
+Path=@UPDATE_URL@
+MatchPattern=@DISTRO_ID@_@v.root.erofs.zst
+
+[Target]
+Type=partition
+Path=auto
+MatchPartitionType=root
+MatchPattern=root_@v
+InstancesMax=2
+ReadOnly=yes

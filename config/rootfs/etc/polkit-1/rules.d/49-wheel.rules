@@ -1,0 +1,4 @@
+/* wheel group members are polkit administrators (Discover, NetworkManager, updates) */
+polkit.addAdminRule(function(action, subject) {
+    return ["unix-group:wheel"];
+});

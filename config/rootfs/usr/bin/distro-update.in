@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+# @DISTRO_ID@-update — thin branded wrapper around systemd-sysupdate (plan/05).
+set -euo pipefail
+
+ID="@DISTRO_ID@"
+
+usage() {
+    cat <<EOF
+$ID-update — OS update management
+
+  check       show installed and available versions
+  apply       download + verify + install the newest version (reboot to activate)
+  reboot      apply, then reboot immediately
+  rollback    make the previous version the default boot entry
+  status      slot map: versions, active slot, boot entries
+  etc-diff    list /etc files diverging from vendor defaults (overlay upper)
+EOF
+}
+
+# _UPDATE_TEST_* env hooks exist for the build's offline test suite only.
+need_root() {
+    [[ ${_UPDATE_TEST_SKIP_ROOT:-0} == 1 ]] && return 0
+    [[ $EUID -eq 0 ]] || { echo "error: must run as root" >&2; exit 1; }
+}
+
+esp_path() { bootctl --print-esp-path 2>/dev/null || echo /efi; }
+
+os_release_path() { printf '%s' "${_UPDATE_TEST_OS_RELEASE:-/etc/os-release}"; }
+overlay_upper()   { printf '%s' "${_UPDATE_TEST_ETC_UPPER:-/var/overlay/etc/upper}"; }
+
+# _uki_versions: reads UKI basenames on stdin, prints bare versions (counter
+# suffixes stripped), version-sorted ascending, deduplicated. Pure; unit-tested.
+_uki_versions() {
+    sed -E -n "s/^${ID}_([0-9]+\.[0-9]+\.[0-9]+)(\+[0-9]+(-[0-9]+)?)?\.efi$/\1/p" \
+        | sort -V | uniq
+}
+
+# _previous_version CURRENT: reads versions (one per line) on stdin, prints the
+# newest version that is not CURRENT. Pure; unit-tested.
+_previous_version() {
+    local current=$1
+    grep -Fxv "$current" | tail -n1
+}
+
+current_version() {
+    # shellcheck source=/dev/null
+    . "$(os_release_path)"
+    printf '%s' "${IMAGE_VERSION:-unknown}"
+}
+
+cmd_check() { systemd-sysupdate list; }
+
+cmd_apply() {
+    need_root
+    systemd-sysupdate update
+    echo "Update staged. Reboot to activate (automatic rollback if the new version fails to boot)."
+}
+
+cmd_reboot() { need_root; systemd-sysupdate update && systemctl reboot; }
+
+cmd_rollback() {
+    need_root
+    local esp cur prev entry
+    esp="$(esp_path)"
+    cur="$(current_version)"
+    prev="$(ls "$esp/EFI/Linux/" 2>/dev/null | _uki_versions | _previous_version "$cur")"
+    [[ -n $prev ]] || { echo "error: no other version present on the ESP" >&2; exit 1; }
+    entry="$(ls "$esp/EFI/Linux/" | grep -F "${ID}_${prev}" | head -n1)"
+    bootctl set-default "$entry"
+    echo "Default boot entry set to $entry — reboot to roll back to $prev."
+}
+
+cmd_status() {
+    echo "installed: $(current_version)"
+    echo
+    echo "root slots:"
+    lsblk -nro NAME,PARTLABEL,PARTTYPE 2>/dev/null \
+        | awk -v t="4f68bc64-6acb-4aa4-b891-db7cd79abf44" 'tolower($3)==t {printf "  /dev/%s  %s\n", $1, $2}'
+    local rootsrc
+    rootsrc="$(findmnt -nvo SOURCE / 2>/dev/null || true)"
+    [[ -n $rootsrc ]] && echo "active root: $rootsrc"
+    echo
+    echo "boot entries on ESP:"
+    ls -1 "$(esp_path)/EFI/Linux/" 2>/dev/null | sed 's/^/  /' || echo "  (ESP not accessible)"
+}
+
+cmd_etc_diff() {
+    local upper; upper="$(overlay_upper)"
+    [[ -d $upper ]] || { echo "(no overlay upper — pristine /etc)"; return 0; }
+    echo "# files diverging from vendor defaults (delete from $upper to revert):"
+    find "$upper" -mindepth 1 \( -type f -o -type l \) -printf '/etc/%P\n' | sort
+    # overlay whiteouts = deletions of vendor files
+    find "$upper" -mindepth 1 -type c -printf 'deleted: /etc/%P\n' | sort
+}
+
+# Allow test harnesses to source the pure helpers without dispatching.
+if [[ ${BASH_SOURCE[0]} != "$0" ]]; then
+    return 0
+fi
+
+case "${1:-}" in
+    check)      cmd_check ;;
+    apply)      cmd_apply ;;
+    reboot)     cmd_reboot ;;
+    rollback)   cmd_rollback ;;
+    status|"")  cmd_status ;;
+    etc-diff)   cmd_etc_diff ;;
+    -h|--help)  usage ;;
+    *)          usage >&2; exit 1 ;;
+esac

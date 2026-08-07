@@ -1,0 +1,13 @@
+[Unit]
+Description=First-boot Flatpak preinstall (firstboot mode)
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=!/var/lib/@DISTRO_ID@/flatpak-preinstall.done
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'set -e; for a in @FLATPAK_PREINSTALL@; do flatpak install -y --system --noninteractive flathub "$a"; done'
+ExecStartPost=/bin/sh -c 'mkdir -p /var/lib/@DISTRO_ID@ && touch /var/lib/@DISTRO_ID@/flatpak-preinstall.done'
+
+[Install]
+WantedBy=multi-user.target

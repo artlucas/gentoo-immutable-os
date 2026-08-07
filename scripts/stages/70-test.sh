@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+# Stage 70 — QEMU/OVMF boot tests (plan/07).
+#   default:                       T1 smoke (boot twice, self-reported assertions)
+#   UPDATE_TEST_BASE_IMG=old.img:  T2 update E2E against out/release served over HTTP
+# The guest self-reports via the distro-test-report unit (gated on an SMBIOS
+# credential injected by run-vm.sh --test; absent on real hardware).
+set -euo pipefail
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+STAGE_NAME=70-test
+# shellcheck source=../lib/common.sh
+source "$SCRIPT_DIR/../lib/common.sh"
+load_config
+ensure_dir "$OUT/logs"; exec > >(tee -a "$OUT/logs/$STAGE_NAME.log") 2>&1
+
+is_linux || die "stages run inside the builder container only"
+IMG="$OUT/$IMG_NAME"
+[[ -f $IMG ]] || die "image missing: $IMG — run stage 60"
+
+TIMEOUT=300
+[[ -e /dev/kvm ]] || { TIMEOUT=1500; warn "no KVM — TCG emulation, timeouts x5"; }
+
+MARKER="IMAGE-TEST:"
+DENY_RE='Kernel panic|emergency\.target|Failed to mount|Timed out waiting for device'
+
+# boot_and_watch WORKIMG LOGFILE [extra run-vm args...] → waits for marker or failure
+boot_and_watch() {
+  local img=$1 slog=$2; shift 2
+  rm -f -- "$slog"
+  DISTRO_ID="$DISTRO_ID" bash "$SCRIPT_DIR/../run-vm.sh" "$img" --headless "$slog" "$@" &
+  local qpid=$!
+  local waited=0
+  while true; do
+    if [[ -f $slog ]]; then
+      grep -Eq "$DENY_RE" "$slog" && { kill "$qpid" 2>/dev/null || true; die "boot failure pattern in serial log ($slog)"; }
+      grep -q "$MARKER" "$slog" && break
+    fi
+    kill -0 "$qpid" 2>/dev/null || { grep -q "$MARKER" "$slog" 2>/dev/null && break; die "QEMU exited before test marker (see $slog)"; }
+    (( waited >= TIMEOUT )) && { kill "$qpid" 2>/dev/null || true; die "timeout after ${TIMEOUT}s waiting for test marker (see $slog)"; }
+    sleep 2; waited=$((waited + 2))
+  done
+  # guest powers itself off after reporting; give it a moment, then ensure exit
+  local grace=0
+  while kill -0 "$qpid" 2>/dev/null && (( grace < 60 )); do sleep 2; grace=$((grace + 2)); done
+  kill "$qpid" 2>/dev/null || true
+  wait "$qpid" 2>/dev/null || true
+}
+
+field() { grep "$MARKER" "$1" | tail -n1 | tr ' ' '\n' | sed -n "s/^$2=//p"; }
+
+assert_report() {  # LOG expected_version
+  local slog=$1 want_ver=$2
+  grep -q "$MARKER ok" "$slog" || die "guest reported failure: $(grep "$MARKER" "$slog" | tail -n1)"
+  local got; got="$(field "$slog" version)"
+  [[ $got == "$want_ver" ]] || die "guest version=$got, expected $want_ver"
+  [[ $(field "$slog" etc_overlay) == overlay ]] || die "guest /etc is not an overlay"
+  [[ $(field "$slog" failed_units) == 0 ]] || die "guest has failed units"
+  if [[ ${CONSOLE_ONLY:-0} != 1 ]]; then
+    [[ $(field "$slog" graphical) == yes ]] || die "graphical.target not reached in guest"
+  fi
+}
+
+if [[ -n ${UPDATE_TEST_BASE_IMG:-} ]]; then
+  # ---- T2: update E2E -------------------------------------------------------------
+  [[ -d $RELEASE_DIR ]] || die "no release dir — run stage 80 for the new version first"
+  [[ -f $UPDATE_TEST_BASE_IMG ]] || die "base image missing: $UPDATE_TEST_BASE_IMG"
+  WORKIMG="$WORK/update-test.img"; cp --sparse=always -- "$UPDATE_TEST_BASE_IMG" "$WORKIMG"
+
+  ( cd "$OUT/release" && exec python3 -m http.server 8000 --bind 0.0.0.0 ) &
+  HTTP_PID=$!; trap 'kill $HTTP_PID 2>/dev/null || true' EXIT
+  sleep 1
+
+  SLOG="$OUT/logs/update-test-boot1.serial.log"
+  log "update test: booting base image, applying update from local server"
+  boot_and_watch "$WORKIMG" "$SLOG" --test update --update-url "http://10.0.2.2:8000/$UPDATE_CHANNEL"
+  # first marker comes from the OLD version confirming the update applied; the guest
+  # then reboots into the new version and reports again on a second invocation:
+  SLOG2="$OUT/logs/update-test-boot2.serial.log"
+  boot_and_watch "$WORKIMG" "$SLOG2" --test update
+  assert_report "$SLOG2" "$VERSION"
+  log "update E2E passed: base image now runs $VERSION"
+else
+  # ---- T1: smoke, two boots ---------------------------------------------------------
+  WORKIMG="$WORK/smoke-test.img"; cp --sparse=always -- "$IMG" "$WORKIMG"
+
+  SLOG1="$OUT/logs/smoke-boot1.serial.log"
+  log "smoke: first boot (repart growth, machine-id generation)"
+  boot_and_watch "$WORKIMG" "$SLOG1" --test smoke
+  assert_report "$SLOG1" "$VERSION"
+
+  SLOG2="$OUT/logs/smoke-boot2.serial.log"
+  log "smoke: second boot (persistence)"
+  boot_and_watch "$WORKIMG" "$SLOG2" --test smoke
+  assert_report "$SLOG2" "$VERSION"
+  m1="$(field "$SLOG1" machine_id)"; m2="$(field "$SLOG2" machine_id)"
+  [[ -n $m1 && $m1 == "$m2" ]] || die "machine-id did not persist across boots ($m1 vs $m2)"
+  log "smoke tests passed"
+fi
+
+stamp_write "$STAGE_NAME" "$(inputs_hash "$IMG")"

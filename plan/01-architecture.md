@@ -1,0 +1,162 @@
+# 01 — System Architecture
+
+## Immutability model
+
+The OS is a **read-only EROFS image** occupying one of two root slots. Nothing on the root
+filesystem is ever modified in place — not by the user, not by updates, not by the OS itself.
+State lives in exactly two places:
+
+| Path | Backing | Lifetime |
+|---|---|---|
+| `/` (incl. `/usr`, `/opt`, `/boot` stub) | EROFS image in active root slot | Replaced wholesale by updates |
+| `/etc` | overlayfs: lower = image's `/etc`, upper = `/var/overlay/etc/upper` | Local edits persist across updates |
+| `/var` | ext4 partition (`PARTLABEL=var`) | Persists across updates, grows to fill disk |
+| `/home` | symlink → `/var/home` | Persists (Silverblue-style) |
+| `/root` | symlink → `/var/roothome` | Persists |
+| `/tmp` | tmpfs | Volatile |
+| `/efi` | ESP (vfat), automount, otherwise unmounted | Written only by updater/`bootctl` |
+
+There is no Portage, no VDB, no compiler on the system (see [06-pruning.md](06-pruning.md)),
+so "installing software natively" is not merely discouraged — it is impossible. Applications
+come from Flatpak into `/var/lib/flatpak`.
+
+EROFS is chosen over squashfs: kernel-native read-only filesystem designed for exactly this
+use (Android system partitions), better random-read performance, lz4hc/zstd compression,
+first-class in `gentoo-kernel-bin`.
+
+## Disk layout
+
+GPT, UEFI-only. Partition names (GPT partlabels) are the API — everything (initrd, sysupdate,
+repart) discovers partitions by label/type, never by `/dev/sdXN`.
+
+```
+GPT (protective MBR only; no BIOS boot support)
+├── p1  ESP        vfat   1 GiB      PARTLABEL=esp     type=EFI System
+│        └── systemd-boot + versioned UKIs (current + previous)
+├── p2  root slot  erofs  6 GiB      PARTLABEL=root_<version-A>   type=root(x86-64)
+├── p3  root slot  (raw)  6 GiB      PARTLABEL=_empty             type=root(x86-64)
+└── p4  var        ext4   4 GiB+     PARTLABEL=var                type=var
+                          (grows to fill disk at first boot)
+```
+
+Sizes are `config/build.conf` variables (`ESP_SIZE`, `ROOT_SLOT_SIZE`, `VAR_SIZE_INITIAL`).
+6 GiB slots leave ~2× headroom over the ~3 GiB compressed root image (budget in
+[06-pruning.md](06-pruning.md)). The factory image ships slot B empty (zeros — compresses to
+nothing in the distributed `.img.zst`).
+
+### Version-labeled slots (the A/B selection mechanism)
+
+Slots are **not** named "A" and "B" anywhere the OS can see. Instead:
+
+- Each release's root partition is labeled with its version: `root_0.1.0`.
+- Each release's UKI embeds the kernel cmdline `root=PARTLABEL=root_0.1.0 rootfstype=erofs ro`.
+- The updater writes the new image to whichever slot is *inactive* and relabels that
+  partition to the new version (`systemd-sysupdate` does this natively).
+
+So a UKI always finds its own rootfs regardless of which physical slot holds it. No per-slot
+UKI variants, no bootloader-side slot logic, no cmdline editing. The unused slot is labeled
+`_empty` (factory) or holds the previous version (after ≥2 updates, the oldest is overwritten).
+
+## Boot flow
+
+```
+UEFI firmware
+  └─ systemd-boot (ESP:/EFI/BOOT/BOOTX64.EFI + /EFI/systemd/)
+       picks highest-version UKI in ESP:/EFI/Linux/, honoring boot-counting suffixes
+       └─ UKI  arttest_<version>[+tries].efi   (kernel + initrd + cmdline + os-release, one PE binary)
+            └─ initrd (dracut, systemd-based, hostonly=no)
+                 1. systemd-repart grows `var` partition to end of disk (first boot only)
+                 2. mount /sysroot            ← root=PARTLABEL=root_<version> (erofs, ro)
+                 3. mount /sysroot/var        ← fstab x-initrd.mount entry (PARTLABEL=var)
+                 4. etc-overlay unit          ← custom dracut module (see below)
+                 5. switch-root
+                      └─ systemd (full)
+                           ... graphical.target → SDDM → Plasma (Wayland)
+                           boot-complete.target → systemd-bless-boot marks UKI good
+```
+
+### UKI construction
+
+Built entirely in the builder (never on the target — the target has no dracut/ukify):
+
+1. `dracut --sysroot <target> --no-hostonly` produces a generic initrd containing:
+   systemd, the etc-overlay module, systemd-repart + our repart.d, erofs/ext4/vfat drivers,
+   storage drivers (nvme, ahci, virtio, usb-storage, sd/mmc), keyboard, plymouth-less console.
+   Early-KMS firmware is *not* packed into the initrd (kernel loads GPU firmware from
+   `/usr/lib/firmware` post-switch-root; keeps the UKI small).
+2. `ukify build --linux=<vmlinuz> --initrd=<initrd> --cmdline="root=PARTLABEL=root_${VERSION} rootfstype=erofs ro nvidia-drm.modeset=1 quiet" --os-release=@<target>/etc/os-release --output=${DISTRO_ID}_${VERSION}.efi`
+
+Cmdline notes: `nvidia-drm.modeset=1` is required for NVIDIA Wayland; harmless without the GPU.
+Test builds append `console=ttyS0` (see [07-testing.md](07-testing.md)).
+
+### Automatic Boot Assessment (rollback)
+
+systemd-boot's built-in boot counting:
+
+- **Factory image:** UKI installed *without* a tries counter (`arttest_0.1.0.efi`) — it is the
+  known-good baseline; there is nothing to roll back to.
+- **Updates:** new UKI lands as `arttest_0.2.0+3.efi` (3 tries). systemd-boot decrements the
+  counter in the filename each attempt (`+2-1`, `+1-2`, …).
+- On a successful boot, `systemd-bless-boot.service` (pulled in by `boot-complete.target`)
+  renames it to `arttest_0.2.0.efi` — permanent.
+- If tries hit `+0-3`, systemd-boot skips the entry and boots the next-highest version — the
+  previous UKI, whose rootfs still sits in the other slot. **Automatic rollback, no server, no
+  agent.**
+
+What counts as a "successful boot" is defined by what `boot-complete.target` requires. We wire
+in `systemd-boot-check-no-failures.service` plus a tiny `arttest-boot-ok.service` that asserts
+`graphical.target` was reached — so a boot that comes up without a display manager is a failed
+boot and gets rolled back. Manual rollback: `bootctl set-default arttest_<old>.efi` (or once,
+`bootctl set-oneshot`).
+
+## /etc overlay
+
+- Lower: `/etc` from the ro image (pristine vendor config, updated with every release).
+- Upper/work: `/var/overlay/etc/{upper,work}`.
+- Mounted **in the initrd** by a ~40-line custom dracut module (`90arttest-etc-overlay`): a
+  systemd unit ordered `After=sysroot-var.mount Before=initrd-switch-root.service` that
+  `mkdir -p`s the upper/work dirs and mounts
+  `overlay /sysroot/etc -o lowerdir=/sysroot/etc,upperdir=/sysroot/var/overlay/etc/upper,workdir=/sysroot/var/overlay/etc/work`.
+
+Why a custom module and not an fstab `x-initrd.mount` entry: overlay `upperdir=`/`workdir=`
+options are absolute paths that systemd's fstab generator would *not* rewrite to `/sysroot/...`
+in the initrd context — the entry would point at the initrd's own `/var` and fail. Regular
+partition mounts like `/var` don't have this problem, which is why `/var` *does* use fstab.
+
+Semantics (documented tradeoff): overlay upper wins file-wise. A file the user modified stops
+receiving vendor updates until the user deletes the upper copy (`arttest-update etc-diff` in
+the CLI wrapper lists divergent files). No 3-way merge à la OSTree — accepted for v1.
+
+`/etc/machine-id`: empty in the image lower; systemd generates one at first boot and the write
+lands in the upper — stable thereafter.
+
+## /var lifecycle
+
+- Shipped 4 GiB, populated at build with: preinstalled Flatpaks (`/var/lib/flatpak`), empty
+  `home/`, `overlay/etc/{upper,work}`, factory journal dir.
+- First boot: `systemd-repart` (in initrd, `repart.d/50-var.conf` with
+  `SizeMaxBytes=` unset + `Weight=`) extends the partition to the end of the physical disk —
+  libfdisk relocates the backup GPT header automatically, so a 16 GiB image dd'd onto a 1 TB
+  disk claims the full disk. `x-systemd.growfs` on the `/var` fstab entry grows the ext4 to
+  match.
+- Updates never touch `/var`. A "factory reset" is: wipe `var` + relabel (roadmap: recovery
+  UKI that does this).
+- swap: zram only (`sys-apps/zram-generator`), no swap partition, no hibernation.
+
+## First boot & default user
+
+v1 images are "live-style": a `live` user (uid 1000, wheel, configurable name/password in
+`build.conf`) is baked into the image `/etc/passwd`/`shadow` at build time, with SDDM
+autologin into Plasma Wayland. Rationale: zero-interaction boot for both VM evaluation and
+USB live use. The future installer (roadmap) replaces this with real user creation via
+`systemd-firstboot`/Calamares. User-created accounts at runtime land in the `/etc` overlay
+upper and `/var/home` — they survive updates.
+
+## What can go wrong (designed-for failure modes)
+
+| Failure | Behavior |
+|---|---|
+| New image kernel-panics / never reaches graphical | Boot counter exhausts → systemd-boot falls back to previous UKI → previous slot boots |
+| Power loss mid-update | Inactive slot half-written but its partition label is set **last** by sysupdate; UKI copied to ESP atomically (write + rename). Old version untouched → still boots |
+| `/var` corruption | fsck via systemd-fsck in initrd; worst case reformat var = factory reset, OS itself unaffected |
+| User remounts root rw | Impossible: EROFS is a read-only filesystem *format*, not a ro mount of a rw fs |

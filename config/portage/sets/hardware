@@ -1,0 +1,12 @@
+# @hardware — kernel, firmware, drivers (plan/03).
+sys-kernel/gentoo-kernel-bin
+sys-kernel/linux-firmware
+sys-firmware/intel-microcode
+sys-firmware/sof-firmware
+x11-drivers/nvidia-drivers
+media-libs/mesa
+media-libs/libva
+media-libs/libva-intel-media-driver
+net-wireless/bluez
+sys-apps/pciutils
+sys-apps/usbutils

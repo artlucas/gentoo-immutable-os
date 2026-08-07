@@ -1,0 +1,17 @@
+[Unit]
+Description=Mount /etc overlay (persistent upper on /var) before switch-root
+DefaultDependencies=no
+# /sysroot and /sysroot/var (fstab x-initrd.mount) are up by initrd-fs.target
+After=initrd-fs.target
+Before=initrd.target
+ConditionPathExists=/sysroot/etc
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/etc-overlay
+
+[Install]
+# Required (not Wanted): a system without its /etc overlay must not come up —
+# the failed boot feeds Automatic Boot Assessment instead (plan/01).
+RequiredBy=initrd.target

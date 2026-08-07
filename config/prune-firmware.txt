@@ -1,0 +1,14 @@
+# Firmware directories under /usr/lib/firmware pruned from the image (stage 50).
+# Server/datacenter NIC + exotic hardware classes outside the desktop/laptop scope.
+# One path per line, relative to /usr/lib/firmware. Lines starting with # ignored.
+liquidio
+netronome
+mellanox
+qed
+bnx2x
+cxgb3
+cxgb4
+qcom/sc8280xp
+ti-connectivity
+mrvl/prestera
+dpaa2

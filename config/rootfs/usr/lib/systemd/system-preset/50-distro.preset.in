@@ -1,0 +1,13 @@
+# Vendor preset for @DISTRO_NAME@ — applied at build time (stage 40).
+# preset-mode=enable-only is used, so absent units and vendor defaults are unaffected.
+enable NetworkManager.service
+enable sddm.service
+enable bluetooth.service
+enable systemd-timesyncd.service
+enable fstrim.timer
+enable systemd-boot-check-no-failures.service
+enable @DISTRO_ID@-boot-ok.service
+enable @DISTRO_ID@-test-report.service
+enable @DISTRO_ID@-flatpak-preinstall.service
+disable sshd.service
+disable systemd-sysupdate.timer

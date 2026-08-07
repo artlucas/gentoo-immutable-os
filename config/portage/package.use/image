@@ -1,0 +1,12 @@
+# Target package.use — per-package flags for the image build (plan/03).
+
+sys-apps/systemd            boot
+x11-drivers/nvidia-drivers  kernel-open dist-kernel
+sys-kernel/linux-firmware   redistributable -initramfs
+media-video/pipewire        sound-server pipewire-alsa
+kde-plasma/discover         flatpak -packagekit -fwupd -webengine
+net-misc/networkmanager     wifi -modemmanager
+media-libs/mesa             vulkan vaapi
+# installkernel stays inert in the target: no initramfs/bootloader hooks at emerge time —
+# the UKI is built from the builder (stage 40), not by package hooks.
+sys-kernel/installkernel    -dracut -grub -systemd-boot

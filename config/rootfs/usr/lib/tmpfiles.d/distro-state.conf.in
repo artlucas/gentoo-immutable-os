@@ -1,0 +1,8 @@
+# /var skeleton for @DISTRO_NAME@ — recreated if missing (factory reset = wipe /var).
+d /var/home             0755 root root -
+d /var/roothome         0700 root root -
+d /var/overlay          0755 root root -
+d /var/overlay/etc      0755 root root -
+d /var/overlay/etc/upper 0755 root root -
+d /var/overlay/etc/work 0755 root root -
+d /var/lib/@DISTRO_ID@  0755 root root -

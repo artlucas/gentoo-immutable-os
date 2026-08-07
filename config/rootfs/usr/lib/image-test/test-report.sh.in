@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# In-guest self-reporting test hook (plan/07). Runs ONLY when the QEMU harness
+# injects the @DISTRO_ID@.test SMBIOS credential — never on real hardware.
+# Prints one machine-readable line to the console, then powers off.
+set -u
+
+ID="@DISTRO_ID@"
+MARKER="IMAGE-TEST:"
+CONSOLE=/dev/console
+
+report() { echo "$MARKER $*" > "$CONSOLE"; }
+
+mode="smoke"
+if [[ -n ${CREDENTIALS_DIRECTORY:-} && -f $CREDENTIALS_DIRECTORY/$ID.test ]]; then
+    mode="$(cat "$CREDENTIALS_DIRECTORY/$ID.test")"
+fi
+
+# let the boot settle (returns when running or degraded)
+systemctl is-system-running --wait >/dev/null 2>&1
+
+collect_and_report() {
+    # shellcheck source=/dev/null
+    . /etc/os-release
+    local etc_fs graphical failed machine_id var_size flatpak_remotes
+    etc_fs="$(findmnt -no FSTYPE /etc 2>/dev/null || echo none)"
+    graphical="$(systemctl is-active graphical.target >/dev/null 2>&1 && echo yes || echo no)"
+    failed="$(systemctl --failed --no-legend --plain 2>/dev/null | grep -c . || true)"
+    machine_id="$(cat /etc/machine-id 2>/dev/null || echo none)"
+    var_size="$(findmnt -bno SIZE /var 2>/dev/null || echo 0)"
+    flatpak_remotes="$(flatpak remotes --system 2>/dev/null | grep -c . || true)"
+    report "ok version=${IMAGE_VERSION:-unknown} etc_overlay=$etc_fs graphical=$graphical" \
+           "failed_units=$failed machine_id=$machine_id var_size=$var_size" \
+           "flatpak_remotes=$flatpak_remotes phase=$1"
+}
+
+case "$mode" in
+smoke)
+    collect_and_report boot
+    systemctl poweroff
+    ;;
+update)
+    state="/var/lib/$ID/update-test.state"
+    if [[ ! -f $state ]]; then
+        # phase 1 (old version): point transfers at the test server, apply, poweroff.
+        if [[ -n ${CREDENTIALS_DIRECTORY:-} && -f $CREDENTIALS_DIRECTORY/$ID.update_url ]]; then
+            url="$(cat "$CREDENTIALS_DIRECTORY/$ID.update_url")"
+            mkdir -p /etc/sysupdate.d
+            for t in /usr/lib/sysupdate.d/*.transfer; do
+                sed "s|^Path=http.*|Path=$url|" "$t" > "/etc/sysupdate.d/$(basename "$t")"
+            done
+        fi
+        if "$ID-update" apply; then
+            mkdir -p "/var/lib/$ID"; touch "$state"
+            collect_and_report update-applied
+        else
+            report "fail reason=update-apply version=$(. /etc/os-release; echo "$IMAGE_VERSION")"
+        fi
+        systemctl poweroff
+    else
+        # phase 2 (new version booted): normal report.
+        rm -f "$state"
+        collect_and_report post-update
+        systemctl poweroff
+    fi
+    ;;
+*)
+    report "fail reason=unknown-mode mode=$mode"
+    systemctl poweroff
+    ;;
+esac

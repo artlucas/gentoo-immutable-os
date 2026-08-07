@@ -1,0 +1,3 @@
+# Never convert line endings: everything here is consumed by Linux tooling.
+# Bash scripts, systemd units, and portage config all break with CRLF.
+* -text

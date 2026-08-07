@@ -1,0 +1,22 @@
+# UKI transfer (plan/05): installs the new UKI on the ESP with a boot-counting
+# tries suffix (+3); systemd-boot's Automatic Boot Assessment handles rollback.
+[Transfer]
+Verify=@VERIFY@
+
+[Source]
+Type=url-file
+Path=@UPDATE_URL@
+MatchPattern=@DISTRO_ID@_@v.efi
+
+[Target]
+Type=regular-file
+Path=/EFI/Linux
+PathRelativeTo=boot
+MatchPattern=@DISTRO_ID@_@v+@l-@d.efi \
+             @DISTRO_ID@_@v+@l.efi \
+             @DISTRO_ID@_@v.efi
+Mode=0444
+TriesLeft=3
+TriesDone=0
+InstancesMax=2
+RemoveTemporary=yes
