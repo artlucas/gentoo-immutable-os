@@ -1,30 +1,29 @@
-# @desktop — minimal Plasma Wayland (plan/03). Printing/CJK entries are filtered out by
+# @desktop — minimal GNOME Wayland (plan/03). Printing/CJK entries are filtered out by
 # stage 30 when INCLUDE_PRINTING/INCLUDE_CJK_FONTS are 0 (marker comments below).
-kde-plasma/plasma-desktop
-kde-plasma/plasma-nm
-kde-plasma/plasma-pa
-kde-plasma/powerdevil
-kde-plasma/kscreen
-kde-plasma/bluedevil
-kde-plasma/breeze
-kde-plasma/breeze-gtk
-kde-frameworks/breeze-icons
-kde-plasma/systemsettings
-kde-plasma/plasma-systemmonitor
-kde-plasma/kscreenlocker
-kde-plasma/sddm-kcm
-x11-misc/sddm
-kde-apps/konsole
-kde-apps/dolphin
-kde-apps/ark
-kde-apps/kwrite
-kde-plasma/discover
-kde-plasma/xdg-desktop-portal-kde
+gnome-base/gnome-shell
+gnome-base/gnome-session
+gnome-base/gnome-settings-daemon
+gnome-base/gnome-control-center
+gnome-base/gnome-keyring
+gnome-base/nautilus
+gnome-base/gdm
+x11-wm/mutter
+sys-power/power-profiles-daemon
+net-wireless/gnome-bluetooth
+gnome-extra/gnome-system-monitor
+gnome-extra/gnome-console
+app-arch/file-roller
+app-editors/gnome-text-editor
+gnome-extra/gnome-software
+sys-apps/xdg-desktop-portal-gnome
+sys-apps/xdg-desktop-portal-gtk
+x11-themes/adwaita-icon-theme
+x11-themes/gnome-backgrounds
 media-video/pipewire
 media-video/wireplumber
 x11-base/xwayland
+media-fonts/cantarell
 media-fonts/noto
 media-fonts/noto-emoji
 media-fonts/noto-cjk        #cjk
 net-print/cups              #printing
-kde-plasma/print-manager    #printing

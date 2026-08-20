@@ -45,5 +45,5 @@ finish() {
 }
 
 make_tmpdir() {
-    mktemp -d "${TMPDIR:-/tmp}/arttest-test.XXXXXX"
+    mktemp -d "${TMPDIR:-/tmp}/immos-test.XXXXXX"
 }

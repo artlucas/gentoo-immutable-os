@@ -1,0 +1,6 @@
+# GDM config for @DISTRO_NAME@ — v1 images double as live media (plan/01).
+# Installed by stage 40 *after* the emerge, so it wins over gdm's shipped default.
+[daemon]
+WaylandEnable=true
+AutomaticLoginEnable=true
+AutomaticLogin=@LIVE_USER@

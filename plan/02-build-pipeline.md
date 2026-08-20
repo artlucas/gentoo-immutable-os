@@ -19,7 +19,7 @@
 ## Repository layout
 
 ```
-arttest-gentoo/
+immos/
 ├── plan/                       # these documents
 ├── config/
 │   ├── build.conf              # single source of truth: DISTRO_ID/NAME, VERSION,
@@ -30,12 +30,12 @@ arttest-gentoo/
 │   │   ├── package.use/
 │   │   ├── package.license/    # NVIDIA-r2, linux-fw redistributable, intel-ucode
 │   │   ├── package.accept_keywords/
-│   │   └── sets/               # @arttest-base, @arttest-hardware, @arttest-desktop
+│   │   └── sets/               # @base, @hardware, @desktop
 │   └── rootfs/                 # file overlay rsync'd onto target in the configure stage
-│       ├── etc/                #   os-release template, fstab, sddm.conf.d/, ...
+│       ├── etc/                #   os-release template, fstab, gdm/custom.conf, ...
 │       ├── usr/lib/            #   systemd units & presets, sysupdate.d/, repart.d/,
 │       │                       #   import-pubring.gpg, tmpfiles.d/
-│       └── usr/lib/dracut/modules.d/90arttest-etc-overlay/
+│       └── usr/lib/dracut/modules.d/90etc-overlay/
 ├── scripts/
 │   ├── build.sh                # HOST entrypoint: builds builder image, runs container,
 │   │                           #   dispatches stages. Flags: --from N, --only N, --clean,
@@ -75,10 +75,10 @@ arttest-gentoo/
 ```
 docker run --privileged \
   -v "$REPO":/repo:ro                      # scripts + config, read-only
-  -v arttest-work:/work                    # named volume: target rootfs, scratch
-  -v arttest-cache:/cache                  # named volume: distfiles + binpkgs (survives runs)
+  -v immos-work:/work                      # named volume: target rootfs, scratch
+  -v immos-cache:/cache                    # named volume: distfiles + binpkgs (survives runs)
   -v "$REPO/out":/out                      # artifacts + logs + stamps back to host
-  arttest-builder /repo/scripts/stages/...
+  immos-builder /repo/scripts/stages/...
 ```
 
 > **WSL2/NTFS warning (load-bearing):** the target rootfs is built inside a **named volume**
@@ -114,7 +114,7 @@ Verifies the builder's pinned state and fetches what later stages need.
 **Does:** write builder `make.conf` (binhost: `FEATURES="getbinpkg buildpkg"` pointing at
 `https://distfiles.gentoo.org/releases/amd64/binpackages/23.0/x86-64/` — generic x86-64,
 **not** x86-64-v3, since budget Goldmont-Plus-class CPUs sold within the 5-year window lack
-AVX2); eselect profile `default/linux/amd64/23.0/desktop/plasma/systemd`; local binpkg cache
+AVX2); eselect profile `default/linux/amd64/23.0/desktop/gnome/systemd`; local binpkg cache
 under `/cache/binpkgs`.
 **Verify:** `emerge --info` shows expected profile/binhost.
 
@@ -125,27 +125,27 @@ The core two-root emerge.
 export ROOT=/work/target
 emerge --root="$ROOT" --config-root=/repo/config/portage \
        --usepkg --with-bdeps=n \
-       @arttest-base @arttest-hardware @arttest-desktop
+       @base @hardware @desktop
 ```
 - Target portage config (`config/portage/`) sets the same profile, target USE flags,
   `INSTALL_MASK` (see 06), `FEATURES="nodoc noinfo noman"`.
 - BDEPENDs resolve into the builder (`/`), RDEPENDs into `$ROOT` — Portage's default ROOT
   semantics. Anything that appears in the target arrived as a *runtime* dependency; the dep
   audit in 06 reviews that list.
-- `--console-only` flag (M1) emerges only `@arttest-base @arttest-hardware`.
-**Verify:** `$ROOT/usr/bin/gcc` absent; `$ROOT/lib/modules/*` exists; systemd, sddm, flatpak
+- `--console-only` flag (M1) emerges only `@base @hardware`.
+**Verify:** `$ROOT/usr/bin/gcc` absent; `$ROOT/lib/modules/*` exists; systemd, gdm, flatpak
 binaries present (full build); VDB at `$ROOT/var/db/pkg` present (pruned later, needed by 40/50).
 
 ### 40-configure
 Turns the raw rootfs into *this* distro.
 **Does (from builder, against `$ROOT`):**
 - rsync `config/rootfs/` overlay onto `$ROOT` (os-release rendered from template with
-  `DISTRO_*`/`VERSION`; fstab; sysupdate.d + repart.d; systemd units incl. `arttest-boot-ok.service`;
-  tmpfiles.d for `/var` skeleton; SDDM autologin conf; NM/PipeWire defaults; dracut module).
+  `DISTRO_*`/`VERSION`; fstab; sysupdate.d + repart.d; systemd units incl. `immos-boot-ok.service`;
+  tmpfiles.d for `/var` skeleton; GDM autologin conf; NM/PipeWire defaults; dracut module).
 - create `/home → var/home`, `/root → var/roothome` symlinks; seed `/var` skeleton.
 **Does (chrooted into `$ROOT` — same arch, privileged container):**
 - `locale-gen` (list from build.conf), `systemd-firstboot --setup` defaults (TZ=UTC),
-  `useradd` the live user, `systemctl preset-all`, enable: sddm, NetworkManager, bluetooth,
+  `useradd` the live user, `systemctl preset-all`, enable: gdm, NetworkManager, bluetooth,
   systemd-timesyncd, zram; mask: getty autospawn beyond tty2.
 - `flatpak remote-add --if-not-exists flathub <flathub.repo>`; `flatpak install -y --system`
   each of `FLATPAK_PREINSTALL` (default: `org.mozilla.firefox`). Network required — fine in
@@ -156,7 +156,7 @@ Turns the raw rootfs into *this* distro.
 **Does (back in builder):** build initrd + UKI:
 `dracut --sysroot $ROOT --no-hostonly ...` then `ukify build ...` →
 `out/uki/${DISTRO_ID}_${VERSION}.efi` (details in 01/04).
-**Verify:** os-release has correct `IMAGE_ID`/`IMAGE_VERSION`; sddm/NM enabled in presets;
+**Verify:** os-release has correct `IMAGE_ID`/`IMAGE_VERSION`; gdm/NM enabled in presets;
 flatpak remote listed; UKI file exists and `ukify inspect` shows expected cmdline.
 
 ### 50-prune
@@ -188,9 +188,9 @@ virtualization on Win11), falls back to TCG with longer timeouts.
 
 - `/cache/distfiles` + `/cache/binpkgs` named volumes persist across builds; after the first
   build, `--usepkg` makes a clean target rebuild minutes-fast.
-- The Gentoo binhost covers packages whose USE match; KDE with our trimmed USE will largely
-  build from source once, then live in the local binpkg cache.
-- First full build estimate: several hours (KDE from source dominates). Subsequent: < 30 min.
+- The Gentoo binhost covers packages whose USE match; the GNOME stack with our trimmed USE will
+  largely build from source once, then live in the local binpkg cache.
+- First full build estimate: several hours (GNOME from source dominates). Subsequent: < 30 min.
 
 ## Failure & debugging
 

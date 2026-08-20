@@ -27,11 +27,13 @@ RUN emerge-webrsync
 #    quirk with multi-root operation). A stock stage3 "/" whose USE doesn't match the
 #    target's desktop profile produces phantom slot conflicts and bogus REQUIRED_USE
 #    failures (e.g. sys-auth/polkit's target-side install requires systemd[policykit];
-#    kde-frameworks' target-side install requires xmlto[text]; media-libs/libcanberra's
-#    REQUIRED_USE "udev? ( alsa )" reads as unsatisfied because "/" lacks alsa globally).
-#    Mirrored per-package rather than as a global USE change on "/" — that cascades into
-#    unrelated rebuilds (e.g. enabling gtk pulls gnupg into the GNOME stack). Packages here
-#    that aren't actually installed on "/" only need the package.use line, not a re-emerge.
+#    media-libs/libcanberra's REQUIRED_USE "udev? ( alsa )" reads as unsatisfied because
+#    "/" lacks alsa globally). Mirrored per-package rather than as a global USE change on
+#    "/" — that cascades into unrelated rebuilds (e.g. flipping introspection globally drags
+#    the whole GObject stack in). Packages here that aren't actually installed on "/" only
+#    need the package.use line, not a re-emerge.
+#    app-text/xmlto[text] is kept as cheap insurance against a docs-toolchain REQUIRED_USE
+#    on the target side; retest dropping it (and its --oneshot) after the first green build.
 RUN echo 'app-emulation/qemu qemu_softmmu_targets_x86_64 -qemu_softmmu_targets_i386 -qemu_user_targets_x86_64' \
       >> /etc/portage/package.use/builder \
  && echo 'sys-apps/systemd boot ukify policykit' >> /etc/portage/package.use/builder \
@@ -39,21 +41,23 @@ RUN echo 'app-emulation/qemu qemu_softmmu_targets_x86_64 -qemu_softmmu_targets_i
  && echo 'media-libs/libcanberra -udev' >> /etc/portage/package.use/builder \
  && echo 'x11-libs/libdrm video_cards_radeon' >> /etc/portage/package.use/builder \
  && echo 'media-libs/mesa vulkan vaapi wayland' >> /etc/portage/package.use/builder \
- && echo 'dev-qt/* vulkan opengl qml icu' >> /etc/portage/package.use/builder \
- && echo 'dev-qt/qtbase libproxy wayland icu cups' >> /etc/portage/package.use/builder \
+ && echo 'gnome-extra/gnome-software flatpak -fwupd -malcontent' >> /etc/portage/package.use/builder \
+ && echo 'gnome-base/gdm wayland -xdmcp -fprint -plymouth' >> /etc/portage/package.use/builder \
+ && echo 'gnome-base/gnome-control-center -gnome-online-accounts' >> /etc/portage/package.use/builder \
+ && echo 'gnome-extra/evolution-data-server -oauth -kerberos -ldap -weather -vala' >> /etc/portage/package.use/builder \
+ && echo 'x11-wm/mutter wayland X screencast' >> /etc/portage/package.use/builder \
  && echo 'media-video/ffmpeg vaapi' >> /etc/portage/package.use/builder \
- && echo 'x11-libs/gtk+ wayland X' >> /etc/portage/package.use/builder \
+ && echo 'dev-libs/glib dbus introspection' >> /etc/portage/package.use/builder \
+ && echo 'gui-libs/gtk wayland X introspection' >> /etc/portage/package.use/builder \
+ && echo 'x11-libs/gtk+ wayland X introspection' >> /etc/portage/package.use/builder \
  && echo 'x11-libs/cairo X' >> /etc/portage/package.use/builder \
- && echo 'kde-frameworks/* wayland dbus qml X' >> /etc/portage/package.use/builder \
+ && echo 'sys-auth/polkit gtk introspection' >> /etc/portage/package.use/builder \
  && echo 'x11-libs/libxkbcommon X' >> /etc/portage/package.use/builder \
  && echo 'net-print/cups dbus' >> /etc/portage/package.use/builder \
  && echo 'x11-base/xwayland libei' >> /etc/portage/package.use/builder \
- && echo 'kde-plasma/plasma-workspace screencast' >> /etc/portage/package.use/builder \
- && echo 'app-text/poppler qt6' >> /etc/portage/package.use/builder \
  && echo 'app-crypt/gcr gtk' >> /etc/portage/package.use/builder \
  && echo 'media-libs/libpulse X' >> /etc/portage/package.use/builder \
  && echo 'media-plugins/alsa-plugins pulseaudio' >> /etc/portage/package.use/builder \
- && echo 'dev-libs/qcoro dbus' >> /etc/portage/package.use/builder \
  && echo 'media-libs/freetype harfbuzz' >> /etc/portage/package.use/builder \
  && echo 'media-libs/libglvnd X' >> /etc/portage/package.use/builder \
  && echo 'sys-libs/minizip-ng compat' >> /etc/portage/package.use/builder \

@@ -36,7 +36,7 @@ log "target has $(wc -l < "$REPORT_DIR/target-packages-cpv.txt") packages"
 [[ -x $TARGET/usr/bin/systemctl ]] || die "verify: systemd missing from target"
 [[ -x $TARGET/usr/bin/flatpak   ]] || die "verify: flatpak missing from target"
 if [[ ${CONSOLE_ONLY:-0} != 1 ]]; then
-  [[ -x $TARGET/usr/bin/sddm ]] || die "verify: sddm missing from desktop target"
+  [[ -x $TARGET/usr/bin/gdm ]] || die "verify: gdm missing from desktop target"
 fi
 log "target rootfs emerged OK"
 stamp_write "$STAGE_NAME" "$(inputs_hash "$REPO/config/build.conf" "$REPO"/config/portage/sets/* "$REPO"/config/portage/package.use/*)"

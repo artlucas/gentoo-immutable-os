@@ -5,7 +5,7 @@
 A Gentoo-based, **immutable**, AMD64 Linux distribution:
 
 - **systemd** init and plumbing throughout (boot, networking hooks, updates, journal).
-- **Minimal KDE Plasma** (Wayland) desktop — only the core desktop shell and a handful of native utilities.
+- **Minimal GNOME Shell** (Wayland) desktop — only the core desktop shell and a handful of native utilities.
 - **Flatpak-first applications** — everything beyond the core desktop comes from Flathub.
 - **Immutable root filesystem** in the spirit of Fedora Silverblue / SteamOS: the OS is a read-only image; users never modify it, updates replace it atomically.
 - **A/B atomic updates with automatic rollback** from version 1.
@@ -22,7 +22,7 @@ Build tooling is **Bash**, running inside a privileged Docker/Podman container s
 | Immutability | Root is a read-only EROFS image; `/etc` is an overlay; `/var` is the only writable partition |
 | Atomic updates + rollback | Dual root slots (A/B), `systemd-sysupdate` client, systemd-boot Automatic Boot Assessment |
 | Minimal native footprint | Two-root Portage build (`emerge --root=`) so build deps never enter the target; aggressive prune with hard assertions |
-| Apps via Flatpak | Flathub preconfigured; Discover with Flatpak backend only; small preinstalled set |
+| Apps via Flatpak | Flathub preconfigured; GNOME Software with Flatpak backend only; small preinstalled set |
 | VM + bare-metal from one artifact | UEFI-only GPT image; `/var` grows to fill whatever disk it lands on at first boot |
 
 ## Non-goals (v1)
@@ -46,8 +46,8 @@ Build tooling is **Bash**, running inside a privileged Docker/Podman container s
 
 The distro name is a build variable, never hardcoded:
 
-- `config/build.conf` defines `DISTRO_ID` (default placeholder: `arttest`), `DISTRO_NAME`, `DISTRO_VERSION`.
-- Used in: `/etc/os-release` (`ID`, `IMAGE_ID`, `IMAGE_VERSION`), UKI filenames (`arttest_0.1.0.efi`), root partition labels (`root_0.1.0`), sysupdate match patterns, update server paths, the update CLI name (`arttest-update`).
+- `config/build.conf` defines `DISTRO_ID` (default placeholder: `immos`), `DISTRO_NAME`, `DISTRO_VERSION`.
+- Used in: `/etc/os-release` (`ID`, `IMAGE_ID`, `IMAGE_VERSION`), UKI filenames (`immos_0.1.0.efi`), root partition labels (`root_0.1.0`), sysupdate match patterns, update server paths, the update CLI name (`immos-update`).
 
 Note on terminology: Gentoo's "stage 3" is a **tarball** (`stage3-amd64-systemd-*.tar.xz`), not an ISO. The pipeline consumes the tarball (via the official `gentoo/stage3` container image or a pinned direct download); the Gentoo *install ISO* is not needed anywhere.
 
@@ -68,7 +68,7 @@ Note on terminology: Gentoo's "stage 3" is a **tarball** (`stage3-amd64-systemd-
 
 - **M0 — Scaffolding.** Repo layout, `config/build.conf`, builder container builds, stage runner executes a no-op pipeline end to end.
 - **M1 — Console image boots.** Minimal (no desktop) image: systemd + getty, ro EROFS root, `/etc` overlay, `/var` grows, boots in QEMU/OVMF. *This validates every hard architectural risk (boot flow, overlay, loopless assembly) before desktop complexity is added.*
-- **M2 — Desktop image.** Full package set: Plasma Wayland session via SDDM autologin, NetworkManager, PipeWire, Flatpak + Flathub, preinstalled Firefox, NVIDIA/firmware present. Prune assertions pass.
+- **M2 — Desktop image.** Full package set: GNOME Wayland session via GDM autologin, NetworkManager, PipeWire, Flatpak + Flathub, preinstalled Firefox, NVIDIA/firmware present. Prune assertions pass.
 - **M3 — Updates E2E.** Build v N and N+1; machine on N updates to N+1 over local HTTP and reboots into it; corrupted-slot test triggers automatic rollback.
 - **M4 — Hardware validation.** dd to USB; boot/validate on physical Intel iGPU, AMD, and NVIDIA machines per the checklist in 07.
 - **M5 (future) — Installer ISO** and roadmap items.

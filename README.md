@@ -1,6 +1,6 @@
-# arttest-gentoo
+# immos
 
-A Gentoo-built, **immutable**, Flatpak-first, minimal-KDE Linux distribution for AMD64
+A Gentoo-built, **immutable**, Flatpak-first, minimal-GNOME Linux distribution for AMD64
 (machines from roughly the last 5 years; UEFI-only). Ships as a single disk image that boots
 in VMs and from USB/disk on real hardware, with A/B atomic updates and automatic rollback.
 The shipped OS contains no compiler and no Portage — Gentoo is the build system, not the
@@ -27,12 +27,12 @@ been run yet. The full design lives in [`plan/`](plan/00-overview.md):
 Any host with Docker/Podman and Bash — including Docker Desktop (WSL2) on Windows:
 
 ```sh
-bash scripts/build.sh                 # full pipeline → out/arttest-<ver>.img(.zst)
+bash scripts/build.sh                 # full pipeline → out/immos-<ver>.img(.zst)
 bash scripts/build.sh --console-only  # M1 milestone image (no desktop)
 bash scripts/build.sh --dry-run       # show what would run
 bash scripts/build.sh --from 40       # resume after a failure
 bash scripts/enter.sh                 # debug shell in the builder container
-bash scripts/run-vm.sh out/arttest-0.1.0.img   # boot the result in QEMU/OVMF
+bash scripts/run-vm.sh out/immos-0.1.0.img   # boot the result in QEMU/OVMF
 ```
 
 First build notes: set `BUILDER_DIGEST` in `config/build.conf` to pin the stage3 base;

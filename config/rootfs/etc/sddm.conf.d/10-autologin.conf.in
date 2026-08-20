@@ -1,7 +1,0 @@
-[Autologin]
-User=@LIVE_USER@
-Session=plasma
-Relogin=false
-
-[General]
-DisplayServer=wayland

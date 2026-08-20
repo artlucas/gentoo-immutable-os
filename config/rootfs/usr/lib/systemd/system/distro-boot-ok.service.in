@@ -2,7 +2,7 @@
 Description=Boot success gate: desktop stack must be up before the boot is blessed
 Documentation=https://www.freedesktop.org/software/systemd/man/systemd-bless-boot.service.html
 # Skipped (not failed) on console-only images:
-ConditionPathExists=/usr/bin/sddm
+ConditionPathExists=/usr/bin/gdm
 # Fails if graphical.target was not reached -> boot-complete.target unreachable ->
 # UKI tries counter never cleared -> automatic rollback (plan/01).
 Requisite=graphical.target

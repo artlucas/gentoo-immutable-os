@@ -7,8 +7,8 @@ CFLAGS="${COMMON_FLAGS}"
 CXXFLAGS="${COMMON_FLAGS}"
 MAKEOPTS="-j@JOBS@"
 
-USE="wayland pipewire screencast bluetooth vulkan vaapi \
-     -doc -examples -test -handbook -webengine -semantic-desktop"
+USE="wayland pipewire screencast bluetooth vulkan vaapi introspection \
+     -doc -gtk-doc -examples -test -gnome-online-accounts"
 
 VIDEO_CARDS="amdgpu radeonsi intel nouveau virgl nvidia"
 INPUT_DEVICES="libinput"
@@ -23,7 +23,10 @@ PKGDIR="/cache/binpkgs"
 DISTDIR="/cache/distfiles"
 
 # Never merged into the image at all (plan/06 layer 2):
+# NB: /usr/lib64/girepository-1.0 is deliberately NOT masked — gjs and gnome-shell load
+# those typelibs at runtime. Only the build-time .gir XML and .vapi files go.
 INSTALL_MASK="/usr/include /usr/share/doc /usr/share/info /usr/share/man \
   /usr/share/gtk-doc /usr/share/devhelp /usr/share/aclocal \
   /usr/lib64/pkgconfig /usr/share/pkgconfig /usr/lib64/cmake \
+  /usr/share/gir-1.0 /usr/share/vala \
   /usr/share/zsh"

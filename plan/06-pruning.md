@@ -21,15 +21,18 @@ INSTALL_MASK="
   /usr/lib64/pkgconfig /usr/share/pkgconfig /usr/lib64/cmake /usr/share/cmake*
   /usr/share/aclocal
   /usr/lib64/*.a
-  /usr/share/qt6/mkspecs
+  /usr/share/gir-1.0 /usr/share/vala        # build-time GIR XML/vapi only
   /usr/share/zsh                               # REVISIT: bash-completion kept for now; size report decides
 "
 ```
 
+GIR note: `/usr/lib64/girepository-1.0` is deliberately **not** masked — those typelibs are
+loaded at runtime by gjs and gnome-shell. Only the `.gir` XML and `.vapi` sources above go.
+
 Locale note: `/usr/share/locale` is deliberately **not** in INSTALL_MASK (masking it wholesale
-breaks the KDE UI-language story). Instead, v1 keeps message catalogs for a `build.conf` list
+breaks the GNOME UI-language story). Instead, v1 keeps message catalogs for a `build.conf` list
 (`LOCALES_KEEP="en de fr es pt_BR it ja zh_CN ru"` default) and stage 50 deletes the rest —
-measured savings vs. usability. KDE/Qt translations follow the same list via `L10N` in the
+measured savings vs. usability. GNOME/GTK translations follow the same list via `L10N` in the
 target make.conf. `REVISIT` markers are resolved during M2 by the size report.
 
 ## Layer 3 — stage 50 prune script
@@ -78,11 +81,25 @@ assert_absent etc/portage
 ```
 
 Perl caveat (known, handled): `dev-lang/perl` is an RDEPEND of some base packages
-(e.g. openssl's `c_rehash`, some KDE deps historically). The dep audit in stage 30 will show
-whether it lands; if it does and the pull is spurious, fix with USE (`-perl`) or
-`package.provided` — decided during M1/M2 with the report in hand, not guessed now. Same
-procedure for python (GTK/glib tooling sometimes drags it): the *mechanism* is the audit
-gate; the *policy* is "empty whitelist until a human approves an entry."
+(e.g. openssl's `c_rehash`). The dep audit in stage 30 will show whether it lands; if it does
+and the pull is spurious, fix with USE (`-perl`) or `package.provided` — decided during
+M1/M2 with the report in hand, not guessed now. The *mechanism* is the audit gate; the
+*policy* is "empty whitelist until a human approves an entry."
+
+**Python under GNOME — open, decided at first build.** The interpreter ban is expected to be
+the first assertion GNOME trips. `gnome-shell → gjs → dev-libs/gobject-introspection` and
+`dev-libs/glib`'s `gdbus-codegen` are the likely paths by which `python3` becomes a genuine
+RDEPEND of the image rather than a build-only leak. The assertion is deliberately **left
+armed** — it is not weakened preemptively. If stage 50 trips on `python3`:
+
+1. confirm from `out/reports/packages.txt` which package actually pulls it (a real RDEPEND,
+   not a `--with-bdeps` mistake);
+2. if it is real, drop `python`/`python3` from the ban list in `scripts/stages/50-prune.sh`
+   while keeping `gcc/g++/ld/make/cmake/ninja/meson/cargo/rustc/emerge/ebuild/portageq/perl/pip`,
+   and record it here as a deliberate GNOME tradeoff with the package that forced it.
+
+The toolchain-free guarantee (no compiler, no Portage) is unaffected either way — a scripting
+interpreter is not a build toolchain.
 
 ## Size budget
 
@@ -93,7 +110,7 @@ gate; the *policy* is "empty whitelist until a human approves an entry."
 | linux-firmware (post-prune) + microcode + SOF | 0.9 GiB |
 | NVIDIA userspace + kernel modules | 0.7 GiB |
 | Mesa/graphics/VA | 0.4 GiB |
-| Plasma + KF6 + Qt6 (no webengine) | 1.6 GiB |
+| GNOME Shell + GTK4 + Mutter (no webkit) | 1.6 GiB *(estimate carried over from the pre-GNOME budget — not yet measured; update from the stage-50 size report after M2)* |
 | Fonts (incl. CJK) | 0.4 GiB |
 | **Total rootfs** | **~5.5 GiB** |
 | **EROFS lz4hc image** | **~2.8–3.3 GiB** (fits 6 GiB slot with 2× headroom) |

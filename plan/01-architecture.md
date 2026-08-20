@@ -63,7 +63,7 @@ UKI variants, no bootloader-side slot logic, no cmdline editing. The unused slot
 UEFI firmware
   └─ systemd-boot (ESP:/EFI/BOOT/BOOTX64.EFI + /EFI/systemd/)
        picks highest-version UKI in ESP:/EFI/Linux/, honoring boot-counting suffixes
-       └─ UKI  arttest_<version>[+tries].efi   (kernel + initrd + cmdline + os-release, one PE binary)
+       └─ UKI  immos_<version>[+tries].efi   (kernel + initrd + cmdline + os-release, one PE binary)
             └─ initrd (dracut, systemd-based, hostonly=no)
                  1. systemd-repart grows `var` partition to end of disk (first boot only)
                  2. mount /sysroot            ← root=PARTLABEL=root_<version> (erofs, ro)
@@ -71,7 +71,7 @@ UEFI firmware
                  4. etc-overlay unit          ← custom dracut module (see below)
                  5. switch-root
                       └─ systemd (full)
-                           ... graphical.target → SDDM → Plasma (Wayland)
+                           ... graphical.target → GDM → GNOME Shell (Wayland)
                            boot-complete.target → systemd-bless-boot marks UKI good
 ```
 
@@ -93,27 +93,27 @@ Test builds append `console=ttyS0` (see [07-testing.md](07-testing.md)).
 
 systemd-boot's built-in boot counting:
 
-- **Factory image:** UKI installed *without* a tries counter (`arttest_0.1.0.efi`) — it is the
+- **Factory image:** UKI installed *without* a tries counter (`immos_0.1.0.efi`) — it is the
   known-good baseline; there is nothing to roll back to.
-- **Updates:** new UKI lands as `arttest_0.2.0+3.efi` (3 tries). systemd-boot decrements the
+- **Updates:** new UKI lands as `immos_0.2.0+3.efi` (3 tries). systemd-boot decrements the
   counter in the filename each attempt (`+2-1`, `+1-2`, …).
 - On a successful boot, `systemd-bless-boot.service` (pulled in by `boot-complete.target`)
-  renames it to `arttest_0.2.0.efi` — permanent.
+  renames it to `immos_0.2.0.efi` — permanent.
 - If tries hit `+0-3`, systemd-boot skips the entry and boots the next-highest version — the
   previous UKI, whose rootfs still sits in the other slot. **Automatic rollback, no server, no
   agent.**
 
 What counts as a "successful boot" is defined by what `boot-complete.target` requires. We wire
-in `systemd-boot-check-no-failures.service` plus a tiny `arttest-boot-ok.service` that asserts
+in `systemd-boot-check-no-failures.service` plus a tiny `immos-boot-ok.service` that asserts
 `graphical.target` was reached — so a boot that comes up without a display manager is a failed
-boot and gets rolled back. Manual rollback: `bootctl set-default arttest_<old>.efi` (or once,
+boot and gets rolled back. Manual rollback: `bootctl set-default immos_<old>.efi` (or once,
 `bootctl set-oneshot`).
 
 ## /etc overlay
 
 - Lower: `/etc` from the ro image (pristine vendor config, updated with every release).
 - Upper/work: `/var/overlay/etc/{upper,work}`.
-- Mounted **in the initrd** by a ~40-line custom dracut module (`90arttest-etc-overlay`): a
+- Mounted **in the initrd** by a ~40-line custom dracut module (`90etc-overlay`): a
   systemd unit ordered `After=sysroot-var.mount Before=initrd-switch-root.service` that
   `mkdir -p`s the upper/work dirs and mounts
   `overlay /sysroot/etc -o lowerdir=/sysroot/etc,upperdir=/sysroot/var/overlay/etc/upper,workdir=/sysroot/var/overlay/etc/work`.
@@ -124,7 +124,7 @@ in the initrd context — the entry would point at the initrd's own `/var` and f
 partition mounts like `/var` don't have this problem, which is why `/var` *does* use fstab.
 
 Semantics (documented tradeoff): overlay upper wins file-wise. A file the user modified stops
-receiving vendor updates until the user deletes the upper copy (`arttest-update etc-diff` in
+receiving vendor updates until the user deletes the upper copy (`immos-update etc-diff` in
 the CLI wrapper lists divergent files). No 3-way merge à la OSTree — accepted for v1.
 
 `/etc/machine-id`: empty in the image lower; systemd generates one at first boot and the write
@@ -146,10 +146,10 @@ lands in the upper — stable thereafter.
 ## First boot & default user
 
 v1 images are "live-style": a `live` user (uid 1000, wheel, configurable name/password in
-`build.conf`) is baked into the image `/etc/passwd`/`shadow` at build time, with SDDM
-autologin into Plasma Wayland. Rationale: zero-interaction boot for both VM evaluation and
-USB live use. The future installer (roadmap) replaces this with real user creation via
-`systemd-firstboot`/Calamares. User-created accounts at runtime land in the `/etc` overlay
+`build.conf`) is baked into the image `/etc/passwd`/`shadow` at build time, with GDM
+autologin into the GNOME Wayland session. Rationale: zero-interaction boot for both VM
+evaluation and USB live use. The future installer (roadmap) replaces this with real user
+creation via `systemd-firstboot` and the installer's own account step. User-created accounts at runtime land in the `/etc` overlay
 upper and `/var/home` — they survive updates.
 
 ## What can go wrong (designed-for failure modes)

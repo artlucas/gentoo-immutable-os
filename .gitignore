@@ -2,3 +2,4 @@ out/
 *.log
 config/keys/*.gpg
 config/keys/*.asc
+.claude/settings.local.json.tmp.*

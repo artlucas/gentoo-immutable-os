@@ -4,8 +4,8 @@
 # Pure functions here are unit-tested on any platform (tests/); functions that
 # mount/chroot are Linux-only and guarded.
 
-[[ -n ${_ARTTEST_COMMON_LOADED:-} ]] && return 0
-_ARTTEST_COMMON_LOADED=1
+[[ -n ${_IMMOS_COMMON_LOADED:-} ]] && return 0
+_IMMOS_COMMON_LOADED=1
 
 set -euo pipefail
 
@@ -107,7 +107,7 @@ render_template() {
 # render_dest_name BASENAME — strips a trailing .in and rewrites every "distro"
 # token in the basename to "${DISTRO_ID}" (files in config/rootfs use "distro" in
 # their names so the distro can be renamed in build.conf alone; e.g.
-# distro-update.in → arttest-update, 50-distro.preset.in → 50-arttest.preset).
+# distro-update.in → immos-update, 50-distro.preset.in → 50-immos.preset).
 render_dest_name() {
   local name=$1
   name="${name%.in}"

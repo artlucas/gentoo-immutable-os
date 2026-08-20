@@ -34,7 +34,7 @@ Verify=yes                      # SHA256SUMS + SHA256SUMS.gpg against /usr/lib/s
 
 [Source]
 Type=url-file
-Path=${UPDATE_URL}              # e.g. https://updates.example.org/arttest/stable/
+Path=${UPDATE_URL}              # e.g. https://updates.example.org/immos/stable/
 MatchPattern=${DISTRO_ID}_@v.root.erofs.zst
 
 [Target]
@@ -78,18 +78,18 @@ Any HTTPS host (nginx autoindex off is fine — sysupdate reads the checksum man
 directory listings):
 
 ```
-/arttest/stable/
+/immos/stable/
 ├── SHA256SUMS            # the version manifest: one line per artifact
 ├── SHA256SUMS.gpg        # detached signature, release key
-├── arttest_0.1.0.root.erofs.zst
-├── arttest_0.1.0.efi
-├── arttest_0.2.0.root.erofs.zst
-├── arttest_0.2.0.efi
-└── img/arttest-0.2.0.img.zst        # full disk image for new installs (not used by updater)
+├── immos_0.1.0.root.erofs.zst
+├── immos_0.1.0.efi
+├── immos_0.2.0.root.erofs.zst
+├── immos_0.2.0.efi
+└── img/immos-0.2.0.img.zst        # full disk image for new installs (not used by updater)
 ```
 
 Stage 80 emits exactly this layout into `out/release/stable/`; publishing is
-`rsync out/release/ host:/srv/updates/arttest/` — no server-side logic. `UPDATE_CHANNEL`
+`rsync out/release/ host:/srv/updates/immos/` — no server-side logic. `UPDATE_CHANNEL`
 (`stable` default) is a path segment, giving free channels (`testing`) later by building with
 a different channel value.
 
@@ -106,30 +106,30 @@ a different channel value.
 
 | Command | Does |
 |---|---|
-| `arttest-update check` | `systemd-sysupdate list` → prints current/available |
-| `arttest-update apply` | `systemd-sysupdate update` → downloads, verifies, writes inactive slot + UKI(+3); prints "reboot to apply" |
-| `arttest-update reboot` | apply + `systemctl reboot` |
-| `arttest-update rollback` | `bootctl set-default <previous UKI>` (manual escape hatch) |
-| `arttest-update status` | slot map: which partlabel/version in each slot, active one, UKI tries state (`bootctl status` + `sfdisk` parse) |
-| `arttest-update etc-diff` | lists files in the `/etc` overlay upper (local divergence from vendor defaults — see 01) |
+| `immos-update check` | `systemd-sysupdate list` → prints current/available |
+| `immos-update apply` | `systemd-sysupdate update` → downloads, verifies, writes inactive slot + UKI(+3); prints "reboot to apply" |
+| `immos-update reboot` | apply + `systemctl reboot` |
+| `immos-update rollback` | `bootctl set-default <previous UKI>` (manual escape hatch) |
+| `immos-update status` | slot map: which partlabel/version in each slot, active one, UKI tries state (`bootctl status` + `sfdisk` parse) |
+| `immos-update etc-diff` | lists files in the `/etc` overlay upper (local divergence from vendor defaults — see 01) |
 
 Runs as root (polkit rule allows wheel to trigger via `pkexec`). **Unattended updates:**
 `systemd-sysupdate.timer` shipped but **disabled by default** in v1 (preset off) — flip to
-opt-out once the update path has soaked (roadmap). Discover shows flatpak app updates; OS
-updates are CLI-first in v1 (Discover OS-update integration is roadmap).
+opt-out once the update path has soaked (roadmap). GNOME Software shows flatpak app updates; OS
+updates are CLI-first in v1 (GNOME Software OS-update integration is roadmap).
 
 ## Update lifecycle (end to end)
 
 ```
 running 0.1.0 (slot A = root_0.1.0, slot B = _empty)
-  arttest-update apply
+  immos-update apply
     → GET SHA256SUMS(.gpg), verify sig; newest = 0.2.0 > 0.1.0
-    → GET arttest_0.2.0.root.erofs.zst → decompress-stream → write slot B → verify → relabel root_0.2.0
-    → GET arttest_0.2.0.efi → verify → ESP:/EFI/Linux/arttest_0.2.0+3.efi
+    → GET immos_0.2.0.root.erofs.zst → decompress-stream → write slot B → verify → relabel root_0.2.0
+    → GET immos_0.2.0.efi → verify → ESP:/EFI/Linux/immos_0.2.0+3.efi
   reboot
     → sd-boot picks 0.2.0 (+3, highest version) → renames +3→+2-1 … boots
-    → boot-complete.target reached → bless-boot renames to arttest_0.2.0.efi   ✅ committed
-  [failure path] 3 failed attempts → sd-boot ignores 0.2.0, boots arttest_0.1.0.efi
+    → boot-complete.target reached → bless-boot renames to immos_0.2.0.efi   ✅ committed
+  [failure path] 3 failed attempts → sd-boot ignores 0.2.0, boots immos_0.1.0.efi
     → slot A untouched, system healthy on 0.1.0                                ↩️ rolled back
   next update (0.3.0) overwrites the oldest slot (A) and evicts 0.1.0's UKI (InstancesMax=2)
 ```

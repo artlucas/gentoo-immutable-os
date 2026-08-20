@@ -66,15 +66,15 @@ Same artifact everywhere:
 
 First-boot sequence on any medium (details in 01): initrd `systemd-repart` extends the var
 partition to the disk's end and fixes the backup GPT header; `x-systemd.growfs` expands
-ext4; machine-id generated into the `/etc` overlay; SDDM autologin → Plasma.
+ext4; machine-id generated into the `/etc` overlay; GDM autologin → GNOME Shell.
 
 ## ESP contents & bootloader policy
 
 ```
 EFI/BOOT/BOOTX64.EFI          systemd-boot (fallback path — no NVRAM entry needed,
 EFI/systemd/systemd-bootx64.efi   boots on any UEFI machine incl. removable media)
-loader/loader.conf            timeout 0 (menu on-demand via key hold), default arttest_*
-EFI/Linux/arttest_<ver>.efi   UKI(s) — Type #2 BLS entries; systemd-boot auto-discovers,
+loader/loader.conf            timeout 0 (menu on-demand via key hold), default immos_*
+EFI/Linux/immos_<ver>.efi   UKI(s) — Type #2 BLS entries; systemd-boot auto-discovers,
                               sorts by version, honors +tries boot counting
 loader/entries.srel           (BLS marker)
 ```
