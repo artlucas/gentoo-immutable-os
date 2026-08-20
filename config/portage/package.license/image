@@ -1,4 +1,5 @@
 # Proprietary blob/driver license acceptance — exactly these, not ACCEPT_LICENSE="*".
 sys-kernel/linux-firmware    linux-fw-redistributable no-source-code
 sys-firmware/intel-microcode intel-ucode
-x11-drivers/nvidia-drivers   NVIDIA-r2
+x11-drivers/nvidia-drivers   NVIDIA-r2 NVIDIA-2023 NVIDIA-2025
+media-libs/libva-intel-media-driver no-source-code

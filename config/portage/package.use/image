@@ -1,12 +1,40 @@
 # Target package.use — per-package flags for the image build (plan/03).
 
-sys-apps/systemd            boot
+sys-apps/systemd            boot policykit
 x11-drivers/nvidia-drivers  kernel-open dist-kernel
 sys-kernel/linux-firmware   redistributable -initramfs
 media-video/pipewire        sound-server pipewire-alsa
 kde-plasma/discover         flatpak -packagekit -fwupd -webengine
-net-misc/networkmanager     wifi -modemmanager
-media-libs/mesa             vulkan vaapi
+net-misc/networkmanager     wifi -modemmanager -bluetooth
+media-libs/mesa             vulkan vaapi wayland
+media-libs/libcanberra      -udev
 # installkernel stays inert in the target: no initramfs/bootloader hooks at emerge time —
 # the UKI is built from the builder (stage 40), not by package hooks.
 sys-kernel/installkernel    -dracut -grub -systemd-boot
+
+# Plasma/Qt pull in binary packages from the official binhost that were built with a more
+# minimal (non-desktop) USE profile than ours; these force the matching source builds
+# instead of a mismatched binary, per portage's own conflict-resolution suggestions.
+x11-libs/libdrm             video_cards_radeon
+dev-qt/*                    vulkan opengl qml icu
+dev-qt/qtbase               libproxy wayland icu cups
+x11-libs/gtk+               wayland X
+x11-libs/cairo              X
+kde-frameworks/*            wayland dbus qml X
+x11-libs/libxkbcommon       X
+media-video/ffmpeg          vaapi
+net-print/cups               dbus
+x11-base/xwayland           libei
+kde-plasma/plasma-workspace screencast
+app-text/poppler            qt6
+app-crypt/gcr               gtk
+media-libs/libpulse         X
+media-plugins/alsa-plugins  pulseaudio
+dev-libs/qcoro              dbus
+media-libs/freetype         harfbuzz
+media-libs/libglvnd         X
+sys-libs/minizip-ng         compat
+
+# kde-frameworks/sonnet needs a concrete regional dictionary; plain L10N="en" (LOCALES_KEEP)
+# doesn't satisfy myspell-en's any-of(l10n_en-*) REQUIRED_USE.
+app-dicts/myspell-en        l10n_en-US

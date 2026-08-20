@@ -27,4 +27,4 @@ media-fonts/noto
 media-fonts/noto-emoji
 media-fonts/noto-cjk        #cjk
 net-print/cups              #printing
-kde-misc/print-manager      #printing
+kde-plasma/print-manager    #printing

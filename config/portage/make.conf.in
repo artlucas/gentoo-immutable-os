@@ -1,5 +1,5 @@
 # Target make.conf — used via emerge --config-root for everything merged into the image.
-# Rendered by stage 20 (@TOKENS@ replaced from build.conf / runtime).
+# Rendered by stage 20 — placeholders below are substituted from build.conf / runtime.
 
 CHOST="x86_64-pc-linux-gnu"
 COMMON_FLAGS="-march=x86-64 -O2 -pipe"   # generic baseline: no AVX2 floor (see plan/03)
