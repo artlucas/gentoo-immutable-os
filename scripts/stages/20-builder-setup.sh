@@ -14,7 +14,7 @@ is_linux || die "stages run inside the builder container only"
 
 PC="$CONFIG_ROOT/etc/portage"
 rm -rf -- "$CONFIG_ROOT"
-ensure_dir "$PC"/{package.use,package.license,package.accept_keywords,sets}
+ensure_dir "$PC"/{package.use,package.license,package.accept_keywords,package.mask,sets}
 
 # profile symlink (profile tree lives in the builder's synced repo)
 PROFILE_DIR="/var/db/repos/gentoo/profiles/$PROFILE"
@@ -32,6 +32,7 @@ render_template "$REPO/config/portage/make.conf.in" "$PC/make.conf"
 cp "$REPO"/config/portage/package.use/*             "$PC/package.use/"
 cp "$REPO"/config/portage/package.license/*         "$PC/package.license/"
 cp "$REPO"/config/portage/package.accept_keywords/* "$PC/package.accept_keywords/"
+cp "$REPO"/config/portage/package.mask/*            "$PC/package.mask/"
 
 # sets, with cjk/printing filtering per build.conf
 for s in base hardware desktop; do
@@ -46,6 +47,12 @@ main-repo = gentoo
 [gentoo]
 location = /var/db/repos/gentoo
 EOF
+
+# Mirror the target's per-package config onto the builder's own "/" (see the function's
+# comment in lib/common.sh for why the depgraph needs this). Stage 30 repeats the call —
+# each stage is a separate container, so this does not persist.
+mirror_target_pkg_config
+log "mirrored target package.use/keywords/license onto builder /etc/portage"
 
 ensure_dir /cache/binpkgs /cache/distfiles
 

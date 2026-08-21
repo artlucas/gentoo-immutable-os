@@ -11,7 +11,7 @@ x11-wm/mutter
 sys-power/power-profiles-daemon
 net-wireless/gnome-bluetooth
 gnome-extra/gnome-system-monitor
-gnome-extra/gnome-console
+gui-apps/gnome-console
 app-arch/file-roller
 app-editors/gnome-text-editor
 gnome-extra/gnome-software

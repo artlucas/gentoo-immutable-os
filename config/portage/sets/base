@@ -2,6 +2,16 @@
 sys-apps/baselayout
 app-shells/bash
 sys-apps/coreutils
+# The text tools are NOT optional, despite what a "minimal" image suggests: the image's own
+# shipped scripts need them. usr/bin/<distro>-update (the A/B update CLI) uses grep -Fxv,
+# grep -F and awk to enumerate ESP entries and partitions, and the stage-70 self-test reporter
+# uses grep -c. They were previously absent from the target entirely — sed and findutils only
+# arrived transitively, and grep/awk not at all, so dracut also failed to install grep into
+# the initramfs. Listed explicitly so a dependency change can never silently drop them again.
+sys-apps/grep
+sys-apps/sed
+sys-apps/findutils
+app-alternatives/awk
 sys-apps/util-linux
 sys-apps/shadow
 sys-libs/pam

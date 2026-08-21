@@ -22,11 +22,11 @@ PORTAGE_BINHOST="@BINHOST_URI@"
 PKGDIR="/cache/binpkgs"
 DISTDIR="/cache/distfiles"
 
-# Never merged into the image at all (plan/06 layer 2):
-# NB: /usr/lib64/girepository-1.0 is deliberately NOT masked — gjs and gnome-shell load
-# those typelibs at runtime. Only the build-time .gir XML and .vapi files go.
-INSTALL_MASK="/usr/include /usr/share/doc /usr/share/info /usr/share/man \
-  /usr/share/gtk-doc /usr/share/devhelp /usr/share/aclocal \
-  /usr/lib64/pkgconfig /usr/share/pkgconfig /usr/lib64/cmake \
-  /usr/share/gir-1.0 /usr/share/vala \
-  /usr/share/zsh"
+# NB: there is deliberately no INSTALL_MASK here. Portage applies INSTALL_MASK to every
+# merge in an emerge invocation, and this pipeline's emerge populates TWO roots: runtime deps
+# into $TARGET and build deps into the builder's own "/". A mask set here therefore also
+# stripped headers, *.pc, cmake and *.gir files from the build dependencies on "/", so any
+# later source build that needed them failed to configure — e.g. gnome-system-monitor dying on
+# "Package 'vulkan', required by 'gtkmm-4.0', not found", and the same root cause behind the
+# tecla lookup. The dev-file stripping now happens in stage 50 against $TARGET only, where it
+# cannot affect the builder (plan/06).

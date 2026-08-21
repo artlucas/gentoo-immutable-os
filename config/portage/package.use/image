@@ -1,23 +1,65 @@
 # Target package.use — per-package flags for the image build (plan/03).
 
 sys-apps/systemd            boot policykit
-x11-drivers/nvidia-drivers  kernel-open dist-kernel
+# sudo[sendmail] (default on) pulls virtual/mta so sudo can mail failed-attempt notices; the
+# first provider is mail-mta/nullmailer, which drags a mail spool, an nullmail user and an
+# sendmail symlink into a desktop image that has no business relaying mail. It also breaks the
+# build outright: its pkg_postinst runs "chown nullmail:nullmail" against $ROOT, but chown
+# resolves users from the BUILDER's passwd where that user does not exist
+# ("chown: invalid user: nullmail"). Off — no MTA in the image (plan/03: nothing like this in
+# the native set).
+app-admin/sudo              -sendmail
+# kernel-open was removed upstream (the open GSP modules are unconditional now), but
+# dist-kernel is still a real flag — it comes from linux-mod-r1.eclass, not this ebuild's own
+# IUSE, and it is REQUIRED here: without it the ebuild builds modules against a configured
+# /usr/src/linux, which an image built from gentoo-kernel-bin does not have ("Unable to find
+# kernel sources at $TARGET/usr/src/linux"). With it, modules are built against
+# virtual/dist-kernel, which is plan/03's "prebuilt against gentoo-kernel-bin".
+x11-drivers/nvidia-drivers  dist-kernel
 sys-kernel/linux-firmware   redistributable -initramfs
 media-video/pipewire        sound-server pipewire-alsa
-net-misc/networkmanager     wifi -modemmanager -bluetooth
+# modemmanager is required by gnome-control-center[networkmanager] (>=1.52.0[modemmanager]
+# plus net-misc/modemmanager itself) — without it the Settings "Network" panel cannot be
+# built at all. Enabled deliberately: one extra daemon is cheaper than losing the panel.
+net-misc/networkmanager     wifi modemmanager -bluetooth
 media-libs/mesa             vulkan vaapi wayland
 media-libs/libcanberra      -udev
 # installkernel stays inert in the target: no initramfs/bootloader hooks at emerge time —
 # the UKI is built from the builder (stage 40), not by package hooks.
 sys-kernel/installkernel    -dracut -grub -systemd-boot
+# ...and the kernel must not try to build one either. gentoo-kernel-bin[initramfs] (on by
+# default) runs a generation step in pkg_postinst that refuses to work with ROOT set:
+# "ROOT is set, and (re-)generation of an initramfs is requested via the USE=initramfs flag.
+# However, this is currently not supported via the sys-kernel/installkernel mechanism."
+# Stage 40 builds the real initrd with dracut --sysroot and folds it into the UKI, so the
+# ebuild's copy would be discarded anyway. (-generic-uki for the same reason: our UKI is
+# assembled by ukify in stage 40, with our cmdline and os-release.)
+sys-kernel/gentoo-kernel-bin -initramfs -generic-uki
 
 # ---- GNOME session ----------------------------------------------------------------
-gnome-extra/gnome-software        flatpak -fwupd -malcontent
+# plan/03 wants the Flatpak backend only. NB: the firmware flag is named "firmware" (not
+# "fwupd") and malcontent is no longer a USE flag at all (hardcoded off in the ebuild), so
+# the old "-fwupd -malcontent" masked nothing and sys-apps/fwupd — explicitly deferred to
+# the roadmap in plan/03 — was being pulled into the image.
+gnome-extra/gnome-software        flatpak -firmware -dkms -snap
 gnome-base/gdm                    wayland -xdmcp -fprint -plymouth
 gnome-base/gnome-control-center   -gnome-online-accounts
 # evolution-data-server is a hard RDEPEND of gnome-shell (calendar). These flags are what
 # keeps net-libs/webkit-gtk — a multi-hour, ~300 MB build — out of the native image.
-gnome-extra/evolution-data-server -oauth -kerberos -ldap -weather -vala
+# NB: the flag is oauth-gtk3/oauth-gtk4 as of EDS 3.60 — plain "oauth" is no longer in IUSE,
+# so the old "-oauth" silently stopped masking anything and webkit-gtk:4.1 came back in via
+# the gtk3 OAuth UI. Both variants are disabled: gtk3 pulls webkit-gtk:4.1, gtk4 pulls :6.
+gnome-extra/evolution-data-server -oauth-gtk3 -oauth-gtk4 -kerberos -ldap -weather -vala
+
+# nautilus[previewer] pulls gnome-extra/sushi → app-text/evince → app-text/poppler (and a
+# second gtk+:3 stack). plan/03 keeps document viewers out of the native image — they are
+# Flatpak territory — so the previewer goes with them.
+gnome-base/nautilus               -previewer
+
+# nautilus search is backed by tinysparql[localsearch]; localsearch[gstreamer] drags
+# gst-plugins-meta (mpeg2dec, dvd, vcd) and media-libs/libsdl2 in for media metadata
+# extraction. Indexing and search stay; the codec stack is Flatpak territory (plan/03).
+app-misc/localsearch              -gstreamer
 x11-wm/mutter                     wayland X screencast
 
 # GNOME/GTK pull in binary packages from the official binhost that were built with a more
@@ -25,7 +67,14 @@ x11-wm/mutter                     wayland X screencast
 # instead of a mismatched binary, per portage's own conflict-resolution suggestions.
 x11-libs/libdrm             video_cards_radeon
 dev-libs/glib               dbus introspection
-gui-libs/gtk                wayland X introspection
+# vulkan: gtkmm-4.20.0-r1 depends on >=gui-libs/gtk-4.19.4:4[vulkan?] and is itself built with
+# vulkan (global USE), so gtk must carry the flag explicitly — otherwise the two roots resolve
+# gtk differently and portage backtracks until "All ebuilds that could satisfy
+# >=gui-libs/gtk-4.19.4:4[vulkan?] have been masked". This is portage's own suggested fix.
+gui-libs/gtk                wayland X introspection vulkan
+# gtk[vulkan,X,wayland] requires >=media-libs/vulkan-loader-1.3:=[wayland?,X?], so the loader
+# has to carry the same two flags or the graph cannot resolve.
+media-libs/vulkan-loader    X wayland
 x11-libs/gtk+               wayland X introspection
 x11-libs/cairo              X
 sys-auth/polkit             gtk introspection
@@ -44,3 +93,43 @@ sys-libs/minizip-ng         compat
 # dictionary; plain L10N="en" (LOCALES_KEEP) doesn't satisfy myspell-en's
 # any-of(l10n_en-*) REQUIRED_USE.
 app-dicts/myspell-en        l10n_en-US
+
+# gnupg stays in @base for the sysupdate verify path (plan/03), but app-alternatives/gpg
+# pulls app-crypt/pinentry, whose qt6 flag drags dev-qt/qtbase + kde-frameworks/kwindowsystem
+# into a GNOME-only image. gcr already provides the GNOME pinentry; keep the GTK one as the
+# console/graphical fallback and leave Qt out entirely.
+app-crypt/pinentry          gtk ncurses -qt6 -efl -emacs
+
+# xdg-utils[perl] gates dev-perl/Net-DBus + dev-perl/X11-Protocol, and Net-DBus drags XML-Twig
+# and the whole LWP/HTML perl stack behind it — ~48 packages. What it buys is the perl
+# xdg-screensaver implementation talking X11, which is useless in a Wayland-only session where
+# GNOME apps inhibit idle through portals. xdg-utils itself stays: it is a hard RDEPEND of
+# gnome-shell and gdm.
+x11-misc/xdg-utils          -perl
+
+# cairomm defaults to -X and depends on cairo[X=], which drags a second, X-less cairo binary
+# into a graph where mutter/gtk/pango all require cairo[X]. Match it to our cairo[X].
+dev-cpp/cairomm             X
+
+# localsearch[pdf] (nautilus file indexing) needs poppler's cairo backend for PDF thumbnails
+# and metadata. Keeping indexing means keeping this on; poppler is a library, not a viewer.
+app-text/poppler            cairo
+
+# poppler defaults to qt6, which drags dev-qt/qtbase into a GNOME-only image for a library
+# only ever used headlessly here (PDF indexing).
+app-text/poppler            -qt6
+
+# ---- printer panel cascade -----------------------------------------------------------
+# gnome-control-center[cups] pulls app-admin/system-config-printer (the org.fedoraproject
+# .Config.Printing D-Bus service the panel calls), which brings net-fs/samba for SMB printer
+# discovery and dev-python/pillow via docutils. Kept deliberately so plan/03's "control-center
+# absorbs printer setup" holds; these flags are what the resulting graph needs to resolve.
+media-libs/tiff             jpeg
+net-fs/samba                client
+net-libs/ngtcp2             gnutls
+
+# libb2[openmp] RDEPENDs on "|| ( sys-devel/gcc[openmp] llvm-runtimes/clang-runtime[openmp] )"
+# for the OpenMP runtime, which portage satisfies by putting a full sys-devel/gcc in the
+# image — breaking plan/06's toolchain-free guarantee. The flag is profile-inherited, not
+# ours, and it only parallelizes BLAKE2bp hashing. Off.
+app-crypt/libb2             -openmp

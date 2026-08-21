@@ -3,6 +3,7 @@ sys-kernel/gentoo-kernel-bin
 sys-kernel/linux-firmware
 sys-firmware/intel-microcode
 sys-firmware/sof-firmware
+# version ceiling lives in package.mask/image (>=610 needs a runtime compiler)
 x11-drivers/nvidia-drivers
 media-libs/mesa
 media-libs/libva

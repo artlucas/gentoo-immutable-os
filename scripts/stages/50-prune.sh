@@ -38,6 +38,21 @@ fi
 du -xsm "$T"/usr "$T"/usr/lib/firmware "$T"/usr/lib/modules "$T"/var 2>/dev/null \
   > "$REPORT_DIR/size-report.txt" || true
 
+# ---- 1b. portage tooling that leaked into the target ---------------------------------
+# Nothing in the image RDEPENDs these: portage's own binhost machinery installs getuto (and
+# with it sec-keys/openpgp-keys-gentoo-release -> app-portage/gemato -> the python requests
+# stack) into whichever ROOT it is populating, and portage-utils arrives the same way. An
+# image with no Portage has no use for Portage tooling (plan/06), so they are unmerged here —
+# before the VDB is deleted below, while emerge can still do it cleanly.
+for p in app-portage/gemato app-portage/getuto app-portage/portage-utils \
+         sec-keys/openpgp-keys-gentoo-release; do
+  [[ -d $T/var/db/pkg/${p%/*} ]] || continue
+  compgen -G "$T/var/db/pkg/$p-*" >/dev/null || continue
+  log "unmerging build-only package from image: $p"
+  ROOT="$T" PORTAGE_CONFIGROOT="$CONFIG_ROOT" emerge --unmerge --quiet "$p" >/dev/null 2>&1 \
+    || warn "could not unmerge $p"
+done
+
 # ---- 2. delete Portage artifacts ------------------------------------------------
 rm -rf -- "$T/var/db/pkg" "$T/var/db/repos" "$T/var/cache"/* \
           "$T/etc/portage" "$T/usr/share/portage"
@@ -69,6 +84,42 @@ if [[ -f $REPO/config/prune-firmware.txt && -d $T/usr/lib/firmware ]]; then
   done < "$REPO/config/prune-firmware.txt"
 fi
 
+# dev files: headers, pkg-config/cmake metadata, GIR XML, vala bindings. This used to be an
+# INSTALL_MASK in the target make.conf, but that leaked onto the builder root and broke build
+# deps there (see the note in config/portage/make.conf.in) — done here it touches only $TARGET.
+# NB: /usr/lib64/girepository-1.0 (the binary typelibs) is deliberately NOT removed — gjs and
+# gnome-shell load those at runtime. Only the build-time .gir XML and .vapi files go.
+for d in usr/include usr/share/doc usr/share/info usr/share/man usr/share/gtk-doc \
+         usr/share/devhelp usr/share/aclocal usr/lib64/pkgconfig usr/share/pkgconfig \
+         usr/lib64/cmake usr/share/gir-1.0 usr/share/vala usr/share/zsh; do
+  rm -rf -- "${T:?}/$d"
+done
+
+# ---- 3b. toolchain split: keep the gcc RUNTIME, delete the compiler ------------------
+# sys-devel/gcc is in the profile's @system set (profiles/base/packages: *sys-devel/gcc), so
+# portage installs it into any new ROOT — it is not something --with-bdeps=n can prevent, and
+# it is also the only provider of libstdc++.so.6 / libgcc_s.so.1, which every C++ program in
+# the image links against. plan/06's guarantee is about the SHIPPED IMAGE, so the split is:
+# the ~270 MB of compiler (cc1/cc1plus/lto1 + drivers + headers + static libs) goes, the ~12 MB
+# of runtime .so files stays, reachable through /etc/ld.so.conf.d/05gcc-*.conf.
+GCC_LIBDIR="$(printf '%s\n' "$T"/usr/lib/gcc/*/* 2>/dev/null | head -n1)"
+if [[ -n ${GCC_LIBDIR:-} && -d $GCC_LIBDIR ]]; then
+  log "toolchain split: keeping $(basename -- "$(dirname -- "$GCC_LIBDIR")")/$(basename -- "$GCC_LIBDIR") runtime libs"
+  rm -rf -- "$T/usr/libexec/gcc"                       # cc1, cc1plus, lto1, collect2
+  rm -rf -- "$GCC_LIBDIR"/{include,include-fixed,plugin,install-tools}
+  find "$GCC_LIBDIR" -maxdepth 1 \( -name '*.a' -o -name '*.o' \) -delete   # crt*.o, libgcc.a
+  # compiler drivers and their toolchain helpers (the runtime .so files live elsewhere)
+  local_bins=(gcc g++ cc c++ cpp gcov gcov-dump gcov-tool lto-dump gcc-ar gcc-nm gcc-ranlib gcc-config)
+  for b in "${local_bins[@]}"; do
+    rm -f -- "$T/usr/bin/$b" "$T/usr/bin/$b"-* "$T/usr/bin/${CHOST:-x86_64-pc-linux-gnu}-$b" \
+             "$T/usr/bin/${CHOST:-x86_64-pc-linux-gnu}-$b"-*
+  done
+  rm -rf -- "$T/usr/share/gcc-data" "$T/usr/${CHOST:-x86_64-pc-linux-gnu}"
+  # the loader must still find libstdc++/libgcc_s
+  ls "$T"/etc/ld.so.conf.d/*gcc* >/dev/null 2>&1 \
+    || warn "no gcc ld.so.conf.d entry — libstdc++ may be unfindable at runtime"
+fi
+
 # build-era files
 rm -f "$T/etc/resolv.conf.build"
 rm -rf "$T/var/log"/* "$T/var/tmp"/* "$T/tmp"/*
@@ -77,8 +128,9 @@ rm -rf "$T/var/log"/* "$T/var/tmp"/* "$T/tmp"/*
 fail=0
 violation() { warn "PRUNE VIOLATION: $*"; fail=1; }
 
+# NB: python/python3 are deliberately NOT in this list — see the interpreter note below.
 for b in gcc g++ cc c++ cpp ld as ar make cmake ninja meson cargo rustc \
-         emerge ebuild portageq python python3 perl pip; do
+         emerge ebuild portageq pip; do
   hits="$(find "$T/usr/bin" "$T/usr/sbin" "$T/bin" "$T/sbin" \
             -maxdepth 1 \( -name "$b" -o -name "$b-*" \) 2>/dev/null || true)"
   [[ -n $hits ]] && violation "toolchain/interpreter binary present: $hits"
@@ -90,9 +142,26 @@ done
 [[ -e $T/etc/portage   ]] && violation "/etc/portage still present"
 find "$T" -xdev -name '*.la' 2>/dev/null | grep -q . && violation "*.la files remain"
 
-# interpreter whitelist is EMPTY by design (plan/06): python/perl arriving is a
-# decision a human makes by editing config/portage/expected-packages.txt AND the
-# assertion list above — not something the build tolerates silently.
+# Interpreter policy (plan/06). The whitelist is no longer empty: dev-lang/python is a
+# genuine RUNTIME dependency of gnome-base/gnome-shell on Gentoo — the ebuild folds
+# DEPEND (which carries dev-python/docutils and dev-python/pygobject) into RDEPEND, so no
+# amount of --with-bdeps=n keeps it out of a GNOME image. Admitted deliberately, per the
+# rule this comment used to state: a human made the call, and it is recorded here, in
+# plan/06 and in expected-packages.txt rather than tolerated silently.
+#   allowed: dev-lang/python, dev-lang/python-exec, dev-python/{docutils,pygobject,pillow}
+#            (+ app-admin/system-config-printer for the control-center printer panel)
+#   allowed: dev-lang/perl + dev-perl/Parse-Yapp — net-fs/samba lists both in COMMON_DEPEND
+#            unconditionally, and samba is a hard dep of gnome-control-center[cups] (the
+#            printer panel). xdg-utils[-perl] keeps the other ~48 perl packages out.
+#   still banned: pip and every compiler/build tool above.
+# The toolchain-free guarantee itself is unchanged: no compiler, no Portage, no headers.
+
+# the toolchain split must leave the runtime behind: a desktop with no libstdc++ boots to
+# nothing, and that failure would otherwise only show up in QEMU (stage 70) or on hardware.
+for lib in libstdc++.so.6 libgcc_s.so.1; do
+  find "$T/usr/lib/gcc" -name "$lib" 2>/dev/null | grep -q . \
+    || violation "gcc runtime library $lib missing after prune (toolchain split cut too deep)"
+done
 
 [[ $fail == 0 ]] || die "prune assertions failed — see PRUNE VIOLATION lines above"
 

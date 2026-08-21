@@ -190,12 +190,71 @@ stamp_path()    { printf '%s/%s.done' "$STATE_DIR" "$1"; }
 stamp_matches() { local s; s="$(stamp_path "$1")"; [[ -f $s && $(cat -- "$s") == "$2" ]]; }
 stamp_write()   { mkdir -p -- "$STATE_DIR"; printf '%s' "$2" > "$(stamp_path "$1")"; }
 
+# seed_merged_usr TARGET — create the merged-/usr symlink layout in an empty target root.
+#
+# A stage3 tarball ships /bin, /sbin, /lib and /lib64 as symlinks into /usr. This pipeline's
+# target starts life as a bare mkdir, so without seeding, the first package that installs to
+# /bin creates it as a REAL directory and every later package follows suit: the result is a
+# split-usr root where bash, sh, mount, login, kmod and glibc itself live in /bin and /lib
+# while the other ~1300 binaries live in /usr/bin. The 23.0 profile is merged-usr, and
+# systemd >=255 refuses to boot a split-usr system, so such an image never comes up. It also
+# silently breaks every /usr/lib/modules and /usr/lib/firmware path the later stages use.
+seed_merged_usr() {
+  local t=$1 d
+  ensure_dir "$t/usr/bin" "$t/usr/sbin" "$t/usr/lib" "$t/usr/lib64"
+  for d in bin sbin lib lib64; do
+    [[ -L $t/$d ]] && continue
+    [[ -d $t/$d ]] && die "target has a real /$d directory — it was populated before the
+  merged-/usr symlinks existed (split-usr). Wipe the work volume and re-run stage 30:
+  docker volume rm -f \${DISTRO_ID:-immos}-work"
+    ln -s "usr/$d" "$t/$d"
+  done
+}
+
+# seed_target_dirs TARGET — create the directories a stage3 tarball would ship but that no
+# package owns. sys-apps/baselayout declares none of these in CONTENTS, so on a target built
+# from an empty directory they simply never appear.
+#
+# They are needed twice over: stage 40 bind-mounts /proc, /sys and /dev to run the chroot
+# finalizers ("mount: /work/target/proc: mount point does not exist"), and the booted image
+# needs them as mount points — systemd cannot create them itself on a read-only erofs root.
+seed_target_dirs() {
+  local t=$1
+  ensure_dir "$t"/{proc,sys,dev,dev/pts,run,mnt,media,boot,var/tmp,var/log,var/cache}
+  ensure_dir "$t/usr/lib/locale"   # glibc's locale-archive lives here; localedef will not create it
+  chmod 0555 "$t/proc" "$t/sys"
+  ensure_dir "$t/tmp"; chmod 1777 "$t/tmp" "$t/var/tmp"
+}
+
+# mirror_target_pkg_config — copy the assembled target package.use/keywords/license onto the
+# builder's own "/etc/portage".
+#
+# Portage's depgraph evaluates target packages against "/"'s profile + package.use as well as
+# the target's (see the long note in builder/Dockerfile), so a flag set only for the target
+# yields a second, differently-configured instance of the same package in the graph — phantom
+# slot conflicts and REQUIRED_USE failures blamed on packages we never asked for on "/".
+#
+# This must run in EVERY container that resolves a depgraph, not once: build.sh dispatches
+# each stage into its own `docker run --rm`, so anything written to /etc/portage by stage 20
+# is gone by the time stage 30 starts. Cheap and idempotent, so stages just call it.
+mirror_target_pkg_config() {
+  local pc="${1:-$CONFIG_ROOT/etc/portage}" bpc=/etc/portage d
+  [[ -d $pc ]] || die "mirror_target_pkg_config: no config-root at $pc (run stage 20 first)"
+  for d in package.use package.accept_keywords package.license package.mask; do
+    ensure_dir "$bpc/$d"
+    # sorts after the Dockerfile's own "builder" file, so these win where the two disagree
+    cat "$pc/$d"/* > "$bpc/$d/zz-target-mirror" 2>/dev/null || :
+  done
+}
+
 # ---- chroot into the target (Linux/container only) ----------------------------------
 _TARGET_MOUNTS=(proc sys dev dev/pts run)
 
 target_mount() {
   is_linux || die "target_mount: Linux only"
   local t=$1
+  # cheap insurance: a resumed build may have a target that predates seed_target_dirs
+  mkdir -p -- "$t"/{proc,sys,dev,dev/pts,run}
   mount -t proc proc "$t/proc"
   mount --rbind /sys "$t/sys";  mount --make-rslave "$t/sys"
   mount --rbind /dev "$t/dev";  mount --make-rslave "$t/dev"

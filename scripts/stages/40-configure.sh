@@ -52,7 +52,22 @@ ln -sfn ../usr/share/zoneinfo/UTC "$TARGET/etc/localtime"
 target_mount "$TARGET"
 trap 'target_umount "$TARGET"' EXIT
 
-chroot_target "$TARGET" "locale-gen"
+# locale generation. sys-apps/locale-gen is a stage3 convenience, not part of the image's
+# package set, so the binary does not exist in the target — but glibc's localedef does, and
+# locale-gen is only a wrapper around it. Drive localedef directly from /etc/locale.gen so no
+# build-only tool has to ship in the image.
+ensure_dir "$TARGET/usr/lib/locale"   # localedef writes locale-archive here and won't mkdir it
+if chroot_target "$TARGET" "command -v locale-gen >/dev/null"; then
+  chroot_target "$TARGET" "locale-gen"
+else
+  while read -r loc charset; do
+    [[ -z $loc || $loc == \#* ]] && continue
+    base="${loc%%.*}"                                   # en_US.UTF-8 -> en_US
+    [[ $loc == *@* ]] && base="${base}@${loc##*@}"       # keep @modifiers (de_DE@euro)
+    log "localedef: $loc ($charset)"
+    chroot_target "$TARGET" "localedef -i '$base' -f '$charset' '$loc'"
+  done < "$TARGET/etc/locale.gen"
+fi
 
 # live user (v1 live-style images; the future installer replaces this)
 if ! chroot_target "$TARGET" "id -u '$LIVE_USER'" >/dev/null 2>&1; then
@@ -102,6 +117,20 @@ done
 # our dracut module must be visible to the *builder's* dracut
 cp -r "$TARGET/usr/lib/dracut/modules.d/90etc-overlay" /usr/lib/dracut/modules.d/
 
+# dracut is a builder tool and is deliberately not part of the image's package set, but
+# --sysroot resolves BOTH dracutbasedir and every module file dracut-install copies relative
+# to the sysroot. Without a copy inside the target it dies on
+# "/work/target/usr/lib/dracut/dracut-functions.sh: No such file or directory"; with only
+# dracutbasedir overridden it "succeeds" while silently failing to install initqueue,
+# loginit, rdsosreport, shutdown and dracut-util into the initramfs. So: lend the target a
+# full copy for the duration of the run, then take it away again.
+DRACUT_LIB="$TARGET/usr/lib/dracut"
+OVERLAY_MOD_KEEP="$WORK/90etc-overlay.keep"
+rm -rf -- "$OVERLAY_MOD_KEEP"
+[[ -d $DRACUT_LIB/modules.d/90etc-overlay ]] && cp -a "$DRACUT_LIB/modules.d/90etc-overlay" "$OVERLAY_MOD_KEEP"
+ensure_dir "$DRACUT_LIB"
+cp -a /usr/lib/dracut/. "$DRACUT_LIB/"
+
 INITRD="$WORK/initrd-$VERSION.img"
 dracut --force --no-hostonly --reproducible \
   --sysroot "$TARGET" --kver "$KVER" \
@@ -109,6 +138,15 @@ dracut --force --no-hostonly --reproducible \
   --omit "network network-legacy nfs iscsi lvm mdraid multipath dmraid cifs brltty" \
   --early-microcode \
   "$INITRD"
+
+# take the borrowed dracut tree back out of the image, keeping the module the overlay ships
+rm -rf -- "$DRACUT_LIB"
+if [[ -d $OVERLAY_MOD_KEEP ]]; then
+  ensure_dir "$DRACUT_LIB/modules.d"
+  cp -a "$OVERLAY_MOD_KEEP" "$DRACUT_LIB/modules.d/90etc-overlay"
+  rm -rf -- "$OVERLAY_MOD_KEEP"
+fi
+[[ -s $INITRD ]] || die "dracut produced no initrd at $INITRD"
 
 CMDLINE="root=PARTLABEL=$ROOT_PARTLABEL rootfstype=erofs ro nvidia-drm.modeset=1 console=ttyS0 console=tty0 quiet"
 UKIFY=ukify; [[ -x /usr/lib/systemd/ukify ]] && UKIFY=/usr/lib/systemd/ukify

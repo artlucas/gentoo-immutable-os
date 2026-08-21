@@ -1,0 +1,9 @@
+# Version ceilings for the image build.
+
+# nvidia-drivers 610.x added an unconditional "sys-devel/gcc:*" to RDEPEND — the open kernel
+# modules are rebuilt on the running system, so the driver expects a toolchain to be present.
+# That would put a full compiler in the image and break plan/06's toolchain-free guarantee
+# (and it could not work anyway on a read-only /usr). 595.x is the newest branch without that
+# dependency; it still ships the open GSP modules, prebuilt here against gentoo-kernel-bin.
+# Revisit if upstream drops the runtime-toolchain requirement — or move to nouveau if it never does.
+>=x11-drivers/nvidia-drivers-610

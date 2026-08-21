@@ -80,17 +80,82 @@ assert_absent etc/portage
 #  not an accident)
 ```
 
-Perl caveat (known, handled): `dev-lang/perl` is an RDEPEND of some base packages
+**GCC — the @system correction (2026-08-20, first build).** Layer 1 above says the toolchain
+"simply never gets installed into the target". That premise is wrong, and the first build
+proved it: `sys-devel/gcc` is a member of the profile's **@system** set
+(`profiles/base/packages`: `*sys-devel/gcc`), so Portage installs it into *any* new ROOT.
+`--with-bdeps=n` does not prevent it — verified by bisection, since `media-libs/mesa`,
+`x11-drivers/nvidia-drivers` and `@base` each pull it identically while a leaf package like
+`sys-apps/hwdata` pulls nothing. It is also the **only** provider of `libstdc++.so.6` and
+`libgcc_s.so.1`, which every C++ program in a GNOME image links against, so it cannot simply
+be masked away with `package.provided` either.
+
+The guarantee is about the shipped image, so stage 50 splits the package instead:
+
+| Removed (~270 MB) | Kept (~12 MB) |
+|---|---|
+| `/usr/libexec/gcc` (cc1, cc1plus, lto1, collect2) | `/usr/lib/gcc/<chost>/<ver>/lib*.so*` |
+| `/usr/bin/{gcc,g++,cc,c++,cpp,gcov*,gcc-ar,…}` + `<chost>-` variants | `/etc/ld.so.conf.d/05gcc-*.conf` (so the loader finds them) |
+| `<gcc libdir>/{include,include-fixed,plugin,install-tools}`, `*.a`, crt`*.o` | |
+
+Stage 50 asserts both halves: no compiler driver in `/usr/bin`, **and** `libstdc++.so.6` +
+`libgcc_s.so.1` still present — a too-aggressive prune would otherwise surface only as a
+black screen in stage 70 or on real hardware. Stage 30's verify no longer treats gcc as a
+leak; it checks for `rustc`/`clang`/`ld`/`as` instead, which would indicate a genuine
+`--with-bdeps`/USE mistake.
+
+**Perl — RESOLVED at the first build (2026-08-20): admitted, narrowly.** The ban tripped, and
+the audit found two independent sources:
+
+1. `x11-misc/xdg-utils[perl]` — a hard RDEPEND of both gnome-shell and gdm — gated
+   `dev-perl/Net-DBus` and `dev-perl/X11-Protocol`, and Net-DBus dragged XML-Twig and the
+   entire LWP/HTML perl stack behind it: **~48 packages**. What it buys is the perl
+   `xdg-screensaver` implementation driving X11, which does nothing in a Wayland-only session
+   where apps inhibit idle through portals. Disabled (`xdg-utils -perl`) — the cleanest 48
+   packages this build removed.
+2. `net-fs/samba` lists `dev-lang/perl:=` and `dev-perl/Parse-Yapp` in COMMON_DEPEND with no
+   USE guard, and `gnome-control-center[cups]` requires `>=net-fs/samba-4.0.0[client]` just as
+   unconditionally. So the GNOME printer panel and a perl interpreter are the same decision.
+
+Admitted after an explicit call to keep the printer panel (plan/03's stated UX). The image
+therefore ships `dev-lang/perl` and `dev-perl/Parse-Yapp` and nothing else perl-shaped. To
+reverse it, set `gnome-control-center -cups`: printing still works through `net-print/cups`
+(apps print normally; printers can be added at `localhost:631`), and perl leaves the image
+entirely along with samba and system-config-printer.
+
+Original caveat text (correctly predicted, wrong package): `dev-lang/perl` is an RDEPEND of some base packages
 (e.g. openssl's `c_rehash`). The dep audit in stage 30 will show whether it lands; if it does
 and the pull is spurious, fix with USE (`-perl`) or `package.provided` — decided during
 M1/M2 with the report in hand, not guessed now. The *mechanism* is the audit gate; the
 *policy* is "empty whitelist until a human approves an entry."
 
-**Python under GNOME — open, decided at first build.** The interpreter ban is expected to be
-the first assertion GNOME trips. `gnome-shell → gjs → dev-libs/gobject-introspection` and
-`dev-libs/glib`'s `gdbus-codegen` are the likely paths by which `python3` becomes a genuine
-RDEPEND of the image rather than a build-only leak. The assertion is deliberately **left
-armed** — it is not weakened preemptively. If stage 50 trips on `python3`:
+**Python under GNOME — RESOLVED at the first build (2026-08-20): admitted.** The ban was
+tripped, the procedure below was followed, and the outcome is recorded here.
+
+The path was not the predicted `gjs → gobject-introspection` one. `gnome-base/gnome-shell`'s
+ebuild declares `dev-python/docutils` and `dev-python/pygobject` in `DEPEND` and then sets
+`RDEPEND="${DEPEND}"` — folding them into the runtime dependency set. `dev-lang/python` is
+therefore a genuine RDEPEND of any native GNOME image on Gentoo; `--with-bdeps=n` cannot
+remove it, and the dep resolves through `gdm → gnome-settings-daemon → libnotify →
+gnome-shell → docutils → pillow`. Enabling the control-center printer panel
+(`gnome-control-center[cups]`) additionally brings `app-admin/system-config-printer`, which
+is itself a Python application.
+
+Admitted to the target, per step 2:
+
+| Package | Why |
+|---|---|
+| dev-lang/python, dev-lang/python-exec | forced RDEPEND of gnome-shell (below) |
+| dev-python/docutils, dev-python/pygobject | gnome-shell `RDEPEND="${DEPEND}"` |
+| dev-python/pillow | docutils → pillow |
+| app-admin/system-config-printer | gnome-control-center[cups] printer panel |
+
+`scripts/stages/50-prune.sh` drops only `python`/`python3` from the ban list.
+`gcc/g++/cc/ld/as/ar/make/cmake/ninja/meson/cargo/rustc/emerge/ebuild/portageq/pip` stay
+banned, and `perl` keeps an explicit assertion of its own. The toolchain-free guarantee is
+unchanged: no compiler, no Portage, no headers in the image.
+
+For reference, the original procedure was:
 
 1. confirm from `out/reports/packages.txt` which package actually pulls it (a real RDEPEND,
    not a `--with-bdeps` mistake);

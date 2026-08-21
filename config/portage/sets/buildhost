@@ -1,0 +1,15 @@
+# Packages installed into the BUILDER's own root ("/") before the target emerge.
+#
+# Not part of the image. These are packages that a target package needs at *configure*
+# time, but that Gentoo declares in RDEPEND only. With a normal ROOT=/ install the
+# distinction is invisible — RDEPEND lands in / like everything else — so upstream never
+# notices. In this pipeline's two-root emerge (plan/02) RDEPEND goes to $TARGET while the
+# compile still happens against "/", so meson/pkg-config cannot see them and configure dies.
+#
+# Add an entry only with the failing configure line to justify it.
+
+# gnome-base/gnome-control-center: meson.build does dependency('tecla') and, when that
+# fails, tries to build tecla as a wrap subproject — which the sandbox forbids
+# ("ERROR: Subproject tecla is buildable: NO"). Declared >=gnome-extra/tecla-47.0 in the
+# ebuild's RDEPEND block only.
+gnome-extra/tecla

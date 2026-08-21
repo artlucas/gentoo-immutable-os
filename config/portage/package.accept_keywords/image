@@ -1,3 +1,10 @@
 # Keyword exceptions for the image build. Keep empty if possible — stable amd64 only.
 media-libs/libva-intel-media-driver ~amd64  # no stable amd64 ebuild in tree at this snapshot
 x11-drivers/nvidia-drivers           ~amd64  # no stable amd64 ebuild in tree at this snapshot
+gnome-extra/gnome-software           ~amd64  # no stable amd64 ebuild in tree at this snapshot
+
+# gtkmm 4.20.0 (stable) exports a private Vulkan dependency in gtkmm-4.0.pc, so every consumer
+# has to resolve vulkan.pc — which no Gentoo package installs. gnome-system-monitor dies with
+# "Package 'vulkan', required by 'gtkmm-4.0', not found". Gentoo's fix is MR-101.patch, applied
+# only in the -r1 revision, which is still ~amd64. Drop this entry once the fix goes stable.
+=dev-cpp/gtkmm-4.20.0-r1             ~amd64
