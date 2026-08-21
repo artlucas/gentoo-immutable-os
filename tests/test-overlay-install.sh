@@ -63,6 +63,36 @@ fi
 assert_true "rendered update CLI parses" bash -n "$DST/usr/bin/${DISTRO_ID}-update"
 assert_true "rendered test-report parses" bash -n "$DST/usr/lib/image-test/test-report.sh"
 
+# ---- DNS: systemd-resolved + nsswitch ------------------------------------------------
+# The pieces are only correct together, so they are checked together: nsswitch pointing at a
+# resolver nothing enables fails closed, and NetworkManager writing its own resolv.conf takes
+# resolved back out of the path. (The resolv.conf symlink itself is made by stage 40, not by
+# the overlay, so it is asserted there and in stage 50 instead of here.)
+N="$DST/etc/nsswitch.conf"
+assert_file "$N" "nsswitch.conf installed"
+assert_true "hosts line goes through resolved first" \
+    grep -qE '^hosts:[[:space:]]+resolve[[:space:]]+\[!UNAVAIL=return\][[:space:]]' "$N"
+assert_true "dns stays as the last-resort fallback" grep -qE '^hosts:.*[[:space:]]dns$' "$N"
+# mymachines needs systemd[importd], which this image does not build — naming it would only
+# produce lookup errors (see the file's own comment).
+assert_false "no mymachines module" grep -qE '^hosts:.*mymachines' "$N"
+assert_true "passwd resolves DynamicUser identities" grep -qE '^passwd:.*[[:space:]]systemd$' "$N"
+
+NM="$DST/usr/lib/NetworkManager/conf.d/10-dns-resolved.conf"
+assert_file "$NM" "NetworkManager DNS drop-in installed"
+assert_true "NM hands DNS to resolved"        grep -qx 'dns=systemd-resolved' "$NM"
+assert_true "NM never writes /etc/resolv.conf" grep -qx 'rc-manager=unmanaged' "$NM"
+
+assert_true "preset enables systemd-resolved" \
+    grep -qx 'enable systemd-resolved.service' "$DST/usr/lib/systemd/system-preset/50-${DISTRO_ID}.preset"
+assert_true "resolved drop-in turns the LLMNR responder off" \
+    grep -qx 'LLMNR=no' "$DST/usr/lib/systemd/resolved.conf.d/10-image.conf"
+
+# the guest self-test must report the fields stage 70 asserts on
+R="$DST/usr/lib/image-test/test-report.sh"
+assert_true "self-test reports resolved=" grep -q 'resolved=\$resolved' "$R"
+assert_true "self-test reports dns="      grep -q 'dns=\$dns' "$R"
+
 # dracut module completeness
 for f in module-setup.sh etc-overlay.service etc-overlay.sh; do
     assert_file "$DST/usr/lib/dracut/modules.d/90etc-overlay/$f" "dracut module: $f"

@@ -54,6 +54,12 @@ assert_report() {  # LOG expected_version
   [[ $got == "$want_ver" ]] || die "guest version=$got, expected $want_ver"
   [[ $(field "$slog" etc_overlay) == overlay ]] || die "guest /etc is not an overlay"
   [[ $(field "$slog" failed_units) == 0 ]] || die "guest has failed units"
+  # DNS: only the resolver's own state is asserted. Whether a name actually resolved is
+  # reported as dns=yes/no and left alone — that depends on the build host's network, not on
+  # the image.
+  [[ $(field "$slog" resolved) == yes ]] \
+    || die "systemd-resolved is not active in the guest (resolved=$(field "$slog" resolved)) — /etc/nsswitch.conf routes host lookups through it"
+  [[ $(field "$slog" dns) == yes ]] || warn "guest could not resolve a public name (dns=no) — network-dependent, not failing the test"
   if [[ ${CONSOLE_ONLY:-0} != 1 ]]; then
     [[ $(field "$slog" graphical) == yes ]] || die "graphical.target not reached in guest"
   fi

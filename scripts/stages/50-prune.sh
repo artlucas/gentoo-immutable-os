@@ -120,11 +120,11 @@ if [[ -n ${GCC_LIBDIR:-} && -d $GCC_LIBDIR ]]; then
     || warn "no gcc ld.so.conf.d entry — libstdc++ may be unfindable at runtime"
 fi
 
-# build-era files. target_mount() (lib/common.sh) seeds /etc/resolv.conf so the chroot can
-# resolve during stages 30/40, and nothing removed it — so the *builder's* nameservers were
-# shipping in the image's /etc lower dir. NetworkManager writes the real one on first boot;
-# an absent file is the correct shipped state.
-rm -f "$T/etc/resolv.conf.build" "$T/etc/resolv.conf"
+# build-era files. target_mount() (lib/common.sh) seeds DNS for the chroot; since stage 40
+# makes /etc/resolv.conf the symlink to systemd-resolved's stub, that seed lands in the tmpfs
+# on /run and is already gone by now. Only the sidecar copy needs clearing here — resolv.conf
+# itself is shipped state and is asserted below, not deleted.
+rm -f "$T/etc/resolv.conf.build"
 rm -rf "$T/var/log"/* "$T/var/tmp"/* "$T/tmp"/*
 
 # ---- 4. THE ASSERTIONS (build fails if any trips) ------------------------------------
@@ -143,11 +143,23 @@ done
 [[ -e $T/var/db/pkg    ]] && violation "VDB still present"
 [[ -e $T/var/db/repos  ]] && violation "ebuild repo still present"
 [[ -e $T/etc/portage   ]] && violation "/etc/portage still present"
-# -L as well as -e: a resolv.conf symlink into /run is dangling at build time. If systemd-
-# resolved is ever adopted, that symlink becomes the intended state and this line is what
-# forces the change to be deliberate rather than silent.
-[[ -e $T/etc/resolv.conf || -L $T/etc/resolv.conf ]] \
-  && violation "builder /etc/resolv.conf shipped (see build-era cleanup above)"
+# /etc/resolv.conf must be the systemd-resolved stub symlink and nothing else. A regular file
+# here means the builder's nameservers got baked into the image's /etc lower dir, which is
+# exactly what happened before resolved was adopted. -L is tested first because the intended
+# state — a symlink into /run — is dangling at build time and therefore invisible to -e.
+if [[ -L $T/etc/resolv.conf ]]; then
+  [[ "$(readlink "$T/etc/resolv.conf")" == ../run/systemd/resolve/stub-resolv.conf ]] \
+    || violation "/etc/resolv.conf -> $(readlink "$T/etc/resolv.conf"), expected resolved's stub"
+elif [[ -e $T/etc/resolv.conf ]]; then
+  violation "builder /etc/resolv.conf shipped as a regular file (expected resolved's stub symlink)"
+else
+  violation "/etc/resolv.conf missing (stage 40 should have made it resolved's stub symlink)"
+fi
+# the resolver those point at, and the NSS module that reaches it, must survive the prune
+[[ -x $T/usr/lib/systemd/systemd-resolved ]] || violation "systemd-resolved binary missing after prune"
+compgen -G "$T/usr/lib64/libnss_resolve.so"* >/dev/null \
+  || compgen -G "$T/usr/lib/libnss_resolve.so"* >/dev/null \
+  || violation "libnss_resolve missing after prune (/etc/nsswitch.conf needs it)"
 find "$T" -xdev -name '*.la' 2>/dev/null | grep -q . && violation "*.la files remain"
 
 # Interpreter policy (plan/06). The whitelist is no longer empty: dev-lang/python is a

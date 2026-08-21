@@ -48,6 +48,20 @@ echo 'LANG=en_US.UTF-8'   > "$TARGET/etc/locale.conf"
 echo 'KEYMAP=us'          > "$TARGET/etc/vconsole.conf"
 ln -sfn ../usr/share/zoneinfo/UTC "$TARGET/etc/localtime"
 
+# DNS: systemd-resolved owns resolution in this image (see config/rootfs/etc/nsswitch.conf,
+# the NetworkManager drop-in and the preset). /etc/resolv.conf becomes the symlink to
+# resolved's stub, which is the state resolved, NetworkManager and glibc's "dns" fallback all
+# expect. It is made here rather than shipped in config/rootfs because the overlay installer
+# copies regular files only — and because git checkouts on Windows/NTFS do not reliably
+# preserve symlinks.
+#
+# The link DANGLES at build time: /run/systemd/resolve/stub-resolv.conf only exists once
+# resolved runs. That is deliberate and load-bearing. target_mount() (lib/common.sh) copies
+# the builder's nameservers *through* this symlink into the tmpfs it mounts on the target's
+# /run, so the chroot below (flatpak talks to flathub) resolves normally and the builder's
+# DNS config disappears with the tmpfs instead of being baked into the image.
+ln -sfn ../run/systemd/resolve/stub-resolv.conf "$TARGET/etc/resolv.conf"
+
 # ---- 2. chroot configuration -------------------------------------------------------
 target_mount "$TARGET"
 trap 'target_umount "$TARGET"' EXIT
@@ -113,6 +127,28 @@ if [[ $FLATPAK_PREINSTALL_MODE == build && -n ${FLATPAK_PREINSTALL// /} ]]; then
   # apps are baked in — the firstboot preinstall unit must never fire
   ensure_dir "$TARGET/var/lib/$DISTRO_ID"
   : > "$TARGET/var/lib/$DISTRO_ID/flatpak-preinstall.done"
+fi
+
+# NetworkManager must actually agree that resolved owns DNS. The drop-in is installed under
+# /usr/lib/NetworkManager/conf.d, and whether NM reads that path (rather than a libdir variant)
+# is a build-time detail of the ebuild, not something the file's presence proves. --print-config
+# parses the real config stack and prints the effective values, so ask NM itself.
+# NB: the binary is addressed by absolute path. chroot(2) does not reset PATH, and Gentoo
+# builds systemd with -Dsplit-bin=false — so a bare "NetworkManager" resolves against whatever
+# the builder's PATH happens to be, which need not contain /usr/sbin.
+NM_BIN=""
+for c in /usr/sbin/NetworkManager /usr/bin/NetworkManager /usr/libexec/NetworkManager; do
+  [[ -x $TARGET$c ]] && { NM_BIN="$c"; break; }
+done
+if [[ -z $NM_BIN ]]; then
+  die "NetworkManager binary not found in target — it is in @base and the DNS wiring depends on it"
+elif NM_CONFIG="$(chroot_target "$TARGET" "$NM_BIN --print-config" 2>/dev/null)"; then
+  NM_DNS="$(sed -nE 's/^[[:space:]]*dns=([^[:space:]]+).*/\1/p' <<<"$NM_CONFIG" | tail -n1)"
+  [[ $NM_DNS == systemd-resolved ]] \
+    || die "NetworkManager effective dns=${NM_DNS:-<unset>}, expected systemd-resolved — is the conf.d drop-in in a directory NM reads?"
+  log "NetworkManager effective dns=$NM_DNS"
+else
+  warn "$NM_BIN --print-config failed in the chroot — DNS backend unverified"
 fi
 
 # finalizers (guarded: console-only images lack the GUI tools)
@@ -191,5 +227,23 @@ grep -q "ID=$DISTRO_ID" "$TARGET/etc/os-release"          || die "verify: os-rel
 [[ -s $UKI_DIR/$UKI_NAME ]]                               || die "verify: UKI missing/empty"
 [[ -f $TARGET/usr/lib/sysupdate.d/50-rootfs.transfer ]]   || die "verify: sysupdate transfer missing"
 [[ -L $TARGET/home ]]                                     || die "verify: /home symlink missing"
+
+# DNS wiring: every piece of it, because each half is useless alone — nsswitch pointing at a
+# resolver that is not enabled fails closed, and an enabled resolver nothing consults is dead
+# weight that still holds port 53.
+RESOLV_STUB=../run/systemd/resolve/stub-resolv.conf
+[[ -L $TARGET/etc/resolv.conf && $(readlink "$TARGET/etc/resolv.conf") == "$RESOLV_STUB" ]] \
+  || die "verify: /etc/resolv.conf is not the symlink to $RESOLV_STUB"
+grep -qE '^hosts:[[:space:]]+resolve[[:space:]]' "$TARGET/etc/nsswitch.conf" \
+  || die "verify: nsswitch.conf hosts line does not start with the resolve module"
+compgen -G "$TARGET/etc/systemd/system/*.target.wants/systemd-resolved.service" >/dev/null \
+  || die "verify: systemd-resolved.service not enabled (preset did not take)"
+# The NSS modules named in nsswitch.conf are glibc dlopen() targets: a missing one is not an
+# error at build time and only shows up as silently degraded lookups on a booted machine.
+for m in resolve systemd myhostname; do
+  compgen -G "$TARGET/usr/lib64/libnss_$m.so"* >/dev/null \
+    || compgen -G "$TARGET/usr/lib/libnss_$m.so"* >/dev/null \
+    || die "verify: /etc/nsswitch.conf uses the $m module but libnss_$m is not installed"
+done
 log "configure complete; UKI at $UKI_DIR/$UKI_NAME"
 stamp_write "$STAGE_NAME" "$(inputs_hash "$REPO/config/build.conf")"

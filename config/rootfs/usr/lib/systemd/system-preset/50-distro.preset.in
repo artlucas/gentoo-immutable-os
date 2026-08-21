@@ -7,6 +7,10 @@ enable NetworkManager.service
 disable systemd-networkd.service
 disable systemd-networkd-wait-online.service
 disable systemd-networkd-wait-online@.service
+# DNS: resolved is the only resolver in the image (/etc/nsswitch.conf uses the "resolve"
+# module, /etc/resolv.conf is its stub, NetworkManager feeds it over D-Bus). Its own vendor
+# preset is "enable" on most builds, but this image must not depend on that.
+enable systemd-resolved.service
 enable gdm.service
 enable bluetooth.service
 enable systemd-timesyncd.service

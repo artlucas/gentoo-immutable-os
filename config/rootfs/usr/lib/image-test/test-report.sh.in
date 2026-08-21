@@ -23,6 +23,7 @@ collect_and_report() {
     # shellcheck source=/dev/null
     . /etc/os-release
     local etc_fs graphical failed failed_list machine_id var_size flatpak_remotes
+    local resolved dns
     etc_fs="$(findmnt -no FSTYPE /etc 2>/dev/null || echo none)"
     graphical="$(systemctl is-active graphical.target >/dev/null 2>&1 && echo yes || echo no)"
     failed="$(systemctl --failed --no-legend --plain 2>/dev/null | grep -c . || true)"
@@ -33,9 +34,16 @@ collect_and_report() {
     machine_id="$(cat /etc/machine-id 2>/dev/null || echo none)"
     var_size="$(findmnt -bno SIZE /var 2>/dev/null || echo 0)"
     flatpak_remotes="$(flatpak remotes --system 2>/dev/null | grep -c . || true)"
+    # DNS comes in two fields on purpose. "resolved" is deterministic — the unit either came
+    # up or it did not — and the harness asserts on it. "dns" is a real query through nss, so
+    # it depends on the network the build host is on; it is reported for diagnosis and NOT
+    # asserted, or a build behind a captive portal would fail the smoke test.
+    resolved="$(systemctl is-active systemd-resolved.service >/dev/null 2>&1 && echo yes || echo no)"
+    dns="$(getent ahostsv4 gentoo.org >/dev/null 2>&1 && echo yes || echo no)"
     report "ok version=${IMAGE_VERSION:-unknown} etc_overlay=$etc_fs graphical=$graphical" \
            "failed_units=$failed machine_id=$machine_id var_size=$var_size" \
-           "flatpak_remotes=$flatpak_remotes failed_list=$failed_list phase=$1"
+           "flatpak_remotes=$flatpak_remotes resolved=$resolved dns=$dns" \
+           "failed_list=$failed_list phase=$1"
 }
 
 # When units failed, put their status on the console too. The guest powers off moments later,

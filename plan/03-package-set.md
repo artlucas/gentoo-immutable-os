@@ -38,12 +38,40 @@ inside the session.**
 | sys-apps/dbus, sys-auth/polkit | desktop/system IPC + privilege broker (Flatpak, NM, GNOME Software all need polkit) |
 | sys-fs/e2fsprogs, sys-fs/dosfstools | fsck for var + ESP |
 | net-misc/networkmanager (`USE="wifi"`, wpa_supplicant backend), net-wireless/wpa_supplicant | networking; wpa_supplicant over iwd for broadest driver compat |
+| systemd-resolved (part of sys-apps/systemd; **enabled by preset**, `dns=systemd-resolved` in NM) | name resolution — see "DNS" below |
 | app-admin/sudo, net-misc/openssh (installed, **disabled by preset**) | admin & debug access |
 | sys-apps/zram-generator | compressed swap, no swap partition |
 | sys-apps/flatpak, sys-apps/xdg-desktop-portal, sys-apps/xdg-desktop-portal-gnome | the application layer |
 | app-arch/zstd, app-arch/xz-utils | decompression for sysupdate payloads |
 | net-misc/curl, ca-certificates | update fetch + TLS trust |
 | app-crypt/gnupg | runtime dep of update verification — systemd's pull/verify machinery spawns `gpg` (see note under the desktop set) |
+
+#### DNS
+
+systemd-resolved is the resolver, and it is wired in three places that only work together:
+
+- **`/etc/nsswitch.conf`** (shipped by the overlay) puts `resolve [!UNAVAIL=return]` first on
+  the `hosts:` line, so lookups go over resolved's varlink socket rather than through glibc's
+  `dns` module. `dns` stays last as the fallback for the case resolved is not running.
+  `mymachines` is deliberately absent — it needs `systemd[importd]`, which is not built here.
+- **`/etc/resolv.conf`** is a symlink to `../run/systemd/resolve/stub-resolv.conf`, created in
+  stage 40. It dangles at build time, which is load-bearing: `target_mount()` copies the
+  builder's nameservers *through* it into the tmpfs mounted on the target's `/run`, so the
+  chroot resolves during the build and the builder's DNS config leaves with the tmpfs. Before
+  resolved, that copy was landing in the image's read-only `/etc` (fixed in 9284cec).
+- **NetworkManager** is told `dns=systemd-resolved` and `rc-manager=unmanaged`
+  (`/usr/lib/NetworkManager/conf.d/10-dns-resolved.conf`): publish leases to resolved over
+  D-Bus, and never write `resolv.conf`. NM would auto-detect resolved from the stub symlink,
+  but that is a heuristic on a file the `/etc` overlay lets anyone replace.
+
+LLMNR is off (`/usr/lib/systemd/resolved.conf.d/10-image.conf`) — a Windows protocol nothing
+here speaks, whose responder answers spoofable queries on every network the laptop joins.
+MulticastDNS stays on for `.local` device discovery.
+
+Each piece is asserted at build time (stage 40 verify: the symlink target, the `hosts:` line,
+the enabled unit, and the presence of `libnss_{resolve,systemd,myhostname}`; stage 50: that
+the prune did not cut them; stage 70: `resolved=yes` from the booted guest). Any one of them
+failing silently degrades to "DNS mostly works", which is why none of them is left implicit.
 
 ### @hardware — kernel, firmware, drivers
 
