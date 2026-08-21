@@ -120,8 +120,11 @@ if [[ -n ${GCC_LIBDIR:-} && -d $GCC_LIBDIR ]]; then
     || warn "no gcc ld.so.conf.d entry — libstdc++ may be unfindable at runtime"
 fi
 
-# build-era files
-rm -f "$T/etc/resolv.conf.build"
+# build-era files. target_mount() (lib/common.sh) seeds /etc/resolv.conf so the chroot can
+# resolve during stages 30/40, and nothing removed it — so the *builder's* nameservers were
+# shipping in the image's /etc lower dir. NetworkManager writes the real one on first boot;
+# an absent file is the correct shipped state.
+rm -f "$T/etc/resolv.conf.build" "$T/etc/resolv.conf"
 rm -rf "$T/var/log"/* "$T/var/tmp"/* "$T/tmp"/*
 
 # ---- 4. THE ASSERTIONS (build fails if any trips) ------------------------------------
@@ -140,6 +143,11 @@ done
 [[ -e $T/var/db/pkg    ]] && violation "VDB still present"
 [[ -e $T/var/db/repos  ]] && violation "ebuild repo still present"
 [[ -e $T/etc/portage   ]] && violation "/etc/portage still present"
+# -L as well as -e: a resolv.conf symlink into /run is dangling at build time. If systemd-
+# resolved is ever adopted, that symlink becomes the intended state and this line is what
+# forces the change to be deliberate rather than silent.
+[[ -e $T/etc/resolv.conf || -L $T/etc/resolv.conf ]] \
+  && violation "builder /etc/resolv.conf shipped (see build-era cleanup above)"
 find "$T" -xdev -name '*.la' 2>/dev/null | grep -q . && violation "*.la files remain"
 
 # Interpreter policy (plan/06). The whitelist is no longer empty: dev-lang/python is a
