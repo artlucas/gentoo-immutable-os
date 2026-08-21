@@ -88,6 +88,17 @@ assert_true "preset enables systemd-resolved" \
 assert_true "resolved drop-in turns the LLMNR responder off" \
     grep -qx 'LLMNR=no' "$DST/usr/lib/systemd/resolved.conf.d/10-image.conf"
 
+# ---- exactly one network manager -----------------------------------------------------
+# Stage 50 deletes systemd-networkd from the image; these disables are what stops stage 40
+# from leaving an enablement symlink pointing at a unit file that is about to be removed.
+P="$DST/usr/lib/systemd/system-preset/50-${DISTRO_ID}.preset"
+for u in systemd-networkd.service systemd-networkd.socket \
+         systemd-networkd-wait-online.service systemd-networkd-wait-online@.service \
+         systemd-network-generator.service; do
+    assert_true "preset disables $u" grep -qx "disable $u" "$P"
+done
+assert_true "preset enables NetworkManager" grep -qx 'enable NetworkManager.service' "$P"
+
 # the guest self-test must report the fields stage 70 asserts on
 R="$DST/usr/lib/image-test/test-report.sh"
 assert_true "self-test reports resolved=" grep -q 'resolved=\$resolved' "$R"

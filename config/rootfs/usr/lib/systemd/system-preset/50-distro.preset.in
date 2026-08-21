@@ -3,10 +3,16 @@
 enable NetworkManager.service
 # preset-all applies VENDOR presets too, which enable systemd-networkd — so the image booted
 # with two network managers and systemd-networkd-wait-online.service failed (no networkd links
-# to wait for). NetworkManager owns the network here (plan/03).
+# to wait for).
+# NetworkManager owns the network here (plan/03). These disables run before stage 50 deletes
+# networkd from the image outright, so that no enablement symlink is left pointing at a unit
+# file that is about to disappear.
 disable systemd-networkd.service
+disable systemd-networkd.socket
 disable systemd-networkd-wait-online.service
 disable systemd-networkd-wait-online@.service
+# networkd's kernel-cmdline (ip=) config generator — useless with no networkd to configure.
+disable systemd-network-generator.service
 # DNS: resolved is the only resolver in the image (/etc/nsswitch.conf uses the "resolve"
 # module, /etc/resolv.conf is its stub, NetworkManager feeds it over D-Bus). Its own vendor
 # preset is "enable" on most builds, but this image must not depend on that.

@@ -73,6 +73,24 @@ the enabled unit, and the presence of `libnss_{resolve,systemd,myhostname}`; sta
 the prune did not cut them; stage 70: `resolved=yes` from the booted guest). Any one of them
 failing silently degrades to "DNS mostly works", which is why none of them is left implicit.
 
+### systemd-networkd is removed, not just disabled
+
+NetworkManager owns the network, so networkd has no job in this image. `sys-apps/systemd` has
+no USE flag that omits it — it is built unconditionally — so stage 50 deletes it: the two
+daemons, `systemd-network-generator`, `networkctl`, their units, the `org.freedesktop.network1`
+D-Bus/polkit surface, and the `systemd-network` user's sysusers/tmpfiles entries.
+
+Disabling alone was not enough. The "exactly one network manager" invariant was held by preset
+lines plus stage 40's disable loop, which only warns on failure; a systemd bump that changes a
+vendor preset would put the image back in the two-managers state that broke boot in 3e52475.
+A binary that is not in the image cannot be re-enabled by anything.
+
+The one trap: `/usr/lib/systemd/network` holds networkd config *and* `.link` files, and `.link`
+files belong to systemd-udevd, not networkd. `99-default.link` and `73-usb-net-by-mac.link`
+drive interface naming and MAC policy, so only `.network`/`.netdev` are removed — and stage 50
+asserts `99-default.link` survived, since losing it would surface only as a machine that boots
+with no network.
+
 ### @hardware — kernel, firmware, drivers
 
 | Package | Why |

@@ -120,6 +120,50 @@ if [[ -n ${GCC_LIBDIR:-} && -d $GCC_LIBDIR ]]; then
     || warn "no gcc ld.so.conf.d entry — libstdc++ may be unfindable at runtime"
 fi
 
+# ---- 3c. systemd-networkd: delete it, don't just disable it ---------------------------
+# NetworkManager owns the network in this image (plan/03) and systemd-resolved owns DNS, so
+# networkd has no job here. sys-apps/systemd has no USE flag that omits it — it is built
+# unconditionally — so "not shipping it" has to happen with rm, here.
+#
+# Disabling was not enough on its own. The invariant "exactly one network manager" was held
+# by preset lines plus stage 40's disable loop, which only warns on failure; a systemd bump
+# that changes a vendor preset or adds a new unit re-enabling networkd would silently put the
+# image back in the two-managers state that broke boot before (see 40-configure.sh and the
+# preset file). A binary that isn't in the image cannot be re-enabled by anything.
+#
+# CAREFUL: /usr/lib/systemd/network holds BOTH networkd config and .link files. .link files
+# are read by systemd-udevd, not networkd, and 99-default.link / 73-usb-net-by-mac.link drive
+# interface naming and MAC policy — deleting them renames every NIC on the next boot. Only
+# .network/.netdev (and their .example siblings) go.
+log "removing systemd-networkd (NetworkManager owns the network)"
+rm -f -- "$T/usr/lib/systemd/systemd-networkd" \
+         "$T/usr/lib/systemd/systemd-networkd-wait-online" \
+         "$T/usr/lib/systemd/systemd-network-generator" \
+         "$T/usr/bin/networkctl" "$T/usr/sbin/networkctl"
+rm -f -- "$T"/usr/lib/systemd/system/systemd-networkd*.service \
+         "$T"/usr/lib/systemd/system/systemd-networkd*.socket \
+         "$T"/usr/lib/systemd/system/systemd-network-generator.service
+rm -f -- "$T"/usr/lib/systemd/network/*.network "$T"/usr/lib/systemd/network/*.netdev \
+         "$T"/usr/lib/systemd/network/*.network.example "$T"/usr/lib/systemd/network/*.netdev.example
+# D-Bus/polkit surface for org.freedesktop.network1, and the systemd-network user that only
+# networkd ever ran as (its tmpfiles entries create /run/systemd/netif for that same user, so
+# leaving them behind would make systemd-tmpfiles fail on an account nothing creates).
+rm -f -- "$T/usr/share/dbus-1/system.d/org.freedesktop.network1.conf" \
+         "$T/usr/share/dbus-1/system-services/org.freedesktop.network1.service" \
+         "$T/usr/share/polkit-1/actions/org.freedesktop.network1.policy" \
+         "$T/usr/lib/sysusers.d/systemd-network.conf" \
+         "$T/usr/lib/tmpfiles.d/systemd-network.conf" \
+         "$T/usr/share/bash-completion/completions/networkctl"
+# Enablement symlinks. Stage 40 disables the units by preset, but preset-all also applies
+# VENDOR presets, and a symlink left pointing at a unit file we just deleted makes systemd log
+# "Unit ... not found" on every boot. Sweep the .wants/.requires dirs for danglers naming a
+# networkd unit — in both /etc (what stage 40 wrote) and /usr (vendor-shipped).
+while IFS= read -r link; do
+  log "removing dangling networkd unit symlink: ${link#"$T"}"
+  rm -f -- "$link"
+done < <(find "$T/etc/systemd/system" "$T/usr/lib/systemd/system" -xdev -type l \
+           \( -name 'systemd-networkd*' -o -name 'systemd-network-generator.service' \) 2>/dev/null)
+
 # build-era files. target_mount() (lib/common.sh) seeds DNS for the chroot; since stage 40
 # makes /etc/resolv.conf the symlink to systemd-resolved's stub, that seed lands in the tmpfs
 # on /run and is already gone by now. Only the sidecar copy needs clearing here — resolv.conf
@@ -160,6 +204,23 @@ fi
 compgen -G "$T/usr/lib64/libnss_resolve.so"* >/dev/null \
   || compgen -G "$T/usr/lib/libnss_resolve.so"* >/dev/null \
   || violation "libnss_resolve missing after prune (/etc/nsswitch.conf needs it)"
+# ...and the resolver's counterpart must be gone: exactly one network manager, structurally.
+for b in usr/lib/systemd/systemd-networkd usr/lib/systemd/systemd-networkd-wait-online \
+         usr/lib/systemd/systemd-network-generator usr/bin/networkctl usr/sbin/networkctl; do
+  [[ -e $T/$b ]] && violation "systemd-networkd residue present: /$b"
+done
+compgen -G "$T/usr/lib/systemd/system/systemd-networkd*" >/dev/null \
+  && violation "systemd-networkd unit files still present"
+# ...but the udev .link files must have survived: they are in networkd's directory and are not
+# networkd's. Losing 99-default.link changes interface naming, which would only show up as a
+# machine that boots with no network.
+[[ -f $T/usr/lib/systemd/network/99-default.link ]] \
+  || violation "/usr/lib/systemd/network/99-default.link removed — udev link policy is not networkd's, the prune cut too deep"
+# NetworkManager itself is the whole point of removing networkd; assert it outlived it.
+compgen -G "$T/usr/sbin/NetworkManager" >/dev/null \
+  || compgen -G "$T/usr/bin/NetworkManager" >/dev/null \
+  || compgen -G "$T/usr/libexec/NetworkManager" >/dev/null \
+  || violation "NetworkManager binary missing after prune — the image has no network manager at all"
 find "$T" -xdev -name '*.la' 2>/dev/null | grep -q . && violation "*.la files remain"
 
 # Interpreter policy (plan/06). The whitelist is no longer empty: dev-lang/python is a
