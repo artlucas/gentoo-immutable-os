@@ -1,6 +1,12 @@
 # Vendor preset for @DISTRO_NAME@ — applied at build time (stage 40).
 # preset-mode=enable-only is used, so absent units and vendor defaults are unaffected.
 enable NetworkManager.service
+# preset-all applies VENDOR presets too, which enable systemd-networkd — so the image booted
+# with two network managers and systemd-networkd-wait-online.service failed (no networkd links
+# to wait for). NetworkManager owns the network here (plan/03).
+disable systemd-networkd.service
+disable systemd-networkd-wait-online.service
+disable systemd-networkd-wait-online@.service
 enable gdm.service
 enable bluetooth.service
 enable systemd-timesyncd.service

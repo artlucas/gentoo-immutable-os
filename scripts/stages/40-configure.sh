@@ -79,6 +79,29 @@ fi
 chroot_target "$TARGET" "systemctl preset-all --preset-mode=enable-only" || \
   warn "preset-all reported errors (often benign; review log)"
 
+# ...but --preset-mode=enable-only IGNORES every "disable" line in our preset file, and
+# preset-all also applies the VENDOR presets, which enable units we do not want. That is how
+# the image ended up running systemd-networkd alongside NetworkManager, with
+# systemd-networkd-wait-online.service failing every boot. Apply our disables explicitly.
+PRESET_FILE="$TARGET/usr/lib/systemd/system-preset/50-${DISTRO_ID}.preset"
+if [[ -f $PRESET_FILE ]]; then
+  while read -r unit; do
+    [[ -z $unit ]] && continue
+    log "disabling per preset: $unit"
+    chroot_target "$TARGET" "systemctl disable '$unit'" >/dev/null 2>&1 \
+      || warn "could not disable $unit (may be static or absent)"
+  done < <(sed -nE 's/^disable[[:space:]]+([^[:space:]]+).*/\1/p' "$PRESET_FILE")
+fi
+
+# ldconfig.service is static, so it cannot be disabled — only masked. It must be masked here:
+# Gentoo builds systemd with -Dsplit-bin=false, so systemd's exec search path is
+# /usr/local/bin:/usr/bin with NO sbin, while ldconfig lives in /usr/sbin. Its bare
+# "ExecStart=ldconfig" therefore always fails 203/EXEC ("Unable to locate executable").
+# Nothing is lost: /etc/ld.so.cache is generated below at build time, and on a read-only
+# erofs root there is nothing for a boot-time cache rebuild to discover.
+chroot_target "$TARGET" "systemctl mask ldconfig.service" >/dev/null 2>&1 \
+  || warn "could not mask ldconfig.service"
+
 # flatpak: remote always; apps per FLATPAK_PREINSTALL_MODE
 chroot_target "$TARGET" \
   "flatpak remote-add --if-not-exists --system flathub https://dl.flathub.org/repo/flathub.flatpakrepo"
@@ -148,7 +171,11 @@ if [[ -d $OVERLAY_MOD_KEEP ]]; then
 fi
 [[ -s $INITRD ]] || die "dracut produced no initrd at $INITRD"
 
-CMDLINE="root=PARTLABEL=$ROOT_PARTLABEL rootfstype=erofs ro nvidia-drm.modeset=1 console=ttyS0 console=tty0 quiet"
+# console order matters: the LAST console= becomes /dev/console for userspace. With
+# "console=ttyS0 console=tty0" that was tty0, so everything written to /dev/console — including
+# the IMAGE-TEST marker from the self-test unit — went to the graphical console while stage 70
+# watched the serial port and timed out. tty0 stays listed so the screen still shows the boot.
+CMDLINE="root=PARTLABEL=$ROOT_PARTLABEL rootfstype=erofs ro nvidia-drm.modeset=1 console=tty0 console=ttyS0 quiet"
 UKIFY=ukify; [[ -x /usr/lib/systemd/ukify ]] && UKIFY=/usr/lib/systemd/ukify
 ensure_dir "$UKI_DIR"
 "$UKIFY" build \

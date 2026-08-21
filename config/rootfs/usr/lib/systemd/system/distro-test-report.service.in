@@ -5,7 +5,13 @@ After=multi-user.target graphical.target network-online.target
 Wants=network-online.target
 
 [Service]
-Type=oneshot
+# Type=exec, NOT oneshot. A oneshot job stays active until the process exits, and this unit is
+# WantedBy=multi-user.target, so its job is part of the initial boot transaction — which means
+# "systemctl is-system-running" reports "starting" until the script finishes. The script's
+# first action is to wait for exactly that, so oneshot deadlocks the harness: the service waits
+# for boot to complete, and boot cannot complete until the service exits. With Type=exec the
+# job completes as soon as the process is spawned, the transaction settles, and the wait returns.
+Type=exec
 ImportCredential=@DISTRO_ID@.*
 ExecStart=/usr/lib/image-test/test-report.sh
 

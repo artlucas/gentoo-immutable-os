@@ -15,27 +15,43 @@ if [[ -n ${CREDENTIALS_DIRECTORY:-} && -f $CREDENTIALS_DIRECTORY/$ID.test ]]; th
     mode="$(cat "$CREDENTIALS_DIRECTORY/$ID.test")"
 fi
 
-# let the boot settle (returns when running or degraded)
-systemctl is-system-running --wait >/dev/null 2>&1
+# let the boot settle (returns when running or degraded). Bounded: a system that never settles
+# must still produce a report, otherwise the harness just times out with no information at all.
+timeout 180 systemctl is-system-running --wait >/dev/null 2>&1 || true
 
 collect_and_report() {
     # shellcheck source=/dev/null
     . /etc/os-release
-    local etc_fs graphical failed machine_id var_size flatpak_remotes
+    local etc_fs graphical failed failed_list machine_id var_size flatpak_remotes
     etc_fs="$(findmnt -no FSTYPE /etc 2>/dev/null || echo none)"
     graphical="$(systemctl is-active graphical.target >/dev/null 2>&1 && echo yes || echo no)"
     failed="$(systemctl --failed --no-legend --plain 2>/dev/null | grep -c . || true)"
+    # names too, not just a count: "failed_units=2" alone tells whoever reads the harness
+    # output nothing about what to fix, and the guest is gone by the time they look.
+    failed_list="$(systemctl --failed --no-legend --plain 2>/dev/null | awk '{print $1}' | paste -sd, -)"
+    [[ -z $failed_list ]] && failed_list=none
     machine_id="$(cat /etc/machine-id 2>/dev/null || echo none)"
     var_size="$(findmnt -bno SIZE /var 2>/dev/null || echo 0)"
     flatpak_remotes="$(flatpak remotes --system 2>/dev/null | grep -c . || true)"
     report "ok version=${IMAGE_VERSION:-unknown} etc_overlay=$etc_fs graphical=$graphical" \
            "failed_units=$failed machine_id=$machine_id var_size=$var_size" \
-           "flatpak_remotes=$flatpak_remotes phase=$1"
+           "flatpak_remotes=$flatpak_remotes failed_list=$failed_list phase=$1"
+}
+
+# When units failed, put their status on the console too. The guest powers off moments later,
+# so this is the only chance to see WHY; the marker line itself stays single-line and parseable.
+dump_failed() {
+    local u
+    for u in $(systemctl --failed --no-legend --plain 2>/dev/null | awk '{print $1}'); do
+        echo "$MARKER-DETAIL unit=$u" > "$CONSOLE"
+        systemctl status --no-pager --lines=8 "$u" 2>&1 | sed "s/^/$MARKER-DETAIL /" > "$CONSOLE"
+    done
 }
 
 case "$mode" in
 smoke)
     collect_and_report boot
+    dump_failed
     systemctl poweroff
     ;;
 update)
