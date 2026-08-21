@@ -9,6 +9,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 export STAGE_NAME=run-vm
+# common.sh defaults REPO to the in-container /repo; interactive host runs need the real
+# path. Stage 70 already exports REPO, and := leaves that alone.
+: "${REPO:="$(dirname -- "$SCRIPT_DIR")"}"
 # shellcheck source=lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
 
@@ -39,7 +42,8 @@ find_ovmf() {
     /usr/share/edk2-ovmf/OVMF_CODE.fd \
     /usr/share/edk2/x64/OVMF_CODE.fd \
     /usr/share/edk2/OvmfX64/OVMF_CODE.fd \
-    /usr/share/OVMF/OVMF_CODE.fd; do
+    /usr/share/OVMF/OVMF_CODE.fd \
+    /usr/share/OVMF/OVMF_CODE_4M.fd; do
     [[ -f $c ]] && { printf '%s' "$c"; return 0; }
   done
   return 1
@@ -59,7 +63,10 @@ QEMU=(qemu-system-x86_64
   -machine "q35,accel=$ACCEL" -cpu max -m "$MEM" -smp 4
   -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE"
   -drive if=pflash,format=raw,file="$VMDIR/VARS.fd"
-  -drive file="$IMG",if=virtio,format=raw
+  # snapshot=on: guest writes go to a temp overlay and the backing file is opened
+  # read-only, so a run can never mutate the image it was pointed at (and root-owned
+  # build artifacts boot without O_RDWR). Discarded on exit; reboots within one run persist.
+  -drive file="$IMG",if=virtio,format=raw,snapshot=on
   -netdev user,id=n0 -device virtio-net-pci,netdev=n0
   -device virtio-gpu)
 
