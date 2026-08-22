@@ -5,6 +5,7 @@
 #   run-vm.sh IMG --headless serial.log    # no display, serial console to file
 #   run-vm.sh IMG --test smoke             # inject test-mode credential (self-reporting boot)
 #   run-vm.sh IMG --test update --update-url http://10.0.2.2:8000/stable
+#   run-vm.sh IMG --writable                # guest writes hit IMG (see snapshot note below)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -18,13 +19,14 @@ source "$SCRIPT_DIR/lib/common.sh"
 IMG="${1:-}"; shift || true
 [[ -n $IMG && -f $IMG ]] || die "usage: run-vm.sh IMG [--headless LOG] [--test smoke|update] [--update-url URL]"
 
-HEADLESS_LOG='' TEST_MODE='' TEST_URL='' MEM=4096
+HEADLESS_LOG='' TEST_MODE='' TEST_URL='' MEM=4096 SNAPSHOT=on
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --headless)   HEADLESS_LOG="$2"; shift 2 ;;
     --test)       TEST_MODE="$2"; shift 2 ;;
     --update-url) TEST_URL="$2"; shift 2 ;;
     --memory)     MEM="$2"; shift 2 ;;
+    --writable)   SNAPSHOT=off; shift ;;
     *) die "unknown argument: $1" ;;
   esac
 done
@@ -63,12 +65,22 @@ QEMU=(qemu-system-x86_64
   -machine "q35,accel=$ACCEL" -cpu max -m "$MEM" -smp 4
   -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE"
   -drive if=pflash,format=raw,file="$VMDIR/VARS.fd"
-  # snapshot=on: guest writes go to a temp overlay and the backing file is opened
-  # read-only, so a run can never mutate the image it was pointed at (and root-owned
-  # build artifacts boot without O_RDWR). Discarded on exit; reboots within one run persist.
-  -drive file="$IMG",if=virtio,format=raw,snapshot=on
+  # snapshot=on (default): guest writes go to a temp overlay and the backing file is opened
+  # read-only, so an interactive run can never mutate the image it was pointed at (and
+  # root-owned build artifacts boot without O_RDWR). Discarded on exit.
+  #
+  # --writable (snapshot=off) exists because that default silently breaks any test spanning
+  # TWO boots: everything the first boot writes to /var — the machine-id systemd generates
+  # into the /etc overlay, and a sysupdate'd root slot — is thrown away before the second
+  # boot starts. Stage 70 asserts both of those persist, so with snapshot=on the smoke test's
+  # machine-id check could only ever pass by accident and the update E2E could not work at
+  # all. Stage 70 boots a throwaway copy in $WORK, so mutating it is safe and is the point.
+  -drive file="$IMG",if=virtio,format=raw,snapshot=$SNAPSHOT
   -netdev user,id=n0 -device virtio-net-pci,netdev=n0
-  -device virtio-gpu)
+  # -vga none suppresses q35's default VGA adapter, which would otherwise sit alongside
+  # virtio-gpu and give the guest two heads (two tabs in the QEMU window). The kernel
+  # console still goes to the serial port, not to this display.
+  -vga none -device virtio-gpu)
 
 if [[ -n $TEST_MODE ]]; then
   QEMU+=(-smbios "type=11,value=io.systemd.credential:${DISTRO_ID}.test=${TEST_MODE}")

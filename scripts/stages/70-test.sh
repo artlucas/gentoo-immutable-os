@@ -26,7 +26,10 @@ DENY_RE='Kernel panic|emergency\.target|Failed to mount|Timed out waiting for de
 boot_and_watch() {
   local img=$1 slog=$2; shift 2
   rm -f -- "$slog"
-  DISTRO_ID="$DISTRO_ID" bash "$SCRIPT_DIR/../run-vm.sh" "$img" --headless "$slog" "$@" &
+  # --writable: $img is always a disposable copy under $WORK, and both the smoke test
+  # (machine-id) and the update E2E (new root slot) assert that boot 1's writes survive into
+  # boot 2. run-vm.sh defaults to snapshot=on, which discards them.
+  DISTRO_ID="$DISTRO_ID" bash "$SCRIPT_DIR/../run-vm.sh" "$img" --writable --headless "$slog" "$@" &
   local qpid=$!
   local waited=0
   while true; do

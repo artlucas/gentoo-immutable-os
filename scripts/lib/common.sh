@@ -176,6 +176,19 @@ sha256_file() { sha256sum -- "$1" | cut -d' ' -f1; }
 
 # inputs_hash [FILES...] — stable hash of the given files' contents plus
 # $STAGE_INPUTS_EXTRA (for non-file inputs like config values).
+# portage_config_hash — fingerprint of everything stage 20 bakes into $CONFIG_ROOT.
+#
+# expected-packages.txt is deliberately excluded: it is the audit gate's DATA, not an input to
+# the config root, and it is rewritten every time the package set legitimately changes — hashing
+# it would make the guards below fire on their own output.
+portage_config_hash() {
+  {
+    find "$REPO/config/portage" -type f ! -name 'expected-packages.txt' -print0 \
+      | sort -z | xargs -0 -r sha256sum
+    sha256_file "$REPO/config/build.conf"
+  } | sha256sum | cut -d' ' -f1
+}
+
 inputs_hash() {
   local f
   {
@@ -261,17 +274,27 @@ target_mount() {
   mount -t tmpfs tmpfs "$t/run"
   # DNS for the chroot, without leaking the builder's nameservers into the image.
   # From stage 40 on, $t/etc/resolv.conf is a DANGLING symlink to systemd-resolved's stub
-  # under /run — and /run is the tmpfs mounted just above. Copying the builder's resolv.conf
-  # to that path therefore writes THROUGH the symlink into the tmpfs (cp follows a symlinked
-  # destination), so the chroot resolves normally and the copy dies with the tmpfs at
-  # target_umount. Before stage 40 the path does not exist yet and this writes a plain file,
-  # which stage 50 removes. Either way -e is false at this point; the test is written as
-  # "not present, or present only as a symlink" so an already-materialised file is not
-  # clobbered on a resumed build.
+  # under /run — and /run is the tmpfs mounted just above.
+  #
+  # This used to copy to $t/etc/resolv.conf and rely on cp following the symlinked
+  # destination. GNU cp does that only when the destination EXISTS; for a dangling link it
+  # refuses outright — "cp: not writing through dangling symlink" — and the `|| true` here
+  # swallowed it, leaving the chroot with no resolver at all. The symptom was stage 40 dying
+  # much later at the flatpak remote-add with "Could not resolve hostname", and it only ever
+  # appeared on a re-run: on a first-ever build target_mount runs BEFORE stage 40 creates the
+  # symlink, so the copy landed as a plain file and DNS worked.
+  #
+  # Write to the stub path directly instead. Post-stage-40 that materialises the file the
+  # dangling symlink points at (in the tmpfs, so it dies at target_umount); pre-stage-40 the
+  # plain-file branch below still applies. Neither leaks into the image: stage 50 asserts
+  # /etc/resolv.conf is the symlink and nothing else.
   if [[ -f /etc/resolv.conf ]]; then
     mkdir -p "$t/run/systemd/resolve"
+    cp -L /etc/resolv.conf "$t/run/systemd/resolve/stub-resolv.conf" || true
     cp -L /etc/resolv.conf "$t/etc/resolv.conf.build" 2>/dev/null || true
-    if [[ ! -e $t/etc/resolv.conf || -L $t/etc/resolv.conf ]]; then
+    # only when the path is genuinely absent — never clobber the stage-40 symlink, and never
+    # overwrite a real file a resumed build already materialised.
+    if [[ ! -e $t/etc/resolv.conf && ! -L $t/etc/resolv.conf ]]; then
       cp -L /etc/resolv.conf "$t/etc/resolv.conf" || true
     fi
   fi

@@ -85,7 +85,12 @@ if [[ $CLEAN == 1 ]]; then
     run rm -rf -- "$WORK" "$OUT/state"
   else
     run "$RUNTIME" volume rm -f "$WORK_VOL"
-    run rm -rf -- "$OUT/state"
+    # out/ is written by the container as root, so a non-root host cannot rm the stamps —
+    # and with set -e that failure aborted --clean before it did anything useful, while the
+    # work volume above had ALREADY been removed. Fall back to deleting them as root inside
+    # the builder. Host attempt stays first: on a first-ever run the image may not exist yet.
+    run rm -rf -- "$OUT/state" 2>/dev/null \
+      || run "$RUNTIME" run --rm --entrypoint /bin/rm -v "$OUT:/out" "$BUILDER_TAG" -rf /out/state
   fi
 fi
 

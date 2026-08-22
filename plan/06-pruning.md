@@ -166,6 +166,83 @@ For reference, the original procedure was:
 The toolchain-free guarantee (no compiler, no Portage) is unaffected either way — a scripting
 interpreter is not a build toolchain.
 
+## The first build's three blind spots (2026-08-21)
+
+The first completed build came in at **8342 MiB installed rootfs against the ~5.5 GiB budget
+below — 52% over**, with `/usr` alone at 7289 MiB. Attributing it was only possible from
+`out/logs/60-image.log`'s per-file `Processing` lines, because the size report itself was
+broken (see below). Three trees accounted for most of the overshoot, and two of them were
+things the prune above already *intends* to remove and simply could not see.
+
+**1. `/usr/src` — 145,752 entries (31.5% of every file in the EROFS), but only 219 MiB.**
+File count is not bytes: this tree was first identified by counting `Processing` lines in the
+stage-60 log, which made it look like the dominant item. It is not — those 145k files are
+kernel headers, and they measure 219 MiB. Worth deleting, but an order of magnitude less than
+the entry count suggests. Rank by `du`, not by file count.
+`sys-kernel/gentoo-kernel-bin` installs a full configured kernel source + build tree at
+`/usr/src/linux-<kver>-gentoo-dist-bin` so out-of-tree modules can be built against it. Layer 3
+step 3 removes the `/usr/lib/modules/*/{build,source}` **symlinks** — and in doing so removed
+the only names that pointed at the tree, which is exactly why nothing ever noticed the tree
+itself was still there. The image has no compiler and a read-only `/usr`; its only out-of-tree
+module (nvidia, `USE=dist-kernel`) is built at image-build time in stage 30. Deleted, with an
+assertion that `nvidia*.ko*` still exists in `/usr/lib/modules` so the cut cannot go too deep.
+
+**2. LLVM shipped a code generator — the toolchain-free guarantee was false.**
+`llvm-core/llvm` is a hard dependency of `media-libs/mesa` (radeonsi and llvmpipe dlopen
+`libLLVM.so`), so it is not removable. But LLVM installs into `/usr/lib/llvm/<slot>/` rather
+than the standard prefixes, so its **14,766 headers, 582 binaries and 360 man pages** were
+invisible to the `usr/include` / `usr/share/man` rules *and* to the assertion block, which only
+swept `maxdepth 1` in `/usr/bin` and friends. The image was shipping `llc`, `lli`, `opt`,
+`bugpoint`, `dsymutil` and `clang-offload-packager`. Stage 50 now deletes
+`/usr/lib/llvm/*/{include,share,bin,lib64/cmake}`, unmerges `llvm-core/llvmgold` and
+`llvm-core/llvm-toolchain-symlinks`, asserts `libLLVM.so` survives, and — the part that keeps
+this fixed — searches `/usr/lib/llvm` **without** a depth limit in the banned-binary sweep, with
+`clang/clang++/llc/lli/opt/llvm-as/llvm-link` added to the ban list.
+
+**3. Qt6, and a full Xorg server, both arriving through a single USE flag each.**
+Two flags in `package.use/image` (`poppler -qt6`, `pinentry -qt6`) had been added specifically
+to keep Qt out of a GNOME-only image, and `dev-qt/{qtbase,qtsvg,qttranslations}` were in the
+image anyway: `dev-libs/appstream[qt6]` builds AppStreamQt for KDE Discover and
+`dev-libs/libportal[qt6]` builds libportal-qt6, neither of which anything here links. Separately
+`x11-drivers/nvidia-drivers[X]` pulled `x11-base/xorg-server` → `xorg-drivers` → every
+`xf86-video-*` matching `VIDEO_CARDS`, plus the `x11-apps` client utilities — a complete X
+server inside a session that plan/03 defines as Wayland-only. Both closed with USE flags;
+`x11-base/xwayland` stays, so X11 Flatpak apps are unaffected.
+
+**Measured breakdown, once the size report was fixed** (pre-prune, MiB, from the first build
+where every row actually recorded):
+
+| Tree | Pre-prune | Post-prune |
+|---|---|---|
+| `usr/lib/firmware` | 2029 | 1629 |
+| `usr/lib64` | 1350 | 1327 |
+| rest of `/usr` | 1523 | 905 |
+| `usr/share/fonts` | 768 | 768 |
+| `usr/lib/modules` | 623 | 623 |
+| `usr/share/locale` | 329 | 78 |
+| `usr/lib/llvm` | 307 | 167 |
+| `usr/src` | 219 | 0 |
+| **`/usr` total** | **7289** | **5497** |
+
+`linux-firmware` is the largest single item by a wide margin and the prune only trims 11
+directories from it — that, and `usr/share/fonts` (noto with `extra`), are the two levers left.
+Both were deliberately left alone: hardware compatibility and script coverage are stated goals.
+
+**Installed size and shipped size are not the same lever.** `/usr` fell 1792 MiB (25%) while the
+EROFS fell only 207 MiB (7%) and the `.img.zst` 299 MiB (9%). Everything the prune removes —
+headers, kernel source, docs, locale catalogs — is highly compressible, so lz4hc had already
+reduced it to near nothing in the shipped image. The budget table below is written in INSTALLED
+size, where the win is real; do not expect it to translate into A/B update download size. The
+incompressible bulk is firmware and fonts.
+
+**Why none of this showed up in the size report.** Stage 50 wrote it as
+`du -xsm "$T"/usr "$T"/usr/lib/firmware "$T"/usr/lib/modules "$T"/var 2>/dev/null || true`. `du -x`
+refuses to cross a filesystem boundary, so `/var` (a separate mount in the builder) and the
+firmware/modules rows were dropped, and the redirection hid the reason — leaving a three-line
+report with no per-row data at all, which is precisely what the budget table below is supposed
+to be checked against. Fixed: no `-x`, no error suppression, and the itemised rows the budget
+names (plus `/usr/src` and `/usr/lib/llvm`) are reported explicitly.
+
 ## Size budget
 
 | Component | Budget (installed, pre-EROFS) |
@@ -181,7 +258,11 @@ interpreter is not a build toolchain.
 | **EROFS lz4hc image** | **~2.8–3.3 GiB** (fits 6 GiB slot with 2× headroom) |
 
 Stage 50's size report tracks actuals against this table; >10% regression on any row warrants
-a look before release. The `.img.zst` distributable lands ≈ 3.5–4.5 GiB (root image + 4 GiB
+a look before release. **The table is still the pre-first-build estimate and is known wrong** —
+the first build measured 8342 MiB rootfs / 3177 MiB EROFS, and after the fixes above /usr is
+5497 MiB with a 2970 MiB EROFS and a 3004 MiB `.img.zst`. The per-row measured numbers are in
+the table further up; these budget rows should be rewritten against them rather than treated as
+a target that was met. The `.img.zst` distributable lands ≈ 3.5–4.5 GiB (root image + 4 GiB
 var with preinstalled Firefox flatpak, zeros compressed away).
 
 ## What is deliberately KEPT

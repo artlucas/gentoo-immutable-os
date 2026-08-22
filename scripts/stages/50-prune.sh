@@ -13,7 +13,52 @@ is_linux || die "stages run inside the builder container only"
 T="$TARGET"
 [[ -d $T/var/db/pkg ]] || die "target VDB missing — run stages 30/40 first (or already pruned: use build.sh --from 30 to rebuild)"
 
-# ---- 1. audit artifacts (BEFORE deletion) -------------------------------------
+# ---- 1. build-only packages that leaked into the target -----------------------------
+#
+# ORDER: this runs BEFORE the audit below, and that ordering is load-bearing. packages.txt is
+# the file the dependency-audit gate compares against config/portage/expected-packages.txt,
+# and it is built by listing the VDB. Generated before this unmerge, it listed ~8 packages
+# that the very next step deleted — so the committed allowlist had to contain phantom entries
+# for the gate to pass, and the same build produced a different packages.txt depending on
+# whether stage 50 had run once or twice (a resumed --from 50 sees an already-unmerged VDB).
+# Unmerging first makes packages.txt mean "what ships", which is what the gate is for.
+# Nothing in the image RDEPENDs these: portage's own binhost machinery installs getuto (and
+# with it sec-keys/openpgp-keys-gentoo-release -> app-portage/gemato -> the python requests
+# stack) into whichever ROOT it is populating, and portage-utils arrives the same way. An
+# image with no Portage has no use for Portage tooling (plan/06), so they are unmerged here —
+# before the VDB is deleted below, while emerge can still do it cleanly.
+#
+# The llvm-core and dev-python entries below are the same story from different directions.
+# llvm-core/llvmgold is an LTO plugin for a linker this image does not have, and
+# llvm-core/llvm-toolchain-symlinks is nothing but symlinks into the /usr/lib/llvm/*/bin tree
+# deleted in section 3 — both would be pure danglers. The dev-python packaging stack
+# (setuptools/wheel/ensurepip-pip and their metadata deps) is build machinery that rode in on
+# dev-lang/python, which gnome-shell forces into RDEPEND; ensurepip-pip in particular ships a
+# bundled pip wheel in an image whose section-4 assertions ban the pip binary outright.
+# dev-python/{docutils,pygobject,pillow} stay — they are on the documented interpreter allowlist.
+#
+# app-admin/perl-cleaner and sys-apps/portage are the tail of a third chain, and the one that
+# actually tripped the section-4 assertions: dev-lang/perl (kept deliberately for samba, see
+# plan/06) pulls perl-cleaner, whose whole job is rebuilding perl modules after a perl upgrade
+# — meaningless on a read-only image with no compiler — and perl-cleaner RDEPENDs sys-apps/
+# portage, which put /usr/bin/{ebuild,portageq,emerge-webrsync} in an image whose entire premise
+# is "no Portage at runtime". Order matters: perl-cleaner is unmerged before portage, since it
+# depends on it. This never showed up before because it takes a from-scratch target to resolve
+# perl's full RDEPEND; an incrementally-built root had already settled without it.
+for p in app-portage/gemato app-portage/getuto app-portage/portage-utils \
+         sec-keys/openpgp-keys-gentoo-release \
+         llvm-core/llvmgold llvm-core/llvm-toolchain-symlinks \
+         dev-python/ensurepip-pip dev-python/wheel dev-python/setuptools-scm \
+         dev-python/trove-classifiers dev-python/vcs-versioning \
+         app-admin/perl-cleaner sys-apps/portage; do
+  [[ -d $T/var/db/pkg/${p%/*} ]] || continue
+  compgen -G "$T/var/db/pkg/$p-*" >/dev/null || continue
+  log "unmerging build-only package from image: $p"
+  ROOT="$T" PORTAGE_CONFIGROOT="$CONFIG_ROOT" emerge --unmerge --quiet "$p" >/dev/null 2>&1 \
+    || warn "could not unmerge $p"
+done
+
+# ---- 1b. audit artifacts (AFTER the unmerge above, BEFORE any deletion) --------------
 ensure_dir "$REPORT_DIR"
 ( cd "$T/var/db/pkg" && printf '%s\n' */* | sort ) > "$REPORT_DIR/packages-cpv.txt"
 # strip versions: category/name-1.2.3[-r4] → category/name
@@ -35,23 +80,13 @@ else
   die "no expected-packages.txt yet (first build): review $REPORT_DIR/expected-packages.txt.generated, commit it as config/portage/expected-packages.txt, then re-run --from 50"
 fi
 
-du -xsm "$T"/usr "$T"/usr/lib/firmware "$T"/usr/lib/modules "$T"/var 2>/dev/null \
-  > "$REPORT_DIR/size-report.txt" || true
-
-# ---- 1b. portage tooling that leaked into the target ---------------------------------
-# Nothing in the image RDEPENDs these: portage's own binhost machinery installs getuto (and
-# with it sec-keys/openpgp-keys-gentoo-release -> app-portage/gemato -> the python requests
-# stack) into whichever ROOT it is populating, and portage-utils arrives the same way. An
-# image with no Portage has no use for Portage tooling (plan/06), so they are unmerged here —
-# before the VDB is deleted below, while emerge can still do it cleanly.
-for p in app-portage/gemato app-portage/getuto app-portage/portage-utils \
-         sec-keys/openpgp-keys-gentoo-release; do
-  [[ -d $T/var/db/pkg/${p%/*} ]] || continue
-  compgen -G "$T/var/db/pkg/$p-*" >/dev/null || continue
-  log "unmerging build-only package from image: $p"
-  ROOT="$T" PORTAGE_CONFIGROOT="$CONFIG_ROOT" emerge --unmerge --quiet "$p" >/dev/null 2>&1 \
-    || warn "could not unmerge $p"
-done
+# NB: no -x here. /var is a separate mount inside the builder, so "du -x" silently skipped it
+# along with any other row on a different filesystem, and "2>/dev/null || true" hid the reason —
+# which meant the firmware/modules rows plan/06 says to check against the budget table never
+# appeared at all. The rows below are the ones that budget actually itemises.
+du -sm "$T"/usr/src "$T"/usr/lib/firmware "$T"/usr/lib/modules "$T"/usr/lib/llvm \
+       "$T"/usr/share/fonts "$T"/usr/share/locale "$T"/usr/share/icons "$T"/usr/lib64 \
+       "$T"/usr "$T"/var > "$REPORT_DIR/size-report.txt"
 
 # ---- 2. delete Portage artifacts ------------------------------------------------
 rm -rf -- "$T/var/db/pkg" "$T/var/db/repos" "$T/var/cache"/* \
@@ -61,6 +96,14 @@ rm -rf -- "$T/var/db/pkg" "$T/var/db/repos" "$T/var/cache"/* \
 find "$T" -xdev -name '*.la' -delete
 find "$T/usr/lib64" -maxdepth 1 -name '*.a' -delete 2>/dev/null || true
 find "$T/usr/lib/modules" -maxdepth 2 \( -name build -o -name source \) -exec rm -rf {} + 2>/dev/null || true
+# ...and the tree those two symlinks POINTED AT. sys-kernel/gentoo-kernel-bin ships a full
+# configured kernel source + build tree at /usr/src/linux-<kver>-gentoo-dist-bin so out-of-tree
+# modules can be compiled against it. This image has no compiler and a read-only /usr, and its
+# only out-of-tree module — the nvidia GSP driver — is built at IMAGE BUILD time by stage 30
+# (nvidia-drivers[dist-kernel]), so nothing at runtime can or does read it. It was 145,752 file
+# entries, 31.5% of everything in the EROFS: invisible to the prune precisely because the line
+# above removes the symlinks that name it, and nothing else ever looked in /usr/src.
+rm -rf -- "${T:?}/usr/src"
 rm -rf -- "${T:?}/boot"/* 2>/dev/null || true  # UKI lives on the ESP; image /boot stays empty
 find "$T" -xdev -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true
 
@@ -89,10 +132,38 @@ fi
 # deps there (see the note in config/portage/make.conf.in) — done here it touches only $TARGET.
 # NB: /usr/lib64/girepository-1.0 (the binary typelibs) is deliberately NOT removed — gjs and
 # gnome-shell load those at runtime. Only the build-time .gir XML and .vapi files go.
+# usr/share/help is GNOME's yelp documentation. gnome-extra/yelp is not in the package set
+# (plan/03 keeps document viewers out of the native image), so nothing here can render those
+# 14,802 files — every Help menu item in the image opens a Flatpak or a URL instead.
 for d in usr/include usr/share/doc usr/share/info usr/share/man usr/share/gtk-doc \
          usr/share/devhelp usr/share/aclocal usr/lib64/pkgconfig usr/share/pkgconfig \
-         usr/lib64/cmake usr/share/gir-1.0 usr/share/vala usr/share/zsh; do
+         usr/lib64/cmake usr/share/gir-1.0 usr/share/vala usr/share/zsh usr/share/help; do
   rm -rf -- "${T:?}/$d"
+done
+
+# VTE's demo app. gui-libs/vte is in the image because gui-apps/gnome-console links libvte,
+# but the ebuild ships upstream's demo terminal alongside it: Gentoo's vte-0.82.x has
+# "#-Dapp-hidden=true" COMMENTED OUT in src_configure, so the demo is built and installed
+# visible. That puts a second, unbranded terminal in the GNOME app grid — and, worse, registers
+# it in /usr/share/xdg-terminals, the freedesktop default-terminal registry that
+# xdg-terminal-exec consults, so it can be launched in preference to gnome-console. The
+# library stays; the demo does not.
+rm -f -- "$T/usr/bin/vte-2.91-gtk4" \
+         "$T/usr/share/applications/org.gnome.Vte.App.Gtk4.desktop" \
+         "$T/usr/share/xdg-terminals/org.gnome.Vte.App.Gtk4.desktop"
+rmdir --ignore-fail-on-non-empty -- "$T/usr/share/xdg-terminals" 2>/dev/null || true
+
+# ---- 3a. LLVM: keep libLLVM.so (mesa), drop the rest ---------------------------------
+# llvm-core/llvm is a hard dep of media-libs/mesa — radeonsi and llvmpipe dlopen libLLVM.so —
+# so the library stays. Everything else does not: LLVM installs under /usr/lib/llvm/<slot>/
+# rather than the standard prefixes, so its 14,766 headers, 582 binaries and man pages sailed
+# past the usr/include / usr/share/man rules above AND past the section-4 banned-binary sweep
+# (which only looks at maxdepth 1 in /usr/bin and friends). That left llc, lli, opt, bugpoint
+# and clang-offload-packager — LLVM's code generators — in an image whose whole premise is that
+# it has no toolchain. The assertions in section 4 are widened to cover this directory.
+for slot in "$T"/usr/lib/llvm/*/; do
+  [[ -d $slot ]] || continue
+  rm -rf -- "$slot"/{include,share,bin} "$slot"/lib64/cmake
 done
 
 # ---- 3b. toolchain split: keep the gcc RUNTIME, delete the compiler ------------------
@@ -176,14 +247,34 @@ fail=0
 violation() { warn "PRUNE VIOLATION: $*"; fail=1; }
 
 # NB: python/python3 are deliberately NOT in this list — see the interpreter note below.
+# NB: /usr/lib/llvm is searched WITHOUT -maxdepth, unlike the standard bin dirs. LLVM installs
+# into /usr/lib/llvm/<slot>/bin/, which is why llc, lli, opt and clang-offload-packager shipped
+# undetected until section 3a started deleting that tree — the sweep below is what keeps them
+# from coming back the next time a mesa bump changes the llvm slot.
 for b in gcc g++ cc c++ cpp ld as ar make cmake ninja meson cargo rustc \
+         clang clang++ llc lli opt llvm-as llvm-link \
          emerge ebuild portageq pip; do
   hits="$(find "$T/usr/bin" "$T/usr/sbin" "$T/bin" "$T/sbin" \
             -maxdepth 1 \( -name "$b" -o -name "$b-*" \) 2>/dev/null || true)"
+  hits+="$(find "$T/usr/lib/llvm" \( -name "$b" -o -name "$b-*" \) 2>/dev/null || true)"
   [[ -n $hits ]] && violation "toolchain/interpreter binary present: $hits"
 done
 
 [[ -e $T/usr/include && -n $(ls -A "$T/usr/include" 2>/dev/null) ]] && violation "/usr/include not empty"
+[[ -e $T/usr/src && -n $(ls -A "$T/usr/src" 2>/dev/null) ]] && violation "/usr/src not empty (kernel build tree came back)"
+# the VTE demo must be gone, but the library it shares a package with must not be — and the
+# terminal the user actually gets must still be there.
+[[ -e $T/usr/share/applications/org.gnome.Vte.App.Gtk4.desktop ]] && violation "VTE demo app desktop entry present"
+compgen -G "$T/usr/lib64/libvte-2.91-gtk4.so"* >/dev/null \
+  || violation "libvte missing after prune — gnome-console will not start"
+[[ -x $T/usr/bin/kgx ]] || compgen -G "$T/usr/bin/gnome-console"* >/dev/null \
+  || violation "gnome-console binary missing after prune"
+# ...but deleting /usr/src must not have taken the prebuilt out-of-tree modules with it: they
+# live in /usr/lib/modules/<kver>/, and a machine that boots without them has no NVIDIA driver
+# at all — a failure that would otherwise only surface on real hardware, never in stage 70's
+# virtio VM.
+find "$T/usr/lib/modules" -name 'nvidia*.ko*' 2>/dev/null | grep -q . \
+  || violation "no nvidia*.ko in /usr/lib/modules — the /usr/src prune cut too deep"
 [[ -e $T/var/db/pkg    ]] && violation "VDB still present"
 [[ -e $T/var/db/repos  ]] && violation "ebuild repo still present"
 [[ -e $T/etc/portage   ]] && violation "/etc/portage still present"
@@ -236,6 +327,12 @@ find "$T" -xdev -name '*.la' 2>/dev/null | grep -q . && violation "*.la files re
 #            printer panel). xdg-utils[-perl] keeps the other ~48 perl packages out.
 #   still banned: pip and every compiler/build tool above.
 # The toolchain-free guarantee itself is unchanged: no compiler, no Portage, no headers.
+
+# same shape as the gcc split below: mesa's radeonsi and llvmpipe drivers dlopen libLLVM.so, so
+# the one thing section 3a must never remove is the library it kept the directory for.
+compgen -G "$T/usr/lib/llvm/"*/lib64/libLLVM.so* >/dev/null \
+  || compgen -G "$T/usr/lib64/libLLVM.so"* >/dev/null \
+  || violation "libLLVM.so missing after prune — mesa's radeonsi/llvmpipe will not load"
 
 # the toolchain split must leave the runtime behind: a desktop with no libstdc++ boots to
 # nothing, and that failure would otherwise only show up in QEMU (stage 70) or on hardware.

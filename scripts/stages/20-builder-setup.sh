@@ -34,6 +34,11 @@ cp "$REPO"/config/portage/package.license/*         "$PC/package.license/"
 cp "$REPO"/config/portage/package.accept_keywords/* "$PC/package.accept_keywords/"
 cp "$REPO"/config/portage/package.mask/*            "$PC/package.mask/"
 
+# Fingerprint of what was just copied. Stage 30 refuses to run against a config root that no
+# longer matches the repo — see the guards there for the two ways that silently produced a
+# wrong image before.
+portage_config_hash > "$CONFIG_ROOT/.inputs-hash"
+
 # sets, with cjk/printing filtering per build.conf
 for s in base hardware desktop; do
   filter_set_file "$REPO/config/portage/sets/$s" "$PC/sets/$s"

@@ -12,6 +12,34 @@ ensure_dir "$OUT/logs"; exec > >(tee -a "$OUT/logs/$STAGE_NAME.log") 2>&1
 is_linux || die "stages run inside the builder container only"
 [[ -d $CONFIG_ROOT/etc/portage ]] || die "config-root missing — run stage 20 first"
 
+# ---- guards: two ways this stage silently built the wrong image ----------------------
+#
+# 1. STALE CONFIG ROOT. Only stage 20 copies config/portage/* into $CONFIG_ROOT, and
+#    mirror_target_pkg_config reads from $CONFIG_ROOT — not from $REPO. So "build.sh --from 30"
+#    after editing package.use/ resolves against the PREVIOUS run's flags and reports success:
+#    the emerge output shows the old USE strings and nothing anywhere says why.
+CUR_CFG_HASH="$(portage_config_hash)"
+REC_CFG_HASH="$(cat "$CONFIG_ROOT/.inputs-hash" 2>/dev/null || echo none)"
+[[ $CUR_CFG_HASH == "$REC_CFG_HASH" ]] || die "config/portage or build.conf changed since stage 20 last ran
+  (config root fingerprint $REC_CFG_HASH != $CUR_CFG_HASH).
+  \$CONFIG_ROOT is a copy, so this stage would resolve against the OLD flags.
+  Re-run including stage 20:  scripts/build.sh --from 20"
+
+# 2. STALE TARGET. This stage is resumable by design: it emerges into an existing $TARGET with
+#    --changed-use, which REBUILDS packages whose flags changed but never REMOVES packages that
+#    dropped out of the graph. A USE change that is meant to delete something (say gdm[-X], to
+#    drop xorg-server) therefore leaves the package installed and shipping, while the emerge
+#    resolution — correctly — no longer lists it. Portage has no safe fix here: the sets are not
+#    this root's @world, so --depclean would consider everything orphaned. Refuse instead.
+TARGET_HASH_FILE="$WORK/target-config-hash"
+PREV_TGT_HASH="$(cat "$TARGET_HASH_FILE" 2>/dev/null || echo none)"
+if [[ -d $TARGET/var/db/pkg && $PREV_TGT_HASH != none && $PREV_TGT_HASH != "$CUR_CFG_HASH" ]]; then
+  die "config changed since $TARGET was populated, and --changed-use cannot remove packages
+  from an existing root — anything a USE flag was meant to DELETE would still ship.
+  Wipe the target and rebuild:  ${RUNTIME:-docker} volume rm -f ${DISTRO_ID}-work
+  (the binpkg cache volume is separate and is kept, so the re-merge is mostly reinstalls)"
+fi
+
 # Same "/" mirror stage 20 sets up: build.sh runs every stage in its own --rm container, so
 # stage 20's copy is already gone. Without this the depgraph resolves target packages against
 # a stock "/" and dies on phantom slot conflicts (cairo:0) and REQUIRED_USE failures
@@ -72,6 +100,9 @@ fi
 
 # quick pre-prune report (full manifest + gate in stage 50)
 ensure_dir "$REPORT_DIR"
+# the target now matches this config; record it for the staleness guard above
+printf '%s' "$CUR_CFG_HASH" > "$WORK/target-config-hash"
+
 ( cd "$TARGET/var/db/pkg" && printf '%s\n' */* | sort ) > "$REPORT_DIR/target-packages-cpv.txt"
 log "target has $(wc -l < "$REPORT_DIR/target-packages-cpv.txt") packages"
 

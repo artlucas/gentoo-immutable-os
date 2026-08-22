@@ -15,7 +15,17 @@ app-admin/sudo              -sendmail
 # /usr/src/linux, which an image built from gentoo-kernel-bin does not have ("Unable to find
 # kernel sources at $TARGET/usr/src/linux"). With it, modules are built against
 # virtual/dist-kernel, which is plan/03's "prebuilt against gentoo-kernel-bin".
-x11-drivers/nvidia-drivers  dist-kernel
+# -X: plan/03 is Wayland-only, but nvidia-drivers[X] installs the X DDX (nvidia_drv.so,
+# libglx.so) and with it pulls x11-base/xorg-server -> x11-base/xorg-drivers -> every
+# xf86-video-* matching VIDEO_CARDS (amdgpu, ati, nouveau) plus xf86-input-libinput and the
+# x11-apps client utilities (xinit, xauth, xhost, xset, xrdb, iceauth). A full X server, in an
+# image whose session is Wayland-only and whose GDM is configured WaylandEnable=true with no
+# Xorg fallback. NVIDIA's Wayland path is GBM/EGLStream driven by nvidia-drm.modeset=1, which
+# is already on the UKI cmdline in stage 40, and x11-base/xwayland stays in @desktop, so X11
+# Flatpak apps keep working. Revert this line if GDM ever needs a real Xorg fallback on NVIDIA
+# (plan/08 open question 4) — it is the only thing standing between here and that server.
+# -static-libs: .a archives have no consumer in an image with no linker.
+x11-drivers/nvidia-drivers  dist-kernel -X -static-libs
 sys-kernel/linux-firmware   redistributable -initramfs
 media-video/pipewire        sound-server pipewire-alsa
 # modemmanager is required by gnome-control-center[networkmanager] (>=1.52.0[modemmanager]
@@ -42,8 +52,25 @@ sys-kernel/gentoo-kernel-bin -initramfs -generic-uki
 # the old "-fwupd -malcontent" masked nothing and sys-apps/fwupd — explicitly deferred to
 # the roadmap in plan/03 — was being pulled into the image.
 gnome-extra/gnome-software        flatpak -firmware -dkms -snap
-gnome-base/gdm                    wayland -xdmcp -fprint -plymouth
-gnome-base/gnome-control-center   -gnome-online-accounts
+# -X is what actually removes the Xorg server. Traced from the target VDB: gdm[X] RDEPENDs
+# x11-base/xorg-server, which PDEPENDs x11-base/xorg-drivers, which pulls every xf86-video-*
+# matching VIDEO_CARDS (amdgpu, ati, nouveau) plus xf86-input-libinput — and those in turn
+# RDEPEND xorg-server right back. That is a complete X server inside a session plan/03 defines
+# as Wayland-only, with GDM already configured WaylandEnable=true and no Xorg session reachable.
+# nvidia-drivers[-X] above removes nvidia from the same reverse-dep set but is NOT sufficient
+# on its own; gdm is the other half. x11-base/xwayland stays in @desktop and mutter[X] keeps
+# X11 client support, so X11 Flatpak apps are unaffected — what goes is the standalone server.
+gnome-base/gdm                    wayland -X -xdmcp -fprint -plymouth
+# -X is the THIRD and last flag holding the Xorg server in. Traced from the 49.9 ebuild:
+#   X? ( >=x11-drivers/xf86-input-libinput-0.19.0 )
+# and that driver RDEPENDs x11-base/xorg-server, which PDEPENDs x11-base/xorg-drivers, which
+# pulls xf86-video-{amdgpu,ati,nouveau} — each of which RDEPENDs xorg-server right back. The
+# stack is a cycle, so it survives until every entry point is closed: nvidia-drivers[-X] and
+# gdm[-X] above are the other two, and removing either alone changed nothing.
+# The panels keep working: dev-libs/libinput is an UNCONDITIONAL dep of this package (the X
+# flag only adds the X11 driver on top), and gtk:4[X,wayland] is required either way, so
+# Xwayland clients are unaffected.
+gnome-base/gnome-control-center   -X -gnome-online-accounts
 # evolution-data-server is a hard RDEPEND of gnome-shell (calendar). These flags are what
 # keeps net-libs/webkit-gtk — a multi-hour, ~300 MB build — out of the native image.
 # NB: the flag is oauth-gtk3/oauth-gtk4 as of EDS 3.60 — plain "oauth" is no longer in IUSE,
@@ -100,12 +127,28 @@ app-dicts/myspell-en        l10n_en-US
 # console/graphical fallback and leave Qt out entirely.
 app-crypt/pinentry          gtk ncurses -qt6 -efl -emacs
 
-# xdg-utils[perl] gates dev-perl/Net-DBus + dev-perl/X11-Protocol, and Net-DBus drags XML-Twig
-# and the whole LWP/HTML perl stack behind it — ~48 packages. What it buys is the perl
+# xdg-utils drags dev-perl/Net-DBus + dev-perl/X11-Protocol, and Net-DBus brings XML-Twig and
+# the whole LWP/HTML perl stack behind it — ~37 packages. What it buys is the perl
 # xdg-screensaver implementation talking X11, which is useless in a Wayland-only session where
 # GNOME apps inhibit idle through portals. xdg-utils itself stays: it is a hard RDEPEND of
 # gnome-shell and gdm.
-x11-misc/xdg-utils          -perl
+#
+# -gnome is load-bearing and "-perl" is not the flag that controls this. In 1.2.1-r11 the guard
+# reads
+#     dbus? ( sys-apps/dbus  gnome? ( dev-perl/Net-DBus  dev-perl/X11-Protocol ) )
+#     perl? ( dev-perl/File-MimeInfo )
+# so "perl" gates only File-MimeInfo, while the ~37-package LWP/XML stack hangs off gnome —
+# and dbus, which this image needs. Keeping -perl is still right (File-MimeInfo is dead weight
+# here), but on its own it does not hold that stack out.
+#
+# Scope of the claim, deliberately narrow: the previous image did NOT ship these packages
+# (expected-packages.txt has dev-perl/Parse-Yapp and nothing else), so this is not a
+# long-standing leak. It surfaced on a from-scratch rebuild, where xdg-utils resolved to a
+# binhost binpkg built with gnome+dbus and its baked RDEPEND pulled Net-DBus in. -gnome makes
+# the exclusion deterministic instead of dependent on which binpkg the binhost happens to
+# serve. What it costs is xdg-utils' GNOME-specific detection path in xdg-open/xdg-screensaver;
+# xdg-open still resolves handlers through gio, and idle inhibition here goes through portals.
+x11-misc/xdg-utils          -perl -gnome
 
 # cairomm defaults to -X and depends on cairo[X=], which drags a second, X-less cairo binary
 # into a graph where mutter/gtk/pango all require cairo[X]. Match it to our cairo[X].
@@ -132,4 +175,22 @@ net-libs/ngtcp2             gnutls
 # for the OpenMP runtime, which portage satisfies by putting a full sys-devel/gcc in the
 # image — breaking plan/06's toolchain-free guarantee. The flag is profile-inherited, not
 # ours, and it only parallelizes BLAKE2bp hashing. Off.
+# The last two Qt entry points, and the reason dev-qt/{qtbase,qtsvg,qttranslations} were in the
+# image despite -qt6 on poppler and pinentry above. appstream[qt6] builds AppStreamQt (the
+# binding KDE Discover uses) and libportal[qt6] builds libportal-qt6 for Qt portal clients;
+# nothing in a GNOME-only image links either one. gnome-software and xdg-desktop-portal-gnome
+# consume the GLib bindings from these same two packages, which are unaffected. qtbase was
+# arriving fully loaded — USE="X cups gtk gui opengl sql sqlite vulkan wayland widgets ..." —
+# for zero consumers. libportal[-vala] for the same reason stage 50 deletes usr/share/vala:
+# .vapi files are build-time inputs.
+dev-libs/appstream          -qt6
+dev-libs/libportal          -qt6 -vala
+# ...and the package that actually kept dev-qt/qtbase in the image. The flag is "gui", not
+# "qt6": wpa_supplicant[gui] builds wpa_gui and RDEPENDs dev-qt/qtbase:6[gui,widgets] plus
+# dev-qt/qtsvg unconditionally, so disabling qt6 everywhere else changed nothing. (Same shape
+# as the "firmware" not "fwupd" and "oauth-gtk3" not "oauth" corrections above — a -qt6 that
+# silently masks nothing.) wpa_gui is a standalone Qt supplicant UI; NetworkManager owns the
+# network here and GNOME Settings is the UI, so nothing would ever launch it.
+net-wireless/wpa_supplicant -gui
+
 app-crypt/libb2             -openmp
