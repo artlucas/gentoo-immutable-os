@@ -116,11 +116,6 @@ media-libs/freetype         harfbuzz
 media-libs/libglvnd         X
 sys-libs/minizip-ng         compat
 
-# enchant/hunspell consumers (gnome-text-editor spellcheck) need a concrete regional
-# dictionary; plain L10N="en" (LOCALES_KEEP) doesn't satisfy myspell-en's
-# any-of(l10n_en-*) REQUIRED_USE.
-app-dicts/myspell-en        l10n_en-US
-
 # gnupg stays in @base for the sysupdate verify path (plan/03), but app-alternatives/gpg
 # pulls app-crypt/pinentry, whose qt6 flag drags dev-qt/qtbase + kde-frameworks/kwindowsystem
 # into a GNOME-only image. gcr already provides the GNOME pinentry; keep the GTK one as the

@@ -120,7 +120,7 @@ have firmware in linux-firmware but an immature userspace stack — out of scope
 | gnome-base/gnome-control-center + gnome-extra/gnome-system-monitor | control panel + task manager (control-center also absorbs printer setup, so there is no separate print manager) |
 | gnome-base/gnome-keyring | secrets store for NM/Wi-Fi creds and flatpak apps |
 | gnome-base/gdm (`WaylandEnable=true`) | login/autologin. Lock screen needs no extra package — it is built into gnome-shell |
-| gnome-extra/gnome-console, gnome-base/nautilus, app-arch/file-roller, app-editors/gnome-text-editor | the four native utilities: terminal, files, archives, text. Native (not Flatpak) because they need unrestricted host access |
+| gnome-extra/gnome-console, gnome-base/nautilus | the two native utilities: terminal and files. Native (not Flatpak) because they need unrestricted host access, and neither is published on Flathub. Archives and text used to sit here too — see "Dropped from the native set" below |
 | gnome-extra/gnome-software (`USE="flatpak -fwupd -malcontent"`) | GUI software center, **Flatpak backend only** — it cannot even offer native packages |
 | media-video/pipewire (`USE="sound-server pipewire-alsa"`) + media-video/wireplumber | audio/video routing (profile default) |
 | x11-base/xwayland | legacy X11 app compat inside the Wayland session |
@@ -133,7 +133,32 @@ against `/usr/lib/systemd/import-pubring.gpg`; it is a genuine runtime dependenc
 update path, listed in `@base`.
 
 Explicitly **absent** natively (Flatpak instead): browser, office, mail, media players, image
-viewers/editors, IDEs, games, chat.
+viewers/editors, IDEs, games, chat, **archive manager and text editor**.
+
+### Dropped from the native set
+
+`app-arch/file-roller` and `app-editors/gnome-text-editor` were in `@desktop` through 0.1.0 as
+two of "the four native utilities". Both are gone; the rule in "Strategy" is what settles it —
+they are application windows, not hardware, sessions or system services.
+
+- **file-roller** had *no* unique dependency tail: `app-arch/libarchive` is required by
+  flatpak, systemd, gvfs, samba and ostree, and `app-arch/gnome-autoar` by gnome-shell and
+  nautilus, so both stay either way. Its removal is ~0.7 MB, and nautilus keeps compressing
+  and extracting through gnome-autoar — what is lost is the file-roller Nautilus extension
+  and the formats libarchive does not cover (rar, 7z).
+- **gnome-text-editor** was the sole consumer of a 12-package tail:
+  `gui-libs/gtksourceview`, `app-text/libspelling`, `app-text/enchant`, `app-text/hunspell`,
+  `app-text/editorconfig-core-c`, and the seven `app-dicts/myspell-*` dictionaries that
+  hunspell PDEPENDs per `L10N` (`myspell-de` alone is ~10 MB compressed). Verified against the
+  target VDB: nothing else in the set references any of them. `app-editors/nano` stays —
+  it is held by `virtual/editor` ← `app-admin/sudo`, independent of this change.
+
+Neither is added to `FLATPAK_PREINSTALL`. `org.gnome.FileRoller` and `org.gnome.TextEditor`
+both run on `org.gnome.Platform`, which is **~1.07 GB installed** — preinstalling either would
+cost more `/var` than the entire native tail this removes from the read-only root, and `/var`
+is 4 GiB already carrying Firefox on the freedesktop runtime. They are one click away in GNOME
+Software instead. Note the Flathub text editor carries `filesystems: host`, so it has the same
+host access as the native build; file-roller is `filesystems: home` and does not.
 
 ## Flatpak layer
 

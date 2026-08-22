@@ -71,7 +71,7 @@ Secure Boot for a full trust chain.
 | Full-image (non-delta) updates | Simplicity + sysupdate stock behavior; roadmap #4 |
 | No hibernation (zram-only swap) | Avoids swap-partition sizing and resume-offset fragility on an immutable, repartition-on-first-boot design |
 | Baked `live` autologin user in v1 images | The image doubles as live media; real user management arrives with the installer |
-| Native GNOME apps limited to gnome-console/nautilus/file-roller/gnome-text-editor | Everything else Flatpak — the point of the distro; portals make it seamless |
+| Native GNOME apps limited to gnome-console/nautilus | Everything else Flatpak — the point of the distro; portals make it seamless. file-roller and gnome-text-editor were dropped after 0.1.0: nautilus already extracts/compresses via gnome-autoar, and the editor was the sole consumer of a 12-package tail ([03](03-package-set.md), "Dropped from the native set"). Neither is preinstalled as a Flatpak — `org.gnome.Platform` is ~1.07 GB in a 4 GiB `/var` — so a user who wants one installs it from GNOME Software |
 | Generic x86-64 (no AVX2 floor) | Budget Atom-class CPUs sold within the window lack AVX2 |
 | WebKitGTK excluded natively (`-gnome-online-accounts`, `evolution-data-server[-oauth]`) | Biggest single build/system-size win; browser ships as Flatpak Firefox |
 

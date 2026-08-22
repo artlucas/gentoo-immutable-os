@@ -12,8 +12,17 @@ sys-power/power-profiles-daemon
 net-wireless/gnome-bluetooth
 gnome-extra/gnome-system-monitor
 gui-apps/gnome-console
-app-arch/file-roller
-app-editors/gnome-text-editor
+# No archive manager and no text editor natively. file-roller had NO unique dependency tail
+# (app-arch/libarchive is held by flatpak/systemd/gvfs/samba/ostree and app-arch/gnome-autoar
+# by gnome-shell+nautilus, so both stay) and nautilus already compresses and extracts through
+# gnome-autoar, which covers the common case. gnome-text-editor was the sole consumer of a
+# 12-package tail — gtksourceview, libspelling, enchant, hunspell, editorconfig-core-c and the
+# seven app-dicts/myspell-* dictionaries that hunspell PDEPENDs per L10N (myspell-de alone is
+# ~10 MB compressed) — and app-editors/nano stays in the image for console editing.
+# Both are one click away in GNOME Software (org.gnome.FileRoller, org.gnome.TextEditor);
+# deliberately NOT in FLATPAK_PREINSTALL, because either would pull org.gnome.Platform
+# (~1.07 GB installed) into a 4 GiB /var that already carries Firefox on the freedesktop
+# runtime — a net loss over the ~50 MB of native tail this removes from the read-only root.
 gnome-extra/gnome-software
 sys-apps/xdg-desktop-portal-gnome
 sys-apps/xdg-desktop-portal-gtk

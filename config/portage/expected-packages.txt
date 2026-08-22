@@ -68,7 +68,6 @@ app-alternatives/gzip
 app-alternatives/tar
 app-arch/brotli
 app-arch/bzip2
-app-arch/file-roller
 app-arch/gnome-autoar
 app-arch/gzip
 app-arch/libarchive
@@ -86,14 +85,6 @@ app-crypt/libsecret
 app-crypt/mit-krb5
 app-crypt/p11-kit
 app-crypt/pinentry
-app-dicts/myspell-de
-app-dicts/myspell-en
-app-dicts/myspell-es
-app-dicts/myspell-fr
-app-dicts/myspell-it
-app-dicts/myspell-pt-br
-app-dicts/myspell-ru
-app-editors/gnome-text-editor
 app-editors/nano
 app-eselect/eselect-cdparanoia
 app-eselect/eselect-lib-bin-symlink
@@ -110,12 +101,8 @@ app-misc/mime-types
 app-misc/pax-utils
 app-misc/tinysparql
 app-shells/bash
-app-text/editorconfig-core-c
-app-text/enchant
-app-text/hunspell
 app-text/iso-codes
 app-text/libpaper
-app-text/libspelling
 app-text/poppler
 dev-cpp/cairomm
 dev-cpp/fast_float
@@ -256,7 +243,6 @@ gui-libs/egl-gbm
 gui-libs/egl-wayland
 gui-libs/egl-wayland2
 gui-libs/gtk
-gui-libs/gtksourceview
 gui-libs/libadwaita
 gui-libs/libpanel
 gui-libs/vte
