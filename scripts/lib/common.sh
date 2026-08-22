@@ -141,6 +141,55 @@ install_rootfs_overlay() {
   done < <(find "$src_root" -type f -print0)
 }
 
+# ---- branding / boot splash ------------------------------------------------------
+# The zoom factor SVG sources are rasterised at. Everything in config/branding is authored in
+# pixels at the 1920x1080 design baseline, and the plymouth theme divides by the same number
+# (ASSET_ZOOM in distro.script.in) — changing it in one place only silently resizes the splash.
+BRANDING_ZOOM=4
+
+# install_branding SRC_DIR THEME_DIR — build the plymouth theme into the target.
+#   *.svg / *.svg.in            → rasterised to THEME_DIR/<name>.png (templates rendered first)
+#   *.plymouth.in / *.script.in → rendered and rebranded through render_dest_name
+#   anything else (README, the wordmark generator) is ignored on purpose.
+# Only PNGs and the two theme files are installed: the SVG sources are build inputs and must
+# not end up in the image.
+install_branding() {
+  local src=$1 dst=$2
+  [[ -d $src ]] || die "branding source missing: $src"
+  require_cmds rsvg-convert
+  ensure_dir "$dst"
+  local f base name svg tmp=""
+  for f in "$src"/*; do
+    [[ -f $f ]] || continue
+    base="$(basename -- "$f")"
+    case "$base" in
+      *.svg|*.svg.in)
+        name="${base%.in}"; name="${name%.svg}"
+        svg="$f"
+        if [[ $f == *.in ]]; then
+          tmp="$(mktemp)"; render_template "$f" "$tmp"; svg="$tmp"
+        fi
+        rsvg-convert -z "$BRANDING_ZOOM" -o "$dst/$name.png" "$svg" \
+          || die "rsvg-convert failed on $base"
+        # rsvg-convert exits 0 on an SVG it could not draw (a missing font, say), so the
+        # size is the only evidence that anything was actually rendered.
+        [[ -s $dst/$name.png ]] || die "branding: $name.png is empty — did rsvg-convert find the font?"
+        chmod 0644 -- "$dst/$name.png"
+        # A plain `if`, not `[[ -n $tmp ]] && { ...; }`: under `set -e` the && form makes the
+        # whole function return 1 whenever the last file processed took the false branch, and
+        # stages would abort here having done all the work correctly.
+        if [[ -n $tmp ]]; then rm -f -- "$tmp"; tmp=""; fi
+        ;;
+      *.plymouth.in|*.script.in)
+        name="$(render_dest_name "$base")"
+        render_template "$f" "$dst/$name"
+        chmod 0644 -- "$dst/$name"
+        ;;
+    esac
+  done
+  return 0   # never let the last iteration's case status become the function's
+}
+
 # ---- GPT / image layout (pure math; unit-tested) ---------------------------------
 GPT_TYPE_ESP="C12A7328-F81F-11D2-BA4B-00A0C93EC93B"
 GPT_TYPE_ROOT_X64="4F68BC64-6ACB-4AA4-B891-DB7CD79ABF44"

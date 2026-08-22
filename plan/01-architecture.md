@@ -81,13 +81,21 @@ Built entirely in the builder (never on the target — the target has no dracut/
 
 1. `dracut --sysroot <target> --no-hostonly` produces a generic initrd containing:
    systemd, the etc-overlay module, systemd-repart + our repart.d, erofs/ext4/vfat drivers,
-   storage drivers (nvme, ahci, virtio, usb-storage, sd/mmc), keyboard, plymouth-less console.
+   storage drivers (nvme, ahci, virtio, usb-storage, sd/mmc), keyboard, and **plymouth** —
+   `plymouthd`, the script plugin, the DRM renderer and the `${DISTRO_ID}` theme, plus the DRM
+   kernel modules dracut's `drm` module pulls in behind it. That is what puts the boot splash
+   on screen before the root pivot rather than after it; the theme is built in stage 40 from
+   `config/branding/` and must exist before dracut runs.
    Early-KMS firmware is *not* packed into the initrd (kernel loads GPU firmware from
    `/usr/lib/firmware` post-switch-root; keeps the UKI small).
 2. `ukify build --linux=<vmlinuz> --initrd=<initrd> --cmdline="root=PARTLABEL=root_${VERSION} rootfstype=erofs ro nvidia-drm.modeset=1 quiet" --os-release=@<target>/etc/os-release --output=${DISTRO_ID}_${VERSION}.efi`
 
 Cmdline notes: `nvidia-drm.modeset=1` is required for NVIDIA Wayland; harmless without the GPU.
 Test builds append `console=ttyS0` (see [07-testing.md](07-testing.md)).
+The splash adds `splash plymouth.ignore-serial-consoles loglevel=3 rd.udev.log_level=3
+vt.global_cursor_default=0`. `plymouth.ignore-serial-consoles` is load-bearing, not cosmetic:
+without it plymouthd claims `ttyS0` as a text display and mirrors forwarded systemd status onto
+the serial log stage 70 scans for failure patterns.
 
 ### Automatic Boot Assessment (rollback)
 

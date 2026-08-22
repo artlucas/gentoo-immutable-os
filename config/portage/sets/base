@@ -18,6 +18,9 @@ sys-libs/pam
 sys-auth/pambase
 sys-apps/systemd
 sys-apps/dbus
+# Boot splash. In @base rather than @desktop because it runs from the initrd, long before any
+# desktop exists — and because the --console-only image is branded too.
+sys-boot/plymouth
 sys-auth/polkit
 sys-fs/e2fsprogs
 sys-fs/dosfstools

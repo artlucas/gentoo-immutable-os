@@ -1,0 +1,139 @@
+# @DISTRO_NAME@ boot splash — plymouth "script" plugin.
+#
+# Layout and motion are the design system's "Boot splash" template with Spinner option B
+# ("Layer pulse"): the logomark holds still and brightness travels up its three slabs, bottom
+# first. Nothing translates, which is why this is a curve evaluated per frame over three
+# stacked images rather than a baked frame sequence — three PNGs instead of ~35, and the same
+# animation at any resolution.
+#
+# Every asset is authored at the 1920x1080 design baseline and rasterised at ASSET_ZOOM by
+# stage 40, so one scale factor covers the whole layout.
+
+BASE_H     = 1080;
+ASSET_ZOOM = 4;
+MARK_BOX   = 132;      # the logomark's layout box (design: 132px square)
+GAP        = 34;       # logomark box -> wordmark
+PAD_X      = 40;
+PAD_Y      = 28;
+PERIOD     = 1.4;      # seconds per pulse cycle
+HZ         = 50;       # refresh function calls per second
+
+# refresh() advances its own clock by 1/HZ, so HZ has to be what plymouth actually does rather
+# than what it happens to default to. 50 IS the 22.02 default (FRAMES_PER_SECOND in the script
+# plugin), but stating it makes the cycle time exact instead of coincidental.
+Plymouth.SetRefreshRate(HZ);
+
+scale = Window.GetHeight() / BASE_H;
+if (scale < 0.6) scale = 0.6;
+if (scale > 4.0) scale = 4.0;
+
+# #0a0d11 — --surface-sunken, dark theme. Flat: both stops are the same colour.
+Window.SetBackgroundTopColor(0.039, 0.051, 0.067);
+Window.SetBackgroundBottomColor(0.039, 0.051, 0.067);
+
+# `local.` is not optional: script-plugin variables are global by default, so a bare name here
+# would be clobbered by the next call.
+fun load(name) {
+    local.img = Image(name);
+    return local.img.Scale(local.img.GetWidth()  * scale / ASSET_ZOOM,
+                           local.img.GetHeight() * scale / ASSET_ZOOM);
+}
+
+fun place(img, x, y) {
+    local.s = Sprite(img);
+    local.s.SetX(x);
+    local.s.SetY(y);
+    local.s.SetZ(1);
+    return local.s;
+}
+
+top_i  = load("slab-top.png");
+mid_i  = load("slab-mid.png");
+bot_i  = load("slab-bot.png");
+word_i = load("wordmark.png");
+
+cx = Window.GetX() + Window.GetWidth()  / 2;
+cy = Window.GetY() + Window.GetHeight() / 2;
+
+# The centred column is [132px logomark box] + [34px gap] + [46px wordmark line box]; the
+# status bar is absolutely positioned and does not take part in the centring.
+box_px  = MARK_BOX * scale;
+block_h = box_px + GAP * scale + word_i.GetHeight();
+block_y = cy - block_h / 2;
+
+mark_x = cx - top_i.GetWidth()  / 2;
+mark_y = block_y + (box_px - top_i.GetHeight()) / 2;
+slab_top = place(top_i, mark_x, mark_y);
+slab_mid = place(mid_i, mark_x, mark_y);
+slab_bot = place(bot_i, mark_x, mark_y);
+
+wordmark = place(word_i, cx - word_i.GetWidth() / 2, block_y + box_px + GAP * scale);
+
+# Status bar. Each field's asset is anchored to the screen edge it aligns to, so the surplus
+# transparent canvas always falls towards the centre and never shifts the text.
+left_i = load("status-left.png");
+bar_y  = Window.GetY() + Window.GetHeight() - PAD_Y * scale - left_i.GetHeight();
+status_left = place(left_i, Window.GetX() + PAD_X * scale, bar_y);
+
+# The ESC hint is a boot-time affordance; shutdown and reboot keep the mark and the left field.
+if (Plymouth.GetMode() == "boot") {
+    hint_i = load("status-right.png");
+    status_hint = place(hint_i,
+        Window.GetX() + Window.GetWidth() - PAD_X * scale - hint_i.GetWidth(), bar_y);
+}
+
+# ---- the pulse ---------------------------------------------------------------------------
+# CSS keyframes from Spinner.jsx: 0%,100% -> .2   22% -> 1   56% -> .2, easing ease-in-out.
+# smoothstep stands in for cubic-bezier(.42,0,.58,1); over these spans the two are visually
+# identical, and it costs no curve solver.
+fun smoothstep(u) {
+    if (u <= 0) return 0;
+    if (u >= 1) return 1;
+    return u * u * (3 - 2 * u);
+}
+
+fun pulse(p) {
+    if (p < 0.22) return 0.2 + 0.8 * smoothstep(p / 0.22);
+    if (p < 0.56) return 1.0 - 0.8 * smoothstep((p - 0.22) / 0.34);
+    return 0.2;
+}
+
+# Wrapping by subtraction rather than a modulo/Math.Int call: plymouth 22.02's script language
+# is the floor here, and this needs nothing from its Math library.
+t = 0;
+fun phase(offset) {
+    local.p = (t + offset) / PERIOD;
+    while (local.p >= 1) local.p = local.p - 1;
+    return local.p;
+}
+
+# Phase offsets are the CSS animation-delays negated: -0.32s means "already 0.32s in", so the
+# slab carrying the largest offset reaches the 22% peak first and the wave starts there.
+#
+# NB: these are the REVERSE of the delay-to-slab assignment in the design system's Spinner.jsx.
+# That file puts -0.32s on the topmost slab, which peaks first and sweeps the highlight
+# DOWNWARD — while its own header comment, its inline comment, Spinner.prompt.md and the
+# "Layer pulse" blurb in Spinner options.html all four say "brightness travels up the stack,
+# bottom to top". Four statements of intent against one line of code: the code is the typo.
+# Reproduced as intended, because at 130px the direction is obvious in a way it is not at 36px.
+fun refresh() {
+    t = t + 1 / HZ;
+    while (t >= PERIOD) t = t - PERIOD;
+    slab_bot.SetOpacity(pulse(phase(0.32)));   # lights first
+    slab_mid.SetOpacity(pulse(phase(0.16)));
+    slab_top.SetOpacity(pulse(phase(0.00)));   # lights last — the wave travels up
+}
+Plymouth.SetRefreshFunction(refresh);
+
+# gdm quits us with --retain-splash, so the last frame drawn is what the greeter fades in over.
+# Leave the mark fully lit rather than wherever the cycle happened to be.
+fun on_quit() {
+    slab_top.SetOpacity(1);
+    slab_mid.SetOpacity(1);
+    slab_bot.SetOpacity(1);
+}
+Plymouth.SetQuitFunction(on_quit);
+
+# No message/password/question handlers are registered on purpose: this image has no LUKS
+# prompt, and plymouth is built with -pango, so there is no text engine to render one with.
+# Adding full-disk encryption means turning pango back on first (plan/08).

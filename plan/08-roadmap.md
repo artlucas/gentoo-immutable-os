@@ -49,7 +49,6 @@ Secure Boot for a full trust chain.
 - **x86-64-v3 image variant** — measurable speedup on 2020+ big-core machines; second binhost
   + second channel; the generic image remains the compatibility floor.
 - **Fingerprint (fprintd), IPU6/MIPI camera stack (libcamera)** as ecosystems mature.
-- **Plymouth** flicker-free boot splash (currently: quiet console).
 - **ARM64** — the pipeline is arch-parameterizable in principle (crossdev or native arm64
   builder); explicitly out of scope until AMD64 is solid.
 
@@ -67,6 +66,8 @@ Secure Boot for a full trust chain.
 | Pascal (GTX 10-series) & older NVIDIA → nouveau fallback | `kernel-open` covers Turing+ only; pre-Turing machines fall outside the 5-year target. Revisit only if user demand appears (would require the legacy proprietary branch and a second driver variant) |
 | No 3-way `/etc` merge (overlay upper shadows vendor changes) | OSTree-grade merge machinery is not worth v1 complexity; `immos-update etc-diff` gives visibility |
 | No Secure Boot in v1 | Owner decision; documented "disable in firmware"; roadmap #2 |
+| Boot splash cannot render a passphrase prompt | `sys-boot/plymouth[-pango]`: all splash text is pre-rendered to PNG at build time, so no font ships in the image. Costs nothing today (no LUKS, no fsck prompt); adding full-disk encryption means turning `pango` back on first — it pulls no new packages, since pango/cairo/libpng are already there for GNOME |
+| Possible brief console flash between firmware logo and splash | `gentoo-kernel-bin` is a binary dist-kernel and `/usr/src` is pruned, so `CONFIG_FRAMEBUFFER_CONSOLE_DEFERRED_TAKEOVER` is whatever Gentoo ships and cannot be changed here. The same kernel has no simpledrm, so plymouth must wait for the real DRM driver before it can draw. Pre-empting the firmware logo entirely would need a `.splash` section in the UKI — deliberately not done in v1 |
 | UEFI-only, no BIOS | 5-year hardware window is UEFI-universal |
 | Full-image (non-delta) updates | Simplicity + sysupdate stock behavior; roadmap #4 |
 | No hibernation (zram-only swap) | Avoids swap-partition sizing and resume-offset fragility on an immutable, repartition-on-first-boot design |

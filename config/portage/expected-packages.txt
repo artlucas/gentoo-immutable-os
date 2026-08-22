@@ -390,6 +390,7 @@ sys-auth/pambase
 sys-auth/passwdqc
 sys-auth/polkit
 sys-block/parted
+sys-boot/plymouth
 sys-devel/gcc
 sys-devel/gcc-config
 sys-devel/gettext

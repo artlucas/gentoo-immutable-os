@@ -15,7 +15,12 @@ is_linux || die "stages run inside the builder container only"
 # ---- 1. file overlay ------------------------------------------------------------
 # Render variables available to templates (@NAME@ tokens):
 VERIFY="$([[ $UPDATE_VERIFY == 1 ]] && echo yes || echo no)"
+# The splash's bottom-left field, uppercased the way the design system's text-transform does it
+# ("Stable · v0.1.0 · amd64" -> "STABLE · V0.1.0 · AMD64"). Composed here rather than in the SVG
+# because both halves come from build.conf and neither is a plain @TOKEN@ substitution.
+SPLASH_STATUS_LEFT="$(printf '%s · V%s · AMD64' "$UPDATE_CHANNEL" "$VERSION" | tr '[:lower:]' '[:upper:]')"
 export DISTRO_ID DISTRO_NAME VERSION HOME_URL UPDATE_URL LIVE_USER VERIFY FLATPAK_PREINSTALL
+export UPDATE_CHANNEL SPLASH_STATUS_LEFT
 install_rootfs_overlay "$REPO/config/rootfs" "$TARGET"
 
 # permissions the generic overlay rules can't know:
@@ -162,6 +167,35 @@ chroot_target "$TARGET" "command -v update-mime-database >/dev/null && update-mi
 target_umount "$TARGET"
 trap - EXIT
 
+# ---- 2b. boot splash -----------------------------------------------------------------
+# Must run BEFORE dracut: dracut's plymouth module copies the theme out of $TARGET into the
+# initramfs, so a theme installed afterwards would exist on the root filesystem and be missing
+# from the initrd — i.e. no splash until the root pivot, which is most of the boot.
+THEME_DIR="$TARGET/usr/share/plymouth/themes/$DISTRO_ID"
+install_branding "$REPO/config/branding" "$THEME_DIR"
+# Both dracut and plymouthd resolve the default theme through this symlink. install_rootfs_overlay
+# copies regular files only, so it is made here — same reason as the resolv.conf link above.
+ln -sfn "$DISTRO_ID/$DISTRO_ID.plymouth" "$TARGET/usr/share/plymouth/themes/default.plymouth"
+# dracut's plymouth module (45plymouth) locates plymouth through its own helper and, if that
+# helper is not in the sysroot, its check() returns 1 and dracut SKIPS THE MODULE ENTIRELY —
+# no error, no warning, just an initrd with no splash in it. Fail here instead, where the
+# message can say what is wrong.
+PPI=""
+for c in /usr/libexec/plymouth /usr/lib64/plymouth /usr/lib/plymouth; do
+  [[ -x $TARGET$c/plymouth-populate-initrd ]] && { PPI="$c"; break; }
+done
+[[ -n $PPI ]] \
+  || die "plymouth-populate-initrd not found under $TARGET/{usr/libexec,usr/lib64,usr/lib}/plymouth
+  — dracut's plymouth module would silently install nothing and the image would boot bare."
+PLYMOUTH_PLUGIN_DIR=""
+for c in /usr/lib64/plymouth /usr/lib/plymouth; do
+  [[ -f $TARGET$c/script.so ]] && { PLYMOUTH_PLUGIN_DIR="$c"; break; }
+done
+[[ -n $PLYMOUTH_PLUGIN_DIR ]] \
+  || die "plymouth's script plugin not found under $TARGET/{usr/lib64,usr/lib}/plymouth
+  — the theme names ModuleName=script and plymouthd would have nothing to interpret it with."
+log "boot splash theme installed at $THEME_DIR (dracut helper: $PPI)"
+
 # ---- 3. initrd + UKI (built HERE, in the builder — the target has no dracut) --------
 KVER="$(basename -- "$(find "$TARGET/usr/lib/modules" -mindepth 1 -maxdepth 1 -type d | head -n1)")"
 [[ -n $KVER ]] || die "cannot determine kernel version from target modules"
@@ -191,9 +225,39 @@ ensure_dir "$DRACUT_LIB"
 cp -a /usr/lib/dracut/. "$DRACUT_LIB/"
 
 INITRD="$WORK/initrd-$VERSION.img"
+# dracut's 45plymouth module does NOT honour --sysroot for its payload. It hands the work to
+# plymouth-populate-initrd without setting PLYMOUTH_SYSROOT, so the helper reads the BUILDER's
+# filesystem — which has no plymouth at all — and quietly installs nothing but the two binaries
+# dracut itself copies. That produced an initrd with plymouthd in it, an EMPTY theme directory,
+# and no script plugin or DRM renderer: a splash that could never draw. module-setup.sh runs
+# the helper with stderr sent to /dev/null, so there was not one word of warning.
+#
+# The helper documents these variables for exactly this case ("For running on a
+# (cross-compiled) sysroot"). PLYMOUTH_PLUGIN_PATH has to be given too: its default is
+# "$(plymouth --get-splash-plugin-path)", which runs the builder's absent plymouth. Same-arch
+# here, so the default ldd is fine — inst_library copies from under the sysroot regardless.
+export PLYMOUTH_SYSROOT="$TARGET"
+export PLYMOUTH_THEME_NAME="$DISTRO_ID"
+export PLYMOUTH_PLUGIN_PATH="$PLYMOUTH_PLUGIN_DIR"
+
+# ...and one thing PLYMOUTH_SYSROOT does NOT fix. plymouth-populate-initrd resolves the splash
+# plugins' shared libraries with a plain `ldd`, which — unlike dracut's installer — is not
+# sysroot-aware: run from the builder, which has no plymouth on it, it cannot resolve
+# libply-splash-graphics.so.5 and drops it without a word. script.so links against exactly that
+# one library, so plymouthd's dlopen() of the theme's plugin fails and plymouth falls back to
+# its grey text splash — every boot, no error, nothing in the journal. The other libply
+# libraries survive only incidentally, because plymouthd itself links them and dracut installs
+# plymouthd's dependencies correctly. dracut's --install DOES resolve against the sysroot, so
+# name them there instead of trusting the helper.
+PLYMOUTH_LIBS=()
+for l in "$TARGET"/usr/lib64/libply*.so* "$TARGET"/usr/lib/libply*.so*; do
+  [[ -e $l ]] && PLYMOUTH_LIBS+=("${l#"$TARGET"}")
+done
+(( ${#PLYMOUTH_LIBS[@]} )) || die "no libply* libraries in $TARGET — is sys-boot/plymouth installed?"
 dracut --force --no-hostonly --reproducible \
   --sysroot "$TARGET" --kver "$KVER" \
-  --add "systemd etc-overlay systemd-repart" \
+  --add "systemd etc-overlay systemd-repart plymouth" \
+  --install "${PLYMOUTH_LIBS[*]}" \
   --omit "network network-legacy nfs iscsi lvm mdraid multipath dmraid cifs brltty" \
   --early-microcode \
   "$INITRD"
@@ -211,7 +275,19 @@ fi
 # "console=ttyS0 console=tty0" that was tty0, so everything written to /dev/console — including
 # the IMAGE-TEST marker from the self-test unit — went to the graphical console while stage 70
 # watched the serial port and timed out. tty0 stays listed so the screen still shows the boot.
-CMDLINE="root=PARTLABEL=$ROOT_PARTLABEL rootfstype=erofs ro nvidia-drm.modeset=1 console=tty0 console=ttyS0 quiet"
+#
+# Splash flags, and why each is here:
+#   splash                          show the graphical theme rather than plymouth's details view
+#   plymouth.ignore-serial-consoles LOAD-BEARING. console=ttyS0 above would otherwise make
+#                                   plymouthd claim the serial port as a text display and mirror
+#                                   forwarded systemd status onto it — straight into the log
+#                                   stage 70 scans for "Failed to mount" and friends.
+#   loglevel / rd.udev.log_level    keep stray printk from punching through the splash. Safe for
+#                                   stage 70: "Kernel panic" is level 0 and always prints, and
+#                                   both the IMAGE-TEST marker and systemd's own messages are
+#                                   userspace writes to /dev/console, unaffected by printk level.
+#   vt.global_cursor_default=0      no blinking text cursor over the splash
+CMDLINE="root=PARTLABEL=$ROOT_PARTLABEL rootfstype=erofs ro nvidia-drm.modeset=1 console=tty0 console=ttyS0 quiet splash plymouth.ignore-serial-consoles loglevel=3 rd.udev.log_level=3 vt.global_cursor_default=0"
 UKIFY=ukify; [[ -x /usr/lib/systemd/ukify ]] && UKIFY=/usr/lib/systemd/ukify
 ensure_dir "$UKI_DIR"
 "$UKIFY" build \
@@ -225,6 +301,53 @@ ensure_dir "$UKI_DIR"
 grep -q "IMAGE_VERSION=$VERSION" "$TARGET/etc/os-release" || die "verify: os-release version mismatch"
 grep -q "ID=$DISTRO_ID" "$TARGET/etc/os-release"          || die "verify: os-release ID mismatch"
 [[ -s $UKI_DIR/$UKI_NAME ]]                               || die "verify: UKI missing/empty"
+
+# Boot splash. Every piece is checked because the splash is invisible to every automated test
+# we have: stage 70 reads a serial port, so an image that boots to a black screen passes it.
+[[ -f $THEME_DIR/$DISTRO_ID.script ]]   || die "verify: splash theme script missing"
+[[ -f $THEME_DIR/$DISTRO_ID.plymouth ]] || die "verify: splash theme manifest missing"
+for a in slab-top slab-mid slab-bot wordmark status-left status-right; do
+  [[ -s $THEME_DIR/$a.png ]] || die "verify: splash asset $a.png missing or empty"
+done
+[[ -L $TARGET/usr/share/plymouth/themes/default.plymouth ]] \
+  || die "verify: default.plymouth symlink missing — dracut and plymouthd both resolve the theme through it"
+[[ -x $TARGET/usr/sbin/plymouthd || -x $TARGET/usr/bin/plymouthd ]] \
+  || die "verify: plymouthd missing from target (is sys-boot/plymouth in @base?)"
+# ...and it has to be IN THE INITRD, not merely in the target. dracut --sysroot can report
+# success while silently installing nothing — that is the trap documented at the lend/borrow
+# dance above, and it would show up only as a splash that never appears before the root pivot.
+if command -v lsinitrd >/dev/null 2>&1; then
+  # Listed ONCE into a variable, deliberately. "lsinitrd ... | grep -q" looks obvious and is
+  # wrong here: grep -q exits at the first match, lsinitrd dies of SIGPIPE, and this script's
+  # `set -o pipefail` reports the pipeline as failed (141) even though the pattern WAS found.
+  # That false negative is what failed the first build with the payload sitting in the initrd.
+  INITRD_LIST="$(lsinitrd "$INITRD" 2>/dev/null || true)"
+  has() { grep -q -- "$1" <<<"$INITRD_LIST"; }
+  has 'plymouthd$' \
+    || die "verify: initrd carries no plymouthd — the dracut plymouth module did not install"
+  # The theme and the plugin that interprets it come from plymouth-populate-initrd, which is
+  # the half that silently reads the wrong filesystem when PLYMOUTH_SYSROOT is unset. Assert
+  # them individually: "plymouthd is present" says nothing about whether it can draw.
+  has "themes/$DISTRO_ID/$DISTRO_ID.script" \
+    || die "verify: initrd has plymouthd but not the $DISTRO_ID theme (PLYMOUTH_SYSROOT wrong?)"
+  has 'plymouth/script.so' \
+    || die "verify: initrd has the theme but not script.so — nothing would interpret it"
+  has 'renderers/drm.so' \
+    || die "verify: initrd has no DRM renderer — the splash would fall back to text"
+  # Presence is not enough: a plugin whose libraries are missing dlopen()s to nothing and
+  # plymouth falls back silently. Check what each one actually links against.
+  for so in "$PLYMOUTH_PLUGIN_DIR/script.so" "$PLYMOUTH_PLUGIN_DIR/renderers/drm.so"; do
+    while read -r lib; do
+      [[ -z $lib ]] && continue
+      has "$lib" || die "verify: $so needs $lib, which is not in the initrd — plymouth would dlopen() it, fail, and silently fall back to the text splash"
+    done < <(objdump -p "$TARGET$so" 2>/dev/null | awk '/NEEDED/{print $2}')
+  done
+  for a in slab-top slab-mid slab-bot wordmark status-left status-right; do
+    has "themes/$DISTRO_ID/$a.png" || die "verify: initrd theme is missing $a.png"
+  done
+else
+  warn "lsinitrd not available — initrd splash contents unverified"
+fi
 [[ -f $TARGET/usr/lib/sysupdate.d/50-rootfs.transfer ]]   || die "verify: sysupdate transfer missing"
 [[ -L $TARGET/home ]]                                     || die "verify: /home symlink missing"
 

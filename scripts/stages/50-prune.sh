@@ -307,6 +307,21 @@ compgen -G "$T/usr/lib/systemd/system/systemd-networkd*" >/dev/null \
 # machine that boots with no network.
 [[ -f $T/usr/lib/systemd/network/99-default.link ]] \
   || violation "/usr/lib/systemd/network/99-default.link removed — udev link policy is not networkd's, the prune cut too deep"
+# The boot splash, in full. None of this is reachable by any automated test we have — stage 70
+# reads a serial port, so an image whose splash was pruned to nothing boots to a black screen
+# and still reports green. The theme, the plugin that interprets it and the renderer that draws
+# it each fail differently and each fail silently.
+[[ -f $T/usr/share/plymouth/themes/$DISTRO_ID/$DISTRO_ID.script ]] \
+  || violation "plymouth theme script missing after prune"
+[[ -L $T/usr/share/plymouth/themes/default.plymouth ]] \
+  || violation "default.plymouth symlink missing after prune"
+compgen -G "$T/usr/lib64/plymouth/script.so" >/dev/null \
+  || compgen -G "$T/usr/lib/plymouth/script.so" >/dev/null \
+  || violation "plymouth script plugin missing after prune — the theme cannot be interpreted"
+compgen -G "$T/usr/lib64/plymouth/renderers/drm.so" >/dev/null \
+  || compgen -G "$T/usr/lib/plymouth/renderers/drm.so" >/dev/null \
+  || violation "plymouth DRM renderer missing after prune — the splash would fall back to text"
+
 # NetworkManager itself is the whole point of removing networkd; assert it outlived it.
 compgen -G "$T/usr/sbin/NetworkManager" >/dev/null \
   || compgen -G "$T/usr/bin/NetworkManager" >/dev/null \

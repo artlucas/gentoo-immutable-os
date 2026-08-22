@@ -14,6 +14,11 @@ RUN emerge-webrsync
 #  - erofs/vfat/ext4 + mtools: loopless image assembly (stage 60)
 #  - dracut: initrd for the UKI (stage 40)
 #  - qemu + OVMF: boot tests (stage 70)
+#  - librsvg (rsvg-convert) + media-fonts/ibm-plex: rasterise the boot-splash SVGs in
+#    config/branding into the plymouth theme (stage 40). Both are BUILD tools and never enter
+#    the image — that is the whole point: the splash ships as PNGs so no font has to. They live
+#    here rather than in config/portage/sets/buildhost because that set is emerged in stage 30,
+#    and every stage runs in its own --rm container, so a stage-30 install is gone by stage 40.
 #  - gnupg + sec-keys/openpgp-keys-gentoo-release + getuto: trust store for binhost
 #    signature verification. Portage's depgraph always considers the builder's own
 #    "/" bintree (real /etc/portage config) alongside --root=$TARGET's, even for a
@@ -42,7 +47,8 @@ RUN echo 'app-emulation/qemu qemu_softmmu_targets_x86_64 -qemu_softmmu_targets_i
  && echo 'x11-libs/libdrm video_cards_radeon' >> /etc/portage/package.use/builder \
  && echo 'media-libs/mesa vulkan vaapi wayland' >> /etc/portage/package.use/builder \
  && echo 'gnome-extra/gnome-software flatpak -fwupd -malcontent' >> /etc/portage/package.use/builder \
- && echo 'gnome-base/gdm wayland -xdmcp -fprint -plymouth' >> /etc/portage/package.use/builder \
+ && echo 'gnome-base/gdm wayland -xdmcp -fprint plymouth' >> /etc/portage/package.use/builder \
+ && echo 'gnome-base/librsvg tools' >> /etc/portage/package.use/builder \
  && echo 'gnome-base/gnome-control-center -gnome-online-accounts' >> /etc/portage/package.use/builder \
  && echo 'gnome-extra/evolution-data-server -oauth -kerberos -ldap -weather -vala' >> /etc/portage/package.use/builder \
  && echo 'x11-wm/mutter wayland X screencast' >> /etc/portage/package.use/builder \
@@ -74,6 +80,8 @@ RUN echo 'app-emulation/qemu qemu_softmmu_targets_x86_64 -qemu_softmmu_targets_i
       app-crypt/gnupg \
       sec-keys/openpgp-keys-gentoo-release \
       dev-util/shellcheck-bin \
+      gnome-base/librsvg \
+      media-fonts/ibm-plex \
  && emerge --quiet-build=y --oneshot sys-apps/systemd app-text/xmlto \
  && GETUTO_EXTERNAL_REFRESH=0 getuto
 

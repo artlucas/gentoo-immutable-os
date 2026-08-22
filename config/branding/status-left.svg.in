@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="16" viewBox="0 0 400 16">
+  <text x="0" y="12" text-anchor="start"
+        font-family="IBM Plex Mono, monospace" font-size="11" letter-spacing="0.88"
+        fill="#66707f">@SPLASH_STATUS_LEFT@</text>
+</svg>

@@ -41,6 +41,7 @@ inside the session.**
 | systemd-resolved (part of sys-apps/systemd; **enabled by preset**, `dns=systemd-resolved` in NM) | name resolution — see "DNS" below |
 | app-admin/sudo, net-misc/openssh (installed, **disabled by preset**) | admin & debug access |
 | sys-apps/zram-generator | compressed swap, no swap partition |
+| **sys-boot/plymouth** (`USE="drm udev -pango -freetype -gtk"`) | boot splash. In @base, not @desktop: it runs from the initrd long before a desktop exists, and the `--console-only` image is branded too. Every glyph and shape is a PNG rasterised at build time from `config/branding/`, so it needs no text engine — `-pango`/`-freetype` drop the label and prompt renderers, `-gtk` the X11 renderer that a UKI/DRM boot can never use. Stable amd64 is 22.02.122-r4; 24.004.60 is `~amd64` **and** package-masked upstream, so no keyword exception belongs here. Two build-only companions, `gnome-base/librsvg[tools]` (`rsvg-convert`) and `media-fonts/ibm-plex`, live in `builder/Dockerfile` and never enter the image |
 | sys-apps/flatpak, sys-apps/xdg-desktop-portal, sys-apps/xdg-desktop-portal-gnome | the application layer |
 | app-arch/zstd, app-arch/xz-utils | decompression for sysupdate payloads |
 | net-misc/curl, ca-certificates | update fetch + TLS trust |

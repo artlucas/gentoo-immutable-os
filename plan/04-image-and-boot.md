@@ -44,7 +44,8 @@ GPT type UUIDs matter: root partitions use the discoverable-partitions **root (x
 and var uses the **var** type, so systemd tooling (repart, gpt-auto for var fallback,
 sysupdate `MatchPartitionType=root`) recognizes them.
 
-Default sizes (build.conf): ESP 1 GiB (2 UKIs ≈ 2×150 MiB + slack), root slots 6 GiB each,
+Default sizes (build.conf): ESP 1 GiB (2 UKIs ≈ 2×250 MiB + slack — the boot splash pulled the
+DRM modules into the initrd and took the UKI from ~105 MiB to ~242 MiB), root slots 6 GiB each,
 var 4 GiB initial → ~17 GiB raw image, grows on first boot.
 
 ## Boot media usage
@@ -102,6 +103,36 @@ ANSI_COLOR=...  HOME_URL=...  BUG_REPORT_URL=...
 `IMAGE_ID`/`IMAGE_VERSION` are load-bearing: `systemd-sysupdate` uses them to know what's
 installed; `ukify --os-release` stamps the same file into the UKI so systemd-boot shows a
 proper menu title.
+
+## Boot splash
+
+From the first DRM device to GDM's greeter the screen shows the Immos splash — the pulsing
+logomark on `#0a0d11`, the wordmark, and a `<channel> · V<version> · AMD64` status line — drawn
+over whatever the firmware left on screen. ESC switches to the boot log.
+
+- **Theme:** plymouth's `script` plugin. Sources live in `config/branding/` as SVG (text, so the
+  suite's CR-byte scan and `.gitattributes` stay happy); stage 40 rasterises them with
+  `rsvg-convert` into `/usr/share/plymouth/themes/${ID}/` **before** dracut runs, because
+  dracut's `45plymouth` module copies the theme out of the target into the initrd.
+- **Cmdline additions:** see [01](01-architecture.md). `plymouth.ignore-serial-consoles` is the
+  one that matters for CI.
+- **Hand-off:** `gdm[plymouth]` conflicts with `plymouth-quit.service` and quits the splash with
+  `--retain-splash` once the greeter has painted, so there is no black frame. On `--console-only`
+  images a `multi-user.target` drop-in does the teardown instead.
+- **UKI size:** the plymouth dracut module depends on dracut's `drm` module, so the initrd now
+  carries the DRM kernel modules — the UKI went from ~105 MiB to ~242 MiB. Two of those is
+  484 MiB of the 1 GiB ESP, which fits with room, but it is now the dominant ESP consumer.
+- **dracut's `45plymouth` module is not sysroot-clean**, and both halves of that fail silently.
+  It hands its payload to `plymouth-populate-initrd` without setting `PLYMOUTH_SYSROOT`, and
+  that helper resolves the splash plugins' libraries with a non-sysroot-aware `ldd`. Stage 40
+  therefore sets `PLYMOUTH_SYSROOT`/`PLYMOUTH_THEME_NAME`/`PLYMOUTH_PLUGIN_PATH` itself and
+  passes the `libply*` libraries to dracut's own `--install`. Without the first, the initrd gets
+  an empty theme directory and no plugins; without the second, `script.so` is present but
+  `libply-splash-graphics.so.5` is not, `dlopen` fails, and plymouth falls back to a grey text
+  splash with nothing logged anywhere. Stage 40 asserts both, including every `NEEDED` library
+  of `script.so` and `drm.so`.
+- **No `.splash` section in the UKI.** Replacing the firmware logo at the bootloader stage was
+  considered and deliberately not done in v1 — see [08](08-roadmap.md).
 
 ## fstab (shipped in image, immutable lower)
 

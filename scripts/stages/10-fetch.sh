@@ -15,7 +15,7 @@ is_linux || die "stages run inside the builder container only"
 # ---- tool preflight (everything any later stage shells out to) ---------------
 require_cmds emerge emerge-webrsync eselect \
   mkfs.erofs mkfs.vfat mkfs.ext4 mtools mcopy mmd \
-  sfdisk dd truncate zstd rsync dracut gpg \
+  sfdisk dd truncate zstd rsync dracut gpg rsvg-convert objdump \
   qemu-system-x86_64 sha256sum
 [[ -x /usr/lib/systemd/ukify ]] || command -v ukify >/dev/null 2>&1 \
   || die "ukify not found (builder systemd must be built with USE=ukify)"
