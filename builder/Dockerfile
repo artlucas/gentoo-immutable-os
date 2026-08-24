@@ -10,6 +10,33 @@ FROM ${BASE}
 # Stage 10 re-verifies/moves the tree to the SNAPSHOT_DATE pin at run time.
 RUN emerge-webrsync
 
+# Binary packages for the BUILDER's own "/". This is the builder only — the target's binhost
+# is configured separately in config/portage/make.conf.in and is not affected by anything here.
+#
+# The stage3 base already ships /etc/portage/binrepos.conf/gentoo.conf pointing at the official
+# binhost with verify-signature = true, and already has sec-keys/openpgp-keys-gentoo-release
+# installed. The one thing it does not have is FEATURES=getbinpkg — so every package in the
+# emerge below was compiled from source, ~98 of them, about an hour of wall clock on any change
+# to this file. The tools here (qemu, dracut, systemd, librsvg, shellcheck) are stock packages
+# with no image-specific requirements; there is no reason to build them.
+#
+# getuto MUST run BEFORE that emerge, not after. verify-signature = true makes portage check
+# binpkg signatures against the trust store in /etc/portage/gnupg, and getuto is what creates
+# that store from the installed release keys. Without it portage cannot verify anything the
+# binhost serves and quietly falls back to building from source — the failure mode is a slow
+# build, not an error, which is exactly how this would regress unnoticed.
+#
+# The URI comes from BINHOST_URI in config/build.conf (build.sh passes it as a build-arg), so
+# the builder and the target resolve the same binhost and a local mirror only has to be set in
+# one place. Packages whose USE this image overrides below (mesa[vulkan], polkit[gtk], the
+# qemu target list, ...) still build from source: the binhost's copies were built against the
+# default profile's USE and portage correctly refuses a mismatched binpkg.
+ARG BINHOST=https://distfiles.gentoo.org/releases/amd64/binpackages/23.0/x86-64/
+RUN printf 'FEATURES="${FEATURES} getbinpkg"\n' >> /etc/portage/make.conf \
+ && printf '[gentoo]\npriority = 1\nsync-uri = %s\nlocation = /var/cache/binhost/gentoo\nverify-signature = true\n' \
+      "$BINHOST" > /etc/portage/binrepos.conf/gentoo.conf \
+ && GETUTO_EXTERNAL_REFRESH=0 getuto
+
 # Host-side tools (never enter the target):
 #  - erofs/vfat/ext4 + mtools: loopless image assembly (stage 60)
 #  - dracut: initrd for the UKI (stage 40)
@@ -67,7 +94,7 @@ RUN echo 'app-emulation/qemu qemu_softmmu_targets_x86_64 -qemu_softmmu_targets_i
  && echo 'media-libs/freetype harfbuzz' >> /etc/portage/package.use/builder \
  && echo 'media-libs/libglvnd X' >> /etc/portage/package.use/builder \
  && echo 'sys-libs/minizip-ng compat' >> /etc/portage/package.use/builder \
- && emerge --quiet-build=y --noreplace \
+ && emerge --quiet-build=y --noreplace --usepkg \
       sys-fs/erofs-utils \
       sys-fs/dosfstools \
       sys-fs/mtools \
@@ -82,7 +109,7 @@ RUN echo 'app-emulation/qemu qemu_softmmu_targets_x86_64 -qemu_softmmu_targets_i
       dev-util/shellcheck-bin \
       gnome-base/librsvg \
       media-fonts/ibm-plex \
- && emerge --quiet-build=y --oneshot sys-apps/systemd app-text/xmlto \
+ && emerge --quiet-build=y --oneshot --usepkg sys-apps/systemd app-text/xmlto \
  && GETUTO_EXTERNAL_REFRESH=0 getuto
 
 # Stages are bind-mounted at /repo and invoked explicitly with bash (the repo may be

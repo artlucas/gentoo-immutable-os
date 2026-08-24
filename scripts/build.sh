@@ -106,7 +106,10 @@ if [[ $RUNTIME != none ]]; then
   base="$BUILDER_IMAGE"
   [[ -n $BUILDER_DIGEST ]] && base="${BUILDER_IMAGE%%:*}@${BUILDER_DIGEST}"
   [[ -z $BUILDER_DIGEST ]] && warn "BUILDER_DIGEST is empty — unpinned base image (dev builds only)"
-  run "$RUNTIME" build -t "$BUILDER_TAG" --build-arg "BASE=$base" "$REPO_ROOT/builder"
+  # BINHOST is the builder's OWN binhost (it emerges its tools from binpkgs rather than
+  # compiling them); the target's comes from the same key via config/portage/make.conf.in.
+  run "$RUNTIME" build -t "$BUILDER_TAG" \
+      --build-arg "BASE=$base" --build-arg "BINHOST=$BINHOST_URI" "$REPO_ROOT/builder"
 fi
 
 # ---- dispatch ------------------------------------------------------------------------

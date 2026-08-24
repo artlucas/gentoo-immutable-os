@@ -69,6 +69,21 @@ immos/
 - The Portage tree inside the builder is synced to the pinned snapshot
   (`emerge-webrsync` against `SNAPSHOT_DATE`) during image build, so the builder image itself
   is reproducible and cacheable.
+- **Those tools are installed from the Gentoo binhost, not compiled.** The stage3 base already
+  ships `/etc/portage/binrepos.conf/gentoo.conf` (official binhost, `verify-signature = true`)
+  and `sec-keys/openpgp-keys-gentoo-release`; the Dockerfile adds `FEATURES=getbinpkg`, points
+  the repo at `BINHOST_URI` from `build.conf` (passed as a `--build-arg` by `build.sh`, so
+  builder and target share one binhost setting), and emerges with `--usepkg`. This is the
+  builder's own `/` only — the target's binhost is configured independently in
+  `config/portage/make.conf.in`.
+  - `getuto` runs **before** that emerge. With `verify-signature = true`, portage checks binpkg
+    signatures against the trust store in `/etc/portage/gnupg`, and `getuto` is what builds that
+    store. If it runs afterwards (as it originally did), portage can verify nothing the binhost
+    serves and falls back to compiling — a slow build, not an error, so the regression is silent.
+  - Packages whose USE this image overrides (`mesa[vulkan]`, `polkit[gtk]`, the qemu target
+    list, …) still build from source: the binhost's copies were built against the default
+    profile's USE and portage correctly refuses a mismatched binpkg. Before this change the
+    figure was ~98 packages compiled on every Dockerfile edit, roughly an hour of wall clock.
 
 `scripts/build.sh` (host wrapper) runs it as:
 
@@ -111,7 +126,10 @@ Verifies the builder's pinned state and fetches what later stages need.
 **Verify:** snapshot timestamp file matches pin; distfiles fetch exit 0.
 
 ### 20-builder-setup
-**Does:** write builder `make.conf` (binhost: `FEATURES="getbinpkg buildpkg"` pointing at
+**Does:** write the **target's** `make.conf` into `$WORK/config` — this is the `PORTAGE_CONFIGROOT`
+stage 30 emerges the target with, *not* the builder's own `/etc/portage/make.conf` (the builder's
+binhost is set up in the Dockerfile; see "Builder container" above) — (binhost:
+`FEATURES="getbinpkg buildpkg"` pointing at
 `https://distfiles.gentoo.org/releases/amd64/binpackages/23.0/x86-64/` — generic x86-64,
 **not** x86-64-v3, since budget Goldmont-Plus-class CPUs sold within the 5-year window lack
 AVX2); eselect profile `default/linux/amd64/23.0/desktop/gnome/systemd`; local binpkg cache
