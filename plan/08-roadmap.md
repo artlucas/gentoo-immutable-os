@@ -46,8 +46,10 @@ Secure Boot for a full trust chain.
 ### 5. Hardware & platform breadth
 - **fwupd** — UEFI capsule + device firmware updates; needs an ESP-write policy and
   `esp` mount coordination with sysupdate; straightforward addition to @hardware.
-- **x86-64-v3 image variant** — measurable speedup on 2020+ big-core machines; second binhost
-  + second channel; the generic image remains the compatibility floor.
+- **x86-64-v3 image variant** — measurable speedup on 2020+ big-core machines; a second
+  `COMMON_FLAGS`, its own binpkg cache (the image compiles what it ships, so the two variants
+  cannot share one) and its own update channel; the generic image remains the compatibility
+  floor.
 - **Fingerprint (fprintd), IPU6/MIPI camera stack (libcamera)** as ecosystems mature.
 - **ARM64** — the pipeline is arch-parameterizable in principle (crossdev or native arm64
   builder); explicitly out of scope until AMD64 is solid.

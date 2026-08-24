@@ -322,6 +322,41 @@ mirror_target_pkg_config() {
   done
 }
 
+# prune_binhost_binpkgs PKGDIR — delete the binary packages the official binhost served from
+# the target's binpkg cache, keep the ones this pipeline built, print how many went.
+#
+# The image is built from source or from this pipeline's own earlier builds: the target
+# make.conf sets neither getbinpkg nor PORTAGE_BINHOST. But PKGDIR lives in the /cache volume,
+# which outlives that rule and predates it, and --usepkg cannot tell where a binpkg came from
+# — a binhost copy downloaded by an older build merges exactly like a locally built one. So
+# without this sweep the policy holds for the download and not for the image.
+#
+# Provenance is readable off the package: the Gentoo binhost signs, this pipeline does not
+# (FEATURES has no binpkg-signing), so a gpkg carrying *.sig members is one of theirs. Only
+# gpkg is examined, because a signed binpkg only exists in that format — portage sets
+# gpkg_only whenever a binrepo requires signature verification (_populate_remote in
+# portage/dbapi/bintree.py), so a .tbz2 cannot have come from the verified binhost.
+#
+# A setup that signs its OWN binpkgs (FEATURES=binpkg-signing) would read as binhost-built
+# here and lose its cache. That is not this pipeline; signing local builds is the change that
+# has to revisit this.
+prune_binhost_binpkgs() {
+  local dir=${1:?prune_binhost_binpkgs: PKGDIR required} p listing n=0
+  [[ -d $dir ]] || { printf '0'; return 0; }
+  while IFS= read -r -d '' p; do
+    # tar into a variable rather than `tar -tf "$p" | grep -q`: grep exits at its first match,
+    # tar dies of SIGPIPE, and under pipefail the pipeline then reports failure — i.e. a
+    # signed package would read as unsigned, which is the one answer that must not be wrong.
+    listing="$(tar -tf "$p" 2>/dev/null)" || continue   # unreadable: not ours to delete
+    grep -q '\.sig$' <<<"$listing" || continue
+    rm -f -- "$p"
+    n=$((n + 1))
+  done < <(find "$dir" -type f -name '*.gpkg.tar' -print0)
+  # The index still lists what was just deleted; portage rebuilds it on the next populate.
+  if (( n > 0 )); then rm -f -- "$dir/Packages" "$dir/Packages.gz"; fi
+  printf '%s' "$n"
+}
+
 # ---- chroot into the target (Linux/container only) ----------------------------------
 _TARGET_MOUNTS=(proc sys dev dev/pts run)
 

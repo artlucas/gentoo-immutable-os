@@ -87,4 +87,41 @@ h_d="$(STAGE_INPUTS_EXTRA=x inputs_hash "$TMP/h1")"
 h_e="$(STAGE_INPUTS_EXTRA=y inputs_hash "$TMP/h1")"
 assert_true "hash changes with extra input" test "$h_d" != "$h_e"
 
+# ---- prune_binhost_binpkgs -------------------------------------------------------------------
+# A binhost gpkg is a tar with *.sig members alongside the payload; one this pipeline built has
+# no signature. Both shapes are fabricated here — the point of the function is telling them
+# apart without a portage, so the test does not need one either.
+PKG="$TMP/pkgdir"
+mk_gpkg() {          # DIR CPV SIGNED
+    local dir=$1 cpv=$2 signed=$3 stage
+    stage="$TMP/stage/$cpv"   # separate line: bash expands the whole `local` before assigning
+    rm -rf -- "$TMP/stage"; mkdir -p "$stage"
+    : > "$stage/gpkg-1"; : > "$stage/metadata.tar.xz"; : > "$stage/image.tar.xz"
+    if [[ $signed == signed ]]; then : > "$stage/metadata.tar.xz.sig"; : > "$stage/image.tar.xz.sig"; fi
+    mkdir -p "$dir"
+    ( cd "$TMP/stage" && tar -cf "$dir/$cpv.gpkg.tar" "$cpv" )
+}
+mk_gpkg "$PKG/cat-egory" remote-1-1 signed
+mk_gpkg "$PKG/cat-egory" local-1-1  unsigned
+mk_gpkg "$PKG/oth-er"    remote-2-1 signed
+printf 'not a tar' > "$PKG/cat-egory/broken-1-1.gpkg.tar"
+printf 'old format'  > "$PKG/cat-egory/legacy-1-1.tbz2"
+: > "$PKG/Packages"; : > "$PKG/Packages.gz"
+
+n="$(prune_binhost_binpkgs "$PKG")"
+assert_eq 2 "$n" "counts the binhost-signed packages it removed"
+assert_false "signed gpkg removed"        test -f "$PKG/cat-egory/remote-1-1.gpkg.tar"
+assert_false "signed gpkg removed (2)"    test -f "$PKG/oth-er/remote-2-1.gpkg.tar"
+assert_true  "locally built gpkg kept"    test -f "$PKG/cat-egory/local-1-1.gpkg.tar"
+assert_true  "unreadable archive kept"    test -f "$PKG/cat-egory/broken-1-1.gpkg.tar"
+assert_true  "non-gpkg kept"              test -f "$PKG/cat-egory/legacy-1-1.tbz2"
+assert_false "stale index dropped"        test -f "$PKG/Packages"
+assert_false "stale index.gz dropped"     test -f "$PKG/Packages.gz"
+
+# idempotent, and a clean cache is left completely alone
+: > "$PKG/Packages"
+assert_eq 0 "$(prune_binhost_binpkgs "$PKG")" "second pass removes nothing"
+assert_true "index kept when nothing was removed" test -f "$PKG/Packages"
+assert_eq 0 "$(prune_binhost_binpkgs "$TMP/no-such-pkgdir")" "missing PKGDIR is not an error"
+
 finish

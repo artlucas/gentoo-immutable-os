@@ -25,7 +25,7 @@ ln -sfn "$PROFILE_DIR" "$PC/make.profile"
 JOBS="$(nproc)"
 # L10N uses hyphens (pt-BR); LOCALES_KEEP uses underscores (pt_BR directory names)
 L10N="$(printf '%s' "$LOCALES_KEEP" | tr '_' '-')"
-export JOBS L10N BINHOST_URI
+export JOBS L10N   # BINHOST_URI is the builder's own setting; the target has no binhost
 render_template "$REPO/config/portage/make.conf.in" "$PC/make.conf"
 
 # straight copies
@@ -61,10 +61,30 @@ log "mirrored target package.use/keywords/license onto builder /etc/portage"
 
 ensure_dir /cache/binpkgs /cache/distfiles
 
+# /cache is a named volume and outlives any config change, so it can still hold binpkgs the
+# official binhost served to an older build — back when the target's make.conf did set
+# getbinpkg. Those are ordinary binpkgs to --usepkg, which has no idea where a package came
+# from, so leaving them there would keep merging binhost binaries into images built by a
+# config that no longer asks for any. Distfiles are untouched: source tarballs are exactly
+# what building from source needs, and their Manifest checksums say what they are.
+dropped="$(prune_binhost_binpkgs /cache/binpkgs)"
+if (( dropped > 0 )); then
+  log "dropped $dropped binhost-built binpkg(s) from /cache/binpkgs — they get rebuilt from source"
+fi
+
 # ---- verify ------------------------------------------------------------------
 out="$(env ROOT="$TARGET" PORTAGE_CONFIGROOT="$CONFIG_ROOT" emerge --info 2>/dev/null | head -n1)"
 log "emerge --info: $out"
 grep -q 'x86-64' "$PC/make.conf" || die "verify: make.conf render failed"
+# Image packages are built from source or from this pipeline's own binpkgs (plan/02). Both of
+# these would silently reintroduce binhost binaries: FEATURES=getbinpkg on the target root is
+# also what turns --getbinpkg on for the whole emerge invocation (_emerge/actions.py), and a
+# PORTAGE_BINHOST with no getbinpkg is one --getbinpkg away from being live.
+grep -qE '^[[:space:]]*FEATURES=.*getbinpkg' "$PC/make.conf" \
+  && die "verify: target make.conf enables getbinpkg — the image is built from source
+  (or from /cache/binpkgs); the binhost is the builder's, see config/portage/make.conf.in"
+grep -qE '^[[:space:]]*PORTAGE_BINHOST=' "$PC/make.conf" \
+  && die "verify: target make.conf sets PORTAGE_BINHOST — see config/portage/make.conf.in"
 [[ -e $PC/make.profile/eapi || -e $PC/make.profile/parent ]] || die "verify: bad profile symlink"
 log "config-root assembled at $CONFIG_ROOT"
 stamp_write "$STAGE_NAME" "$(inputs_hash "$REPO/config/build.conf" "$REPO"/config/portage/make.conf.in "$REPO"/config/portage/sets/*)"

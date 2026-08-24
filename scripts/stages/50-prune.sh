@@ -22,11 +22,14 @@ T="$TARGET"
 # for the gate to pass, and the same build produced a different packages.txt depending on
 # whether stage 50 had run once or twice (a resumed --from 50 sees an already-unmerged VDB).
 # Unmerging first makes packages.txt mean "what ships", which is what the gate is for.
-# Nothing in the image RDEPENDs these: portage's own binhost machinery installs getuto (and
-# with it sec-keys/openpgp-keys-gentoo-release -> app-portage/gemato -> the python requests
-# stack) into whichever ROOT it is populating, and portage-utils arrives the same way. An
-# image with no Portage has no use for Portage tooling (plan/06), so they are unmerged here —
-# before the VDB is deleted below, while emerge can still do it cleanly.
+# Nothing in the image needs these at runtime: sys-apps/portage is in the profile's @system
+# set, so it lands in any ROOT portage populates, and its RDEPEND (USE=-build) drags
+# app-portage/getuto -> sec-keys/openpgp-keys-gentoo-release, plus app-portage/gemato and the
+# python requests stack behind USE=rsync-verify; app-portage/portage-utils rides in with the
+# same Portage tooling. This has nothing to do with binhosts — the target uses none
+# (config/portage/make.conf.in) and they still arrive. An image with no Portage has no use for
+# Portage tooling (plan/06), so they are unmerged here — before the VDB is deleted below,
+# while emerge can still do it cleanly.
 #
 # The llvm-core and dev-python entries below are the same story from different directions.
 # llvm-core/llvmgold is an LTO plugin for a linker this image does not have, and
