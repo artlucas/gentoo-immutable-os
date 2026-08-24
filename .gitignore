@@ -3,3 +3,10 @@ out/
 config/keys/*.gpg
 config/keys/*.asc
 .claude/settings.local.json.tmp.*
+# Claude Code session state, none of it project content:
+#   worktrees/ holds live `git worktree` checkouts of this same repo — committing one nests a
+#   working tree inside the branch it was cut from. Anything shared (a project settings.json,
+#   CLAUDE.md) is deliberately NOT ignored here.
+.claude/worktrees/
+.claude/settings.local.json
+.claude/RESUME.md
