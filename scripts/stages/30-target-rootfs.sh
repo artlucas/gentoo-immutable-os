@@ -48,12 +48,19 @@ mirror_target_pkg_config
 
 # Configure-time deps that only exist in RDEPEND upstream — see config/portage/sets/buildhost
 # for the full explanation. Installed into the builder's "/", never into the image.
+#
+# --getbinpkg, unlike the target emerge below: builder-side packages come from the binhost,
+# the same way builder/Dockerfile installs the rest of the builder's tools. "/" already has
+# FEATURES=getbinpkg and the getuto trust store, so the flag only makes the intent explicit
+# — but it is also why this is a SEPARATE emerge. --getbinpkg is per-invocation, not per-root
+# (_emerge/actions.py derives it from the TARGET root's FEATURES and then populates every
+# tree with it), so anything merged inside the target emerge below cannot use the binhost.
 BUILDHOST_SET="$REPO/config/portage/sets/buildhost"
 if [[ -s $BUILDHOST_SET ]]; then
   mapfile -t BUILDHOST_PKGS < <(sed -E 's/#.*//; /^[[:space:]]*$/d; s/[[:space:]]//g' "$BUILDHOST_SET")
   if (( ${#BUILDHOST_PKGS[@]} )); then
     log "builder-root configure deps: ${BUILDHOST_PKGS[*]}"
-    emerge --oneshot --noreplace --usepkg --quiet-build=y "${BUILDHOST_PKGS[@]}"
+    emerge --oneshot --noreplace --usepkg --getbinpkg --quiet-build=y "${BUILDHOST_PKGS[@]}"
   fi
 fi
 
@@ -65,24 +72,30 @@ ensure_dir "$TARGET"
 seed_merged_usr "$TARGET"
 seed_target_dirs "$TARGET"
 
-# Portage's binhost trust helper runs once per root, and for a --root=$TARGET install it
-# looks for the Gentoo release keys *inside* the target — which is empty on a first build,
-# so getuto exits 1 and takes the whole emerge with it before a single package is merged.
-# Seed the keys from the builder (the Dockerfile installs sec-keys/openpgp-keys-gentoo-release
-# for the same reason on "/"). Build-time only: the trustdb getuto derives lands in
-# $TARGET/etc/portage, which stage 50 deletes, and the seed itself is dropped below.
-GENTOO_KEYS=/usr/share/openpgp-keys/gentoo-release.asc
-[[ -f $GENTOO_KEYS ]] \
-  || die "builder lacks $GENTOO_KEYS (sec-keys/openpgp-keys-gentoo-release missing from the image)"
-SEEDED_KEYS=0
-if [[ ! -f $TARGET$GENTOO_KEYS ]]; then
-  install -D -m0644 "$GENTOO_KEYS" "$TARGET$GENTOO_KEYS"
-  SEEDED_KEYS=1
-  log "seeded binhost trust keys into target for getuto"
-fi
+# The image is built from source, or from binpkgs this pipeline built earlier: the target's
+# make.conf sets neither getbinpkg nor PORTAGE_BINHOST (config/portage/make.conf.in explains
+# why), and --usepkg reads /cache/binpkgs only. Asserted here as well as in stage 20's verify
+# block, because this is the config portage actually reads and because the failure is
+# invisible in the emerge log — a remote binpkg merges exactly like a local one.
+#
+# This is also what used to force a getuto dance around the target root: with getbinpkg set,
+# portage ran its trust helper against --root=$TARGET, which on a first build is an empty
+# directory with no Gentoo release keys, so getuto exited 1 and took the whole emerge with it
+# unless the keys were seeded in first. No remote bintree, no trust helper — populate() only
+# reaches _run_trust_helper via _populate_remote (portage/dbapi/bintree.py).
+tgt_features=" $(ROOT="$TARGET" PORTAGE_CONFIGROOT="$CONFIG_ROOT" portageq envvar FEATURES 2>/dev/null || true) "
+[[ $tgt_features == *" getbinpkg "* ]] \
+  && die "the target config enables FEATURES=getbinpkg, so this emerge would pull binaries
+  built against the default profile's USE into the image. Image packages come from source or
+  from /cache/binpkgs; the binhost belongs to the builder (config/portage/make.conf.in)"
+tgt_binhost="$(ROOT="$TARGET" PORTAGE_CONFIGROOT="$CONFIG_ROOT" portageq envvar PORTAGE_BINHOST 2>/dev/null || true)"
+[[ -n $tgt_binhost ]] \
+  && die "the target config sets PORTAGE_BINHOST=$tgt_binhost (config/portage/make.conf.in)"
 
 # BDEPEND → builder (/), RDEPEND → ROOT: portage's default ROOT semantics.
 # --with-bdeps=n keeps build-only deps out of the target's depgraph.
+# --usepkg without --getbinpkg: the only binaries this may reuse are the ones an earlier run
+# of this pipeline built into /cache/binpkgs (FEATURES=buildpkg). Everything else compiles.
 # --changed-use is not optional for a resumable pipeline: without it emerge leaves an
 # already-installed package alone even when config/portage/package.use now says something
 # different, so a build resumed with --from 30 silently keeps the old flags. That is how
@@ -90,13 +103,6 @@ fi
 # later USE fix appear to apply while the image still carried the old build.
 ROOT="$TARGET" PORTAGE_CONFIGROOT="$CONFIG_ROOT" \
   emerge --verbose --usepkg --with-bdeps=n --changed-use --quiet-build=y "${SETS[@]}"
-
-# drop the trust-key seed again unless a merged package legitimately owns that path now,
-# so it never becomes unowned content in the image.
-if [[ $SEEDED_KEYS == 1 ]] && ! grep -rqs "^obj $GENTOO_KEYS " "$TARGET/var/db/pkg"; then
-  rm -f -- "$TARGET$GENTOO_KEYS"
-  rmdir --ignore-fail-on-non-empty -- "$TARGET$(dirname -- "$GENTOO_KEYS")" 2>/dev/null || true
-fi
 
 # quick pre-prune report (full manifest + gate in stage 50)
 ensure_dir "$REPORT_DIR"

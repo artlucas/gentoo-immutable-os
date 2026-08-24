@@ -13,7 +13,7 @@ ensure_dir "$OUT/logs"; exec > >(tee -a "$OUT/logs/$STAGE_NAME.log") 2>&1
 is_linux || die "stages run inside the builder container only"
 
 # ---- tool preflight (everything any later stage shells out to) ---------------
-require_cmds emerge emerge-webrsync eselect \
+require_cmds emerge emerge-webrsync eselect portageq \
   mkfs.erofs mkfs.vfat mkfs.ext4 mtools mcopy mmd \
   sfdisk dd truncate zstd rsync dracut gpg rsvg-convert objdump \
   qemu-system-x86_64 sha256sum

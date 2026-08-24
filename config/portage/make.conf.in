@@ -17,10 +17,27 @@ L10N="@L10N@"
 ACCEPT_LICENSE="-* @FREE"
 # proprietary exceptions live in package.license/
 
-FEATURES="nodoc noinfo noman buildpkg getbinpkg"
-PORTAGE_BINHOST="@BINHOST_URI@"
+FEATURES="nodoc noinfo noman buildpkg"
 PKGDIR="/cache/binpkgs"
 DISTDIR="/cache/distfiles"
+
+# NB: no getbinpkg and no PORTAGE_BINHOST here, deliberately. Everything that ships in the
+# image is compiled by this pipeline, from the pinned snapshot, against the USE and CFLAGS
+# above — or reused from a binpkg an earlier run of this pipeline compiled. That reuse is what
+# buildpkg + PKGDIR are for: /cache is a named volume, so a rebuild is not a recompile.
+#
+# The binhost's copies are built against the DEFAULT profile's USE, and portage merges a
+# remote binpkg whenever its recorded USE happens to satisfy the graph. That makes "what
+# ships" a function of what the binhost published that day rather than of this repo, and the
+# difference is not always visible in the USE string: package.use/image documents a
+# from-scratch build where x11-misc/xdg-utils resolved to a binhost copy built with gnome+dbus
+# and the image inherited ~37 perl packages from that binpkg's baked RDEPEND, which a source
+# build of the same ebuild does not pull.
+#
+# The BUILDER is the opposite case and is configured the opposite way: its own tools (qemu,
+# dracut, rsvg-convert, ...) are stock packages with no image-specific requirements, so it
+# installs them as binaries from BINHOST_URI (builder/Dockerfile). BINHOST_URI in build.conf
+# is the builder's setting and only the builder's; nothing it fetches reaches the image.
 
 # NB: there is deliberately no INSTALL_MASK here. Portage applies INSTALL_MASK to every
 # merge in an emerge invocation, and this pipeline's emerge populates TWO roots: runtime deps

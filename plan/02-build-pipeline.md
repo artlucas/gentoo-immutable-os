@@ -72,10 +72,9 @@ immos/
 - **Those tools are installed from the Gentoo binhost, not compiled.** The stage3 base already
   ships `/etc/portage/binrepos.conf/gentoo.conf` (official binhost, `verify-signature = true`)
   and `sec-keys/openpgp-keys-gentoo-release`; the Dockerfile adds `FEATURES=getbinpkg`, points
-  the repo at `BINHOST_URI` from `build.conf` (passed as a `--build-arg` by `build.sh`, so
-  builder and target share one binhost setting), and emerges with `--usepkg`. This is the
-  builder's own `/` only — the target's binhost is configured independently in
-  `config/portage/make.conf.in`.
+  the repo at `BINHOST_URI` from `build.conf` (passed as a `--build-arg` by `build.sh`), and
+  emerges with `--usepkg --getbinpkg`. This is the builder's own `/` only, and it is the
+  **opposite** of the rule for the image — see "Where binaries come from" below.
   - `getuto` runs **before** that emerge. With `verify-signature = true`, portage checks binpkg
     signatures against the trust store in `/etc/portage/gnupg`, and `getuto` is what builds that
     store. If it runs afterwards (as it originally did), portage can verify nothing the binhost
@@ -84,6 +83,9 @@ immos/
     list, …) still build from source: the binhost's copies were built against the default
     profile's USE and portage correctly refuses a mismatched binpkg. Before this change the
     figure was ~98 packages compiled on every Dockerfile edit, roughly an hour of wall clock.
+  - Because that fallback is silent, the same `RUN` asserts it did not happen: `portageq envvar
+    FEATURES` must list `getbinpkg` and `/etc/portage/gnupg/pubring.kbx` must be non-empty, or
+    the image build fails.
 
 `scripts/build.sh` (host wrapper) runs it as:
 
@@ -103,6 +105,35 @@ docker run --privileged \
 > filesystem. `--privileged` is required for chroot + bind mounts + device nodes during
 > emerge and for KVM passthrough in the test stage; **no loop devices are ever needed**
 > (see [04-image-and-boot.md](04-image-and-boot.md)).
+
+## Where binaries come from
+
+Two roots, two opposite rules, and the failure mode in both directions is silent — a binpkg
+merges exactly like a source build, and a source build is just slower — so each is asserted:
+
+| | builder `/` | image `$TARGET` |
+|---|---|---|
+| config | builder's `/etc/portage` (`builder/Dockerfile`) | `$WORK/config` from `config/portage/` |
+| binhost | `BINHOST_URI`, `FEATURES=getbinpkg`, signature-verified | **none** |
+| binaries reused | official binhost + `/var/cache/binpkgs` | `/cache/binpkgs`, this pipeline's own `buildpkg` output |
+| otherwise | compiles | compiles |
+| asserted by | the `portageq`/trust-store checks in the Dockerfile | stage 20 verify block + stage 30 `portageq` guard |
+
+The image compiles what it ships because the binhost builds against the **default** profile's
+USE, and portage merges a remote binpkg whenever its recorded USE happens to satisfy the graph:
+that makes the package set a function of what the binhost published rather than of this repo.
+`config/portage/package.use/image` documents one such incident — `x11-misc/xdg-utils` resolving
+to a binhost copy built with `gnome+dbus`, whose baked RDEPEND pulled ~37 perl packages a source
+build of the same ebuild does not.
+
+`--getbinpkg` is per **invocation**, not per root (`_emerge/actions.py` reads it off the target
+root's `FEATURES` and then populates every tree with it), which is why stage 30 runs the
+builder-root `@buildhost` install as a separate emerge from the target's.
+
+The `/cache` volume outlives the config, so stage 20 also sweeps binpkgs the binhost served to
+older builds out of `/cache/binpkgs` — `--usepkg` cannot tell them apart, but the packages can:
+Gentoo signs its binpkgs and this pipeline does not, so a `.gpkg.tar` carrying `*.sig` members
+is one of theirs (`prune_binhost_binpkgs` in `scripts/lib/common.sh`). Distfiles are untouched.
 
 ## Stage contract
 
@@ -128,13 +159,14 @@ Verifies the builder's pinned state and fetches what later stages need.
 ### 20-builder-setup
 **Does:** write the **target's** `make.conf` into `$WORK/config` — this is the `PORTAGE_CONFIGROOT`
 stage 30 emerges the target with, *not* the builder's own `/etc/portage/make.conf` (the builder's
-binhost is set up in the Dockerfile; see "Builder container" above) — (binhost:
-`FEATURES="getbinpkg buildpkg"` pointing at
-`https://distfiles.gentoo.org/releases/amd64/binpackages/23.0/x86-64/` — generic x86-64,
-**not** x86-64-v3, since budget Goldmont-Plus-class CPUs sold within the 5-year window lack
-AVX2); eselect profile `default/linux/amd64/23.0/desktop/gnome/systemd`; local binpkg cache
-under `/cache/binpkgs`.
-**Verify:** `emerge --info` shows expected profile/binhost.
+binhost is set up in the Dockerfile; see "Builder container" above). `FEATURES="… buildpkg"`
+with no `getbinpkg` and no `PORTAGE_BINHOST`: the image is compiled here and cached in
+`/cache/binpkgs` for later builds. `COMMON_FLAGS` is generic x86-64, **not** x86-64-v3, since
+budget Goldmont-Plus-class CPUs sold within the 5-year window lack AVX2; profile
+`default/linux/amd64/23.0/desktop/gnome/systemd`. Also sweeps binhost-built binpkgs left in
+`/cache/binpkgs` by older builds (see "Where binaries come from").
+**Verify:** `emerge --info` shows the expected profile; the rendered `make.conf` has neither
+`getbinpkg` nor `PORTAGE_BINHOST`.
 
 ### 30-target-rootfs
 The core two-root emerge.
@@ -150,6 +182,10 @@ emerge --root="$ROOT" --config-root=/repo/config/portage \
 - BDEPENDs resolve into the builder (`/`), RDEPENDs into `$ROOT` — Portage's default ROOT
   semantics. Anything that appears in the target arrived as a *runtime* dependency; the dep
   audit in 06 reviews that list.
+- `--usepkg` **without** `--getbinpkg`: the only binaries this emerge may reuse are ones an
+  earlier run built into `/cache/binpkgs`. A `portageq` guard ahead of it fails the stage if
+  the target config ever grows `getbinpkg`/`PORTAGE_BINHOST` again. The builder-root
+  `@buildhost` install runs first, as its own emerge, *with* `--getbinpkg`.
 - `--console-only` flag (M1) emerges only `@base @hardware`.
 **Verify:** `$ROOT/usr/bin/gcc` absent; `$ROOT/lib/modules/*` exists; systemd, gdm, flatpak
 binaries present (full build); VDB at `$ROOT/var/db/pkg` present (pruned later, needed by 40/50).
@@ -206,9 +242,13 @@ virtualization on Win11), falls back to TCG with longer timeouts.
 
 - `/cache/distfiles` + `/cache/binpkgs` named volumes persist across builds; after the first
   build, `--usepkg` makes a clean target rebuild minutes-fast.
-- The Gentoo binhost covers packages whose USE match; the GNOME stack with our trimmed USE will
-  largely build from source once, then live in the local binpkg cache.
-- First full build estimate: several hours (GNOME from source dominates). Subsequent: < 30 min.
+- Those cached binpkgs are this pipeline's own (`FEATURES=buildpkg`), which is the whole
+  mechanism: the image is compiled once and reused, rather than downloaded.
+- First full build estimate: several hours — the entire target set compiles, not just the
+  GNOME stack whose USE the binhost never matched anyway. Subsequent: < 30 min.
+- A change that invalidates the target (any `config/portage` edit — stage 30's staleness guard
+  spells this out) costs a recompile of whatever the cache no longer covers, so the binpkg
+  cache volume is worth keeping even when the work volume is wiped.
 
 ## Failure & debugging
 

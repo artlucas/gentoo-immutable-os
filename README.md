@@ -39,6 +39,12 @@ First build notes: set `BUILDER_DIGEST` in `config/build.conf` to pin the stage3
 signing needs a key (see `config/keys/README.md`) or use `--no-verify` for dev images.
 Target machines must have Secure Boot disabled (v1; see plan/08).
 
+Everything the image ships is **compiled** by the build — no binary packages are downloaded
+into it, so the first build takes hours. Those builds are cached as binpkgs in the
+`immos-cache` volume, which later builds reuse, and which `--clean` deliberately keeps. The
+*builder's* own tools are the opposite: installed as binaries from the Gentoo binhost
+(`BINHOST_URI`). See [plan/02](plan/02-build-pipeline.md#where-binaries-come-from).
+
 ## Testing
 
 `bash tests/run-tests.sh` — offline suite (no Gentoo downloads, no root): bash syntax on
