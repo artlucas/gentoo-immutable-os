@@ -131,8 +131,27 @@ over whatever the firmware left on screen. ESC switches to the boot log.
   `libply-splash-graphics.so.5` is not, `dlopen` fails, and plymouth falls back to a grey text
   splash with nothing logged anywhere. Stage 40 asserts both, including every `NEEDED` library
   of `script.so` and `drm.so`.
-- **No `.splash` section in the UKI.** Replacing the firmware logo at the bootloader stage was
-  considered and deliberately not done in v1 — see [08](08-roadmap.md).
+- **`.splash` section in the UKI: available, off by default.** `SPLASH_BACKEND` in `build.conf`
+  selects `plymouth` (default, what v1 shipped), `stub`, `both`, or `none`. The stub image is
+  composed by `config/branding/make-stub-bmp.py` from the same PNGs the theme uses, so the two
+  cannot drift. What it buys and what it does not:
+  - `systemd-stub` draws it **before the kernel starts**, which is the one window plymouth
+    cannot reach — it needs a DRM device, and this kernel has no simpledrm (see [08](08-roadmap.md)).
+  - It is drawn **once**, and it dies at the first modeset. There is no animation, no progress,
+    and nothing redraws it: `stub` alone leaves the screen black from the first DRM driver all
+    the way to GDM, which is the majority of the boot. `both` is the combination that covers
+    the whole timeline; `stub` alone is a downgrade, not a replacement.
+  - The stub fills the screen **black** and blits the bitmap **1:1, centred, without scaling**
+    (`src/boot/splash.c`). Hence `SPLASH_STUB_SCALE`, and hence the bitmap's black background
+    rather than the theme's `#0a0d11` — a brand-coloured canvas would seam against the fill.
+  - The section is measured into **PCR 11**. Changing the splash changes that measurement, so
+    it matters to any future TPM-sealed policy the way the kernel and cmdline already do.
+- **Plymouth is never uninstalled by any of this.** In all four modes it stays merged, its theme
+  stays in `/usr/share/plymouth/themes/`, and it stays in the initrd with every stage-40
+  assertion about its payload still enforced. "Off" is the single cmdline token its own unit
+  already tests for: `ConditionKernelCommandLine=!plymouth.enable=0` on `plymouth-start.service`,
+  which ships in both the initrd and rootfs copies. Switching backends is a rerun of stages
+  40–60, not a rebuild.
 
 ## fstab (shipped in image, immutable lower)
 

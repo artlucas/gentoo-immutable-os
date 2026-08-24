@@ -202,10 +202,23 @@ KVER="$(basename -- "$(find "$TARGET/usr/lib/modules" -mindepth 1 -maxdepth 1 -t
 log "kernel: $KVER"
 
 KERNEL_IMG=""
-for c in "$TARGET/usr/lib/modules/$KVER/vmlinuz" "$TARGET/boot/vmlinuz-$KVER" "$TARGET/boot/kernel-$KVER"; do
+# $WORK/vmlinuz-$KVER is last and is OUR copy, not the target's — see the stash below.
+for c in "$TARGET/usr/lib/modules/$KVER/vmlinuz" "$TARGET/boot/vmlinuz-$KVER" \
+         "$TARGET/boot/kernel-$KVER" "$WORK/vmlinuz-$KVER"; do
   [[ -f $c ]] && { KERNEL_IMG="$c"; break; }
 done
-[[ -n $KERNEL_IMG ]] || die "kernel image not found in target (checked modules dir and /boot)"
+[[ -n $KERNEL_IMG ]] || die "kernel image not found in target (checked modules dir, /boot and $WORK)"
+
+# Stash it. /usr/lib/modules/$KVER/vmlinuz is a SYMLINK into /usr/src/linux-$KVER, and stage 50
+# deletes /usr/src wholesale — so after one full build the target's kernel image is a dangling
+# link and this stage can no longer run against that rootfs without re-emerging the kernel.
+# That turns "rebuild the UKI with a different cmdline or splash" from a two-minute rerun of
+# stages 40-60 into a full rebuild, which is the whole point of SPLASH_BACKEND being a switch.
+# Copying costs ~15 MB in the work volume and makes stage 40 idempotent across stage 50.
+if [[ $KERNEL_IMG != "$WORK/vmlinuz-$KVER" ]]; then
+  cp -f -- "$KERNEL_IMG" "$WORK/vmlinuz-$KVER"
+fi
+log "kernel image: $KERNEL_IMG"
 
 # our dracut module must be visible to the *builder's* dracut
 cp -r "$TARGET/usr/lib/dracut/modules.d/90etc-overlay" /usr/lib/dracut/modules.d/
@@ -287,13 +300,42 @@ fi
 #                                   both the IMAGE-TEST marker and systemd's own messages are
 #                                   userspace writes to /dev/console, unaffected by printk level.
 #   vt.global_cursor_default=0      no blinking text cursor over the splash
-CMDLINE="root=PARTLABEL=$ROOT_PARTLABEL rootfstype=erofs ro nvidia-drm.modeset=1 console=tty0 console=ttyS0 quiet splash plymouth.ignore-serial-consoles loglevel=3 rd.udev.log_level=3 vt.global_cursor_default=0"
+#
+# The two splash tokens are chosen by SPLASH_BACKEND (build.conf). Note what does NOT change
+# with it: plymouth stays merged, its theme stays installed, and the dracut plymouth module
+# stays in the --add list above, so the initrd payload and every assertion in the verify block
+# below hold in all four modes. Turning plymouth "off" is exactly the one condition its own
+# unit ships with — ConditionKernelCommandLine=!plymouth.enable=0 on plymouth-start.service,
+# present in both the initrd copy and the rootfs copy — and nothing else. Switching backends
+# is therefore a rerun of stages 40-60, not a rebuild.
+SPLASH_TOKENS=()
+case $SPLASH_BACKEND in
+  plymouth|both) SPLASH_TOKENS+=(splash) ;;
+  stub|none)     SPLASH_TOKENS+=(plymouth.enable=0) ;;
+esac
+CMDLINE="root=PARTLABEL=$ROOT_PARTLABEL rootfstype=erofs ro nvidia-drm.modeset=1 console=tty0 console=ttyS0 quiet ${SPLASH_TOKENS[*]} plymouth.ignore-serial-consoles loglevel=3 rd.udev.log_level=3 vt.global_cursor_default=0"
+log "splash backend: $SPLASH_BACKEND"
+
+# The stub bitmap is composed from the PNGs install_branding() just rasterised, so it cannot
+# drift from the Plymouth theme — one set of sources, one rasterisation, two consumers.
+UKIFY_SPLASH=()
+if [[ $SPLASH_BACKEND == stub || $SPLASH_BACKEND == both ]]; then
+  STUB_BMP="$WORK/splash-$VERSION.bmp"
+  require_cmds python3
+  python3 "$REPO/config/branding/make-stub-bmp.py" \
+    --theme-dir "$THEME_DIR" --output "$STUB_BMP" --scale "$SPLASH_STUB_SCALE" \
+    || die "stub splash bitmap generation failed"
+  [[ -s $STUB_BMP ]] || die "stub splash bitmap is empty: $STUB_BMP"
+  UKIFY_SPLASH+=(--splash="$STUB_BMP")
+fi
+
 UKIFY=ukify; [[ -x /usr/lib/systemd/ukify ]] && UKIFY=/usr/lib/systemd/ukify
 ensure_dir "$UKI_DIR"
 "$UKIFY" build \
   --linux="$KERNEL_IMG" \
   --initrd="$INITRD" \
   --cmdline="$CMDLINE" \
+  "${UKIFY_SPLASH[@]}" \
   --os-release="@$TARGET/etc/os-release" \
   --output="$UKI_DIR/$UKI_NAME"
 
@@ -347,6 +389,27 @@ if command -v lsinitrd >/dev/null 2>&1; then
   done
 else
   warn "lsinitrd not available — initrd splash contents unverified"
+fi
+
+# The stub splash is a PE section, so it is invisible to every check above. ukify exits 0 for
+# an unreadable --splash argument in some versions, and the stub itself simply skips a section
+# it cannot parse — either way the failure mode is a black screen with nothing logged.
+#
+# Sectioned into a variable first, and the comparison written as a full `if` rather than a
+# trailing `&&`: `objdump | grep -q` hits the same SIGPIPE/pipefail false negative documented
+# at the lsinitrd check above, and a bare `[[ ... ]] && die` as the last statement of an if
+# body makes `set -e` abort the stage when the condition is false.
+UKI_SECTIONS="$(objdump -h "$UKI_DIR/$UKI_NAME" 2>/dev/null || true)"
+if [[ $SPLASH_BACKEND == stub || $SPLASH_BACKEND == both ]]; then
+  if ! grep -q '\.splash' <<<"$UKI_SECTIONS"; then
+    die "verify: SPLASH_BACKEND=$SPLASH_BACKEND but the UKI has no .splash section"
+  fi
+else
+  # The converse: a leftover .splash in a plymouth-only build would paint an image the kernel
+  # then blanks, which reads as a flicker no one ordered.
+  if grep -q '\.splash' <<<"$UKI_SECTIONS"; then
+    die "verify: SPLASH_BACKEND=$SPLASH_BACKEND but the UKI carries a .splash section"
+  fi
 fi
 [[ -f $TARGET/usr/lib/sysupdate.d/50-rootfs.transfer ]]   || die "verify: sysupdate transfer missing"
 [[ -L $TARGET/home ]]                                     || die "verify: /home symlink missing"

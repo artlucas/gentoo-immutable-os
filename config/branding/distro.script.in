@@ -1,10 +1,10 @@
 # @DISTRO_NAME@ boot splash — plymouth "script" plugin.
 #
 # Layout and motion are the design system's "Boot splash" template with Spinner option B
-# ("Layer pulse"): the logomark holds still and brightness travels up its three slabs, bottom
-# first. Nothing translates, which is why this is a curve evaluated per frame over three
-# stacked images rather than a baked frame sequence — three PNGs instead of ~35, and the same
-# animation at any resolution.
+# ("Layer pulse"), with the pulse INVERTED: the logomark holds still and rests fully lit, and a
+# fade travels up its three slabs, bottom first. Nothing translates, which is why this is a
+# curve evaluated per frame over three stacked images rather than a baked frame sequence —
+# three PNGs instead of ~35, and the same animation at any resolution.
 #
 # Every asset is authored at the 1920x1080 design baseline and rasterised at ASSET_ZOOM by
 # stage 40, so one scale factor covers the whole layout.
@@ -16,7 +16,11 @@ GAP        = 34;       # logomark box -> wordmark
 PAD_X      = 40;
 PAD_Y      = 28;
 PERIOD     = 1.4;      # seconds per pulse cycle
+DIM        = 0.2;      # opacity at the fully-faded-out end of the pulse
 HZ         = 50;       # refresh function calls per second
+
+# DIM is duplicated in config/branding/make-stub-bmp.py, which paints the static UKI stub frame
+# at exactly this level. Change it in one place and the stub stops matching the theme.
 
 # refresh() advances its own clock by 1/HZ, so HZ has to be what plymouth actually does rather
 # than what it happens to default to. 50 IS the 22.02 default (FRAMES_PER_SECOND in the script
@@ -83,7 +87,15 @@ if (Plymouth.GetMode() == "boot") {
 }
 
 # ---- the pulse ---------------------------------------------------------------------------
-# CSS keyframes from Spinner.jsx: 0%,100% -> .2   22% -> 1   56% -> .2, easing ease-in-out.
+# Spinner.jsx's keyframes are 0%,100% -> .2   22% -> 1   56% -> .2: a bright wave over a mark
+# that rests dim. This theme runs that curve INVERTED — 0%,100% -> 1   22% -> DIM   56% -> 1 —
+# so the mark rests fully lit and what travels up it is a fade. Same timings, same easing, same
+# direction of travel; only the two endpoints swap, which is exactly `1 + DIM - pulse_css(p)`.
+#
+# The inversion is what makes the mark legible when nothing is animating it: the resting state
+# is now the lit one, so a stalled boot, a dropped frame or the quit frame all leave a solid
+# logomark rather than a 20%-opacity ghost.
+#
 # smoothstep stands in for cubic-bezier(.42,0,.58,1); over these spans the two are visually
 # identical, and it costs no curve solver.
 fun smoothstep(u) {
@@ -93,9 +105,9 @@ fun smoothstep(u) {
 }
 
 fun pulse(p) {
-    if (p < 0.22) return 0.2 + 0.8 * smoothstep(p / 0.22);
-    if (p < 0.56) return 1.0 - 0.8 * smoothstep((p - 0.22) / 0.34);
-    return 0.2;
+    if (p < 0.22) return 1.0 - (1.0 - DIM) * smoothstep(p / 0.22);
+    if (p < 0.56) return DIM + (1.0 - DIM) * smoothstep((p - 0.22) / 0.34);
+    return 1.0;
 }
 
 # Wrapping by subtraction rather than a modulo/Math.Int call: plymouth 22.02's script language
@@ -108,10 +120,13 @@ fun phase(offset) {
 }
 
 # Phase offsets are the CSS animation-delays negated: -0.32s means "already 0.32s in", so the
-# slab carrying the largest offset reaches the 22% peak first and the wave starts there.
+# slab carrying the largest offset reaches the 22% extreme first and the wave starts there.
+# That extreme is the DIM trough now rather than the bright peak, but the ordering is a property
+# of the offsets, not of the curve — inverting the endpoints does not change which slab goes
+# first, so the wave still travels bottom to top.
 #
 # NB: these are the REVERSE of the delay-to-slab assignment in the design system's Spinner.jsx.
-# That file puts -0.32s on the topmost slab, which peaks first and sweeps the highlight
+# That file puts -0.32s on the topmost slab, which turns first and sweeps the travelling band
 # DOWNWARD — while its own header comment, its inline comment, Spinner.prompt.md and the
 # "Layer pulse" blurb in Spinner options.html all four say "brightness travels up the stack,
 # bottom to top". Four statements of intent against one line of code: the code is the typo.
@@ -119,14 +134,16 @@ fun phase(offset) {
 fun refresh() {
     t = t + 1 / HZ;
     while (t >= PERIOD) t = t - PERIOD;
-    slab_bot.SetOpacity(pulse(phase(0.32)));   # lights first
+    slab_bot.SetOpacity(pulse(phase(0.32)));   # fades first
     slab_mid.SetOpacity(pulse(phase(0.16)));
-    slab_top.SetOpacity(pulse(phase(0.00)));   # lights last — the wave travels up
+    slab_top.SetOpacity(pulse(phase(0.00)));   # fades last — the wave travels up
 }
 Plymouth.SetRefreshFunction(refresh);
 
 # gdm quits us with --retain-splash, so the last frame drawn is what the greeter fades in over.
-# Leave the mark fully lit rather than wherever the cycle happened to be.
+# Leave the mark fully lit rather than wherever the cycle happened to be. With the inverted
+# curve that is also the curve's own resting value, so the quit no longer snaps the mark
+# brighter than the frame before it — it just stops the wave.
 fun on_quit() {
     slab_top.SetOpacity(1);
     slab_mid.SetOpacity(1);

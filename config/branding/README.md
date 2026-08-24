@@ -21,6 +21,7 @@ also means the splash rescales for any panel instead of being pinned to one reso
 | `distro.plymouth.in` | theme manifest → `<distro>.plymouth` |
 | `distro.script.in` | the theme itself → `<distro>.script` |
 | `outline-wordmark.py` | the one-time generator for `wordmark.svg` (not run by the build) |
+| `make-stub-bmp.py` | composes the `systemd-stub` `.splash` bitmap from the PNGs above, when `SPLASH_BACKEND` includes the stub. Run by stage 40, after the rasterise pass — same sources, same rasterisation, so the stub image and the Plymouth theme cannot drift |
 
 Assets are authored at the **1920×1080 design baseline** in CSS pixels and rasterised at 4×;
 the theme script scales by `scale / 4`. Do not change the zoom in one place only.

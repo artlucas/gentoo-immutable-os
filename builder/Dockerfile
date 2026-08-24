@@ -46,6 +46,11 @@ RUN printf 'FEATURES="${FEATURES} getbinpkg"\n' >> /etc/portage/make.conf \
 #    the image — that is the whole point: the splash ships as PNGs so no font has to. They live
 #    here rather than in config/portage/sets/buildhost because that set is emerged in stage 30,
 #    and every stage runs in its own --rm container, so a stage-30 install is gone by stage 40.
+#  - dev-python/pillow: composes the systemd-stub .splash bitmap from those same PNGs when
+#    SPLASH_BACKEND includes the stub (stage 40, config/branding/make-stub-bmp.py). rsvg-convert
+#    cannot emit BMP — its formats are png/pdf/ps/svg — and BMP is the only container the EFI
+#    stub reads. Named explicitly because it was already present here transitively, and a
+#    dependency that arrives by accident is one a graph change can remove by accident.
 #  - gnupg + sec-keys/openpgp-keys-gentoo-release + getuto: trust store for binhost
 #    signature verification. Portage's depgraph always considers the builder's own
 #    "/" bintree (real /etc/portage config) alongside --root=$TARGET's, even for a
@@ -109,6 +114,7 @@ RUN echo 'app-emulation/qemu qemu_softmmu_targets_x86_64 -qemu_softmmu_targets_i
       dev-util/shellcheck-bin \
       gnome-base/librsvg \
       media-fonts/ibm-plex \
+      dev-python/pillow \
  && emerge --quiet-build=y --oneshot --usepkg sys-apps/systemd app-text/xmlto \
  && GETUTO_EXTERNAL_REFRESH=0 getuto
 

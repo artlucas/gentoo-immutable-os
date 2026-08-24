@@ -46,6 +46,15 @@ load_config() {
 }
 
 validate_config() {
+  # Defaulted rather than required: a build.conf written before the splash-backend switch
+  # existed still has to validate, and "plymouth" is what those images already did.
+  #
+  # ${x=y}, NOT ${x:=y}. The colon form also substitutes for an EMPTY value, which would make
+  # a truncated `SPLASH_BACKEND=""` silently mean "plymouth" instead of failing — every other
+  # key here dies on empty, and an empty value in a hand-edited build.conf is a typo, not a
+  # request for the default. Unset defaults; empty falls through to the pattern check below.
+  : "${SPLASH_BACKEND=plymouth}"
+  : "${SPLASH_STUB_SCALE=1}"
   local v
   for v in DISTRO_ID DISTRO_NAME VERSION HOME_URL UPDATE_URL UPDATE_CHANNEL UPDATE_VERIFY \
            BUILDER_IMAGE SNAPSHOT_DATE PROFILE BINHOST_URI \
@@ -61,6 +70,10 @@ validate_config() {
     [[ ${!n} =~ ^[0-9]+$ ]] || die "build.conf: $n must be an integer MiB count"
   done
   [[ $UPDATE_VERIFY =~ ^[01]$ ]] || die "build.conf: UPDATE_VERIFY must be 0 or 1"
+  [[ $SPLASH_BACKEND =~ ^(plymouth|stub|both|none)$ ]] \
+    || die "build.conf: SPLASH_BACKEND must be plymouth|stub|both|none (got: $SPLASH_BACKEND)"
+  [[ $SPLASH_STUB_SCALE =~ ^[1-9][0-9]*$ ]] \
+    || die "build.conf: SPLASH_STUB_SCALE must be a positive integer (got: $SPLASH_STUB_SCALE)"
   [[ $FLATPAK_PREINSTALL_MODE =~ ^(build|firstboot)$ ]] \
     || die "build.conf: FLATPAK_PREINSTALL_MODE must be build|firstboot"
   [[ $SNAPSHOT_DATE =~ ^[0-9]{8}$ ]] || die "build.conf: SNAPSHOT_DATE must be YYYYMMDD"
