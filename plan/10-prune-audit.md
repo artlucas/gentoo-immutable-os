@@ -484,12 +484,17 @@ would be a prune list. Removing them breaks GPU compute for native apps and for 
 expects the host driver to be complete (Blender, DaVinci, PyTorch containers). A desktop image
 that has decided it is not a compute workstation can take it; one that has not, cannot.
 
-**nouveau GSP firmware — 148 MiB installed, 102 MiB shipped.**
+**nouveau GSP firmware — 148 MiB installed, 102 MiB shipped. No longer a policy call.**
 `firmware/nvidia/ga102` (98) and `firmware/nvidia/tu102` (51) are nouveau's GSP blobs, separate
-from the proprietary driver's own 99 MiB at `firmware/nvidia/595.91.07`. `VIDEO_CARDS` includes
-`nouveau`, so this is the fallback path if the proprietary module fails to load. A middle option:
-each directory carries **two** GSP versions, and dropping only the older `gsp-535.113.01.bin`
-pair frees 59 MiB while leaving nouveau working.
+from the proprietary driver's own 99 MiB at `firmware/nvidia/595.91.07`. This used to be listed
+here as a capability tradeoff — pruning it traded away the nouveau fallback for pre-Turing
+cards. That fallback was never real (`nvidia-drivers` blacklists nouveau unconditionally,
+see the finding below), and `VIDEO_CARDS` no longer builds nouveau at all (plan/03). The initrd
+copy is already gone via `--omit-drivers "nouveau"` in stage 40. What's left is these two
+subdirectories (`nvidia/ga102`, `nvidia/tu102`) on the root filesystem, now pure dead weight
+rather than a tradeoff — a `prune-firmware.txt` candidate, left for a future pass since it
+needs the same real-build verification as the rest of this section, and the exact subdirectory
+names should be confirmed against a fresh build rather than assumed stable.
 
 **`INCLUDE_CJK_FONTS=0` — 294 MiB.** Already a `build.conf` switch. Noted only because it is the
 second-largest font row and the audit should say what it costs.
@@ -574,6 +579,15 @@ hardware rather than in a virtio guest: apply `prune-firmware.txt` before dracut
 `10-prune-firmware` step at the end of stage 30, with stage 50 keeping its copy as a guard), or
 narrow what dracut copies with `--omit-drivers`/a hostonly-ish policy. The first is the smaller
 change and removes only firmware the image has already decided it will never load.
+
+**One instance of the second fix has since landed.** `nouveau` was already dead weight in the
+initrd — blacklisted by `nvidia-drivers`' own modprobe.d file (which *is* copied into the
+initrd), so it can never modprobe by modalias, early boot or otherwise. `VIDEO_CARDS` no longer
+lists it either (plan/03), and stage 40's dracut invocation now carries
+`--omit-drivers "nouveau"`, dropping `nouveau.ko`/`mxm-wmi.ko` and their GSP firmware
+(`/usr/lib/firmware/nvidia`, on the order of 150 MiB installed) from the initrd. Not
+re-measured against a full build in this document — the general firmware-before-dracut ordering
+problem above is still open for everything else.
 
 ## Status and remaining order
 

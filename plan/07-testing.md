@@ -89,8 +89,9 @@ Minimum matrix (aligned with the 5-year compatibility target):
 | Any machine | update A→B→bless over real network; manual `immos-update rollback`; Flatpak install via Discover; reboot persistence of user files + Wi-Fi creds |
 
 Recorded as a filled-in copy of `plan/checklists/hw-<machine>-<version>.md` (template to be
-added with M4). Known-limit notes to verify rather than pass: Pascal-or-older NVIDIA falls
-back to nouveau; IPU6 MIPI webcams may not stream.
+added with M4). Known-limit notes to verify rather than pass: Pascal-or-older NVIDIA has no
+working GPU driver (nouveau is dropped from the package set and blacklisted anyway, plan/03);
+IPU6 MIPI webcams may not stream.
 
 ## CI shape (later, but designed for now)
 

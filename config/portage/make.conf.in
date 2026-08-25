@@ -42,7 +42,10 @@ USE="wayland pipewire screencast bluetooth vulkan vaapi \
      -handbook -telemetry -webengine -designer \
      -gnome -gnome-keyring -gnome-online-accounts -introspection -vala"
 
-VIDEO_CARDS="amdgpu radeonsi intel nouveau virgl nvidia"
+VIDEO_CARDS="amdgpu radeonsi intel virgl nvidia"
+# nouveau dropped: nvidia-drivers ships /etc/modprobe.d/nvidia.conf blacklisting nouveau
+# unconditionally (plan/03), so it was never a live fallback, only mesa/xorg-driver bytes
+# for a module that can't load. See plan/03 and plan/10 for the tradeoff this removes.
 INPUT_DEVICES="libinput"
 L10N="@L10N@"
 

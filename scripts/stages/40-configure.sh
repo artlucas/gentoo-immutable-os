@@ -300,8 +300,16 @@ dracut --force --no-hostonly --reproducible \
   --add "systemd etc-overlay systemd-repart plymouth" \
   --install "${PLYMOUTH_LIBS[*]}" \
   --omit "network network-legacy nfs iscsi lvm mdraid multipath dmraid cifs brltty" \
+  --omit-drivers "nouveau" \
   --early-microcode \
   "$INITRD"
+# --omit-drivers nouveau: x11-drivers/nvidia-drivers blacklists nouveau via
+# /etc/modprobe.d/nvidia.conf (also carried into the initrd), so it can never modprobe by
+# modalias here — early-boot nouveau was already dead, just not absent. Without this flag
+# dracut's default driver sweep (70kernel-modules with $drivers unset) pulls every module the
+# kernel has, nouveau.ko included, and instmods drags its ~151 MiB of GSP firmware in behind
+# it (plan/10). Surgical: drops nouveau.ko + mxm-wmi.ko only, leaves amdgpu/i915/xe/radeon's
+# modules and firmware untouched, so early KMS on AMD/Intel is unaffected.
 
 # take the borrowed dracut tree back out of the image, keeping the module the overlay ships
 rm -rf -- "$DRACUT_LIB"

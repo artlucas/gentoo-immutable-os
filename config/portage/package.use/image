@@ -19,7 +19,7 @@ app-admin/sudo              -sendmail
 # virtual/dist-kernel, which is plan/03's "prebuilt against gentoo-kernel-bin".
 # -X: plan/03 is Wayland-only, but nvidia-drivers[X] installs the X DDX (nvidia_drv.so,
 # libglx.so) and with it pulls x11-base/xorg-server -> x11-base/xorg-drivers -> every
-# xf86-video-* matching VIDEO_CARDS (amdgpu, ati, nouveau) plus xf86-input-libinput and the
+# xf86-video-* matching VIDEO_CARDS (amdgpu, ati) plus xf86-input-libinput and the
 # x11-apps client utilities (xinit, xauth, xhost, xset, xrdb, iceauth). A full X server, in an
 # image whose session is Wayland-only and whose display manager (Plasma Login Manager) drives
 # kwin as its greeter compositor, with no Xorg session installed at all.
