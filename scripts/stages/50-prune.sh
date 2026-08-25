@@ -106,7 +106,14 @@ rm -rf -- "$T/var/db/pkg" "$T/var/db/repos" "$T/var/cache"/* \
 
 # ---- 3. runtime-useless residue ---------------------------------------------------
 find "$T" -xdev -name '*.la' -delete
-find "$T/usr/lib64" -maxdepth 1 -name '*.a' -delete 2>/dev/null || true
+# Static archives. This used to read `find "$T/usr/lib64" -maxdepth 1`, and that missed 22 MiB
+# in three places, all of them one directory deeper than it looked or in the other libdir:
+# /usr/lib64/glibc-2.43/libm-2.43.a, /usr/lib/llvm/22/lib64/*.a (11.5 MiB — section 3a below
+# removes that slot's include/share/bin but never its archives), and the whole 32-bit multilib
+# set under /usr/lib and /usr/lib/gcc/*/*/32. A .a is a link-time input and can never be loaded
+# at runtime, so there is no depth or libdir at which one is legitimate in this image; the scope
+# is the two libdirs and the depth is unlimited. Asserted in section 4.
+find "$T/usr/lib64" "$T/usr/lib" -xdev -name '*.a' -delete 2>/dev/null || true
 find "$T/usr/lib/modules" -maxdepth 2 \( -name build -o -name source \) -exec rm -rf {} + 2>/dev/null || true
 # ...and the tree those two symlinks POINTED AT. sys-kernel/gentoo-kernel-bin ships a full
 # configured kernel source + build tree at /usr/src/linux-<kver>-gentoo-dist-bin so out-of-tree
@@ -202,9 +209,32 @@ if [[ -n ${GCC_LIBDIR:-} && -d $GCC_LIBDIR ]]; then
              "$T/usr/bin/${CHOST:-x86_64-pc-linux-gnu}-$b"-*
   done
   rm -rf -- "$T/usr/share/gcc-data" "$T/usr/${CHOST:-x86_64-pc-linux-gnu}"
+
+  # ...and the runtimes NOTHING in the image links. "Keep the gcc runtime" above was never meant
+  # to mean all of it: a DT_NEEDED sweep over /usr/lib64, /usr/bin and /usr/sbin counts 1159
+  # references to libstdc++.so.6, 147 to libgcc_s.so.1 and 3 to libgomp.so.1 — and ZERO to each
+  # of the ten below, which are the sanitizer, Fortran, transactional-memory and OpenMP-offload
+  # runtimes. They are 8.6 MiB of libraries that only a program compiled against them could ever
+  # load, in an image with no compiler. libatomic.so.1 also has no references but stays: it is
+  # 34 KB and glibc's atomics fallback is the kind of thing a future package picks up silently.
+  for l in libgfortran libasan libtsan libhwasan liblsan libubsan libquadmath libitm libcc1 \
+           libgomp-plugin-nvptx; do
+    rm -f -- "$GCC_LIBDIR/$l".so*
+  done
+
+  # The 32-bit multilib half of gcc, 31 MiB. See the multilib block in 3d for why the whole
+  # 32-bit ABI is dead weight here; this is the part of it that gcc owns. It survived until now
+  # because the *.a sweep two lines up is -maxdepth 1 and this is one level deeper.
+  rm -rf -- "$GCC_LIBDIR/32"
+
   # the loader must still find libstdc++/libgcc_s
   ls "$T"/etc/ld.so.conf.d/*gcc* >/dev/null 2>&1 \
     || warn "no gcc ld.so.conf.d entry — libstdc++ may be unfindable at runtime"
+  # ...and must not be told to search a directory that no longer exists. ldconfig tolerates a
+  # missing path silently, so this is tidiness rather than a fix — but a stale path in
+  # ld.so.conf.d is exactly the sort of thing that makes a later "why is this not found?"
+  # investigation take an hour.
+  sed -i '\|/32$|d' "$T"/etc/ld.so.conf.d/*gcc* 2>/dev/null || true
 fi
 
 # ---- 3c. systemd-networkd: delete it, don't just disable it ---------------------------
@@ -257,6 +287,78 @@ done < <(find "$T/etc/systemd/system" "$T/usr/lib/systemd/system" -xdev -type l 
 # itself is shipped state and is asserted below, not deleted.
 rm -f "$T/etc/resolv.conf.build"
 rm -rf "$T/var/log"/* "$T/var/tmp"/* "$T/tmp"/*
+
+# ---- 3d. multilib: the 32-bit ABI has no users in this image --------------------------
+# On amd64 /usr/lib is the 32-bit libdir and /usr/lib64 the 64-bit one. sys-libs/glibc and
+# sys-devel/gcc are built multilib by the profile, so a complete 32-bit runtime is installed —
+# ld-linux.so.2, libc.so.6, the NSS modules, the crt*.o startup files — and NOTHING in the image
+# can load any of it: a DT_NEEDED/ELF-class sweep over /usr/lib64, /usr/bin and /usr/sbin finds
+# zero ELFCLASS32 objects. 32-bit Flatpaks carry their own org.freedesktop.Platform.Compat.i386
+# runtime and never look at the host's. Together with the gcc half above this is 42.7 MiB.
+#
+# The alternative fix is `sys-libs/glibc -multilib` + `sys-devel/gcc -multilib` in
+# package.use/image, which never builds it at all and saves build time too. It is not taken here
+# because both are @system packages on a multilib profile, and a mis-set flag on glibc is
+# discovered at the far end of a multi-hour rebuild. Deleting is exact and costs nothing.
+#
+# CAREFUL: this deletes by FILE CONTENT, not by name or by directory. /usr/lib holds real, live
+# things at the same depth — os-release (systemd reads it, /etc/os-release is a symlink to it),
+# the terminfo symlink, and the firmware/modules/systemd/udev/python trees below. Two content
+# tests, and nothing else goes:
+#
+#   ELFCLASS32  — \x7fELF\x01 in the first five bytes. The libraries, the loader, the crt*.o
+#                 startup files. A 64-bit consumer cannot link or load one of these by
+#                 construction, which is what makes deleting by class safe rather than merely
+#                 well-researched.
+#   GNU ld script — /usr/lib/libc.so is not an ELF at all but a text stanza reading
+#                 `OUTPUT_FORMAT(elf32-i386) GROUP ( /lib/libc.so.6 ... )`. It is consumed only
+#                 by ld at link time. Testing only the ELF class leaves it behind, and then the
+#                 section-4 assertion for 32-bit residue trips on this stage's own output.
+#
+# Dangling symlinks left pointing at any of it are swept in 3e.
+is_elf32()     { [[ "$(od -An -tx1 -N5 -- "$1" 2>/dev/null | tr -d ' ')" == 7f454c4601 ]]; }
+is_ld_script() { [[ "$(head -c 16 -- "$1" 2>/dev/null)" == '/* GNU ld script'* ]]; }
+n32=0
+while IFS= read -r -d '' f; do
+  is_elf32 "$f" || is_ld_script "$f" || continue
+  rm -f -- "$f" && n32=$((n32 + 1))
+done < <(find "$T/usr/lib" -maxdepth 1 -type f -print0 2>/dev/null)
+log "multilib: removed $n32 32-bit objects from /usr/lib"
+# /usr/lib/cpp -> /usr/bin/x86_64-pc-linux-gnu-cpp: the preprocessor driver the split above
+# deletes. The section-4 banned-binary sweep looks in /usr/bin, /usr/sbin, /bin and /sbin, so a
+# `cpp` living in /usr/lib was never going to trip it — it is a symlink, not a binary, but it is
+# the last thing in the image still spelling the name of a compiler driver.
+rm -f -- "$T/usr/lib/cpp"
+
+# ---- 3e. dangling symlinks this stage's own deletions create --------------------------
+# Deliberately NOT a whole-image sweep: several symlinks in this image are supposed to dangle at
+# build time and are asserted to exist below — /etc/resolv.conf points into /run, /etc/mtab into
+# /proc — so a blanket "delete every broken link" would break the image and the assertions with
+# it. Only the two directories this stage empties are swept.
+#
+#   /usr/lib/modules/<kver>/: gentoo-kernel-bin ships config, vmlinuz and System.map as symlinks
+#     into /usr/src/linux-<kver>-gentoo-dist-bin, and section 3 deletes that tree. The `build`
+#     and `source` links were already handled by name; these three were not, and a dangling
+#     `vmlinuz` under /usr/lib/modules is the kind of thing kernel-install and dracut follow.
+#   /usr/lib (maxdepth 1): the ABI-mate symlinks of the 32-bit libraries just deleted
+#     (libm.so -> ../../lib/libm.so.6 and ~20 more).
+prune_dangling_links() {
+  local dir=$1 depth=$2 link tgt base
+  [[ -d $dir ]] || return 0
+  while IFS= read -r -d '' link; do
+    tgt="$(readlink -- "$link")"
+    if [[ $tgt == /* ]]; then
+      [[ -e "$T$tgt" ]] && continue          # absolute: resolve inside the image, not the builder
+    else
+      base="$(dirname -- "$link")"
+      [[ -e "$base/$tgt" ]] && continue
+    fi
+    log "removing dangling symlink: ${link#"$T"} -> $tgt"
+    rm -f -- "$link"
+  done < <(find "$dir" -maxdepth "$depth" -type l -print0 2>/dev/null)
+}
+prune_dangling_links "$T/usr/lib/modules" 2
+prune_dangling_links "$T/usr/lib" 1
 
 # ---- 4. THE ASSERTIONS (build fails if any trips) ------------------------------------
 fail=0
@@ -359,6 +461,42 @@ compgen -G "$T/usr/sbin/NetworkManager" >/dev/null \
   || compgen -G "$T/usr/libexec/NetworkManager" >/dev/null \
   || violation "NetworkManager binary missing after prune — the image has no network manager at all"
 find "$T" -xdev -name '*.la' 2>/dev/null | grep -q . && violation "*.la files remain"
+# Same rule as *.la, and it belongs here for the same reason: a static archive is a link-time
+# input, so one surviving anywhere means a sweep grew a blind spot. This one is image-wide, not
+# scoped to the two libdirs the deletion covers — if a package ever installs a .a somewhere else,
+# this is where that should be noticed.
+a_left="$(find "$T" -xdev -name '*.a' 2>/dev/null | head -5)"
+[[ -n $a_left ]] && violation "static archives remain: $a_left"
+# 32-bit multilib residue (section 3d). Named-pattern check rather than an ELF-class re-scan:
+# after 3d there should be no shared object or relocatable at all at /usr/lib maxdepth 1.
+m32="$(find "$T/usr/lib" -maxdepth 1 -type f \( -name '*.so' -o -name '*.so.*' -o -name '*.o' \) 2>/dev/null | head -5)"
+[[ -n $m32 ]] && violation "32-bit multilib residue in /usr/lib: $m32"
+[[ -e $T/usr/lib/cpp ]] && violation "/usr/lib/cpp (compiler driver symlink) survived the prune"
+# ...and the one link at that depth that must NOT be swept. 3e deletes every dangling symlink in
+# /usr/lib maxdepth 1, and /usr/lib/terminfo -> ../share/terminfo lives there: it resolves today
+# only because section 3's /usr/share deletions do not include terminfo. Reorder those and this
+# sweep silently takes the terminal database with it — plan/06 lists terminfo under "deliberately
+# KEPT", and the failure would surface as an unusable console during recovery, which is exactly
+# when nobody can debug it. Caught by a mutation test of 3e, not by a build.
+[[ -d $T/usr/lib/terminfo || -d $T/usr/share/terminfo ]] \
+  || violation "terminfo is gone — the dangling-link sweep in 3e cut too deep"
+# ...and the counterpart: 3d deletes by ELF class inside a directory that also holds live files,
+# so assert the most load-bearing of them is still there. systemd reads /usr/lib/os-release on
+# every boot and /etc/os-release is a symlink to it.
+[[ -s $T/usr/lib/os-release ]] \
+  || violation "/usr/lib/os-release missing or empty — the multilib sweep in 3d cut too deep"
+# no dangling symlinks in the module tree: section 3e removes the three that pointed into the
+# deleted /usr/src, and a kernel bump adding a fourth should fail loudly rather than ship a
+# broken vmlinuz link that dracut and kernel-install both follow.
+# NB: resolved the same way 3e resolves them, NOT with `find -exec test -e`. test(1) would
+# resolve an ABSOLUTE link against the BUILDER's root, which is a different filesystem — that
+# reports a link as present when the image lacks it, and as broken when the builder lacks it.
+while IFS= read -r -d '' l; do
+  lt="$(readlink -- "$l")"
+  if [[ $lt == /* ]]; then [[ -e "$T$lt" ]] && continue
+  else [[ -e "$(dirname -- "$l")/$lt" ]] && continue; fi
+  violation "dangling symlink under /usr/lib/modules: ${l#"$T"} -> $lt"
+done < <(find "$T/usr/lib/modules" -type l -print0 2>/dev/null)
 
 # Interpreter policy (plan/06). The rule is that an interpreter in the image is a call a human
 # made and recorded — here, in plan/06 and in expected-packages.txt — never something tolerated
@@ -390,7 +528,11 @@ compgen -G "$T/usr/lib/llvm/"*/lib64/libLLVM.so* >/dev/null \
 
 # the toolchain split must leave the runtime behind: a desktop with no libstdc++ boots to
 # nothing, and that failure would otherwise only show up in QEMU (stage 70) or on hardware.
-for lib in libstdc++.so.6 libgcc_s.so.1; do
+# libgomp joined this list when 3b started deleting its neighbours: it has only 3 DT_NEEDED
+# references in the image (against libstdc++'s 1159), which is exactly the profile that makes a
+# library look droppable to the next person editing that loop. It is not — ghostscript and
+# libqalculate link it.
+for lib in libstdc++.so.6 libgcc_s.so.1 libgomp.so.1; do
   find "$T/usr/lib/gcc" -name "$lib" 2>/dev/null | grep -q . \
     || violation "gcc runtime library $lib missing after prune (toolchain split cut too deep)"
 done

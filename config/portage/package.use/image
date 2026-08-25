@@ -342,3 +342,21 @@ dev-libs/libportal          qt6 -gtk -vala
 net-wireless/wpa_supplicant -gui dbus
 
 app-crypt/libb2             -openmp
+
+# ---- fonts -----------------------------------------------------------------------------
+# media-fonts/noto is 440 MiB installed and 291 MiB of the EROFS — the largest font row and
+# the third-largest tree in the image. "extra" is a Gentoo-side size switch, not a coverage
+# switch; the ebuild's entire use of it is:
+#
+#     use extra || rm -rf "${ED}"/usr/share/fonts/noto/Noto*{Condensed,SemiBold,Extra}*.tt[f,c]
+#
+# so what leaves is 1550 of the package's 2177 files, all of them extra WEIGHTS and WIDTHS
+# (Condensed, SemiBold, ExtraLight, ExtraBold). Every NotoSans-*/NotoSerif-* script family
+# survives intact, which is the thing plan/06 says fonts are kept for. Arch splits the package
+# on the same line. Measured 2026-08-25 (plan/10): 445 -> 110 MiB installed, 291 -> 69 MiB in
+# the EROFS, with no script losing coverage.
+#
+# What this DOES cost: an application that explicitly asks for a condensed or semibold Noto
+# face falls back to the nearest available weight. Nothing in the Breeze theme or the
+# fontconfig defaults (66-noto-{sans,serif,mono}.conf) selects one.
+media-fonts/noto            -extra

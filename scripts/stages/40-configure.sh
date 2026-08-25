@@ -124,6 +124,34 @@ chroot_target "$TARGET" "systemctl mask ldconfig.service" >/dev/null 2>&1 \
 # flatpak: remote always; apps per FLATPAK_PREINSTALL_MODE
 chroot_target "$TARGET" \
   "flatpak remote-add --if-not-exists --system flathub https://dl.flathub.org/repo/flathub.flatpakrepo"
+
+# Locale scoping, BEFORE any install. Without an explicit xa.languages, flatpak pulls the
+# .Locale extension subpath for every language the runtime ships:
+# org.freedesktop.Platform.Locale alone was 824 MiB of the 2495 MiB /var this image carried,
+# plus 48 MiB for org.mozilla.firefox.Locale — in an image whose build.conf names nine locales
+# and whose stage-50 prune deletes every other message catalog out of /usr/share/locale on
+# exactly that list. Measured saving (plan/10): 615 + 40 = 655 MiB off /var.
+#
+# Set unconditionally, not just in "build" mode: the key is written to
+# /var/lib/flatpak/repo/config, which ships with the image, so the firstboot preinstall unit
+# and every later `flatpak install` the user runs inherit it too.
+#
+# The subpaths are keyed by bare LANGUAGE code — the deployed extension has "pt" and "zh", never
+# "pt_BR" or "zh_CN", and no "en" at all (English lives in the runtime itself). So the region
+# suffix is stripped rather than passed through. flatpak would tolerate the longer form (it
+# derives the base language itself and ignores a subpath that does not exist), but the config
+# would then name subpaths that are not there, which misleads anyone reading it back.
+FLATPAK_LANGS="$(printf '%s\n' $LOCALES_KEEP | sed 's/[_.@].*//' | sed '/^$/d' | sort -u | paste -sd';')"
+[[ -n $FLATPAK_LANGS ]] || die "LOCALES_KEEP produced an empty flatpak language list"
+log "flatpak languages: $FLATPAK_LANGS"
+chroot_target "$TARGET" "flatpak config --system --set languages '$FLATPAK_LANGS'" \
+  || die "flatpak config --set languages failed — the image would ship every locale on Flathub"
+# Read it back. A silently-unset key costs 655 MiB and is invisible until someone measures /var,
+# which is the same failure mode plan/06 records for the size report itself.
+FL_READBACK="$(chroot_target "$TARGET" "flatpak config --system --get languages" 2>/dev/null | tr -d '[:space:]')"
+[[ $FL_READBACK == "$FLATPAK_LANGS" ]] \
+  || die "flatpak xa.languages reads back as '${FL_READBACK:-<unset>}', expected '$FLATPAK_LANGS'"
+
 if [[ $FLATPAK_PREINSTALL_MODE == build && -n ${FLATPAK_PREINSTALL// /} ]]; then
   for app in $FLATPAK_PREINSTALL; do
     log "preinstalling flatpak: $app"

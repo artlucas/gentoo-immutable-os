@@ -54,7 +54,8 @@ Order matters — audit artifacts are saved *before* deletion:
 3. **Delete runtime-useless residue:** `*.la` files; static `*.a` that escaped
    INSTALL_MASK; `/usr/share/locale/<not in LOCALES_KEEP>`; `/usr/lib/firmware` blobs for
    hardware classes outside scope (`liquidio`, `netronome`, `mellanox`, `qed` — server NICs;
-   list curated in `config/prune-firmware.txt`; saves ~200–400 MiB); kernel build/source
+   list curated in `config/prune-firmware.txt`; **measured 2026-08-25 at 479 MiB** since the
+   whole `qcom` ARM SoC tree joined it — see plan/10 finding 2); kernel build/source
    symlinks in `/lib/modules/*/{build,source}`; `__pycache__` if any.
 4. **Strip binaries:** already handled by Portage (`FEATURES=nostrip` NOT set) — verify only.
 5. **tmpfiles-clean:** empty `/var/log/*`, `/var/tmp/*`, seeded machine-id blank, no bash
@@ -132,6 +133,15 @@ perl-shaped. To reverse it, set `kde-apps/kio-extras -samba`: samba, perl and Pa
 leave the image together, and what is lost is network-share browsing in Dolphin. Printing is
 unaffected either way.
 
+> **SUPERSEDED for the perl half (2026-08-25, [10-prune-audit.md](10-prune-audit.md) §
+> "Corrections").** `kio-extras -samba` no longer takes perl with it. `sys-apps/lm-sensors`
+> RDEPENDs `dev-lang/perl` unconditionally — `sensors-detect` is a perl script — and lm-sensors
+> is pulled by `kde-plasma/libksysguard` and `kde-plasma/ksystemstats`, i.e. by the System
+> Monitor in `@desktop`. The flag still frees 36.1 MiB (samba, mit-krb5, cifs-utils, the
+> talloc/tdb/tevent trio, Parse-Yapp); `dev-lang/perl` (47.4 MiB) stays either way. The image
+> also ships more than "nothing else perl-shaped": nine packages, 47.6 MiB, counting the
+> `virtual/perl-*` and `perl-core/*` that perl itself drags in.
+
 Original caveat text (correctly predicted, wrong package): `dev-lang/perl` is an RDEPEND of some base packages
 (e.g. openssl's `c_rehash`). The dep audit in stage 30 will show whether it lands; if it does
 and the pull is spurious, fix with USE (`-perl`) or `package.provided` — decided during
@@ -172,6 +182,18 @@ packages left dangling behind them. Nothing in the image imports them. Adding th
 unmerge loop in section 1 of `50-prune.sh` is the obvious next trim; it was left out of the
 Plasma migration deliberately, because that loop is shared with the console-only image and the
 change deserves its own before/after measurement rather than riding along with a desktop swap.
+
+> **MEASURED, and it is not the next trim (2026-08-25,
+> [10-prune-audit.md](10-prune-audit.md)).** The before/after this paragraph asks for was done by
+> reconstructing the VDB from the binpkg cache. Applying stage 50's existing unmerge list orphans
+> **fifteen** packages worth **1.78 MiB** — six `dev-python/*` plus `pax-utils`, `sandbox`,
+> `install-xattr`, `debugedit` and the portage user/group accounts. Worth unmerging for hygiene,
+> but it is a rounding error, and the count above is wrong in the other direction too:
+> `setuptools`, `packaging`, `platformdirs`, `more-itertools` and the `jaraco-*` trio are **not**
+> orphans — `dev-libs/gobject-introspection` RDEPENDs `dev-python/setuptools`, and g-i is held by
+> `pygobject` ← `power-profiles-daemon` and by `libqrtr-glib` ← `modemmanager` ←
+> `networkmanager`. Unmerging them would leave a broken dependency in the image. The trims that
+> actually matter are firmware compression, `noto[-extra]` and the wallpapers; see 10.
 
 `scripts/stages/50-prune.sh` drops only `python`/`python3` from the ban list.
 `gcc/g++/cc/ld/as/ar/make/cmake/ninja/meson/cargo/rustc/emerge/ebuild/portageq/pip` stay
@@ -253,6 +275,16 @@ where every row actually recorded):
 `linux-firmware` is the largest single item by a wide margin and the prune only trims 11
 directories from it — that, and `usr/share/fonts` (noto with `extra`), are the two levers left.
 Both were deliberately left alone: hardware compatibility and script coverage are stated goals.
+
+> **Both levers can be pulled without paying either price (2026-08-25,
+> [10-prune-audit.md](10-prune-audit.md)).** The premise that firmware and fonts can only shrink
+> by giving up coverage turns out to be false for both. `sys-kernel/linux-firmware[compress-zstd]`
+> keeps every blob and the shipped kernel decompresses on load (`CONFIG_FW_LOADER_COMPRESS_ZSTD=y`
+> in gentoo-kernel-bin); `media-fonts/noto[-extra]` removes only Condensed/SemiBold/Extra *weights*
+> and leaves every script family intact. Add the ARM-only vendor firmware that cannot load on
+> amd64 at all — `qcom` is 458 MiB of Snapdragon platform blobs — and the two "untouchable" rows
+> give up **1390 MiB installed / 640 MiB of EROFS** between them with no loss of hardware support
+> or script coverage. Measured, not estimated: see 10.
 
 ## Measured: the first Plasma build (2026-08-25)
 

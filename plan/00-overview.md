@@ -63,6 +63,8 @@ Note on terminology: Gentoo's "stage 3" is a **tarball** (`stage3-amd64-systemd-
 | [06-pruning.md](06-pruning.md) | INSTALL_MASK, prune lists, no-toolchain assertions, size budget |
 | [07-testing.md](07-testing.md) | QEMU smoke tests, update/rollback E2E, hardware checklist |
 | [08-roadmap.md](08-roadmap.md) | Installer ISO, Secure Boot, verity, and other future work |
+| [09-kde-migration.md](09-kde-migration.md) | The GNOME → KDE Plasma 6 swap: package mapping, USE inversions, GTK residue |
+| [10-prune-audit.md](10-prune-audit.md) | Measured audit of the 0.2.0 image: what holds each package in, what can leave, ranked by shipped size |
 
 ## Milestones
 

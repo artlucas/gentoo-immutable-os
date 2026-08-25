@@ -1,6 +1,25 @@
 # Firmware directories under /usr/lib/firmware pruned from the image (stage 50).
-# Server/datacenter NIC + exotic hardware classes outside the desktop/laptop scope.
 # One path per line, relative to /usr/lib/firmware. Lines starting with # ignored.
+#
+# Two classes of entry, on the same reasoning: hardware this image cannot be installed on.
+#
+#   1. Server/datacenter NICs and storage — outside the desktop/laptop scope of plan/03.
+#   2. ARM SoC *platform* firmware — DSP, modem, GPU-zap and boot blobs for phone, ARM-laptop,
+#      Chromebook, automotive and IoT SoCs. This is an amd64-only image (PROFILE in
+#      build.conf), so none of it can ever be requested by a driver here.
+#
+# CAREFUL with class 2: vendors ship laptop Wi-Fi/Bluetooth firmware alongside their ARM SoC
+# firmware, and those DO load on x86. The rule used below is to prune only the directories
+# named after an ARM *SoC*, never a directory named after a radio. Specifically:
+#   - Qualcomm's x86-relevant radios live in ath10k/, ath11k/, ath12k/, qca/ and rtw89/ —
+#     all separate top-level directories, none of them touched here.
+#   - MediaTek's mt79xx are Wi-Fi parts (mt7925/mt7927 are the Wi-Fi 6E/7 M.2 modules found in
+#     x86 laptops), so the whole mt79xx range is left alone; only the mt8xxx Chromebook/tablet
+#     SoCs go.
+# Getting this wrong produces a machine that boots with no network, which stage 70 cannot see
+# (its QEMU guest is virtio and requests no firmware at all). When in doubt, keep the blob.
+
+# ---- class 1: server/datacenter NICs and storage ----------------------------------
 liquidio
 netronome
 mellanox
@@ -8,7 +27,30 @@ qed
 bnx2x
 cxgb3
 cxgb4
-qcom/sc8280xp
 ti-connectivity
 mrvl/prestera
 dpaa2
+
+# ---- class 2: ARM SoC platform firmware -------------------------------------------
+# Qualcomm Snapdragon, all of it: 458 MiB, the single largest prunable tree in the image and
+# 28% of /usr/lib/firmware. Phone (sm8250, sdm845, apq8016/8096), ARM laptop (x1e80100,
+# glymur, kaanapali), automotive/IoT (sa8775p, qcs6490, qrb4210, qcm2290, qdu100) and the
+# venus/vpu ARM video cores. This entry replaces the narrower "qcom/sc8280xp" it grew out of —
+# that was one ARM laptop SoC picked out of forty on exactly this reasoning.
+#
+# Two entries under here are arguable and go anyway: qcom/aic100 (5 MiB) is a PCIe AI
+# accelerator that can sit in an x86 server, and qcom/venus-* is ARM video. Both are outside a
+# desktop/laptop image's scope for the same reason the class-1 server NICs above are, and
+# keeping them would mean enumerating ~40 subdirectories by hand and re-auditing that list on
+# every linux-firmware bump.
+qcom
+
+# MediaTek ARM SoCs (Chromebooks, tablets) — 18 MiB. NOT mt79xx: see the warning above.
+mediatek/mt8173
+mediatek/mt8183
+mediatek/mt8186
+mediatek/mt8188
+mediatek/mt8189
+mediatek/mt8192
+mediatek/mt8195
+mediatek/mt8196
