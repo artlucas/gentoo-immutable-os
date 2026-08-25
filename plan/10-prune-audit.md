@@ -484,17 +484,31 @@ would be a prune list. Removing them breaks GPU compute for native apps and for 
 expects the host driver to be complete (Blender, DaVinci, PyTorch containers). A desktop image
 that has decided it is not a compute workstation can take it; one that has not, cannot.
 
-**nouveau GSP firmware — 148 MiB installed, 102 MiB shipped. No longer a policy call.**
-`firmware/nvidia/ga102` (98) and `firmware/nvidia/tu102` (51) are nouveau's GSP blobs, separate
-from the proprietary driver's own 99 MiB at `firmware/nvidia/595.91.07`. This used to be listed
-here as a capability tradeoff — pruning it traded away the nouveau fallback for pre-Turing
-cards. That fallback was never real (`nvidia-drivers` blacklists nouveau unconditionally,
-see the finding below), and `VIDEO_CARDS` no longer builds nouveau at all (plan/03). The initrd
-copy is already gone via `--omit-drivers "nouveau"` in stage 40. What's left is these two
-subdirectories (`nvidia/ga102`, `nvidia/tu102`) on the root filesystem, now pure dead weight
-rather than a tradeoff — a `prune-firmware.txt` candidate, left for a future pass since it
-needs the same real-build verification as the rest of this section, and the exact subdirectory
-names should be confirmed against a fresh build rather than assumed stable.
+**nouveau firmware — 154 MiB, done, moved out of this section.** Used to be listed here as a
+capability tradeoff — pruning it traded away the nouveau fallback for pre-Turing cards. That
+fallback was never real (`nvidia-drivers` blacklists nouveau unconditionally, see the finding
+below), `VIDEO_CARDS` no longer builds nouveau at all (plan/03), and the initrd copy is already
+gone via `--omit-drivers "nouveau"` in stage 40. What was left was dead weight, not a tradeoff,
+so it's implemented rather than merely proposed: verified against the actual
+`linux-firmware-20260622` binpkg (`docker run ... immos-builder tar -tf`, not assumed) rather
+than the earlier two-directory guess. The nvidia/ tree there is 42 entries across every GPU
+generation from Kepler-mobile to Blackwell plus four Tegra SoC codenames, 154 MiB total —
+`ga102` (98 MiB) and `tu102` (51 MiB) are the bulk of it, the rest a few hundred KiB each. All
+42 are now `prune-firmware.txt` class 3. Confirmed no overlap with `nvidia/595.91.07/`, the
+proprietary driver's own firmware, which stays.
+
+**Verified against a real 0.2.2 build (2026-08-25), not just planned.** Full pipeline from
+stage 20, both smoke-test boots passed. Post-prune, `/work/target/usr/lib/firmware/nvidia/`
+contains exactly one entry, `595.91.07` (99 MiB) — every nouveau codename directory is gone,
+confirmed with `du` against the live target rootfs, not inferred from the prune list. The
+initrd's own recorded dracut invocation carries `--omit-drivers 'nouveau'` and `lsinitrd`
+finds zero `firmware/nvidia` paths in it. Measured artifact deltas against the 0.2.1 baseline
+above: root EROFS **2721 MiB (−123 vs 2844.0)**, UKI **135.5 MiB (−105.2 vs 240.7)** — the UKI
+number is the bigger surprise: `--omit-drivers` was scoped as an initrd-firmware fix, but at
+135.5 MiB the UKI is now closer to half its pre-nouveau-removal size, because 151 MiB of that
+240.7 MiB was nouveau's GSP blobs riding along for a module that could never load. `packages.txt`
+still matches `expected-packages.txt` unmodified — this remains a firmware/USE change, not a
+package-set change.
 
 **`INCLUDE_CJK_FONTS=0` — 294 MiB.** Already a `build.conf` switch. Noted only because it is the
 second-largest font row and the audit should say what it costs.
@@ -603,6 +617,7 @@ each tree was rebuilt with the same `mkfs.erofs -zlz4hc,12` the build uses.
 | 4 | flatpak `xa.languages` from `LOCALES_KEEP` | −655 (`/var`) | — (disk image only) | done |
 | 8 | toolchain residue: both libdirs, no `-maxdepth`, delete by ELF class, assert | −66 | **−31** | done |
 | 9 | dangling symlinks in `/usr/lib/modules` and `/usr/lib` | — | — | done |
+| — | nouveau firmware (`prune-firmware.txt` class 3) | −154 | **−123** | done |
 | 1 | `linux-firmware[compress-zstd,deduplicate]` | −581 more | **−135 more** | open |
 | 5 | wallpaper resolution ceiling at 3840x2160 | −193 | **−192** | open |
 | — | unmerge the 15 real orphans in stage 50 section 1 | −2 | ~0 | open |
@@ -611,6 +626,11 @@ each tree was rebuilt with the same `mkfs.erofs -zlz4hc,12` the build uses.
 **2844.0 MiB (−15.9%)**, the A/B payload **2135.6 MiB (−15.2%)** and the installed tree
 **6826 MiB (−1536)**. Adding findings 1 and 5 should reach roughly 2517 MiB of EROFS (−26%) —
 though note that finding 1 will not shrink the UKI either, for the stage-ordering reason above.
+The nouveau-firmware row moved that forward again: the 0.2.2 build measured above puts the root
+EROFS at **2721 MiB** and — the one this table doesn't otherwise track — the UKI at **135.5 MiB**,
+down from 240.7 MiB. That number matters for A/B updates specifically: every update downloads a
+fresh `.efi` next to the root payload, so the UKI shrinking by 44% lands on update bandwidth and
+ESP headroom in a way the EROFS column alone doesn't show.
 
 **None of the five changed the package set** — 615 packages before and after, byte-identical
 `packages.txt`, and the stage-50 dependency-audit gate passed against an unmodified

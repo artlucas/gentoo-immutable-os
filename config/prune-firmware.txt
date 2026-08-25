@@ -1,12 +1,17 @@
 # Firmware directories under /usr/lib/firmware pruned from the image (stage 50).
 # One path per line, relative to /usr/lib/firmware. Lines starting with # ignored.
 #
-# Two classes of entry, on the same reasoning: hardware this image cannot be installed on.
+# Three classes of entry, on the same reasoning: hardware this image cannot be installed on,
+# or — class 3 — a kernel driver the image will never load.
 #
 #   1. Server/datacenter NICs and storage — outside the desktop/laptop scope of plan/03.
 #   2. ARM SoC *platform* firmware — DSP, modem, GPU-zap and boot blobs for phone, ARM-laptop,
 #      Chromebook, automotive and IoT SoCs. This is an amd64-only image (PROFILE in
 #      build.conf), so none of it can ever be requested by a driver here.
+#   3. nouveau's per-GPU-generation firmware from linux-firmware. VIDEO_CARDS carries no
+#      nouveau (plan/03) and x11-drivers/nvidia-drivers blacklists the kernel module
+#      unconditionally (plan/10), so nothing on this image can ever modprobe nouveau to
+#      request these blobs.
 #
 # CAREFUL with class 2: vendors ship laptop Wi-Fi/Bluetooth firmware alongside their ARM SoC
 # firmware, and those DO load on x86. The rule used below is to prune only the directories
@@ -54,3 +59,63 @@ mediatek/mt8189
 mediatek/mt8192
 mediatek/mt8195
 mediatek/mt8196
+
+# ---- class 3: nouveau firmware (dead since nouveau was dropped, plan/10) ----------
+# Every per-GPU-generation directory linux-firmware ships under nvidia/ — 154 MiB, verified
+# against the actual linux-firmware-20260622 binpkg (`docker run ... immos-builder tar -tf`,
+# not guessed). Kepler-mobile through Blackwell desktop, plus the Tegra SoC entries (already
+# out of scope under class 2's amd64-only reasoning, listed here instead since they live under
+# nvidia/ and the two reasons for dropping them are the same firmware bump apart). ga102 (98
+# MiB) and tu102 (51 MiB) are the bulk of it. Four of the desktop entries below are actually
+# symlinks to a sibling in the same family (ad103/104/106/107 -> ad102, gb102 -> gb100,
+# gb203/205/206/207 -> gb202) but are listed explicitly rather than relying on that, since a
+# future linux-firmware could turn any of them into a real directory without notice.
+#
+# NOT touched: nvidia/<version>/ (e.g. nvidia/595.91.07/gsp_*.bin), which is
+# x11-drivers/nvidia-drivers' OWN firmware for the proprietary driver actually in use — a
+# completely disjoint subtree (numeric dotted version vs. alpha chip codename, verified no
+# overlap against both binpkgs). Do not add a bare "nvidia" entry above this comment: that
+# would delete the proprietary driver's firmware along with nouveau's and break GPU
+# acceleration outright.
+nvidia/ad102
+nvidia/ad103
+nvidia/ad104
+nvidia/ad106
+nvidia/ad107
+nvidia/ga100
+nvidia/ga102
+nvidia/ga103
+nvidia/ga104
+nvidia/ga106
+nvidia/ga107
+nvidia/gb100
+nvidia/gb102
+nvidia/gb202
+nvidia/gb203
+nvidia/gb205
+nvidia/gb206
+nvidia/gb207
+nvidia/gh100
+nvidia/gk20a
+nvidia/gm200
+nvidia/gm204
+nvidia/gm206
+nvidia/gm20b
+nvidia/gp100
+nvidia/gp102
+nvidia/gp104
+nvidia/gp106
+nvidia/gp107
+nvidia/gp108
+nvidia/gp10b
+nvidia/gv100
+nvidia/tegra124
+nvidia/tegra186
+nvidia/tegra194
+nvidia/tegra210
+nvidia/tu102
+nvidia/tu104
+nvidia/tu106
+nvidia/tu10x
+nvidia/tu116
+nvidia/tu117
