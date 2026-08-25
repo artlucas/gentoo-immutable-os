@@ -1,0 +1,19 @@
+[Unit]
+Description=Set a per-machine hostname (first boot)
+# /etc/machine-id ships empty (stage 40) so systemd generates a fresh one per machine on its
+# first boot, before any unit runs — the same reason a hostname can't be baked in at build
+# time either, or every machine flashed from one image would share it. Order after the unit
+# that persists a machine-id generated on a transient/read-only /etc, so the value read below
+# is never the empty placeholder.
+After=systemd-machine-id-commit.service
+ConditionPathExists=!/var/lib/@DISTRO_ID@/hostname-init.done
+
+[Service]
+Type=oneshot
+# hostnamectl (not a plain /etc/hostname write) so the pretty/static/transient names and the
+# D-Bus-visible hostname all agree from the first boot onward.
+ExecStart=/bin/sh -c 'set -e; hostnamectl set-hostname "@DISTRO_ID@-$(cut -c1-5 /etc/machine-id)"'
+ExecStartPost=/bin/sh -c 'mkdir -p /var/lib/@DISTRO_ID@ && touch /var/lib/@DISTRO_ID@/hostname-init.done'
+
+[Install]
+WantedBy=multi-user.target

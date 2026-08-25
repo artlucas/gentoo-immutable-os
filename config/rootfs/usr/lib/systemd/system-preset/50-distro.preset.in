@@ -29,5 +29,6 @@ enable systemd-boot-check-no-failures.service
 enable @DISTRO_ID@-boot-ok.service
 enable @DISTRO_ID@-test-report.service
 enable @DISTRO_ID@-flatpak-preinstall.service
+enable @DISTRO_ID@-hostname-init.service
 disable sshd.service
 disable systemd-sysupdate.timer
