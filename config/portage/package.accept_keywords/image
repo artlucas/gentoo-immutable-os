@@ -1,10 +1,26 @@
 # Keyword exceptions for the image build. Keep empty if possible — stable amd64 only.
 media-libs/libva-intel-media-driver ~amd64  # no stable amd64 ebuild in tree at this snapshot
 x11-drivers/nvidia-drivers           ~amd64  # no stable amd64 ebuild in tree at this snapshot
-gnome-extra/gnome-software           ~amd64  # no stable amd64 ebuild in tree at this snapshot
 
-# gtkmm 4.20.0 (stable) exports a private Vulkan dependency in gtkmm-4.0.pc, so every consumer
-# has to resolve vulkan.pc — which no Gentoo package installs. gnome-system-monitor dies with
-# "Package 'vulkan', required by 'gtkmm-4.0', not found". Gentoo's fix is MR-101.patch, applied
-# only in the -r1 revision, which is still ~amd64. Drop this entry once the fix goes stable.
-=dev-cpp/gtkmm-4.20.0-r1             ~amd64
+# The ONLY ~amd64 package in the desktop set, and a deliberate departure from the rule in the
+# line above — recorded here rather than slipped in. Plasma Login Manager shipped with Plasma
+# 6.6 as KDE's SDDM replacement and has no stable ebuild yet; x11-misc/sddm does
+# (0.21.0_p20250502-r1), so this exception is the price of choosing PLM (plan/09). It is worth
+# paying because PLM reuses kwin as its greeter compositor rather than starting a second one,
+# which matters in an image that is Wayland-only by construction.
+#
+# Pinned to =6.6.6 deliberately, not left open: both 6.6.6-r1 and 6.7.4-r1 raise QTMIN to
+# >=6.11.2, which is itself ~amd64 and would pull a ~amd64 Qt AND the ~amd64 Plasma 6.7.4 set
+# in behind it. 6.6.6 needs only QTMIN=6.10.0, satisfied by the stable dev-qt/qtbase-6.11.1.
+# One ~amd64 package, not a hundred.
+# Drop the pin — not the entry — when 6.7.x stabilises alongside the rest of Plasma.
+=kde-plasma/plasma-login-manager-6.6.6   ~amd64
+
+# Everything else in @desktop is stable amd64 at the pinned snapshot, verified against the
+# tree rather than assumed: Plasma 6.6.6, Frameworks 6.27.0, Gear 26.04.3, dev-qt/qtbase-6.11.1.
+# Baloo's tail needs no entry either — kde-frameworks/{baloo,kfilemetadata} at 6.27.0,
+# kde-apps/baloo-widgets at 26.04.3, and dev-db/lmdb, media-libs/taglib, media-gfx/exiv2 are
+# all stable amd64.
+#
+# If "emerge -p @desktop" reports any OTHER masked-by-keyword package, that is new information:
+# add it here with the same one-line justification, and reconsider whether the set has drifted.

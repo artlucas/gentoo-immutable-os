@@ -85,8 +85,8 @@ Minimum matrix (aligned with the 5-year compatibility target):
 |---|---|
 | Intel laptop, iGPU (Iris Xe class), 2021+ | boot from USB, Wi-Fi, BT, audio (SOF), suspend/resume, brightness, external display (HDMI/USB-C) |
 | AMD laptop (Zen 3+ APU) | same list, amdgpu |
-| Desktop w/ NVIDIA RTX (Turing+) | boot, `nvidia` module loaded (not nouveau), GNOME Wayland session on NVIDIA (GDM refuses Wayland there without DRM modesetting — the UKI cmdline already carries `nvidia-drm.modeset=1`, so confirm `loginctl show-session` reports `Type=wayland` and not a silent X11 fallback), vulkaninfo, video decode |
-| Any machine | update A→B→bless over real network; manual `immos-update rollback`; Flatpak install via GNOME Software; reboot persistence of user files + Wi-Fi creds |
+| Desktop w/ NVIDIA RTX (Turing+) | boot, `nvidia` module loaded (not nouveau), Plasma Wayland session on NVIDIA (the greeter refuses Wayland there without DRM modesetting — the UKI cmdline already carries `nvidia-drm.modeset=1`, so confirm `loginctl show-session` reports `Type=wayland` and not a silent X11 fallback), vulkaninfo, video decode |
+| Any machine | update A→B→bless over real network; manual `immos-update rollback`; Flatpak install via Discover; reboot persistence of user files + Wi-Fi creds |
 
 Recorded as a filled-in copy of `plan/checklists/hw-<machine>-<version>.md` (template to be
 added with M4). Known-limit notes to verify rather than pass: Pascal-or-older NVIDIA falls

@@ -71,7 +71,7 @@ UEFI firmware
                  4. etc-overlay unit          ← custom dracut module (see below)
                  5. switch-root
                       └─ systemd (full)
-                           ... graphical.target → GDM → GNOME Shell (Wayland)
+                           ... graphical.target → Plasma Login Manager → Plasma (Wayland)
                            boot-complete.target → systemd-bless-boot marks UKI good
 ```
 
@@ -154,8 +154,8 @@ lands in the upper — stable thereafter.
 ## First boot & default user
 
 v1 images are "live-style": a `live` user (uid 1000, wheel, configurable name/password in
-`build.conf`) is baked into the image `/etc/passwd`/`shadow` at build time, with GDM
-autologin into the GNOME Wayland session. Rationale: zero-interaction boot for both VM
+`build.conf`) is baked into the image `/etc/passwd`/`shadow` at build time, with Plasma Login
+Manager autologin into the Plasma Wayland session (`/etc/plasmalogin.conf.d/10-autologin.conf`). Rationale: zero-interaction boot for both VM
 evaluation and USB live use. The future installer (roadmap) replaces this with real user
 creation via `systemd-firstboot` and the installer's own account step. User-created accounts at runtime land in the `/etc` overlay
 upper and `/var/home` — they survive updates.

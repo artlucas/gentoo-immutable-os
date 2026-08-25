@@ -67,7 +67,7 @@ Same artifact everywhere:
 
 First-boot sequence on any medium (details in 01): initrd `systemd-repart` extends the var
 partition to the disk's end and fixes the backup GPT header; `x-systemd.growfs` expands
-ext4; machine-id generated into the `/etc` overlay; GDM autologin → GNOME Shell.
+ext4; machine-id generated into the `/etc` overlay; Plasma Login Manager autologin → Plasma.
 
 ## ESP contents & bootloader policy
 
@@ -106,7 +106,7 @@ proper menu title.
 
 ## Boot splash
 
-From the first DRM device to GDM's greeter the screen shows the Immos splash — the pulsing
+From the first DRM device to the Plasma Login Manager greeter the screen shows the Immos splash — the pulsing
 logomark on `#0a0d11`, the wordmark, and a `<channel> · V<version> · AMD64` status line — drawn
 over whatever the firmware left on screen. ESC switches to the boot log.
 
@@ -116,9 +116,14 @@ over whatever the firmware left on screen. ESC switches to the boot log.
   dracut's `45plymouth` module copies the theme out of the target into the initrd.
 - **Cmdline additions:** see [01](01-architecture.md). `plymouth.ignore-serial-consoles` is the
   one that matters for CI.
-- **Hand-off:** `gdm[plymouth]` conflicts with `plymouth-quit.service` and quits the splash with
-  `--retain-splash` once the greeter has painted, so there is no black frame. On `--console-only`
-  images a `multi-user.target` drop-in does the teardown instead.
+- **Hand-off:** `plymouth-quit.service` tears the splash down, on **both** the desktop and
+  `--console-only` images, with the `multi-user.target` drop-in guaranteeing the units are
+  wanted. `plasmalogin.service` carries an `After=plymouth-quit-wait.service` drop-in so the
+  greeter paints after the teardown rather than racing it.
+  This is a regression against the GNOME image and a deliberate one: `gdm[plymouth]` conflicted
+  with `plymouth-quit.service` and quit the splash itself with `--retain-splash` once the
+  greeter had painted, so there was no black frame at all. Plasma Login Manager has no
+  retain-splash equivalent. Restoring that hand-off is a [roadmap](08-roadmap.md) item.
 - **UKI size:** the plymouth dracut module depends on dracut's `drm` module, so the initrd now
   carries the DRM kernel modules — the UKI went from ~105 MiB to ~242 MiB. Two of those is
   484 MiB of the 1 GiB ESP, which fits with room, but it is now the dominant ESP consumer.
@@ -139,7 +144,7 @@ over whatever the firmware left on screen. ESC switches to the boot log.
     cannot reach — it needs a DRM device, and this kernel has no simpledrm (see [08](08-roadmap.md)).
   - It is drawn **once**, and it dies at the first modeset. There is no animation, no progress,
     and nothing redraws it: `stub` alone leaves the screen black from the first DRM driver all
-    the way to GDM, which is the majority of the boot. `both` is the combination that covers
+    the way to the greeter, which is the majority of the boot. `both` is the combination that covers
     the whole timeline; `stub` alone is a downgrade, not a replacement.
   - The stub fills the screen **black** and blits the bitmap **1:1, centred, without scaling**
     (`src/boot/splash.c`). Hence `SPLASH_STUB_SCALE`, and hence the bitmap's black background

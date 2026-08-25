@@ -414,6 +414,31 @@ fi
 [[ -f $TARGET/usr/lib/sysupdate.d/50-rootfs.transfer ]]   || die "verify: sysupdate transfer missing"
 [[ -L $TARGET/home ]]                                     || die "verify: /home symlink missing"
 
+# The desktop session hand-off. Each of these is a failure that would otherwise surface only as
+# a black screen or a console login on a machine that is supposed to autologin — stage 70 reads
+# a serial port and would report green for all three.
+if [[ ${CONSOLE_ONLY:-0} != 1 ]]; then
+  # /etc/plasmalogin.conf.d/10-autologin.conf says Session=plasma. That names a file, and the
+  # file comes from kde-plasma/plasma-login-sessions[wayland] — not from the display manager
+  # and not from plasma-workspace. Without it the greeter has nothing to log in TO.
+  [[ -f $TARGET/usr/share/wayland-sessions/plasma.desktop ]] \
+    || die "verify: /etc/plasmalogin.conf.d names Session=plasma but no plasma.desktop wayland session exists — is kde-plasma/plasma-login-sessions[wayland] installed?"
+  # plasmalogin.service's [Install] is Alias=display-manager.service, so this symlink IS the
+  # enablement. preset-all reports errors only as a warning above (they are usually benign),
+  # which is exactly why the outcome is asserted rather than the exit status trusted.
+  compgen -G "$TARGET/etc/systemd/system/display-manager.service" >/dev/null \
+    || die "verify: plasmalogin.service not enabled (preset did not take — no display-manager.service alias)"
+  # KWallet auto-unlock. Gentoo's PLM ebuild ships PAM stacks that already carry
+  #   -auth    optional pam_kwallet5.so
+  #   -session optional pam_kwallet5.so auto_start
+  # and the leading "-" makes each line a no-op when the module is absent — so a missing
+  # kde-plasma/kwallet-pam degrades to "prompt for the wallet password" rather than failing to
+  # log in. A warning, not a die, for that reason.
+  compgen -G "$TARGET/usr/lib64/security/pam_kwallet"*.so >/dev/null \
+    || compgen -G "$TARGET/usr/lib/security/pam_kwallet"*.so >/dev/null \
+    || warn "verify: no pam_kwallet module — KWallet will prompt instead of auto-unlocking"
+fi
+
 # DNS wiring: every piece of it, because each half is useless alone — nsswitch pointing at a
 # resolver that is not enabled fails closed, and an enabled resolver nothing consults is dead
 # weight that still holds port 53.

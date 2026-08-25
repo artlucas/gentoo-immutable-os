@@ -8,14 +8,16 @@ The stated next major goal. Design sketch, so v1 choices don't paint us into a c
 - **Media:** hybrid ISO (xorriso/grub-mkrescue or systemd-boot ISO layout) carrying (a) a
   live boot of the *same* root EROFS with `systemd.volatile`-style tmpfs var — reusing the
   exact production image, and (b) the compressed disk image payload.
-- **Installer:** GNOME-native, GTK4 + libadwaita, so the ISO carries no second toolkit — the
-  live session already has the whole GTK stack, and pulling a Qt installer in would roughly
-  double the ISO's UI dependencies for one screen flow. Either a purpose-built app or a
-  `gnome-initial-setup`-derived flow; either way the responsibilities are the same thin set:
-  picks target disk → writes the GPT layout ([04](04-image-and-boot.md)) sized to the disk →
-  dd's ESP+root slot → creates var → runs `systemd-firstboot`-style user/locale/TZ pages →
-  removes the baked live user. Cost vs. an off-the-shelf installer: more code to write, since
-  none of the GTK options is as turnkey as the Qt ones — spike it before committing.
+- **Installer:** Qt/Kirigami, so the ISO carries no second toolkit — the live session already
+  has the whole Qt6 + Frameworks stack, and pulling a GTK installer in would roughly double the
+  ISO's UI dependencies for one screen flow. (This reverses with the desktop: the same argument
+  said GTK4 + libadwaita when the session was GNOME.) The responsibilities are the same thin
+  set either way: picks target disk → writes the GPT layout ([04](04-image-and-boot.md)) sized
+  to the disk → dd's ESP+root slot → creates var → runs `systemd-firstboot`-style
+  user/locale/TZ pages → removes the baked live user.
+  The cost calculation also flips, in our favour: the turnkey options in this space (Calamares
+  above all) *are* the Qt ones, so "more code to write than an off-the-shelf installer" is no
+  longer a given — spike Calamares against a purpose-built Kirigami app before committing.
 - v1 groundwork already in place: identical image on any medium, var-grows-to-disk, no
   NVRAM dependency, all identity in `build.conf`.
 
@@ -38,8 +40,9 @@ Secure Boot for a full trust chain.
   or erofs chunk-dedup between consecutive images.
 - **Unattended updates:** enable `systemd-sysupdate.timer` by default (staged rollout knob:
   `UPDATE_URL` per channel already supports `stable`/`testing`).
-- **GNOME Software integration:** OS update visibility in the GUI next to Flatpak updates
-  (gnome-software has a pluggable backend API; SteamOS does similar with its own centre).
+- **Discover integration:** OS update visibility in the GUI next to Flatpak updates. Discover
+  has a pluggable backend API the same way gnome-software did; SteamOS does similar with its
+  own centre.
 - `/var` **migration hooks** if a release ever needs them (versioned oneshot design reserved
   in [05](05-updates.md)).
 
@@ -68,16 +71,16 @@ Secure Boot for a full trust chain.
 | Pascal (GTX 10-series) & older NVIDIA → nouveau fallback | `kernel-open` covers Turing+ only; pre-Turing machines fall outside the 5-year target. Revisit only if user demand appears (would require the legacy proprietary branch and a second driver variant) |
 | No 3-way `/etc` merge (overlay upper shadows vendor changes) | OSTree-grade merge machinery is not worth v1 complexity; `immos-update etc-diff` gives visibility |
 | No Secure Boot in v1 | Owner decision; documented "disable in firmware"; roadmap #2 |
-| Boot splash cannot render a passphrase prompt | `sys-boot/plymouth[-pango]`: all splash text is pre-rendered to PNG at build time, so no font ships in the image. Costs nothing today (no LUKS, no fsck prompt); adding full-disk encryption means turning `pango` back on first — it pulls no new packages, since pango/cairo/libpng are already there for GNOME |
+| Boot splash cannot render a passphrase prompt | `sys-boot/plymouth[-pango]`: all splash text is pre-rendered to PNG at build time, so no font ships in the image. Costs nothing today (no LUKS, no fsck prompt); adding full-disk encryption means turning `pango` back on first — it pulls no new packages, since pango/cairo/libpng are already there for the GTK theming bridge |
 | Possible brief console flash between firmware logo and splash | `gentoo-kernel-bin` is a binary dist-kernel and `/usr/src` is pruned, so the graphics config is whatever Gentoo ships and cannot be changed without leaving `-bin`. Verified against the 6.18.43 config: `CONFIG_FRAMEBUFFER_CONSOLE_DEFERRED_TAKEOVER=y` (good), but `DRM_SIMPLEDRM`, `DRM_EFIDRM`, `DRM_VESADRM` and `SYSFB_SIMPLEFB` are all **unset**, and `CONFIG_FB_DEVICE` is unset too — so there is no generic firmware-framebuffer DRM device and no `/dev/fb0` either. Plymouth must wait for a real DRM driver, and plymouth's `frame-buffer.so` renderer can never be the fallback. Pre-empting the firmware logo is now possible via `SPLASH_BACKEND=both` (a `.splash` section in the UKI, see [04](04-image-and-boot.md)), but that covers only the pre-kernel window; closing the modeset gap itself needs a kernel with simpledrm, i.e. `sys-kernel/gentoo-kernel` with a custom config |
 | NVIDIA machines get no splash until after the root pivot | The proprietary modules live in `/usr/lib/modules/<kver>/video/` and are **not** in the initrd (dracut's `drm` module globs `drivers/gpu/drm` only), while `/etc/modprobe.d/nvidia.conf` — which *is* in the initrd — blacklists `nouveau`. So the initrd has no usable DRM device on NVIDIA at all: plymouth waits out `DeviceTimeout=8` and falls back to text. Fix is `--add-drivers "nvidia nvidia-drm nvidia-modeset"` in stage 40. Related: the initrd also carries ~150 MiB of nouveau GSP firmware (`/usr/lib/firmware/nvidia`) for that blacklisted driver, because stage 50's firmware prune runs *after* stage 40 builds the initrd |
 | UEFI-only, no BIOS | 5-year hardware window is UEFI-universal |
 | Full-image (non-delta) updates | Simplicity + sysupdate stock behavior; roadmap #4 |
 | No hibernation (zram-only swap) | Avoids swap-partition sizing and resume-offset fragility on an immutable, repartition-on-first-boot design |
 | Baked `live` autologin user in v1 images | The image doubles as live media; real user management arrives with the installer |
-| Native GNOME apps limited to gnome-console/nautilus | Everything else Flatpak — the point of the distro; portals make it seamless. file-roller and gnome-text-editor were dropped after 0.1.0: nautilus already extracts/compresses via gnome-autoar, and the editor was the sole consumer of a 12-package tail ([03](03-package-set.md), "Dropped from the native set"). Neither is preinstalled as a Flatpak — `org.gnome.Platform` is ~1.07 GB in a 4 GiB `/var` — so a user who wants one installs it from GNOME Software |
+| Native apps limited to Konsole/Dolphin | Everything else Flatpak — the point of the distro; portals make it seamless. Ark, Kate, Okular and Gwenview are deliberately absent for the same reason file-roller and gnome-text-editor were dropped after 0.1.0 ([03](03-package-set.md), "Dropped from the native set"). One genuine regression to note: Dolphin does **not** get archive handling for free the way nautilus did through gnome-autoar. A user who wants any of these installs it from Discover |
 | Generic x86-64 (no AVX2 floor) | Budget Atom-class CPUs sold within the window lack AVX2 |
-| WebKitGTK excluded natively (`-gnome-online-accounts`, `evolution-data-server[-oauth]`) | Biggest single build/system-size win; browser ships as Flatpak Firefox |
+| No browser engine natively (`USE=-webengine` + hard masks on `net-libs/webkit-gtk` and `dev-qt/qtwebengine`) | Biggest single build/system-size win; browser ships as Flatpak Firefox. Under GNOME this was `-gnome-online-accounts` + `evolution-data-server[-oauth]` holding webkit-gtk out; under Plasma it is a global USE flag plus the mask, i.e. structural rather than flag-dependent |
 
 ## Open questions (to resolve during implementation, with data)
 
@@ -86,8 +89,17 @@ Secure Boot for a full trust chain.
 2. Flatpak preinstall inside chroot — verify ostree pulls work under the builder's network;
    fallback `firstboot` mode exists ([03](03-package-set.md)).
 3. Exact UKI size with `--no-hostonly` dracut (ESP sized 1 GiB with 2× margin; confirm).
-4. GDM Wayland greeter stability on NVIDIA — GDM's shipped udev rule disables Wayland on
-   NVIDIA unless DRM modesetting is on, which the UKI cmdline sets (`nvidia-drm.modeset=1`).
-   If it still falls back, the greeter would want X11 — revisit the no-Xorg stance for the
-   greeter alone before giving it up session-wide.
+4. Wayland on NVIDIA — this used to be a *greeter* question (GDM's shipped udev rule disabled
+   Wayland on NVIDIA unless DRM modesetting was on, which the UKI cmdline sets with
+   `nvidia-drm.modeset=1`). With Plasma Login Manager it collapses into the **session**
+   question, because PLM runs its greeter on `kwin` — the same compositor the session uses.
+   There is no separate greeter stack to fall back independently, and no X11 fallback exists to
+   fall back *to*: `kde-plasma/kwin` is Wayland-only and `kwin-x11` is not installed. So if this
+   fails on NVIDIA it fails at the session level and the fix is session-wide, not greeter-only.
 5. `bash-completion`/zsh data: keep or prune — size report decides (marked REVISIT in 06).
+6. **Restore a retain-splash hand-off.** `gdm[plymouth]` quit the splash itself with
+   `--retain-splash` once the greeter had painted, so there was no black frame between splash
+   and login. Plasma Login Manager has no equivalent, so `plymouth-quit.service` tears the
+   splash down and `plasmalogin.service` is merely ordered after `plymouth-quit-wait` — a
+   deterministic hand-off, but a visible one. Worth a look at whether PLM can be made to run
+   `plymouth quit --retain-splash` from a drop-in `ExecStartPre`/`ExecStartPost`.

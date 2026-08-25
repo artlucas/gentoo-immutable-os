@@ -7,8 +7,40 @@ CFLAGS="${COMMON_FLAGS}"
 CXXFLAGS="${COMMON_FLAGS}"
 MAKEOPTS="-j@JOBS@"
 
-USE="wayland pipewire screencast bluetooth vulkan vaapi introspection \
-     -doc -gtk-doc -examples -test -gnome-online-accounts"
+# Global USE. The desktop half of this is Plasma-shaped (plan/09); everything above the
+# first line break is desktop-agnostic and unchanged from the GNOME image.
+#
+#   -handbook   KDE ships a DocBook handbook per app. Nothing in the image can render one
+#               (no khelpcenter, no yelp), and they install under /usr/share/doc/HTML, which
+#               stage 50 deletes anyway. Off at the source instead.
+#   -telemetry  drops kde-frameworks/kuserfeedback and the KDE telemetry surface with it.
+#   -webengine  the structural guard against dev-qt/qtwebengine — a Chromium build. Nothing
+#               native renders HTML here (plan/03); backed by a hard mask in package.mask.
+#   -designer   Qt Designer plugins, for an image with no IDE.
+#   -gnome -gnome-keyring -gnome-online-accounts
+#               global levers that stop packages offering GNOME integration from pulling it
+#               in. -gnome is load-bearing for x11-misc/xdg-utils specifically (see the long
+#               note in package.use/image).
+#
+#   -introspection
+#               was "introspection" (positive), because gjs and gnome-shell load GObject
+#               typelibs at runtime. Nothing in the image does that any more, and most of the
+#               packages that build them default the flag ON in their own IUSE — so dropping
+#               the token was not enough; it has to be negated. dev-libs/glib keeps it as a
+#               per-package line below so the binhost's glib binpkg still matches.
+#               ROLLBACK: if some surviving package turns out to dlopen a typelib, put
+#               "introspection" back here AND revert the girepository-1.0 deletion in stage 50
+#               — that pair moves together, in both directions.
+#   -vala       .vapi files are build-time inputs for compiling Vala, and nothing in the image
+#               compiles anything — stage 50 deletes usr/share/vala outright, so the flag only
+#               ever built files the prune then threw away. It is also what makes
+#               -introspection viable at all: several packages (gnome-base/librsvg,
+#               app-crypt/libsecret) carry REQUIRED_USE="vala? ( introspection )", so with vala
+#               left on, -introspection is unsatisfiable and the depgraph stops.
+USE="wayland pipewire screencast bluetooth vulkan vaapi \
+     -doc -gtk-doc -examples -test \
+     -handbook -telemetry -webengine -designer \
+     -gnome -gnome-keyring -gnome-online-accounts -introspection -vala"
 
 VIDEO_CARDS="amdgpu radeonsi intel nouveau virgl nvidia"
 INPUT_DEVICES="libinput"

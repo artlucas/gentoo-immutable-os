@@ -7,3 +7,64 @@
 # dependency; it still ships the open GSP modules, prebuilt here against gentoo-kernel-bin.
 # Revisit if upstream drops the runtime-toolchain requirement — or move to nouveau if it never does.
 >=x11-drivers/nvidia-drivers-610
+
+# ---- the GNOME ban (plan/09) ---------------------------------------------------------
+# Belt-and-braces. config/portage/expected-packages.txt remains the primary gate, but a mask
+# fails the build AT DEPENDENCY RESOLUTION and names the package that pulled the offender,
+# which is far easier to act on than a 500-line diff at stage 50.
+#
+# mirror_target_pkg_config() (scripts/lib/common.sh) copies this file onto the BUILDER's "/"
+# as well, so every entry applies to both roots. That is fine now that @buildhost is empty and
+# the builder's own emerge list contains no GNOME desktop package — but it is exactly why this
+# list must stay curated rather than becoming "gnome-base/*". gnome-base/librsvg is emerged on
+# the builder for rsvg-convert (builder/Dockerfile), and a category wildcard would kill it.
+gnome-base/gnome-shell
+gnome-base/gnome-session
+gnome-base/gnome-settings-daemon
+gnome-base/gnome-control-center
+gnome-base/gnome-keyring
+gnome-base/nautilus
+gnome-base/gdm
+gnome-base/gvfs
+gnome-base/gnome-desktop
+gnome-base/libgtop
+# Covers gnome-software, gnome-system-monitor, evolution-data-server, gnome-color-manager,
+# nm-applet, polkit-gnome and tecla in one line.
+gnome-extra/*
+gui-apps/gnome-console
+gui-libs/libadwaita
+gui-libs/vte
+dev-libs/gjs
+x11-wm/mutter
+x11-themes/gnome-backgrounds
+sys-apps/xdg-desktop-portal-gnome
+# xdg-desktop-portal-kde implements the full interface set (FileChooser, Settings, Screenshot,
+# ScreenCast, Print, Inhibit, Account, GlobalShortcuts), so the GTK *backend* has no job. The
+# GTK *theming* bridge is a separate thing and stays.
+sys-apps/xdg-desktop-portal-gtk
+# GNOME's file indexer. kde-frameworks/baloo replaces it, so this bans a DUPLICATE indexer,
+# not indexing — see the baloo block in package.use/image and /etc/xdg/baloofilerc.
+app-misc/localsearch
+app-misc/tinysparql
+app-arch/gnome-autoar
+x11-misc/xdg-user-dirs-gtk
+media-libs/libcanberra-gtk3
+sci-geosciences/geocode-glib
+# The GNOME printer UI. kde-plasma/print-manager talks to CUPS directly and nothing in the
+# Plasma set asks for this, so the mask still catches the old printer-panel cascade coming
+# back — while leaving net-fs/samba, which IS wanted (kio-extras[samba], for smb:// in
+# Dolphin), deliberately unmasked.
+app-admin/system-config-printer
+# Browser engines: nothing native renders HTML here (plan/03). Structural, not flag-dependent
+# — USE=-webengine is the flag half of the same guard.
+net-libs/webkit-gtk
+dev-qt/qtwebengine
+
+# NOT masked, deliberately — the allowed residue enumerated in plan/09 §4. Listed here so the
+# next person does not "finish the job" and break the GTK theming bridge:
+#   gnome-base/librsvg               RDEPEND of adwaita-icon-theme (SVG icon loading)
+#   gnome-base/dconf                 GSettings backend the bridge reads
+#   gnome-base/gsettings-desktop-schemas   DEPEND of kde-plasma/kde-gtk-config
+#   dev-libs/glib                    flatpak, NetworkManager, polkit, pipewire
+#   net-libs/glib-networking         glib's TLS backend; flatpak's HTTP path
+#   x11-themes/adwaita-icon-theme    hard RDEPEND of x11-libs/gtk+:3

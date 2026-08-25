@@ -1,6 +1,6 @@
 # immos
 
-A Gentoo-built, **immutable**, Flatpak-first, minimal-GNOME Linux distribution for AMD64
+A Gentoo-built, **immutable**, Flatpak-first, minimal-KDE-Plasma Linux distribution for AMD64
 (machines from roughly the last 5 years; UEFI-only). Ships as a single disk image that boots
 in VMs and from USB/disk on real hardware, with A/B atomic updates and automatic rollback.
 The shipped OS contains no compiler and no Portage — Gentoo is the build system, not the

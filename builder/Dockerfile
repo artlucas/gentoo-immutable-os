@@ -80,34 +80,72 @@ RUN printf 'FEATURES="${FEATURES} getbinpkg"\n' >> /etc/portage/make.conf \
 #    need the package.use line, not a re-emerge.
 #    app-text/xmlto[text] is kept as cheap insurance against a docs-toolchain REQUIRED_USE
 #    on the target side; retest dropping it (and its --oneshot) after the first green build.
+#
+#    KEEP THESE IN SYNC WITH config/portage/package.use/image, verbatim. They are largely
+#    redundant with mirror_target_pkg_config(), which writes zz-target-mirror at build time —
+#    that file sorts after this one and wins on conflict. Where they matter is the builder's
+#    OWN emerge in this Dockerfile, which runs before any mirror exists, and as documentation.
+#    Three of these lines had silently drifted from the target's under GNOME, which is worth
+#    not reproducing: a mirror that disagrees with what it mirrors is worse than no mirror.
+#    The Plasma lines below are copied flag-for-flag from package.use/image (plan/09 §4).
 RUN echo 'app-emulation/qemu qemu_softmmu_targets_x86_64 -qemu_softmmu_targets_i386 -qemu_user_targets_x86_64' \
       >> /etc/portage/package.use/builder \
- && echo 'sys-apps/systemd boot ukify policykit' >> /etc/portage/package.use/builder \
- && echo 'app-text/xmlto text' >> /etc/portage/package.use/builder \
+ && echo 'sys-apps/systemd boot ukify policykit pam' >> /etc/portage/package.use/builder \
  && echo 'media-libs/libcanberra -udev' >> /etc/portage/package.use/builder \
  && echo 'x11-libs/libdrm video_cards_radeon' >> /etc/portage/package.use/builder \
  && echo 'media-libs/mesa vulkan vaapi wayland' >> /etc/portage/package.use/builder \
- && echo 'gnome-extra/gnome-software flatpak -fwupd -malcontent' >> /etc/portage/package.use/builder \
- && echo 'gnome-base/gdm wayland -xdmcp -fprint plymouth' >> /etc/portage/package.use/builder \
- && echo 'gnome-base/librsvg tools' >> /etc/portage/package.use/builder \
- && echo 'gnome-base/gnome-control-center -gnome-online-accounts' >> /etc/portage/package.use/builder \
- && echo 'gnome-extra/evolution-data-server -oauth -kerberos -ldap -weather -vala' >> /etc/portage/package.use/builder \
- && echo 'x11-wm/mutter wayland X screencast' >> /etc/portage/package.use/builder \
+ && echo 'kde-plasma/kwin lock systemd screencast -gamepad -gles2-only -accessibility' >> /etc/portage/package.use/builder \
+ && echo 'kde-plasma/plasma-login-sessions wayland -X' >> /etc/portage/package.use/builder \
+ && echo 'kde-plasma/plasma-workspace X fontconfig appstream networkmanager policykit systemd screencast ksysguard wallpaper-metadata semantic-desktop -telemetry' >> /etc/portage/package.use/builder \
+ && echo 'kde-plasma/plasma-desktop semantic-desktop -webengine -ibus -scim -sdl' >> /etc/portage/package.use/builder \
+ && echo 'kde-plasma/discover flatpak -firmware -snap -telemetry -webengine' >> /etc/portage/package.use/builder \
+ && echo 'kde-apps/kio-extras samba -mtp -nfs -X taglib -openexr -ios' >> /etc/portage/package.use/builder \
+ && echo 'kde-frameworks/kfilemetadata exif pdf ffmpeg taglib -epub -mobi' >> /etc/portage/package.use/builder \
+ && echo 'dev-qt/qtbase libproxy icu wayland opengl vulkan cups' >> /etc/portage/package.use/builder \
+ && echo 'dev-qt/qtdeclarative opengl vulkan' >> /etc/portage/package.use/builder \
+ && echo 'dev-qt/qt5compat icu qml' >> /etc/portage/package.use/builder \
+ && echo 'dev-qt/qttools opengl' >> /etc/portage/package.use/builder \
+ && echo 'dev-qt/qtmultimedia opengl vulkan qml' >> /etc/portage/package.use/builder \
+ && echo 'dev-qt/qtquick3d opengl vulkan' >> /etc/portage/package.use/builder \
+ && echo 'kde-frameworks/kconfig qml dbus' >> /etc/portage/package.use/builder \
+ && echo 'kde-frameworks/kcoreaddons dbus' >> /etc/portage/package.use/builder \
+ && echo 'kde-frameworks/kguiaddons wayland' >> /etc/portage/package.use/builder \
+ && echo 'kde-frameworks/kidletime wayland' >> /etc/portage/package.use/builder \
+ && echo 'kde-frameworks/kimageformats avif' >> /etc/portage/package.use/builder \
+ && echo 'kde-frameworks/kwindowsystem X wayland' >> /etc/portage/package.use/builder \
+ && echo 'kde-frameworks/prison qml' >> /etc/portage/package.use/builder \
+ && echo 'kde-frameworks/sonnet qml -hunspell -aspell' >> /etc/portage/package.use/builder \
+ && echo 'dev-libs/qcoro dbus' >> /etc/portage/package.use/builder \
+ && echo 'sys-apps/dbus X' >> /etc/portage/package.use/builder \
+ && echo 'net-dns/avahi mdnsresponder-compat' >> /etc/portage/package.use/builder \
+ && echo 'media-libs/libva X' >> /etc/portage/package.use/builder \
+ && echo 'app-crypt/libsecret -vala' >> /etc/portage/package.use/builder \
+ && echo 'app-text/poppler qt6 -cairo' >> /etc/portage/package.use/builder \
+ && echo 'dev-libs/appstream qt6' >> /etc/portage/package.use/builder \
+ && echo 'dev-libs/libportal qt6 -gtk -vala' >> /etc/portage/package.use/builder \
  && echo 'media-video/ffmpeg vaapi' >> /etc/portage/package.use/builder \
  && echo 'dev-libs/glib dbus introspection' >> /etc/portage/package.use/builder \
- && echo 'gui-libs/gtk wayland X introspection' >> /etc/portage/package.use/builder \
- && echo 'x11-libs/gtk+ wayland X introspection' >> /etc/portage/package.use/builder \
+ && echo 'gui-libs/gtk wayland X vulkan' >> /etc/portage/package.use/builder \
+ && echo 'x11-libs/gtk+ wayland X' >> /etc/portage/package.use/builder \
+ && echo 'media-libs/vulkan-loader X wayland' >> /etc/portage/package.use/builder \
  && echo 'x11-libs/cairo X' >> /etc/portage/package.use/builder \
- && echo 'sys-auth/polkit gtk introspection' >> /etc/portage/package.use/builder \
+ && echo 'sys-auth/polkit kde -gtk' >> /etc/portage/package.use/builder \
  && echo 'x11-libs/libxkbcommon X' >> /etc/portage/package.use/builder \
  && echo 'net-print/cups dbus' >> /etc/portage/package.use/builder \
  && echo 'x11-base/xwayland libei' >> /etc/portage/package.use/builder \
- && echo 'app-crypt/gcr gtk' >> /etc/portage/package.use/builder \
+ && echo 'app-crypt/pinentry qt6 ncurses -gtk -efl -emacs' >> /etc/portage/package.use/builder \
+ && echo 'x11-misc/xdg-utils -perl -gnome' >> /etc/portage/package.use/builder \
+ && echo 'x11-misc/xdg-user-dirs -gtk' >> /etc/portage/package.use/builder \
+ && echo 'net-fs/samba client' >> /etc/portage/package.use/builder \
+ && echo 'net-libs/ngtcp2 gnutls' >> /etc/portage/package.use/builder \
+ && echo 'net-wireless/wpa_supplicant -gui dbus' >> /etc/portage/package.use/builder \
  && echo 'media-libs/libpulse X' >> /etc/portage/package.use/builder \
  && echo 'media-plugins/alsa-plugins pulseaudio' >> /etc/portage/package.use/builder \
  && echo 'media-libs/freetype harfbuzz' >> /etc/portage/package.use/builder \
  && echo 'media-libs/libglvnd X' >> /etc/portage/package.use/builder \
  && echo 'sys-libs/minizip-ng compat' >> /etc/portage/package.use/builder \
+ && echo 'app-text/xmlto text' >> /etc/portage/package.use/builder \
+ && echo 'gnome-base/librsvg tools' >> /etc/portage/package.use/builder \
  && emerge --quiet-build=y --noreplace --usepkg --getbinpkg \
       sys-fs/erofs-utils \
       sys-fs/dosfstools \

@@ -32,7 +32,7 @@ immos/
 │   │   ├── package.accept_keywords/
 │   │   └── sets/               # @base, @hardware, @desktop
 │   └── rootfs/                 # file overlay rsync'd onto target in the configure stage
-│       ├── etc/                #   os-release template, fstab, gdm/custom.conf, ...
+│       ├── etc/                #   os-release template, fstab, plasmalogin.conf.d/, xdg/, ...
 │       ├── usr/lib/            #   systemd units & presets, sysupdate.d/, repart.d/,
 │       │                       #   import-pubring.gpg, tmpfiles.d/
 │       └── usr/lib/dracut/modules.d/90etc-overlay/
@@ -79,7 +79,7 @@ immos/
     signatures against the trust store in `/etc/portage/gnupg`, and `getuto` is what builds that
     store. If it runs afterwards (as it originally did), portage can verify nothing the binhost
     serves and falls back to compiling — a slow build, not an error, so the regression is silent.
-  - Packages whose USE this image overrides (`mesa[vulkan]`, `polkit[gtk]`, the qemu target
+  - Packages whose USE this image overrides (`mesa[vulkan]`, `polkit[kde]`, the qemu target
     list, …) still build from source: the binhost's copies were built against the default
     profile's USE and portage correctly refuses a mismatched binpkg. Before this change the
     figure was ~98 packages compiled on every Dockerfile edit, roughly an hour of wall clock.
@@ -163,7 +163,7 @@ binhost is set up in the Dockerfile; see "Builder container" above). `FEATURES="
 with no `getbinpkg` and no `PORTAGE_BINHOST`: the image is compiled here and cached in
 `/cache/binpkgs` for later builds. `COMMON_FLAGS` is generic x86-64, **not** x86-64-v3, since
 budget Goldmont-Plus-class CPUs sold within the 5-year window lack AVX2; profile
-`default/linux/amd64/23.0/desktop/gnome/systemd`. Also sweeps binhost-built binpkgs left in
+`default/linux/amd64/23.0/desktop/plasma/systemd`. Also sweeps binhost-built binpkgs left in
 `/cache/binpkgs` by older builds (see "Where binaries come from").
 **Verify:** `emerge --info` shows the expected profile; the rendered `make.conf` has neither
 `getbinpkg` nor `PORTAGE_BINHOST`.
@@ -187,7 +187,8 @@ emerge --root="$ROOT" --config-root=/repo/config/portage \
   the target config ever grows `getbinpkg`/`PORTAGE_BINHOST` again. The builder-root
   `@buildhost` install runs first, as its own emerge, *with* `--getbinpkg`.
 - `--console-only` flag (M1) emerges only `@base @hardware`.
-**Verify:** `$ROOT/usr/bin/gcc` absent; `$ROOT/lib/modules/*` exists; systemd, gdm, flatpak
+**Verify:** `$ROOT/usr/bin/gcc` absent; `$ROOT/lib/modules/*` exists; systemd, plasmalogin,
+plasmashell, kwin_wayland, flatpak
 binaries present (full build); VDB at `$ROOT/var/db/pkg` present (pruned later, needed by 40/50).
 
 ### 40-configure
@@ -195,11 +196,12 @@ Turns the raw rootfs into *this* distro.
 **Does (from builder, against `$ROOT`):**
 - rsync `config/rootfs/` overlay onto `$ROOT` (os-release rendered from template with
   `DISTRO_*`/`VERSION`; fstab; sysupdate.d + repart.d; systemd units incl. `immos-boot-ok.service`;
-  tmpfiles.d for `/var` skeleton; GDM autologin conf; NM/PipeWire defaults; dracut module).
+  tmpfiles.d for `/var` skeleton; Plasma Login Manager autologin drop-in; Baloo defaults;
+  NM/PipeWire defaults; dracut module).
 - create `/home → var/home`, `/root → var/roothome` symlinks; seed `/var` skeleton.
 **Does (chrooted into `$ROOT` — same arch, privileged container):**
 - `locale-gen` (list from build.conf), `systemd-firstboot --setup` defaults (TZ=UTC),
-  `useradd` the live user, `systemctl preset-all`, enable: gdm, NetworkManager, bluetooth,
+  `useradd` the live user, `systemctl preset-all`, enable: plasmalogin, NetworkManager, bluetooth,
   systemd-timesyncd, zram; mask: getty autospawn beyond tty2.
 - `flatpak remote-add --if-not-exists flathub <flathub.repo>`; `flatpak install -y --system`
   each of `FLATPAK_PREINSTALL` (default: `org.mozilla.firefox`). Network required — fine in
@@ -210,7 +212,9 @@ Turns the raw rootfs into *this* distro.
 **Does (back in builder):** build initrd + UKI:
 `dracut --sysroot $ROOT --no-hostonly ...` then `ukify build ...` →
 `out/uki/${DISTRO_ID}_${VERSION}.efi` (details in 01/04).
-**Verify:** os-release has correct `IMAGE_ID`/`IMAGE_VERSION`; gdm/NM enabled in presets;
+**Verify:** os-release has correct `IMAGE_ID`/`IMAGE_VERSION`; plasmalogin (via the
+`display-manager.service` alias) and NM enabled in presets; `plasma.desktop` wayland session
+present;
 flatpak remote listed; UKI file exists and `ukify inspect` shows expected cmdline.
 
 ### 50-prune
@@ -245,7 +249,9 @@ virtualization on Win11), falls back to TCG with longer timeouts.
 - Those cached binpkgs are this pipeline's own (`FEATURES=buildpkg`), which is the whole
   mechanism: the image is compiled once and reused, rather than downloaded.
 - First full build estimate: several hours — the entire target set compiles, not just the
-  GNOME stack whose USE the binhost never matched anyway. Subsequent: < 30 min.
+  desktop stack whose USE the binhost never matched anyway. Qt6 + Frameworks + Plasma is a
+  comparable or larger source build than GNOME was, so budget at least as long for the first
+  Plasma build as the GNOME one took, not less.
 - A change that invalidates the target (any `config/portage` edit — stage 30's staleness guard
   spells this out) costs a recompile of whatever the cache no longer covers, so the binpkg
   cache volume is worth keeping even when the work volume is wiped.

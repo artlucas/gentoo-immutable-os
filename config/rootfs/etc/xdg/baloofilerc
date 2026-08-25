@@ -1,0 +1,34 @@
+# Baloo (file indexing) image defaults for the Plasma desktop — plan/09.
+#
+# The /etc/xdg layer, not a skel copy. KConfig cascades $XDG_CONFIG_DIRS underneath
+# ~/.config, so this is the image's default and anything the user changes in
+# System Settings → Search is written to ~/.config/baloofilerc and wins. /etc is the overlay
+# backed by /var/overlay/etc, so the file stays editable on a running machine.
+#
+# This is not a new capability for the distro: the GNOME image indexed too (app-misc/localsearch
+# + app-misc/tinysparql, with app-text/poppler[cairo] kept specifically so localsearch could
+# read PDFs). Baloo is that same feature under the new desktop, which is why the
+# localsearch/tinysparql entries in package.mask/image ban a duplicate indexer rather than
+# indexing itself.
+#
+# The index lives in ~/.local/share/baloo/index. $HOME is /var/home/<user>
+# (tmpfiles.d/distro-state.conf.in), so it sits on the growable var partition that
+# repart.d/50-var.conf extends to the end of the disk at first boot — never on the read-only
+# erofs root. A factory reset wipes var and takes the index with the home directory it
+# describes, which is correct; plan/05 records it so it is not later reported as data loss.
+
+[Basic Settings]
+Indexing-Enabled=true
+
+[General]
+# Index file names and metadata, NOT file contents. Content extraction is what makes the index
+# large and the first-login I/O heavy; names, tags, and the EXIF/ID3/PDF metadata that
+# kfilemetadata's extractors provide are what Dolphin's Find bar and the KRunner file runner
+# actually use. A user who wants full-text ticks one box in System Settings → Search and
+# re-indexes into their own baloofilerc.
+only basic indexing=true
+
+# The Flatpak per-app data tree. Baloo skips dotted paths already, so this is belt-and-braces:
+# the preinstalled Firefox Flatpak alone would otherwise be a browser cache sitting in the
+# index the day someone turns content indexing on.
+exclude folders[$e]=$HOME/.var/

@@ -26,11 +26,15 @@ INSTALL_MASK="
 "
 ```
 
-GIR note: `/usr/lib64/girepository-1.0` is deliberately **not** masked — those typelibs are
-loaded at runtime by gjs and gnome-shell. Only the `.gir` XML and `.vapi` sources above go.
+GIR note: `/usr/lib64/girepository-1.0` used to be deliberately **not** masked — those typelibs
+were loaded at runtime by gjs and gnome-shell. **That exception is withdrawn with GNOME**
+(plan/09): global `USE=-introspection` means most of them are not built at all, nothing in a
+Plasma image loads one, and stage 50 now deletes the directory as a guard against the ones
+`dev-libs/glib` still builds (it keeps the flag per-package). Rollback moves as a pair — put
+`introspection` back globally *and* take the directory out of the deletion list.
 
 Locale note: `/usr/share/locale` is deliberately **not** in INSTALL_MASK (masking it wholesale
-breaks the GNOME UI-language story). Instead, v1 keeps message catalogs for a `build.conf` list
+breaks the desktop UI-language story). Instead, v1 keeps message catalogs for a `build.conf` list
 (`LOCALES_KEEP="en de fr es pt_BR it ja zh_CN ru"` default) and stage 50 deletes the rest —
 measured savings vs. usability. GNOME/GTK translations follow the same list via `L10N` in the
 target make.conf. `REVISIT` markers are resolved during M2 by the size report.
@@ -107,21 +111,26 @@ leak; it checks for `rustc`/`clang`/`ld`/`as` instead, which would indicate a ge
 **Perl — RESOLVED at the first build (2026-08-20): admitted, narrowly.** The ban tripped, and
 the audit found two independent sources:
 
-1. `x11-misc/xdg-utils[perl]` — a hard RDEPEND of both gnome-shell and gdm — gated
-   `dev-perl/Net-DBus` and `dev-perl/X11-Protocol`, and Net-DBus dragged XML-Twig and the
-   entire LWP/HTML perl stack behind it: **~48 packages**. What it buys is the perl
-   `xdg-screensaver` implementation driving X11, which does nothing in a Wayland-only session
-   where apps inhibit idle through portals. Disabled (`xdg-utils -perl`) — the cleanest 48
-   packages this build removed.
+1. `x11-misc/xdg-utils[perl]` gated `dev-perl/Net-DBus` and `dev-perl/X11-Protocol`, and
+   Net-DBus dragged XML-Twig and the entire LWP/HTML perl stack behind it: **~48 packages**.
+   What it buys is the perl `xdg-screensaver` implementation driving X11, which does nothing in
+   a Wayland-only session where apps inhibit idle through portals. Disabled
+   (`xdg-utils -perl -gnome` — see the note in `package.use/image`; `-gnome` is the flag that
+   actually holds the LWP stack out) — the cleanest 48 packages this build removed. **This item
+   stands unchanged under Plasma**; a dry-run depgraph confirms the LWP stack resolves to the
+   *builder* root only, never to the image.
 2. `net-fs/samba` lists `dev-lang/perl:=` and `dev-perl/Parse-Yapp` in COMMON_DEPEND with no
-   USE guard, and `gnome-control-center[cups]` requires `>=net-fs/samba-4.0.0[client]` just as
-   unconditionally. So the GNOME printer panel and a perl interpreter are the same decision.
+   USE guard. **The holder changed with the desktop; the dependency fact did not.** Under GNOME
+   it was `gnome-control-center[cups]` → `app-admin/system-config-printer` → samba. Under
+   Plasma it is direct: `kde-apps/kio-extras[samba]`, kept for `smb://` browsing in Dolphin.
+   `kde-plasma/print-manager` talks to CUPS directly and needs no samba at all, so printing is
+   no longer part of this decision.
 
-Admitted after an explicit call to keep the printer panel (plan/03's stated UX). The image
-therefore ships `dev-lang/perl` and `dev-perl/Parse-Yapp` and nothing else perl-shaped. To
-reverse it, set `gnome-control-center -cups`: printing still works through `net-print/cups`
-(apps print normally; printers can be added at `localhost:631`), and perl leaves the image
-entirely along with samba and system-config-printer.
+Admitted after an explicit call — under GNOME to keep the printer panel, under Plasma to keep
+`smb://`. The image therefore ships `dev-lang/perl` and `dev-perl/Parse-Yapp` and nothing else
+perl-shaped. To reverse it, set `kde-apps/kio-extras -samba`: samba, perl and Parse-Yapp all
+leave the image together, and what is lost is network-share browsing in Dolphin. Printing is
+unaffected either way.
 
 Original caveat text (correctly predicted, wrong package): `dev-lang/perl` is an RDEPEND of some base packages
 (e.g. openssl's `c_rehash`). The dep audit in stage 30 will show whether it lands; if it does
@@ -129,42 +138,46 @@ and the pull is spurious, fix with USE (`-perl`) or `package.provided` — decid
 M1/M2 with the report in hand, not guessed now. The *mechanism* is the audit gate; the
 *policy* is "empty whitelist until a human approves an entry."
 
-**Python under GNOME — RESOLVED at the first build (2026-08-20): admitted.** The ban was
-tripped, the procedure below was followed, and the outcome is recorded here.
+**Python — RESOLVED again at the first Plasma build (2026-08-25): admitted, and the chain is
+not the desktop's.** It was RESOLVED under GNOME (2026-08-20) on a chain that no longer exists,
+reopened by the migration, and is now settled from the build's own dependency tree.
 
-The path was not the predicted `gjs → gobject-introspection` one. `gnome-base/gnome-shell`'s
-ebuild declares `dev-python/docutils` and `dev-python/pygobject` in `DEPEND` and then sets
-`RDEPEND="${DEPEND}"` — folding them into the runtime dependency set. `dev-lang/python` is
-therefore a genuine RDEPEND of any native GNOME image on Gentoo; `--with-bdeps=n` cannot
-remove it, and the dep resolves through `gdm → gnome-settings-daemon → libnotify →
-gnome-shell → docutils → pillow`. Enabling the control-center printer panel
-(`gnome-control-center[cups]`) additionally brings `app-admin/system-config-printer`, which
-is itself a Python application.
+The GNOME chain was: `gnome-base/gnome-shell` declared `dev-python/docutils` and
+`dev-python/pygobject` in `DEPEND` and then set `RDEPEND="${DEPEND}"`, folding them into the
+runtime set, resolving through `gdm → gnome-settings-daemon → libnotify → gnome-shell →
+docutils → pillow`. **None of those packages is in the image any more**, and neither is
+`dev-python/docutils` or `dev-python/pillow`.
 
-Admitted to the target, per step 2:
+Python still ships, on a chain that has nothing to do with which desktop is installed —
+traced with `emerge -p --tree` against the pinned snapshot:
 
-| Package | Why |
+| Package | Held by |
 |---|---|
-| dev-lang/python, dev-lang/python-exec | forced RDEPEND of gnome-shell (below) |
-| dev-python/docutils, dev-python/pygobject | gnome-shell `RDEPEND="${DEPEND}"` |
-| dev-python/pillow | docutils → pillow |
-| app-admin/system-config-printer | gnome-control-center[cups] printer panel |
+| `dev-lang/python`, `python-exec`, `python-exec-conf` | the two chains below |
+| `dev-python/pygobject` | `sys-power/power-profiles-daemon` → `sys-power/switcheroo-control` |
+| `dev-python/pycairo` | `dev-python/pygobject` |
+| `dev-python/pyxdg` | `app-accessibility/speech-dispatcher[python]` (`+python` by default) |
+| `dev-python/{requests,urllib3,certifi,idna,charset-normalizer,pysocks}` | `app-portage/gemato` — **orphans**, see below |
+| `dev-python/{setuptools,packaging,platformdirs,more-itertools,jaraco-context,jaraco-functools,jaraco-text}` | the same Portage tooling cluster — **orphans** |
+| `dev-python/gentoo-common` | `dev-lang/python-exec` |
+
+`sys-power/power-profiles-daemon` is in `@desktop` deliberately and was in the GNOME set too, so
+this is not a Plasma cost — the GNOME image was paying for it as well, hidden behind the much
+louder gnome-shell chain.
+
+**The orphan cluster is a real, actionable finding.** Thirteen of the twenty surviving
+`dev-python/*` packages are held by `app-portage/gemato` and the setuptools stack, and stage 50
+*already unmerges* gemato, getuto, portage-utils and `sys-apps/portage` itself — but not the
+packages left dangling behind them. Nothing in the image imports them. Adding them to the
+unmerge loop in section 1 of `50-prune.sh` is the obvious next trim; it was left out of the
+Plasma migration deliberately, because that loop is shared with the console-only image and the
+change deserves its own before/after measurement rather than riding along with a desktop swap.
 
 `scripts/stages/50-prune.sh` drops only `python`/`python3` from the ban list.
 `gcc/g++/cc/ld/as/ar/make/cmake/ninja/meson/cargo/rustc/emerge/ebuild/portageq/pip` stay
 banned, and `perl` keeps an explicit assertion of its own. The toolchain-free guarantee is
-unchanged: no compiler, no Portage, no headers in the image.
-
-For reference, the original procedure was:
-
-1. confirm from `out/reports/packages.txt` which package actually pulls it (a real RDEPEND,
-   not a `--with-bdeps` mistake);
-2. if it is real, drop `python`/`python3` from the ban list in `scripts/stages/50-prune.sh`
-   while keeping `gcc/g++/ld/make/cmake/ninja/meson/cargo/rustc/emerge/ebuild/portageq/perl/pip`,
-   and record it here as a deliberate GNOME tradeoff with the package that forced it.
-
-The toolchain-free guarantee (no compiler, no Portage) is unaffected either way — a scripting
-interpreter is not a build toolchain.
+unchanged: no compiler, no Portage, no headers in the image — a scripting interpreter is not a
+build toolchain.
 
 ## The first build's three blind spots (2026-08-21)
 
@@ -203,11 +216,24 @@ this fixed — searches `/usr/lib/llvm` **without** a depth limit in the banned-
 Two flags in `package.use/image` (`poppler -qt6`, `pinentry -qt6`) had been added specifically
 to keep Qt out of a GNOME-only image, and `dev-qt/{qtbase,qtsvg,qttranslations}` were in the
 image anyway: `dev-libs/appstream[qt6]` builds AppStreamQt for KDE Discover and
-`dev-libs/libportal[qt6]` builds libportal-qt6, neither of which anything here links. Separately
+`dev-libs/libportal[qt6]` builds libportal-qt6, neither of which anything then linked. Separately
 `x11-drivers/nvidia-drivers[X]` pulled `x11-base/xorg-server` → `xorg-drivers` → every
 `xf86-video-*` matching `VIDEO_CARDS`, plus the `x11-apps` client utilities — a complete X
 server inside a session that plan/03 defines as Wayland-only. Both closed with USE flags;
 `x11-base/xwayland` stays, so X11 Flatpak apps are unaffected.
+
+> **The Qt half of this reads the other way round under Plasma** (plan/09). Qt is the image's
+> own toolkit now, so `appstream[qt6]` has a real consumer — `plasma-workspace` RDEPENDs
+> `>=dev-libs/appstream-1[qt6]` — and `pinentry[qt6]` is the prompt that matches the session.
+> `poppler` does not merely become harmless but **inverts**: `kde-frameworks/kfilemetadata[pdf]`
+> *requires* `app-text/poppler[qt6(-)]`, and it is `cairo` that goes off, because that backend
+> existed for poppler-glib and its only consumer was `app-misc/localsearch`.
+> `dev-libs/libportal` turns out not to be in the Plasma graph at all.
+>
+> The Xorg half stands, and got *stronger*: it took three `-X` flags under GNOME and takes two
+> now, because `kde-plasma/kwin` is Wayland-only by construction (the X11 compositor is a
+> separate `kde-plasma/kwin-x11`). A dry-run depgraph against the pinned tree resolves with no
+> `xorg-server` and no `xf86-*` at all.
 
 **Measured breakdown, once the size report was fixed** (pre-prune, MiB, from the first build
 where every row actually recorded):
@@ -227,6 +253,60 @@ where every row actually recorded):
 `linux-firmware` is the largest single item by a wide margin and the prune only trims 11
 directories from it — that, and `usr/share/fonts` (noto with `extra`), are the two levers left.
 Both were deliberately left alone: hardware compatibility and script coverage are stated goals.
+
+## Measured: the first Plasma build (2026-08-25)
+
+Same pipeline, same `du` invocation, so these are directly comparable with the GNOME column.
+GNOME is the 0.1.0 build of 2026-08-23; Plasma is 0.2.0.
+
+**Pre-prune, itemised** (MiB — `du` de-duplicates nested operands, so the `/usr` row is
+*rest of* `/usr`, and the `/usr total` row is the sum):
+
+| Tree | GNOME 0.1.0 | Plasma 0.2.0 | Δ |
+|---|---|---|---|
+| `usr/lib/firmware` | 2029 | 2029 | — |
+| `usr/lib64` | 1346 | **1711** | **+365** |
+| rest of `/usr` | 1317 | 1359 | +42 |
+| `usr/share/fonts` | 768 | 847 | +79 |
+| `usr/lib/modules` | 623 | 623 | — |
+| `usr/share/locale` | 323 | 388 | +65 |
+| `usr/lib/llvm` | 307 | 307 | — |
+| `usr/share/icons` | 26 | **161** | **+135** |
+| `usr/src` | 219 | 219 | — |
+| **`/usr` total** | **6958** | **7644** | **+686** |
+| `/var` | 2490 | 2495 | +5 |
+| **target, post-prune** | **7674** | **8362** | **+688** |
+
+The desktop swap costs **+688 MiB installed**, and it is concentrated in exactly two rows:
+`usr/lib64` (+365, Qt6 + Frameworks shared libraries) and `usr/share/icons` (+135,
+`breeze-icons` — Breeze ships a far larger icon set than Adwaita). Fonts and locale grew
+because Qt and KDE ship their own catalogues. Everything the budget calls incompressible —
+firmware, modules, LLVM, kernel source — is bit-for-bit unchanged, which is the expected
+result of a change that touches only the desktop layer.
+
+**Shipped artefacts** (MiB):
+
+| Artefact | GNOME 0.1.0 | Plasma 0.2.0 | Δ |
+|---|---|---|---|
+| root EROFS (lz4hc) | 2884.2 | 3380.8 | +496.6 (+17%) |
+| root EROFS `.zst` — the A/B update payload | 2107.4 | 2519.0 | +411.6 (+20%) |
+| full disk `.img.zst` | 3082.6 | 3496.7 | +414.1 (+13%) |
+| UKI | 238.5 | 240.6 | +2.1 |
+
+The EROFS grew *more* than the installed tree did (+496 vs +688 installed, but +17% vs +9%),
+which is the mirror image of the note below: Qt/KDE's addition is mostly shared libraries and
+icon SVGs, which compress far less well than the headers and locale catalogues the prune
+removes. Budget headroom is unaffected — 3381 MiB still fits the 6144 MiB root slot with 1.8×
+margin — but the A/B **download** grew 20%, which is the number that matters to users on slow
+links.
+
+> **Reading `out/reports/size-report.txt` correctly.** The file is written by *two different*
+> `du` runs and mixing them up is easy: `50-prune.sh:101` writes the ten itemised rows
+> **before** any deletion, and `50-prune.sh:400` appends a single final row from
+> `du -xsm "$T"` **after** the prune. So rows 1–10 are pre-prune and row 11 is post-prune —
+> they are not summable. Worse, that last one still carries the `-x` that this document already
+> records as having silently dropped `/var` from the old report. Splitting them into two clearly
+> labelled files is a small, worthwhile fix that has not been made.
 
 **Installed size and shipped size are not the same lever.** `/usr` fell 1792 MiB (25%) while the
 EROFS fell only 207 MiB (7%) and the `.img.zst` 299 MiB (9%). Everything the prune removes —
@@ -252,18 +332,27 @@ names (plus `/usr/src` and `/usr/lib/llvm`) are reported explicitly.
 | linux-firmware (post-prune) + microcode + SOF | 0.9 GiB |
 | NVIDIA userspace + kernel modules | 0.7 GiB |
 | Mesa/graphics/VA | 0.4 GiB |
-| GNOME Shell + GTK4 + Mutter (no webkit) | 1.6 GiB *(estimate carried over from the pre-GNOME budget — not yet measured; update from the stage-50 size report after M2)* |
+| Plasma 6 + Qt6 + Frameworks (no webengine) | ~1.9 GiB *(measured 2026-08-25: the desktop layer is +688 MiB installed over the GNOME image's, whose own row was an unmeasured 1.6 GiB estimate. Treat this as "GNOME's estimate plus a real delta", not as an independently measured figure — no row in this table has ever been measured in isolation)* |
 | Fonts (incl. CJK) | 0.4 GiB |
 | **Total rootfs** | **~5.5 GiB** |
 | **EROFS lz4hc image** | **~2.8–3.3 GiB** (fits 6 GiB slot with 2× headroom) |
 
 Stage 50's size report tracks actuals against this table; >10% regression on any row warrants
 a look before release. **The table is still the pre-first-build estimate and is known wrong** —
-the first build measured 8342 MiB rootfs / 3177 MiB EROFS, and after the fixes above /usr is
-5497 MiB with a 2970 MiB EROFS and a 3004 MiB `.img.zst`. The per-row measured numbers are in
-the table further up; these budget rows should be rewritten against them rather than treated as
-a target that was met. The `.img.zst` distributable lands ≈ 3.5–4.5 GiB (root image + 4 GiB
-var with preinstalled Firefox flatpak, zeros compressed away).
+every row except the desktop one is an unvalidated guess, and the totals below it are now two
+desktops out of date. Measured reality, from the two builds in the section above:
+
+| | Budget | GNOME 0.1.0 | Plasma 0.2.0 |
+|---|---|---|---|
+| Total rootfs (installed, post-prune) | ~5.5 GiB | 7674 MiB | **8362 MiB** |
+| EROFS lz4hc image | ~2.8–3.3 GiB | 2884 MiB | **3381 MiB** |
+
+The rootfs has been ~50% over budget since the first build and the desktop swap did not cause
+that — `linux-firmware` (2029 MiB) and fonts (847 MiB) are the two rows that blow it, and both
+were deliberately left alone because hardware compatibility and script coverage are stated
+goals. The EROFS still lands inside its stated range and inside the 6144 MiB slot with 1.8×
+margin. **These per-row budget numbers should be rewritten from measurement rather than kept as
+a target that was never met**; that is a documentation task, not a build one.
 
 ## What is deliberately KEPT
 

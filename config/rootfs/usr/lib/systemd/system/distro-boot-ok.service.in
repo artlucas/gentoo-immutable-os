@@ -1,8 +1,13 @@
 [Unit]
 Description=Boot success gate: desktop stack must be up before the boot is blessed
 Documentation=https://www.freedesktop.org/software/systemd/man/systemd-bless-boot.service.html
-# Skipped (not failed) on console-only images:
-ConditionPathExists=/usr/bin/gdm
+# Skipped (not failed) on console-only images.
+# NB: this path is absolute and ConditionPathExists fails SILENTLY by skipping the unit, so a
+# wrong path here disables the boot-success gate rather than erroring. The gdm value this
+# replaced may never have matched at all — stage 30 documents gdm's daemon as living in
+# /usr/sbin. Stage 30's `have_exe plasmalogin` searches both /usr/bin and /usr/sbin and fails
+# the build loudly, which is where a wrong guess is supposed to surface.
+ConditionPathExists=/usr/bin/plasmalogin
 # Fails if graphical.target was not reached -> boot-complete.target unreachable ->
 # UKI tries counter never cleared -> automatic rollback (plan/01).
 Requisite=graphical.target

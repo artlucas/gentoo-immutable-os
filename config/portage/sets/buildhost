@@ -8,8 +8,14 @@
 #
 # Add an entry only with the failing configure line to justify it.
 
-# gnome-base/gnome-control-center: meson.build does dependency('tecla') and, when that
-# fails, tries to build tecla as a wrap subproject — which the sandbox forbids
-# ("ERROR: Subproject tecla is buildable: NO"). Declared >=gnome-extra/tecla-47.0 in the
-# ebuild's RDEPEND block only.
-gnome-extra/tecla
+# Currently EMPTY. The one entry this file ever held was gnome-extra/tecla, for
+# gnome-base/gnome-control-center's meson.build doing dependency('tecla') and, when that
+# failed, trying to build tecla as a wrap subproject — which the sandbox forbids
+# ("ERROR: Subproject tecla is buildable: NO"). control-center is gone with GNOME (plan/09),
+# so the entry went with it.
+#
+# The header above is kept rather than deleted because the failure mode has not gone away:
+# Qt6/Frameworks/Plasma is a cmake graph with the same RDEPEND-only-configure-dep shape, and
+# the first Plasma build is what surfaces whether it has one. The signature to watch for is a
+# cmake "Could NOT find <Foo>" or meson "Dependency ... found: NO" inside a *target* package
+# build, for something the ebuild declares in RDEPEND but not DEPEND.

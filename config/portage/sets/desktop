@@ -1,38 +1,51 @@
-# @desktop — minimal GNOME Wayland (plan/03). Printing/CJK entries are filtered out by
-# stage 30 when INCLUDE_PRINTING/INCLUDE_CJK_FONTS are 0 (marker comments below).
-gnome-base/gnome-shell
-gnome-base/gnome-session
-gnome-base/gnome-settings-daemon
-gnome-base/gnome-control-center
-gnome-base/gnome-keyring
-gnome-base/nautilus
-gnome-base/gdm
-x11-wm/mutter
+# @desktop — minimal KDE Plasma 6 Wayland (plan/03, plan/09). Printing/CJK entries are
+# filtered out by stage 30 when INCLUDE_PRINTING/INCLUDE_CJK_FONTS are 0 (marker comments
+# below).
+#
+# This is a 1:1 functional mirror of the GNOME set it replaces, not a full Plasma install:
+# session + compositor + settings + file manager + terminal + software centre, and nothing
+# else. Applications are Flatpaks (plan/03), so there is no Ark, no Kate, no Okular and no
+# Gwenview here for exactly the reasons file-roller and gnome-text-editor were dropped from
+# the GNOME set: each is one click away in Discover, and each would cost a native dependency
+# tail on a read-only root to save a Flatpak download.
+kde-plasma/plasma-desktop
+kde-plasma/plasma-workspace
+kde-plasma/kwin
+kde-plasma/systemsettings
+kde-plasma/plasma-systemmonitor
+kde-plasma/plasma-nm
+kde-plasma/plasma-pa
+kde-plasma/powerdevil
+kde-plasma/bluedevil
+kde-plasma/kscreen
+kde-plasma/polkit-kde-agent
+kde-plasma/kwallet-pam
+kde-plasma/discover
+kde-plasma/xdg-desktop-portal-kde
+kde-plasma/breeze
+# The GTK theming bridge, kept so Flatpak apps (Firefox is preinstalled) do not render as an
+# unstyled GTK island. It is also the reason "remove all GNOME" cannot be literal: gtk
+# hard-RDEPENDs adwaita-icon-theme, which RDEPENDs gnome-base/librsvg. See plan/09 §4 for the
+# full enumerated residue — dropping these two packages removes almost all of it.
+kde-plasma/breeze-gtk
+kde-plasma/kde-gtk-config
+kde-plasma/plasma-workspace-wallpapers
+kde-plasma/plasma-login-manager  # the display manager; its System Settings KCM is built in
+# /usr/share/wayland-sessions/plasma.desktop lives HERE, not in the display manager and not in
+# plasma-workspace. It is a PDEPEND of plasma-workspace so it would arrive anyway, but its
+# wayland/X flags are the real lever deciding whether an Xorg session exists at all
+# (X? pulls kde-plasma/kwin-x11), so it is named explicitly.
+kde-plasma/plasma-login-sessions
+kde-frameworks/breeze-icons
+kde-apps/dolphin
+kde-apps/konsole
+kde-apps/kio-extras              # the gvfs equivalent: trash, network, thumbnails
+kde-plasma/print-manager         #printing
 sys-power/power-profiles-daemon
-net-wireless/gnome-bluetooth
-gnome-extra/gnome-system-monitor
-gui-apps/gnome-console
-# No archive manager and no text editor natively. file-roller had NO unique dependency tail
-# (app-arch/libarchive is held by flatpak/systemd/gvfs/samba/ostree and app-arch/gnome-autoar
-# by gnome-shell+nautilus, so both stay) and nautilus already compresses and extracts through
-# gnome-autoar, which covers the common case. gnome-text-editor was the sole consumer of a
-# 12-package tail — gtksourceview, libspelling, enchant, hunspell, editorconfig-core-c and the
-# seven app-dicts/myspell-* dictionaries that hunspell PDEPENDs per L10N (myspell-de alone is
-# ~10 MB compressed) — and app-editors/nano stays in the image for console editing.
-# Both are one click away in GNOME Software (org.gnome.FileRoller, org.gnome.TextEditor);
-# deliberately NOT in FLATPAK_PREINSTALL, because either would pull org.gnome.Platform
-# (~1.07 GB installed) into a 4 GiB /var that already carries Firefox on the freedesktop
-# runtime — a net loss over the ~50 MB of native tail this removes from the read-only root.
-gnome-extra/gnome-software
-sys-apps/xdg-desktop-portal-gnome
-sys-apps/xdg-desktop-portal-gtk
-x11-themes/adwaita-icon-theme
-x11-themes/gnome-backgrounds
 media-video/pipewire
 media-video/wireplumber
 x11-base/xwayland
-media-fonts/cantarell
 media-fonts/noto
 media-fonts/noto-emoji
-media-fonts/noto-cjk        #cjk
-net-print/cups              #printing
+media-fonts/noto-cjk             #cjk
+net-print/cups                   #printing

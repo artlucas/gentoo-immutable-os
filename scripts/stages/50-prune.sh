@@ -35,10 +35,16 @@ T="$TARGET"
 # llvm-core/llvmgold is an LTO plugin for a linker this image does not have, and
 # llvm-core/llvm-toolchain-symlinks is nothing but symlinks into the /usr/lib/llvm/*/bin tree
 # deleted in section 3 — both would be pure danglers. The dev-python packaging stack
-# (setuptools/wheel/ensurepip-pip and their metadata deps) is build machinery that rode in on
-# dev-lang/python, which gnome-shell forces into RDEPEND; ensurepip-pip in particular ships a
-# bundled pip wheel in an image whose section-4 assertions ban the pip binary outright.
-# dev-python/{docutils,pygobject,pillow} stay — they are on the documented interpreter allowlist.
+# (setuptools/wheel/ensurepip-pip and their metadata deps) is build machinery that rides in on
+# dev-lang/python; ensurepip-pip in particular ships a bundled pip wheel in an image whose
+# section-4 assertions ban the pip binary outright. These entries are all guarded by existence
+# checks, so they are harmless if the package never arrives.
+#
+# NB: the chain that forced python in is GONE. gnome-base/gnome-shell's ebuild folded DEPEND
+# (dev-python/{docutils,pygobject}) into RDEPEND, which no --with-bdeps=n could undo; that
+# package is not in this image any more. Whether python survives at all under Plasma is a
+# question for the first build's expected-packages.txt, NOT something to pre-empt here — see
+# the interpreter policy note in section 4.
 #
 # app-admin/perl-cleaner and sys-apps/portage are the tail of a third chain, and the one that
 # actually tripped the section-4 assertions: dev-lang/perl (kept deliberately for samba, see
@@ -48,6 +54,9 @@ T="$TARGET"
 # is "no Portage at runtime". Order matters: perl-cleaner is unmerged before portage, since it
 # depends on it. This never showed up before because it takes a from-scratch target to resolve
 # perl's full RDEPEND; an incrementally-built root had already settled without it.
+# The perl chain SURVIVES the desktop swap intact — only its holder changed, from
+# gnome-control-center[cups] -> system-config-printer -> samba to kde-apps/kio-extras[samba]
+# directly (package.use/image, plan/06).
 for p in app-portage/gemato app-portage/getuto app-portage/portage-utils \
          sec-keys/openpgp-keys-gentoo-release \
          llvm-core/llvmgold llvm-core/llvm-toolchain-symlinks \
@@ -133,28 +142,32 @@ fi
 # dev files: headers, pkg-config/cmake metadata, GIR XML, vala bindings. This used to be an
 # INSTALL_MASK in the target make.conf, but that leaked onto the builder root and broke build
 # deps there (see the note in config/portage/make.conf.in) — done here it touches only $TARGET.
-# NB: /usr/lib64/girepository-1.0 (the binary typelibs) is deliberately NOT removed — gjs and
-# gnome-shell load those at runtime. Only the build-time .gir XML and .vapi files go.
-# usr/share/help is GNOME's yelp documentation. gnome-extra/yelp is not in the package set
-# (plan/03 keeps document viewers out of the native image), so nothing here can render those
-# 14,802 files — every Help menu item in the image opens a Flatpak or a URL instead.
+# NB: usr/lib64/girepository-1.0 (the binary typelibs) USED to be deliberately kept here,
+# because gjs and gnome-shell loaded them at runtime. That exception is withdrawn with GNOME:
+# make.conf.in now sets USE=-introspection globally, so most of these should not be built in
+# the first place, and nothing in a Plasma image loads a typelib. The directory is deleted as
+# a guard against the ones dev-libs/glib still builds (it keeps introspection as a per-package
+# line) — pure dead weight once nothing reads them.
+# ROLLBACK: this line and the global -introspection move together. Putting the flag back means
+# taking girepository-1.0 out of this list again.
+#
+# usr/share/help was GNOME's yelp documentation. Nothing installs there now, but the line stays
+# as a cheap guard — KDE's equivalent is the per-app DocBook handbook, which lands in
+# /usr/share/doc/HTML and is therefore already covered by the usr/share/doc entry. USE=-handbook
+# should mean there is nothing there to cover in the first place.
 for d in usr/include usr/share/doc usr/share/info usr/share/man usr/share/gtk-doc \
          usr/share/devhelp usr/share/aclocal usr/lib64/pkgconfig usr/share/pkgconfig \
-         usr/lib64/cmake usr/share/gir-1.0 usr/share/vala usr/share/zsh usr/share/help; do
+         usr/lib64/cmake usr/share/gir-1.0 usr/share/vala usr/share/zsh usr/share/help \
+         usr/lib64/girepository-1.0; do
   rm -rf -- "${T:?}/$d"
 done
 
-# VTE's demo app. gui-libs/vte is in the image because gui-apps/gnome-console links libvte,
-# but the ebuild ships upstream's demo terminal alongside it: Gentoo's vte-0.82.x has
-# "#-Dapp-hidden=true" COMMENTED OUT in src_configure, so the demo is built and installed
-# visible. That puts a second, unbranded terminal in the GNOME app grid — and, worse, registers
-# it in /usr/share/xdg-terminals, the freedesktop default-terminal registry that
-# xdg-terminal-exec consults, so it can be launched in preference to gnome-console. The
-# library stays; the demo does not.
-rm -f -- "$T/usr/bin/vte-2.91-gtk4" \
-         "$T/usr/share/applications/org.gnome.Vte.App.Gtk4.desktop" \
-         "$T/usr/share/xdg-terminals/org.gnome.Vte.App.Gtk4.desktop"
-rmdir --ignore-fail-on-non-empty -- "$T/usr/share/xdg-terminals" 2>/dev/null || true
+# (The VTE demo-app deletion that used to live here is gone with GNOME. gui-libs/vte was in the
+# image only because gui-apps/gnome-console linked libvte, and Gentoo's vte ebuild shipped
+# upstream's demo terminal alongside it — a second, unbranded terminal registered in
+# /usr/share/xdg-terminals. kde-apps/konsole has no equivalent, and gui-libs/vte is masked
+# outright in package.mask/image, so there is nothing left to delete. The assertions in
+# section 4 changed with it.)
 
 # ---- 3a. LLVM: keep libLLVM.so (mesa), drop the rest ---------------------------------
 # llvm-core/llvm is a hard dep of media-libs/mesa — radeonsi and llvmpipe dlopen libLLVM.so —
@@ -265,13 +278,28 @@ done
 
 [[ -e $T/usr/include && -n $(ls -A "$T/usr/include" 2>/dev/null) ]] && violation "/usr/include not empty"
 [[ -e $T/usr/src && -n $(ls -A "$T/usr/src" 2>/dev/null) ]] && violation "/usr/src not empty (kernel build tree came back)"
-# the VTE demo must be gone, but the library it shares a package with must not be — and the
-# terminal the user actually gets must still be there.
-[[ -e $T/usr/share/applications/org.gnome.Vte.App.Gtk4.desktop ]] && violation "VTE demo app desktop entry present"
-compgen -G "$T/usr/lib64/libvte-2.91-gtk4.so"* >/dev/null \
-  || violation "libvte missing after prune — gnome-console will not start"
-[[ -x $T/usr/bin/kgx ]] || compgen -G "$T/usr/bin/gnome-console"* >/dev/null \
-  || violation "gnome-console binary missing after prune"
+# The desktop the user actually gets. Every one of these is invisible to stage 70 — it reads a
+# serial port, so an image pruned down to a black screen still reports green — and every one
+# fails differently: no shell, no file manager, no session, no way to log in.
+if [[ ${CONSOLE_ONLY:-0} != 1 ]]; then
+  [[ -x $T/usr/bin/konsole ]]             || violation "konsole missing after prune"
+  [[ -x $T/usr/bin/dolphin ]]             || violation "dolphin missing after prune"
+  [[ -x $T/usr/bin/plasmashell ]]         || violation "plasmashell missing after prune"
+  [[ -x $T/usr/bin/startplasma-wayland ]] || violation "startplasma-wayland missing after prune"
+  [[ -x $T/usr/bin/plasmalogin || -x $T/usr/sbin/plasmalogin ]] \
+    || violation "plasma-login-manager missing after prune — no way to log in"
+  [[ -f $T/usr/share/wayland-sessions/plasma.desktop ]] \
+    || violation "plasma.desktop wayland session missing after prune"
+  # The cheapest assertion that USE=semantic-desktop actually resolved. The flag is a profile
+  # global, so a profile change or a stray -semantic-desktop would silently produce a Plasma
+  # image with no file indexer and no error anywhere else.
+  # CONFIRMED on the first Plasma build (2026-08-25): the binary is /usr/bin/balooctl6, and
+  # plain "balooctl" does not exist. Both spellings stay accepted anyway — the assertion exists
+  # to catch a missing indexer, not to pin a filename, and a future KF rename should trip it
+  # loudly rather than be silently tolerated by a wildcard.
+  [[ -x $T/usr/bin/balooctl6 || -x $T/usr/bin/balooctl ]] \
+    || violation "balooctl missing after prune — USE=semantic-desktop did not take, so the image has no file indexer"
+fi
 # ...but deleting /usr/src must not have taken the prebuilt out-of-tree modules with it: they
 # live in /usr/lib/modules/<kver>/, and a machine that boots without them has no NVIDIA driver
 # at all — a failure that would otherwise only surface on real hardware, never in stage 70's
@@ -332,18 +360,26 @@ compgen -G "$T/usr/sbin/NetworkManager" >/dev/null \
   || violation "NetworkManager binary missing after prune — the image has no network manager at all"
 find "$T" -xdev -name '*.la' 2>/dev/null | grep -q . && violation "*.la files remain"
 
-# Interpreter policy (plan/06). The whitelist is no longer empty: dev-lang/python is a
-# genuine RUNTIME dependency of gnome-base/gnome-shell on Gentoo — the ebuild folds
-# DEPEND (which carries dev-python/docutils and dev-python/pygobject) into RDEPEND, so no
-# amount of --with-bdeps=n keeps it out of a GNOME image. Admitted deliberately, per the
-# rule this comment used to state: a human made the call, and it is recorded here, in
-# plan/06 and in expected-packages.txt rather than tolerated silently.
-#   allowed: dev-lang/python, dev-lang/python-exec, dev-python/{docutils,pygobject,pillow}
-#            (+ app-admin/system-config-printer for the control-center printer panel)
-#   allowed: dev-lang/perl + dev-perl/Parse-Yapp — net-fs/samba lists both in COMMON_DEPEND
-#            unconditionally, and samba is a hard dep of gnome-control-center[cups] (the
-#            printer panel). xdg-utils[-perl] keeps the other ~48 perl packages out.
-#   still banned: pip and every compiler/build tool above.
+# Interpreter policy (plan/06). The rule is that an interpreter in the image is a call a human
+# made and recorded — here, in plan/06 and in expected-packages.txt — never something tolerated
+# silently.
+#
+#   allowed: dev-lang/perl + dev-perl/Parse-Yapp. net-fs/samba lists both in COMMON_DEPEND with
+#            no USE guard, and samba is a hard dep of kde-apps/kio-extras[samba], kept
+#            deliberately for smb:// browsing in Dolphin. The escape hatch is one flag —
+#            kio-extras[-samba] drops samba, perl and Parse-Yapp together, at the cost of
+#            smb://. x11-misc/xdg-utils[-perl,-gnome] keeps the other ~48 perl packages out.
+#            (Holder changed with the desktop; the dependency fact did not. It used to arrive
+#            behind gnome-control-center[cups] -> app-admin/system-config-printer -> samba.)
+#
+#   python:  UNDECIDED, deliberately. It was admitted under GNOME because gnome-base/gnome-shell
+#            folds DEPEND — dev-python/{docutils,pygobject} — into RDEPEND, and that chain no
+#            longer exists. Do NOT pre-emptively ban it: let the first Plasma build's
+#            expected-packages.txt.generated say what actually arrives and why, then record the
+#            surviving allowlist WITH ITS CHAIN, the way the perl entry above does.
+#
+#   still banned: pip and every compiler/build tool swept for above.
+#
 # The toolchain-free guarantee itself is unchanged: no compiler, no Portage, no headers.
 
 # same shape as the gcc split below: mesa's radeonsi and llvmpipe drivers dlopen libLLVM.so, so

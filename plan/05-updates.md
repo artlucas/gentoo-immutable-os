@@ -115,8 +115,13 @@ a different channel value.
 
 Runs as root (polkit rule allows wheel to trigger via `pkexec`). **Unattended updates:**
 `systemd-sysupdate.timer` shipped but **disabled by default** in v1 (preset off) — flip to
-opt-out once the update path has soaked (roadmap). GNOME Software shows flatpak app updates; OS
-updates are CLI-first in v1 (GNOME Software OS-update integration is roadmap).
+opt-out once the update path has soaked (roadmap). KDE Discover shows flatpak app updates; OS
+updates are CLI-first in v1 (Discover OS-update integration is roadmap).
+
+**Factory reset drops the file index.** Baloo's database lives at
+`~/.local/share/baloo/index`, i.e. under `/var/home/<user>` on the var partition, so wiping
+`var` (plan/01) takes it with the home directory it describes. The desktop silently re-indexes
+on next login. Expected, not data loss — recorded here so it is not later reported as one.
 
 ## Update lifecycle (end to end)
 

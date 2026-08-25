@@ -1,9 +1,25 @@
 # 09 — KDE Plasma Migration
 
-**Status: proposed, not started.** This document is the working plan for replacing the GNOME
-desktop with a minimal KDE Plasma 6 one. It is written to be iterated on before any code
-changes; once executed, its content folds back into plan/03 (package set) and plan/06 (pruning)
-and this file becomes history.
+**Status: EXECUTED 2026-08-23. BUILT AND BOOTED 2026-08-25 (image `0.2.0`).** Every change
+below is in the tree, and the substance has folded back into plan/03 (package set), plan/06
+(pruning) and plan/08 (roadmap), which are now the live documents. This file is kept as the
+record of *why*, and of what the plan got wrong.
+
+The full pipeline runs green end to end: 628 packages to the image root, stage 50's prune
+assertions all pass, both stage-70 smoke boots report
+`graphical=yes failed_units=0 resolved=yes dns=yes`, and stage 80 assembles a release. The
+committed `config/portage/expected-packages.txt` is 615 entries, regenerated from this build.
+Measured sizes and the settled Python chain are in plan/06; the audit of the generated allowlist
+and the remaining open items are at the end of this file.
+
+**What is still unverified is everything a serial port cannot see.** Stage 70 asserts that
+`graphical.target` was reached, not that anything was drawn on it. The manual QEMU pass in §6 —
+autologin landing in a Wayland session, the screen locking, Discover, `smb://`, Baloo staying
+basic — has **not** been done, and until it is, "the desktop works" is not a claim this document
+supports.
+
+Getting the dependency graph to resolve took eleven USE corrections the plan did not predict;
+they are recorded in "What the plan got wrong" below.
 
 ## Why
 
@@ -196,10 +212,27 @@ mobile-broadband UI, the same call plan/03 made for the control-center panel),
 **Delete outright** (their packages are gone): the whole `# ---- GNOME session ----` block
 (`gnome-software`, `gdm`, `gnome-control-center`, `evolution-data-server`, `nautilus`,
 `localsearch`, `mutter`), `dev-cpp/cairomm`, `app-crypt/gcr`, `media-libs/libcanberra`,
-`app-text/poppler` (both lines), and the printer-panel cascade `media-libs/tiff` /
-`net-fs/samba` / `net-libs/ngtcp2` — that cascade existed only because
-`gnome-control-center[cups]` pulled `app-admin/system-config-printer` → samba.
-`kde-plasma/print-manager` talks to CUPS directly.
+and `media-libs/tiff jpeg` — that last one belonged to the printer-panel cascade, where it fed
+`dev-python/pillow` via docutils behind `app-admin/system-config-printer`.
+`kde-plasma/print-manager` talks to CUPS directly, so system-config-printer and pillow both go.
+
+**Replace, rather than delete, the two `app-text/poppler` lines.** They currently read `cairo`
+(so `localsearch[pdf]` can extract PDF text and thumbnails) and `-qt6` (to keep `dev-qt/qtbase`
+out of a GNOME-only image). Both premises invert here: PDF indexing now runs through
+`kde-frameworks/kfilemetadata[pdf]`, which requires `app-text/poppler[qt6(-)]`, and qtbase is
+this image's own toolkit. One line replaces both — see the block below.
+
+**Keep `net-fs/samba client`,** and retarget the `# ---- printer panel cascade ----` header
+comment above it. It is no longer the GNOME printer panel that holds samba — it is
+`kde-apps/kio-extras[samba]`, kept deliberately for `smb://` in Dolphin (see `package.use`
+below). State the consequence in that comment rather than leaving it to be rediscovered: samba
+lists `dev-lang/perl:=` and `dev-perl/Parse-Yapp` in COMMON_DEPEND with no USE guard, so **the
+image still ships a perl interpreter**. That was already true under GNOME, at one more remove;
+this change keeps it true and makes the reason a direct one.
+
+`net-libs/ngtcp2 gnutls` is a REQUIRED_USE tiebreak — ngtcp2 wants exactly one crypto backend —
+that appeared alongside samba's `net-libs/gnutls`. Since samba stays, leave the line in for the
+first depgraph rather than guessing; drop it if `emerge -p @desktop` resolves without it.
 
 **Invert the four anti-Qt lines:**
 
@@ -234,10 +267,12 @@ kde-plasma/plasma-login-sessions  wayland -X
 # REQUIRED_USE="fontconfig? ( X )" and both are default-on. X here pulls only X *libraries*
 # (libX11/libICE/libSM/libXau/libxcb + xorg-proto) — no xorg-server — which is exactly plan/03's
 # "X11 libraries remain, the Xorg server does not", so X stays on and the font-management KCM
-# keeps working. semantic-desktop pulls kde-frameworks/baloo: no file indexer in this image.
+# keeps working. semantic-desktop is kde-frameworks/baloo, the image's file indexer: ON in all
+# three places below, and written positively even where it is already the default. See
+# "File indexing" in section 2 for the runtime side.
 kde-plasma/plasma-workspace       X fontconfig appstream networkmanager policykit systemd \
-                                  ksysguard wallpaper-metadata -semantic-desktop -telemetry
-kde-plasma/plasma-desktop         -semantic-desktop -webengine -ibus -scim -sdl
+                                  ksysguard wallpaper-metadata semantic-desktop -telemetry
+kde-plasma/plasma-desktop         semantic-desktop -webengine -ibus -scim -sdl
 # There is no "packagekit" flag; the PackageKit backend is not built unless firmware/snap are.
 # Flatpak backend only, exactly as gnome-software was.
 kde-plasma/discover               flatpak -firmware -snap -telemetry -webengine
@@ -247,15 +282,37 @@ kde-plasma/powerdevil             -brightness-control
 kde-plasma/kscreen                -X
 kde-plasma/print-manager          -gtk    # a GTK print dialog module; Flatpaks print via the portal
 kde-apps/konsole                  -X
-kde-apps/dolphin                  -semantic-desktop -telemetry
-# samba must not come back through the side door after the printer-panel cascade removed it.
-kde-apps/kio-extras               -samba -mtp -nfs -X -taglib -openexr -ios
+# semantic-desktop is the Information panel's tags/ratings/comments and content search in the
+# Find bar; it is what pulls kde-apps/baloo-widgets. Unlike the two plasma packages above,
+# dolphin's own IUSE has it OFF by default — only the profile global turns it on, which is
+# exactly why it is spelled out here.
+kde-apps/dolphin                  semantic-desktop -telemetry
+# samba: kept deliberately for smb:// browsing in Dolphin. This is now the *only* thing holding
+# net-fs/samba in the image, and through it dev-lang/perl + dev-perl/Parse-Yapp (unguarded
+# COMMON_DEPEND). Setting -samba here is the one-flag escape hatch that removes all three.
+# taglib: on, because kfilemetadata already pulls media-libs/taglib for the indexer (below).
+# The flag buys audio tags in Dolphin's preview/tooltip path for a package that is now free.
+kde-apps/kio-extras               samba -mtp -nfs -X taglib -openexr -ios
+
+# The indexer's extractor set — the only real configuration surface Baloo has. exif and pdf
+# arrive from the profile's global USE; the other four are off by default and are decided here.
+# ffmpeg costs nothing: media-video/ffmpeg is already in the image, so it is free video/audio
+# metadata. taglib is ~1 MB and covers a music library, which is the case file search is most
+# often wanted for. epub pulls app-text/ebook-tools and mobi pulls
+# kde-apps/kdegraphics-mobipocket — new packages for formats plan/03 sends to Flatpak readers.
+kde-frameworks/kfilemetadata      exif pdf ffmpeg taglib -epub -mobi
+
+# Replaces the GNOME-era "cairo" and "-qt6" lines. qt6 is required by kfilemetadata[pdf];
+# cairo off because the cairo backend exists for poppler-glib, whose only consumer was
+# localsearch. Nothing in a Plasma image links the glib frontend.
+app-text/poppler                  qt6 -cairo
 ```
 
 `systemsettings`, `breeze`, `breeze-gtk`, `kde-gtk-config`, `xdg-desktop-portal-kde`,
-`plasma-systemmonitor`, `plasma-pa`, `bluedevil`, `kwallet-pam`, `polkit-kde-agent` and
-`plasma-workspace-wallpapers` all have empty `IUSE` — nothing to configure, and no line belongs
-in `package.use` for them.
+`plasma-systemmonitor`, `plasma-pa`, `bluedevil`, `kwallet-pam`, `polkit-kde-agent`,
+`plasma-workspace-wallpapers`, `kde-frameworks/baloo` and `kde-apps/baloo-widgets` all have
+empty `IUSE` — nothing to configure, and no line belongs in `package.use` for them. Baloo's
+entire configuration surface is `kfilemetadata`'s six extractor flags above.
 
 ### `config/portage/package.mask/image` — the GNOME ban
 
@@ -290,6 +347,7 @@ x11-wm/mutter
 x11-themes/gnome-backgrounds
 sys-apps/xdg-desktop-portal-gnome
 sys-apps/xdg-desktop-portal-gtk
+# GNOME's file indexer. Baloo replaces it, so this bans a *duplicate* indexer, not indexing.
 app-misc/localsearch
 app-misc/tinysparql
 app-arch/gnome-autoar
@@ -297,7 +355,6 @@ x11-misc/xdg-user-dirs-gtk
 media-libs/libcanberra-gtk3
 sci-geosciences/geocode-glib
 app-admin/system-config-printer
-net-fs/samba
 # Browser engines: nothing native renders HTML here (plan/03). Structural, not flag-dependent.
 net-libs/webkit-gtk
 dev-qt/qtwebengine
@@ -307,6 +364,11 @@ dev-qt/qtwebengine
 gnome-color-manager, nm-applet, polkit-gnome and tecla in one line. Deliberately **not** masked
 — the allowed residue of §4: `gnome-base/librsvg`, `gnome-base/dconf`,
 `gnome-base/gsettings-desktop-schemas`, `dev-libs/glib`, `net-libs/glib-networking`.
+
+Also deliberately **not** masked: `net-fs/samba`. It is wanted, for `smb://` in Dolphin.
+`app-admin/system-config-printer` stays banned — that was the GNOME printer UI, and nothing in
+the Plasma set asks for it — so the mask still catches the cascade coming back the old way while
+leaving the new, intentional holder alone.
 
 ### `config/portage/package.accept_keywords/image`
 
@@ -330,12 +392,20 @@ verified, not assumed:
 If `emerge -p @desktop` reports any *other* masked-by-keyword package, that is new information:
 add it here with the same one-line justification, and reconsider whether the set has drifted.
 
+Nothing Baloo drags in needs an entry either: `kde-frameworks/baloo` and
+`kde-frameworks/kfilemetadata` are stable at 6.27.0 with the rest of Frameworks,
+`kde-apps/baloo-widgets` at 26.04.3 with the rest of Gear, and `dev-db/lmdb`, `media-libs/taglib`
+and `media-gfx/exiv2` are all stable amd64 in the pinned snapshot.
+
 ### `config/portage/expected-packages.txt` — regenerate, do not hand-edit
 
 The audit gate diffs the *entire* list; a desktop swap invalidates all 521 lines. Delete the
 file, run the build, and stage 50 (`scripts/stages/50-prune.sh:78-81`) stops with
 `out/reports/expected-packages.txt.generated` to review and commit. That is the documented
 first-build flow — use it rather than trying to predict the KDE dependency closure by hand.
+
+**Result: 615 lines**, committed 2026-08-25 with a header naming the allowed residue. The
+audit that gates it is in §6.
 
 ---
 
@@ -432,6 +502,56 @@ retarget the wording at plymouth-quit / Plasma Login Manager. No code change.
 
 Comment: "GNOME Software" → "Discover".
 
+### File indexing: add `config/rootfs/etc/xdg/baloofilerc`
+
+`semantic-desktop` (§1) puts `baloo_file` in every user session. Four packages arrive with it —
+`kde-frameworks/baloo`, `kde-frameworks/kfilemetadata`, `kde-apps/baloo-widgets` and
+`dev-db/lmdb` (the index store; stable amd64, no keyword entry needed). **None of them belongs
+in `@desktop`:** plasma-workspace and plasma-desktop pull baloo, dolphin pulls baloo-widgets,
+baloo pulls kfilemetadata and lmdb. Listing them in the set would only invite version pins the
+set does not own.
+
+This is not a new capability for the distro, and the plan should not present it as one. The
+GNOME image indexes too: `app-misc/localsearch` and `app-misc/tinysparql` are both in today's
+`expected-packages.txt`, and `app-text/poppler[cairo]` is kept at `package.use/image:165`
+specifically so `localsearch[pdf]` can read PDFs. Baloo is that same feature under the new
+desktop — which is why the localsearch/tinysparql mask entries in §1 are a ban on duplicate
+function rather than a statement that this image does not index.
+
+**The index lives in `/var`.** `$HOME` is `/var/home/<user>` (`tmpfiles.d/distro-state.conf.in`),
+so `~/.local/share/baloo/index` sits on the growable var partition — which `repart.d/50-var.conf`
+extends to the end of the disk at first boot — and never on the read-only erofs root. Nothing in
+the immutable layout constrains it. A factory reset (wipe `var`, plan/01:150) drops the index
+along with the home directory it describes, which is correct and is worth one line in plan/05 so
+it is not later reported as data loss.
+
+Ship the defaults **system-wide, not through a skel copy**. KConfig cascades `$XDG_CONFIG_DIRS`
+(`/etc/xdg`) underneath `~/.config`, so `/etc/xdg/baloofilerc` is the image's default layer and
+anything the user changes in System Settings → Search is written to `~/.config/baloofilerc` and
+wins. `/etc` is the overlayfs backed by `/var/overlay/etc`, so the file stays editable on a live
+system. `install_rootfs_overlay()` copies any non-`.in` file verbatim at 0644
+(`scripts/lib/common.sh:134`), so this needs no templating and no stage-40 change — and
+`tests/test-overlay-install.sh` picks it up with the rest of the tree.
+
+```ini
+# Image defaults — the /etc/xdg layer. ~/.config/baloofilerc overrides anything here.
+[Basic Settings]
+Indexing-Enabled=true
+
+[General]
+# Index file names and metadata, NOT file contents. Content extraction is what makes the index
+# large and the first-login I/O heavy; names, tags and the EXIF/ID3/PDF metadata that
+# kfilemetadata's extractors provide are what Dolphin's Find bar and the KRunner file runner
+# actually use. A user who wants full-text ticks one box in System Settings and re-indexes into
+# their own baloofilerc.
+only basic indexing=true
+
+# The Flatpak per-app data tree. Baloo skips dotted paths already, so this is belt-and-braces:
+# the preinstalled Firefox Flatpak alone would otherwise be a browser cache sitting in the
+# index the day someone turns content indexing on.
+exclude folders[$e]=$HOME/.var/
+```
+
 ---
 
 ## 3. Stage scripts
@@ -480,7 +600,13 @@ Comment: "GNOME Software" → "Discover".
   [[ -x $T/usr/bin/plasmalogin ]]         || violation "plasma-login-manager missing after prune — no way to log in"
   [[ -f $T/usr/share/wayland-sessions/plasma.desktop ]] \
                                           || violation "plasma.desktop wayland session missing after prune"
+  [[ -x $T/usr/bin/balooctl6 ]]           || violation "balooctl6 missing after prune — semantic-desktop did not take"
   ```
+
+  The `balooctl6` line is the cheapest assertion that `semantic-desktop` actually resolved: the
+  flag is a profile global, so a profile change or a stray `-semantic-desktop` would silently
+  produce a Plasma image with no indexer and no error anywhere else. Confirm the binary's name
+  and path against the first build's file list before trusting it — see the open items.
 
 - **Prune dirs** (138-142): `usr/share/help` (yelp) can go — nothing installs there now; keep the
   line as a cheap guard and retarget its comment at KDE handbooks (`/usr/share/doc/HTML`,
@@ -490,13 +616,17 @@ Comment: "GNOME Software" → "Discover".
   kept* for gjs/gnome-shell. With `-introspection` global they should not be built at all — add
   the directory to the deletion list as a guard, and rewrite the comment to record why the
   exception was withdrawn.
-- **Interpreter policy comment** (332-344): rewrite. `dev-lang/python` was admitted because
-  gnome-shell folds DEPEND into RDEPEND; `dev-lang/perl` + `dev-perl/Parse-Yapp` because
-  `net-fs/samba` was a hard dep of `gnome-control-center[cups]`. Both chains are gone. Do **not**
-  pre-emptively ban either — let the first build's `expected-packages.txt.generated` say what
-  actually arrives, then record the surviving allowlist *with its chain*, the way the current
-  comment does. The `dev-python/*` and `app-admin/perl-cleaner` / `sys-apps/portage` unmerge loop
-  (48-59) is already guarded by existence checks and needs no change.
+- **Interpreter policy comment** (332-344): rewrite, but only half of it. `dev-lang/python` was
+  admitted because gnome-shell folds DEPEND into RDEPEND — that chain is gone. `dev-lang/perl` +
+  `dev-perl/Parse-Yapp` came in behind `net-fs/samba`, and samba stays; only its holder changes,
+  from `gnome-control-center[cups]` to `kde-apps/kio-extras[samba]`. So the perl allowance
+  survives as-is and needs its chain re-cited, not deleted — the same edit applies at `:44`,
+  where that justification is repeated, and at `:343-344`, where the assertion whitelist spells
+  it out. Do **not** pre-emptively ban python — let the first build's
+  `expected-packages.txt.generated` say what actually arrives, then record the surviving
+  allowlist *with its chain*, the way the current comment does. The `dev-python/*` and
+  `app-admin/perl-cleaner` / `sys-apps/portage` unmerge loop (48-59) is already guarded by
+  existence checks and needs no change.
 
 ### `scripts/stages/70-test.sh`
 
@@ -541,8 +671,9 @@ The GNOME-project packages that legitimately remain in the image. The new
 |---|---|
 | `dev-libs/glib` | flatpak, NetworkManager, polkit, pipewire — desktop-independent |
 | `net-libs/glib-networking` | glib's TLS backend; flatpak's HTTP path |
-| `gui-libs/gtk`, `x11-libs/gtk+`, `x11-libs/gdk-pixbuf`, `x11-libs/pango` | the `breeze-gtk` / `kde-gtk-config` bridge |
-| `x11-themes/adwaita-icon-theme` | hard RDEPEND of both GTK slots |
+| `x11-libs/gtk+` (GTK **3** only), `x11-libs/gdk-pixbuf`, `x11-libs/pango` | `kde-gtk-config` DEPENDs `x11-libs/gtk+:3[X]`. **Not `gui-libs/gtk`** — see item 7 in "What the plan got wrong"; GTK 4 leaves the image, confirmed absent from the built allowlist |
+| `x11-themes/adwaita-icon-theme` (+ `-legacy`) | hard RDEPEND of GTK 3 |
+| `x11-misc/xsettingsd` | RDEPEND of `kde-gtk-config` — not GNOME-namespace, but part of the same bridge |
 | `gnome-base/librsvg` | RDEPEND of adwaita-icon-theme (SVG icon loading) |
 | `gnome-base/dconf`, `gnome-base/gsettings-desktop-schemas` | GSettings backend + schemas the GTK bridge reads |
 
@@ -558,13 +689,13 @@ Mechanical but non-trivial — nine files assert GNOME as a design fact:
 | File | What changes |
 |---|---|
 | `README.md:3` | "minimal-GNOME" → "minimal-KDE-Plasma" |
-| `plan/03-package-set.md` | The largest rewrite: Strategy (profile, global USE — the "X11 libraries stay, Xorg server goes" paragraph is still correct), the `@desktop` table (replace wholesale), "Dropped from the native set" (keep the file-roller / gnome-text-editor history as background, add the KDE equivalents Ark/Kate with the same reasoning), the portals paragraph (portal-kde), plus a new subsection recording the ban list and allowed residue from §4 |
+| `plan/03-package-set.md` | The largest rewrite: Strategy (profile, global USE — the "X11 libraries stay, Xorg server goes" paragraph is still correct), the `@desktop` table (replace wholesale), "Dropped from the native set" (keep the file-roller / gnome-text-editor history as background, add the KDE equivalents Ark/Kate with the same reasoning), the portals paragraph (portal-kde), plus a new subsection recording the ban list and allowed residue from §4, and one recording file indexing: Baloo replaces localsearch/tinysparql, `only basic indexing` is a deliberate default rather than an accident, and the extractor set is a stated choice |
 | `plan/00-overview.md:8,25,71` | M2 "GNOME Wayland session via GDM autologin" → Plasma session via Plasma Login Manager autologin; GNOME Software → Discover |
 | `plan/01-architecture.md:74,157-158` | Boot flow `graphical.target → GDM → GNOME Shell`, and the autologin rationale |
 | `plan/02-build-pipeline.md:35,83,135,154,162,166,172,177,209,211` | Overlay file name, `polkit[gtk]` → `polkit[kde]`, profile string, stage-30 verify names, preset list, and the "GNOME from source dominates" build-time estimate — Qt6 + Frameworks + Plasma is comparable or larger; say so |
 | `plan/04-image-and-boot.md:70,109,119,142` | Splash → Plasma Login Manager hand-off |
-| `plan/05-updates.md:118-119` | GNOME Software → Discover shows Flatpak updates |
-| `plan/06-pruning.md` | The typelib exception (`:20,30`), the xdg-utils/cups/samba cascade (`:110-122`), the "Python under GNOME — RESOLVED" section (`:132-164`) whose entire dependency chain no longer exists, the Qt6/Xorg section (`:202-206`) which now reads the other way round, and the size-budget row (`:255`, "GNOME Shell + GTK4 + Mutter (no webkit) = 1.6 GiB") — replace with a measured figure after the first build |
+| `plan/05-updates.md:118-119` | GNOME Software → Discover shows Flatpak updates; **add** a line that a factory reset drops `~/.local/share/baloo/index` with the rest of `/var` and the desktop silently re-indexes — expected, not data loss |
+| `plan/06-pruning.md` | The typelib exception (`:20,30`); the xdg-utils/cups/samba cascade (`:110-122`) — item 1 (`xdg-utils[perl]`) stands unchanged, item 2 (samba → perl) is rewritten rather than deleted: the dependency fact is still true, the holder is now `kio-extras[samba]`, and the escape hatch at `:124` changes from "set `gnome-control-center -cups`" to "set `kio-extras -samba`", which drops samba and perl but costs `smb://` in Dolphin; the "Python under GNOME — RESOLVED" section (`:132-164`) whose entire dependency chain no longer exists, the Qt6/Xorg section (`:202-206`) which now reads the other way round — and note that `poppler -qt6` does not merely become harmless but inverts outright, since `kfilemetadata[pdf]` *requires* `poppler[qt6]`; and the size-budget row (`:255`, "GNOME Shell + GTK4 + Mutter (no webkit) = 1.6 GiB") — replace with a measured figure after the first build |
 | `plan/07-testing.md:88-89` | NVIDIA Wayland session checks; Flatpak install via Discover |
 | `plan/08-roadmap.md:11-18,41-42,69,76-78,87` | The installer would now be Qt/Kirigami, not GTK4/libadwaita; open question 4 (GDM Wayland on NVIDIA) becomes Plasma Login Manager, whose greeter is kwin — so the NVIDIA Wayland question is now the *session* question, not a separate one; **add** the retain-splash hand-off as a new roadmap item |
 
@@ -584,10 +715,32 @@ bash scripts/build.sh --dry-run                # stage wiring
 bash scripts/build.sh --clean --console-only   # fast check that @base/@hardware still resolve
 bash scripts/build.sh --clean                  # the real build
 # stage 50 stops here on the first run:
-#   review out/reports/expected-packages.txt.generated
+#   review out/reports/expected-packages.txt.generated  <- CHECK ITS MTIME FIRST
 cp out/reports/expected-packages.txt.generated config/portage/expected-packages.txt
 bash scripts/build.sh --from 50
 ```
+
+> **`out/` is never cleaned between runs.** Stale reports from previous builds sit there until a
+> stage overwrites them, and stage 50 writes `expected-packages.txt.generated` only when it
+> reaches its audit gate. During this migration a report from the *first GNOME build* (four days
+> stale, still listing `gdm`, `nautilus`, `xorg-server` and `xf86-video-*`) was very nearly
+> committed as the Plasma allowlist. `stat -c %y` the file and confirm it is newer than the
+> stage-30 completion before copying it. The same trap applies to `size-report.txt`, which is
+> written *after* the gate and therefore does not exist yet when the gate first stops the build.
+
+**Outcome, 2026-08-25.** All of the above ran. Notes from doing it:
+
+- The build must start from stage 20, not 30, whenever `config/portage` or `build.conf` has
+  changed since the config root was assembled — stage 30's first guard says so itself. Do not
+  compute `portage_config_hash` on the host to check: it runs `sha256sum` over
+  `find "$REPO/config/portage"`, and `sha256sum` embeds the **absolute path**, so a host-side
+  value (`/home/…/repo`) can never equal the container's (`/repo`). Compare inside the builder
+  or not at all.
+- Never run two stages concurrently against the same work volume. Two `30-target-rootfs.sh`
+  containers were briefly live at once, both emerging into the same `$TARGET` and both appending
+  to the same log; the only safe recovery was `docker volume rm immos-work` and a restart.
+- `UPDATE_VERIFY=1` in `build.conf` with no `config/keys/import-pubring.gpg` stops stage 40 dead.
+  Dev builds need `UPDATE_VERIFY=0` (or `UPDATE_VERIFY_OVERRIDE=0` in the environment).
 
 Then, in order:
 
@@ -597,14 +750,21 @@ Then, in order:
    ```sh
    grep -iE 'gnome|gdm|mutter|nautilus|gjs|adwaita|webkit|qtwebengine' \
      config/portage/expected-packages.txt
-   wc -l config/portage/expected-packages.txt   # compare against today's 521
+   wc -l config/portage/expected-packages.txt   # compare against GNOME's 521
    ```
 
    Everything the first command returns must be in the §4 residue table. Anything else means a
    mask is missing or a USE flag is wrong.
 
-2. **Size.** `out/reports/size-report.txt` — compare `/usr` (today 1317 MB) and the total (today
-   7674 MB) against the plan/06 budget, and update that table with the real number.
+   **Done. It returns exactly five names** — `gnome-base/{dconf,gsettings-desktop-schemas,librsvg}`
+   and `x11-themes/adwaita-icon-theme{,-legacy}` — all of them in the residue table. No ruby, no
+   `gui-libs/gtk`, no `xorg-server`, no `xf86-*`. 615 entries against GNOME's 521: +94, of which
+   128 are `kde-*` (115) and `dev-qt/*` (13), so the non-desktop set actually *shrank*.
+
+2. **Size.** `out/reports/size-report.txt` — **done**, and folded into plan/06's "Measured: the
+   first Plasma build" section. Headline: +688 MiB installed (7674 → 8362), +496 MiB EROFS
+   (2884 → 3381), +412 MiB on the A/B update payload (2107 → 2519). Concentrated almost entirely
+   in `usr/lib64` (+365, Qt6/Frameworks) and `usr/share/icons` (+135, breeze-icons).
 
 3. **Stage 70 smoke** runs automatically: two boots, `graphical.target` reached,
    `failed_units=0`, machine-id persists, resolved active.
@@ -613,7 +773,7 @@ Then, in order:
    an image that boots to a black screen still passes it):
 
    ```sh
-   bash scripts/run-vm.sh out/immos-0.1.0.img
+   bash scripts/run-vm.sh out/immos-0.2.0.img
    ```
 
    - splash appears, then Plasma Login Manager autologins straight into a Plasma **Wayland**
@@ -622,6 +782,14 @@ Then, in order:
    - the screen locks (`loginctl lock-session`) — that is `kwin[lock]` doing its job, and it is
      the flag most likely to be dropped by accident;
    - Konsole and Dolphin launch; Discover lists Flathub and can install an app;
+   - **Baloo runs and stays basic.** `balooctl6 status` reports the indexer running with a file
+     count that grows and then settles; `~/.local/share/baloo/index` exists under `/var/home`;
+     typing a filename into Dolphin's Find bar or KRunner returns it. Then confirm the default
+     took: `grep -r "only basic indexing" ~/.config/baloofilerc /etc/xdg/baloofilerc` and check
+     `balooctl6 indexSize` against a home with a few hundred files. If the index is large, the
+     `/etc/xdg` key name is wrong and content indexing is on — see the open items;
+   - Dolphin's Network view opens `smb://` and can reach a share — that is `kio-extras[samba]`,
+     the one flag this image pays a perl interpreter for, so it is worth confirming it works;
    - the preinstalled Firefox Flatpak launches, its file picker opens (that is
      xdg-desktop-portal-kde doing its job), and it picks up the Breeze GTK theme;
    - System Settings opens the Network / Audio / Power / Display / Bluetooth / Printers panels;
@@ -635,41 +803,165 @@ Then, in order:
 
 ---
 
-## Settled since the first draft
+## What the plan got wrong
 
-These were open questions; they are now answered against the pinned tree and folded into the
-sections above:
+Recorded rather than quietly fixed, because each one is a class of mistake worth recognising
+next time.
 
-- **IUSE for every `kde-plasma/*` package** — read from the 6.6.6 ebuilds, §1. The corrections
-  that mattered: `discover` has no `packagekit` flag; `powerdevil` has no `powerprofiles` flag
+**1. `media-libs/libcanberra` was listed for deletion. It is more firmly in a Plasma image than
+it ever was in a GNOME one** — an unconditional dependency of `kde-plasma/kwin`,
+`plasma-desktop`, `plasma-pa` **and** `plasma-workspace`. Its `-udev` line stays in both
+`package.use/image` and `builder/Dockerfile`, and the Dockerfile's reason for it (a phantom
+`REQUIRED_USE="udev? ( alsa )"` failure evaluated against the builder's alsa-less `/`) is
+unchanged. The mistake was reasoning from "it was in the GNOME block" instead of from RDEPEND.
+
+**2. Backslash line continuations in `package.use` do not work.** The plan's
+`plasma-workspace` entry was written across two lines with a trailing `\`. Portage's
+`grabfile()` does no continuation handling whatsoever (`portage/util/__init__.py`) — the `\`
+would have been parsed as a literal USE token. Repeating the atom on a second line is the
+correct idiom and is what the file already did for `app-text/poppler`.
+
+**3. `-introspection` as a *global* flag needed `-vala` beside it.** "Dropped from the global
+set" was not enough: most packages that build typelibs default `introspection` on in their own
+`IUSE`, so the token has to be negated, and once negated, `gnome-base/librsvg` and
+`app-crypt/libsecret` both fail `REQUIRED_USE="vala? ( introspection )"`. `-vala` globally is
+the right answer independently — stage 50 deletes `usr/share/vala` wholesale.
+
+**4. The Qt module family has to be flag-matched by hand, per package.** `dev-qt/*` modules
+bind each other with mirrored USE-deps (`~dev-qt/qtbase[opengl=,vulkan=,icu=,...]`), and
+portage evaluates those against the **builder's own `/`**, where the target's global USE does
+not apply — the multi-root quirk already documented at length in `builder/Dockerfile`. So
+`opengl`, `vulkan`, `qml`, `dbus` and `X` all had to be restated per-package even though every
+one of them is already on globally. Eight lines, all of them mirror artefacts rather than
+choices: `qtbase`, `qtdeclarative`, `qt5compat`, `qttools`, `qtmultimedia`, `qtquick3d`, plus
+`kconfig`/`kcoreaddons`/`kguiaddons`/`kidletime`/`kimageformats`/`kwindowsystem`/`prison`/
+`sonnet`, `qcoro`, `dbus`, `avahi`, `libva` and `wpa_supplicant`.
+
+**5. `kde-frameworks/sonnet[hunspell]` brings back the exact dependency tail plan/03 dropped
+gnome-text-editor to avoid** — and worse, it *fails the depgraph outright*, because this image's
+`L10N` uses plain `en` while `app-dicts/myspell-en`'s `REQUIRED_USE` demands one of
+`en-AU/en-CA/en-GB/en-US/en-ZA`. Fixed with `sonnet[-hunspell,-aspell]`.
+
+**6. `x11-misc/xdg-user-dirs[gtk]` pulls the masked `xdg-user-dirs-gtk`.** Caught by the new
+mask, at dependency resolution, naming the puller — which is precisely the argument this plan
+made for adding the mask in the first place. Fixed with `xdg-user-dirs -gtk`.
+
+**7. The GTK bridge holds GTK *3*, not GTK 4.** `kde-gtk-config` DEPENDs `x11-libs/gtk+:3[X]`;
+`breeze-gtk` is a pure theme with no runtime GTK dependency at all. So `gui-libs/gtk` leaves
+the image (confirmed by the depgraph), and the §4 residue table was wrong to list it. GTK3 is
+what keeps `adwaita-icon-theme` → `librsvg` in, so the residue itself is unchanged in shape.
+`x11-misc/xsettingsd` is a new arrival, via `kde-gtk-config`'s RDEPEND.
+
+**8. Two package.use lines are now dead.** `dev-libs/libportal` (not in the Plasma graph at
+all) and `sys-libs/minizip-ng`. **Confirmed by the build** — neither package is in the 615-entry
+allowlist. They are kept as documented no-ops rather than deleted: a line for an absent package
+costs nothing, and if a later portal or flatpak change does pull libportal back, it should
+arrive with the Qt binding rather than the GTK one. Delete them if that stops being true.
+`gui-libs/gtk`'s line is in the same position for the same reason (see item 7).
+
+**9. `app-crypt/libsecret` arrives via KWallet** — `kio[kwallet]` → `kwallet` →
+`kwallet-runtime` → `libsecret`. That answers one of the open questions below about
+`org.freedesktop.secrets` for Flatpak apps: the Secret Service bridge comes with KWallet rather
+than needing a separate package.
+
+**10. `net-dns/avahi[mdnsresponder-compat]` is required by `kde-frameworks/kdnssd`,** which is
+how `kio-extras` advertises and browses network services — the same feature `smb://` is kept
+for. A real choice, not a mirror artefact.
+
+**11. Stage 50's desktop presence assertions had to become conditional on `CONSOLE_ONLY`.**
+The GNOME ones (`gnome-console`, `libvte`) were unconditional, which means a `--console-only`
+build was flagging prune violations for packages it was never supposed to have. Fixed while
+replacing them.
+
+## Settled against the pinned tree
+
+These were open questions in the first draft; they are answered and folded into the sections
+above.
+
+- **IUSE for every `kde-plasma/*` package** — read from the 6.6.6 ebuilds. The corrections that
+  mattered: `discover` has no `packagekit` flag; `powerdevil` has no `powerprofiles` flag
   (`brightness-control` is DDC/CI via ddcutil); `kwin` has no `X` flag at all — the X11
   compositor is a separate `kde-plasma/kwin-x11` package; and eleven of the packages have empty
   `IUSE` and need no line.
 - **`kwin[lock]`** — not default-on, required by `plasma-login-manager`, and the only thing that
-  puts `kscreenlocker` in the image. Missing it would have shipped a laptop that cannot lock.
+  puts `kscreenlocker` in the image. Confirmed present in the resolved set.
 - **`plasma-workspace` REQUIRED_USE `fontconfig? ( X )`** — and its `X?` block pulls only X
-  libraries, never `xorg-server`, so `X` stays on.
+  libraries, never `xorg-server`, so `X` stays on. Note `plasma-workspace` also RDEPENDs
+  `x11-apps/{xmessage,xprop,xrdb}` unconditionally; none of them pulls a server either, and
+  `xrdb-1.2.2` is stable amd64 so no keyword entry is needed.
 - **Keywords** — everything is stable amd64 at Plasma 6.6.6 / Frameworks 6.27.0 / Gear 26.04.3
   except `kde-plasma/plasma-login-manager`. One `package.accept_keywords` entry, pinned to
-  `=6.6.6`.
+  `=6.6.6`; the resolved graph confirms nothing else `~amd64` comes in behind it.
+- **`semantic-desktop` is a profile global**, not a per-package default:
+  `profiles/targets/desktop/plasma/make.defaults` sets it. `plasma-workspace` and
+  `plasma-desktop` carry `+semantic-desktop` in their own `IUSE` too; `kde-apps/dolphin` does
+  **not**, and gets it only from the profile. All three are written positively so the image
+  keeps its indexer if the profile ever drops the token.
+- **`kde-frameworks/baloo` and `kde-apps/baloo-widgets` have empty `IUSE`**, and
+  `kde-frameworks/kfilemetadata` has `epub exif ffmpeg mobi pdf taglib` — the whole of the
+  indexer's build-time configuration.
 - **`kde-plasma/print-manager`**, not `kde-apps/`.
 - **KWallet auto-unlock** — Gentoo's PLM PAM stacks already carry the `pam_kwallet5.so` lines,
   so no stage-40 `/etc/pam.d` edit is needed.
+- **PLM's binary and paths** — the ebuild sets `-DRUNTIME_DIR=/run/plasmalogin`, installs
+  `/etc/plasmalogin.conf.d/01gentoo.conf`, and adds PAM stacks `plasmalogin`,
+  `plasmalogin-greeter`, `plasmalogin-autologin`. The binary *name* is still inferred (see
+  below).
 
-## Open items the first build decides
+## Settled by the first build (2026-08-25)
 
-- **The `plasmalogin` binary path.** Inferred from the ebuild's other paths, not read off an
-  installed file list. Stage 30's `have_exe plasmalogin` is where a wrong guess surfaces.
+- **The `plasmalogin` binary path** — it is `/usr/bin/plasmalogin`. The inference from the
+  ebuild's other paths was right, which means `distro-boot-ok.service`'s
+  `ConditionPathExists=/usr/bin/plasmalogin` matches and the boot-success gate is live rather
+  than silently skipped.
+- **`balooctl6`** — that is the installed name; plain `balooctl` does not exist. Stage 50's
+  assertion accepts both, deliberately: it exists to catch a missing indexer, not to pin a
+  filename, and a future KF rename should trip it loudly.
+- **The `~amd64` blast radius** — three unstable packages in the built image and no more:
+  `plasma-login-manager-6.6.6`, `nvidia-drivers`, `libva-intel-media-driver`. The `=6.6.6` pin
+  held; nothing dragged a `~amd64` Qt or Plasma 6.7.4 in behind it.
+- **`@buildhost` needed no entry.** No tecla-shaped configure-time RDEPEND surfaced; the set is
+  still empty and its header still explains what to watch for.
+- **`kwin[lock]` took** — `kde-plasma/kscreenlocker` is in the image. Whether the lock screen
+  actually *engages* is a manual-pass question, not a package one.
+- **Size** — measured; see plan/06.
+- **Python** — resolved, and the chain is `power-profiles-daemon → switcheroo-control →
+  pygobject → pycairo`, i.e. not the desktop's doing at all. Full table in plan/06.
+
+## Open items — the manual QEMU pass decides
+
+None of these is answerable from a build log. Stage 70 reads a serial port, so an image that
+boots to a black screen still reports green.
+
 - **PLM's autologin config keys.** Assumed SDDM-compatible (`[Autologin] User/Session/Relogin`)
-  because PLM is a fork; confirm against `man plasmalogin.conf` and `/usr/share/plasmalogin/`.
-- **`~amd64` blast radius.** `=plasma-login-manager-6.6.6` should need nothing else unkeyworded —
-  verify with `emerge -p` before accepting the build, and if it starts pulling a `~amd64` Qt or
-  Plasma set, the pin is wrong and the whole PLM choice is worth revisiting.
-- Whether `kde-frameworks/kwallet` provides `org.freedesktop.secrets` for Flatpak apps, or a
-  separate Secret Service bridge is needed.
-- Whether a configure-time RDEPEND-only dep needs adding to `@buildhost` (the tecla-shaped
-  failure mode).
-- Whether `-introspection` global holds, or some surviving package dlopens a typelib.
-- Whether PLM's `pkg_setup` kernel check (`CONFIG_CHECK="~DRM"`, via `linux-info`) is quiet in a
-  `--root=$TARGET` build with no `/usr/src/linux` symlink. It is a `~`-prefixed check, so it
-  should warn rather than fail — but it is a new eclass in this pipeline's dependency graph.
+  because PLM is a fork. The build proves the file is *installed*, not that PLM *reads* it —
+  confirm against `man plasmalogin.conf` and `/usr/share/plasmalogin/`, and by observing whether
+  the greeter actually logs in without a password.
+- **The `baloofilerc` key spellings.** `[Basic Settings] Indexing-Enabled`, `[General] only basic
+  indexing` and `[General] exclude folders[$e]` are written from Baloo's documented config, not
+  read off an installed file. A wrong key is *silently ignored*, and the failure mode is full
+  content indexing with no error anywhere — so verify by flipping the matching switch in
+  System Settings → Search and diffing the resulting `~/.config/baloofilerc` against the
+  `/etc/xdg` copy.
+- **Whether `baloo_file` autostarts** from `/etc/xdg/autostart/` or a systemd user unit under
+  KF6, and whether the index lands under `/var/home` as intended.
+- **Whether `-introspection` global holds at runtime.** The graph resolves and the image builds;
+  whether some surviving package dlopens a typelib it no longer has is a different question, and
+  the rollback (put `introspection` back globally *and* restore the `girepository-1.0` prune) is
+  documented in plan/06.
+- **Whether PLM's `pkg_setup` kernel check (`CONFIG_CHECK="~DRM"`) was quiet.** It did not fail
+  the build, which is all that is known; the `~` prefix means a warning would have passed
+  unnoticed in a 14 MB emerge log.
+
+## Known issue, not caused by this migration
+
+**`systemd-repart` fails in the initrd on every boot** — `Failed to start Repartition Root Disk`,
+on both stage-70 smoke boots. It does not appear in `systemctl --failed` afterwards because the
+failure is in the initrd instance, which is why `failed_units=0` is not a contradiction.
+
+The cause is geometry, not the desktop: `ESP 1024 + 2×root 6144 + var 4096 = 17408 MiB` against
+a 17410 MiB image, so repart has ~2 MiB to grow `var` into and gives up. `var_size` in the guest
+report is 4143677440 bytes — the built size, ungrown. In a VM whose disk is exactly the image
+that is arguably correct behaviour; on real hardware with a larger disk it is the mechanism
+plan/01 relies on for "var grows to fill the disk", and **nothing has ever exercised it**.
+Worth a run against an over-provisioned disk before trusting that guarantee.

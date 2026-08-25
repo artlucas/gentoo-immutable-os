@@ -17,7 +17,11 @@ disable systemd-network-generator.service
 # module, /etc/resolv.conf is its stub, NetworkManager feeds it over D-Bus). Its own vendor
 # preset is "enable" on most builds, but this image must not depend on that.
 enable systemd-resolved.service
-enable gdm.service
+# The display manager. Its [Install] section is Alias=display-manager.service — the same
+# mechanism gdm used — so nothing else in the preset flow changes with the swap. Stage 40
+# asserts the alias symlink actually got written, because a preset that quietly did not
+# take produces an image that boots to a console with no error anywhere.
+enable plasmalogin.service
 enable bluetooth.service
 enable systemd-timesyncd.service
 enable fstrim.timer

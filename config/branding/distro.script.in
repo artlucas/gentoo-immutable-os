@@ -140,10 +140,16 @@ fun refresh() {
 }
 Plymouth.SetRefreshFunction(refresh);
 
-# gdm quits us with --retain-splash, so the last frame drawn is what the greeter fades in over.
 # Leave the mark fully lit rather than wherever the cycle happened to be. With the inverted
 # curve that is also the curve's own resting value, so the quit no longer snaps the mark
 # brighter than the frame before it — it just stops the wave.
+#
+# This was written for gdm[plymouth], which quit us with --retain-splash so the last frame
+# drawn was what the greeter faded in over. Plasma Login Manager has no retain-splash
+# equivalent, so plymouth-quit.service tears the splash down outright and the last frame is
+# what the console shows for the instant before the greeter paints. The reasoning is unchanged
+# and so is the code: a fully-lit mark is the right resting frame either way, and it becomes
+# the right one again the day the retain-splash hand-off is restored (plan/08).
 fun on_quit() {
     slab_top.SetOpacity(1);
     slab_mid.SetOpacity(1);

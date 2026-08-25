@@ -1,6 +1,8 @@
 # Target package.use — per-package flags for the image build (plan/03).
 
-sys-apps/systemd            boot policykit
+# pam: kde-plasma/plasma-login-manager RDEPENDs sys-apps/systemd:=[pam] — it authenticates
+# through the systemd PAM stack rather than shipping its own session bookkeeping.
+sys-apps/systemd            boot policykit pam
 # sudo[sendmail] (default on) pulls virtual/mta so sudo can mail failed-attempt notices; the
 # first provider is mail-mta/nullmailer, which drags a mail spool, an nullmail user and an
 # sendmail symlink into a desktop image that has no business relaying mail. It also breaks the
@@ -19,20 +21,32 @@ app-admin/sudo              -sendmail
 # libglx.so) and with it pulls x11-base/xorg-server -> x11-base/xorg-drivers -> every
 # xf86-video-* matching VIDEO_CARDS (amdgpu, ati, nouveau) plus xf86-input-libinput and the
 # x11-apps client utilities (xinit, xauth, xhost, xset, xrdb, iceauth). A full X server, in an
-# image whose session is Wayland-only and whose GDM is configured WaylandEnable=true with no
-# Xorg fallback. NVIDIA's Wayland path is GBM/EGLStream driven by nvidia-drm.modeset=1, which
+# image whose session is Wayland-only and whose display manager (Plasma Login Manager) drives
+# kwin as its greeter compositor, with no Xorg session installed at all.
+# NVIDIA's Wayland path is GBM/EGLStream driven by nvidia-drm.modeset=1, which
 # is already on the UKI cmdline in stage 40, and x11-base/xwayland stays in @desktop, so X11
-# Flatpak apps keep working. Revert this line if GDM ever needs a real Xorg fallback on NVIDIA
-# (plan/08 open question 4) — it is the only thing standing between here and that server.
+# Flatpak apps keep working. Revert this line if the session ever needs a real Xorg fallback on
+# NVIDIA (plan/08 open question 4) — it is the only thing standing between here and that server.
+# NB: with GNOME gone this is now one of only TWO -X flags holding the server out, not three;
+# kde-plasma/plasma-login-sessions[-X] is the other. See the Plasma session block below.
 # -static-libs: .a archives have no consumer in an image with no linker.
 x11-drivers/nvidia-drivers  dist-kernel -X -static-libs
 sys-kernel/linux-firmware   redistributable -initramfs
 media-video/pipewire        sound-server pipewire-alsa
-# modemmanager is required by gnome-control-center[networkmanager] (>=1.52.0[modemmanager]
-# plus net-misc/modemmanager itself) — without it the Settings "Network" panel cannot be
-# built at all. Enabled deliberately: one extra daemon is cheaper than losing the panel.
+# modemmanager is what kde-plasma/plasma-nm's mobile-broadband UI talks to. Same call plan/03
+# made for the GNOME control-center panel: one extra daemon is cheaper than an image that
+# cannot bring up a WWAN card at all.
 net-misc/networkmanager     wifi modemmanager -bluetooth
 media-libs/mesa             vulkan vaapi wayland
+# NB: plan/09 listed this line for deletion along with the rest of the GNOME block. That was
+# wrong, and the ebuilds say so: media-libs/libcanberra is an UNCONDITIONAL dependency of
+# kde-plasma/{kwin,plasma-desktop,plasma-pa,plasma-workspace} — it is the event-sound library
+# the whole session uses. It is more firmly in a Plasma image than it ever was in a GNOME one.
+# -udev is unchanged and still load-bearing on the BUILDER side: libcanberra's
+# REQUIRED_USE="udev? ( alsa )" is evaluated against the builder's own "/", which has no global
+# alsa, so a udev-enabled libcanberra reads as unsatisfiable there and fails the target
+# depgraph (see the long note in builder/Dockerfile). What udev buys is per-card sound-theme
+# lookup, which nothing here asks for.
 media-libs/libcanberra      -udev
 # installkernel stays inert in the target: no initramfs/bootloader hooks at emerge time —
 # the UKI is built from the builder (stage 40), not by package hooks.
@@ -54,92 +68,203 @@ sys-kernel/gentoo-kernel-bin -initramfs -generic-uki
 # own plugin rather than the theme's. Verified in QEMU on the shipping image: pressing ESC
 # during the splash renders the full systemd boot log with its [ OK ] markers. If a future
 # plymouth bump regresses that, turn pango back on — pango, cairo and libpng are already in the
-# image for GNOME, so it costs no extra packages.
+# image for the GTK theming bridge, so it costs no extra packages.
 # Version note: 22.02.122-r4 is the amd64 stable; 24.004.60 is ~amd64 AND package-masked
 # upstream for breakage, so no package.accept_keywords entry belongs with this.
 sys-boot/plymouth           drm udev -pango -freetype -gtk
 
-# ---- GNOME session ----------------------------------------------------------------
-# plan/03 wants the Flatpak backend only. NB: the firmware flag is named "firmware" (not
-# "fwupd") and malcontent is no longer a USE flag at all (hardcoded off in the ebuild), so
-# the old "-fwupd -malcontent" masked nothing and sys-apps/fwupd — explicitly deferred to
-# the roadmap in plan/03 — was being pulled into the image.
-gnome-extra/gnome-software        flatpak -firmware -dkms -snap
-# -X is what actually removes the Xorg server. Traced from the target VDB: gdm[X] RDEPENDs
-# x11-base/xorg-server, which PDEPENDs x11-base/xorg-drivers, which pulls every xf86-video-*
-# matching VIDEO_CARDS (amdgpu, ati, nouveau) plus xf86-input-libinput — and those in turn
-# RDEPEND xorg-server right back. That is a complete X server inside a session plan/03 defines
-# as Wayland-only, with GDM already configured WaylandEnable=true and no Xorg session reachable.
-# nvidia-drivers[-X] above removes nvidia from the same reverse-dep set but is NOT sufficient
-# on its own; gdm is the other half. x11-base/xwayland stays in @desktop and mutter[X] keeps
-# X11 client support, so X11 Flatpak apps are unaffected — what goes is the standalone server.
-gnome-base/gdm                    wayland -X -xdmcp -fprint plymouth
-# -X is the THIRD and last flag holding the Xorg server in. Traced from the 49.9 ebuild:
-#   X? ( >=x11-drivers/xf86-input-libinput-0.19.0 )
-# and that driver RDEPENDs x11-base/xorg-server, which PDEPENDs x11-base/xorg-drivers, which
-# pulls xf86-video-{amdgpu,ati,nouveau} — each of which RDEPENDs xorg-server right back. The
-# stack is a cycle, so it survives until every entry point is closed: nvidia-drivers[-X] and
-# gdm[-X] above are the other two, and removing either alone changed nothing.
-# The panels keep working: dev-libs/libinput is an UNCONDITIONAL dep of this package (the X
-# flag only adds the X11 driver on top), and gtk:4[X,wayland] is required either way, so
-# Xwayland clients are unaffected.
-gnome-base/gnome-control-center   -X -gnome-online-accounts
-# evolution-data-server is a hard RDEPEND of gnome-shell (calendar). These flags are what
-# keeps net-libs/webkit-gtk — a multi-hour, ~300 MB build — out of the native image.
-# NB: the flag is oauth-gtk3/oauth-gtk4 as of EDS 3.60 — plain "oauth" is no longer in IUSE,
-# so the old "-oauth" silently stopped masking anything and webkit-gtk:4.1 came back in via
-# the gtk3 OAuth UI. Both variants are disabled: gtk3 pulls webkit-gtk:4.1, gtk4 pulls :6.
-gnome-extra/evolution-data-server -oauth-gtk3 -oauth-gtk4 -kerberos -ldap -weather -vala
+# ---- Plasma session ---------------------------------------------------------------
+# Every flag below was read off the 6.6.6 / 26.04.3 ebuilds in the pinned snapshot, not
+# guessed. Eleven of the packages in @desktop have an empty IUSE and correctly appear nowhere
+# in this file: systemsettings, breeze, breeze-gtk, kde-gtk-config, xdg-desktop-portal-kde,
+# plasma-systemmonitor, plasma-pa, bluedevil, kwallet-pam, polkit-kde-agent and
+# plasma-workspace-wallpapers — as do kde-frameworks/baloo and kde-apps/baloo-widgets.
+#
+# kde-plasma/plasma-login-manager has IUSE="test" only, so it has no line either. What it
+# needs from elsewhere is recorded where those flags live: sys-apps/systemd[pam] at the top of
+# this file, and kwin[lock] immediately below.
 
-# nautilus[previewer] pulls gnome-extra/sushi → app-text/evince → app-text/poppler (and a
-# second gtk+:3 stack). plan/03 keeps document viewers out of the native image — they are
-# Flatpak territory — so the previewer goes with them.
-gnome-base/nautilus               -previewer
+# kwin has NO X flag: kde-plasma/kwin is Wayland-only and the X11 compositor is a separate
+# package (kde-plasma/kwin-x11), which nothing here pulls.
+# "lock" is NOT default-on, is required by plasma-login-manager, and is the ONLY thing that
+# puts a screen locker (kde-plasma/kscreenlocker) in the image. GNOME got the lock screen for
+# free inside gnome-shell; here it is one USE flag, and forgetting it ships a laptop that
+# cannot lock. Asserted in QEMU (plan/09 §6), because nothing else would catch it.
+kde-plasma/kwin                   lock systemd screencast -gamepad -gles2-only -accessibility
+# The session .desktop files, and the SECOND of the two remaining -X levers (nvidia-drivers is
+# the other). X? RDEPENDs kde-plasma/kwin-x11 — a real X11 session — so this flag, not kwin's
+# own, is what keeps the image Wayland-only. REQUIRED_USE="|| ( wayland X )", so wayland is
+# written positively rather than relying on its default.
+kde-plasma/plasma-login-sessions  wayland -X
+# REQUIRED_USE="fontconfig? ( X )" and both are default-on. X here pulls only X *libraries*
+# (libX11/libICE/libSM/libXau/libxcb/libXcursor/libXfixes/libXtst + xorg-proto) — no
+# xorg-server — which is exactly plan/03's "X11 libraries remain, the Xorg server does not",
+# so X stays on and the font-management KCM keeps working.
+# semantic-desktop is kde-frameworks/baloo, the image's file indexer. It is written positively
+# in all three places it appears, even where it is already the default, so the image keeps its
+# indexer if the profile ever drops the token. See the baloo block further down.
+# Split across two lines for the same atom deliberately: portage's grabfile() does NOT support
+# backslash line continuation, so a trailing "\" would be parsed as a literal USE token.
+kde-plasma/plasma-workspace       X fontconfig appstream networkmanager policykit systemd
+kde-plasma/plasma-workspace       screencast ksysguard wallpaper-metadata semantic-desktop -telemetry
+kde-plasma/plasma-desktop         semantic-desktop -webengine -ibus -scim -sdl
+# There is no "packagekit" flag on discover; the PackageKit backend is not built unless
+# firmware or snap are. Flatpak backend only, exactly as gnome-software was.
+kde-plasma/discover               flatpak -firmware -snap -telemetry -webengine
+# brightness-control is DDC/CI for external monitors via app-misc/ddcutil. Laptop backlight
+# goes through logind either way, so this buys a package and no function we need.
+kde-plasma/powerdevil             -brightness-control
+kde-plasma/kscreen                -X
+kde-plasma/print-manager          -gtk    # a GTK print dialog module; Flatpaks print via the portal
+kde-apps/konsole                  -X
+# semantic-desktop here is the Information panel's tags/ratings/comments and content search in
+# the Find bar; it is what pulls kde-apps/baloo-widgets. Unlike the two plasma packages above,
+# dolphin's own IUSE has it OFF by default — only the profile global turns it on, which is
+# exactly why it is spelled out.
+kde-apps/dolphin                  semantic-desktop -telemetry
+# samba: kept deliberately, for smb:// browsing in Dolphin. This is now the ONLY thing holding
+# net-fs/samba in the image, and through it dev-lang/perl + dev-perl/Parse-Yapp (unguarded in
+# samba's COMMON_DEPEND). Setting -samba here is the one-flag escape hatch that removes all
+# three — see the cascade block below and plan/06.
+# taglib: on, because kfilemetadata already pulls media-libs/taglib for the indexer (below),
+# so the flag buys audio tags in Dolphin's preview/tooltip path for a package that is free.
+kde-apps/kio-extras               samba -mtp -nfs -X taglib -openexr -ios
 
-# nautilus search is backed by tinysparql[localsearch]; localsearch[gstreamer] drags
-# gst-plugins-meta (mpeg2dec, dvd, vcd) and media-libs/libsdl2 in for media metadata
-# extraction. Indexing and search stay; the codec stack is Flatpak territory (plan/03).
-app-misc/localsearch              -gstreamer
-x11-wm/mutter                     wayland X screencast
+# The indexer's extractor set — the only real configuration surface Baloo has, since
+# kde-frameworks/baloo itself has an empty IUSE. exif and pdf arrive from the profile's global
+# USE and are restated; the other four are off by default and are decided here.
+# ffmpeg costs nothing: media-video/ffmpeg is already in the image, so it is free video/audio
+# metadata. taglib is ~1 MB and covers a music library, which is the case file search is most
+# often wanted for. epub would pull app-text/ebook-tools and mobi kde-apps/kdegraphics-
+# mobipocket — new packages, for formats plan/03 sends to Flatpak readers.
+kde-frameworks/kfilemetadata      exif pdf ffmpeg taglib -epub -mobi
 
-# GNOME/GTK pull in binary packages from the official binhost that were built with a more
-# minimal (non-desktop) USE profile than ours; these force the matching source builds
+# ---- Frameworks/Qt flags the depgraph requires ---------------------------------------
+# Not choices — these are the USE changes "emerge -p @desktop" demands before it will resolve,
+# recorded here with the package that demands them rather than pasted from emerge's output.
+# kde-frameworks/kio needs qtbase[libproxy,icu] (proxy resolution and collation in the KIO
+# slaves) and kwindowsystem[X,wayland] (it talks to both display protocols); kded needs
+# kconfig[dbus]. kio arrives via kcmutils -> keditfiletype, i.e. from systemsettings, so this
+# is the settings-module half of the graph, not something optional.
+# wayland+opengl: kde-frameworks/kwindowsystem[wayland] requires qtbase[wayland], and qtbase's
+# REQUIRED_USE has "wayland? ( opengl )". A Wayland-only image whose toolkit was built without
+# the Wayland platform plugin would compile fine and then have nothing to draw on.
+#
+# opengl and vulkan are ALSO in the target's global USE (make.conf.in, and the desktop profile
+# sets both) — so why spell them out? Because the Qt modules bind each other with mirrored
+# USE-deps (~dev-qt/qtbase[opengl=,vulkan=,...]), and portage evaluates those against the
+# BUILDER's own "/" as well, where our make.conf USE does not apply — the same multi-root
+# depgraph quirk documented at length in builder/Dockerfile. mirror_target_pkg_config() copies
+# per-package config onto "/", so a flag written HERE reaches both roots; a flag that is only
+# global reaches one. Without these lines the graph fails on "/" with a REQUIRED_USE error for
+# a constraint the target satisfies perfectly.
+dev-qt/qtbase                     libproxy icu wayland opengl vulkan cups
+dev-qt/qtdeclarative              opengl vulkan
+# qt5compat DEPENDs ~dev-qt/qtbase[icu=], i.e. its own icu must MATCH qtbase's. It defaults off
+# and qtbase is on above, so without this the graph splits on the one flag. (qt5compat arrives
+# via app-crypt/qca <- kwallet-runtime; it is not something the image asks for directly.)
+dev-qt/qt5compat                  icu qml
+# Same shape: qttools[widgets] DEPENDs ~dev-qt/qtbase[opengl=]. Note this is NOT the "designer"
+# flag — that one is off globally (make.conf.in) and stays off.
+dev-qt/qttools                    opengl
+dev-qt/qtmultimedia               opengl vulkan qml
+dev-qt/qtquick3d                  opengl vulkan
+# (qtbase's "cups" above is the Qt half of the printing decision: kde-plasma/print-manager and
+# every Qt print dialog resolve through qtbase's CUPS support, and net-print/cups is already in
+# @desktop behind the #printing marker.)
+# The rest of the same class: every one of these flags is already ON in the target's global
+# USE (qml, dbus and X all come from the desktop profile), and every one has to be restated
+# per-package so mirror_target_pkg_config() carries it to the builder's "/" too. They are
+# listed with the package that needs them so a future reader can tell "the graph needs this"
+# from "we chose this" — none of these is a choice.
+kde-frameworks/kconfig            qml dbus
+kde-frameworks/kcoreaddons        dbus
+kde-frameworks/kguiaddons         wayland
+kde-frameworks/kidletime          wayland
+kde-frameworks/kimageformats      avif
+media-libs/libva                  X
+kde-frameworks/prison             qml
+# Spell checking in KDE text widgets. sonnet[hunspell] (default on) pulls app-text/hunspell,
+# which PDEPENDs an app-dicts/myspell-* dictionary per L10N entry — and dies outright here,
+# because this image's L10N uses plain "en" while myspell-en's REQUIRED_USE demands one of
+# en-AU/en-CA/en-GB/en-US/en-ZA.
+# Off rather than fixed by widening L10N, and the precedent is explicit: plan/03 dropped
+# gnome-text-editor from the native set specifically to avoid this same tail (hunspell +
+# seven myspell-* dictionaries, myspell-de alone ~10 MB compressed). Nothing in this image is
+# a text editor — Konsole and Dolphin do not spell-check — so the flag buys a dictionary tree
+# on a read-only root for no user-visible function. Text editors are Flatpaks (plan/03), and
+# they bring their own dictionaries.
+kde-frameworks/sonnet             qml -hunspell -aspell
+dev-libs/qcoro                    dbus
+sys-apps/dbus                     X
+# kde-frameworks/kdnssd wants Avahi's Bonjour-compatibility shim, and it is a real choice
+# rather than a mirror artefact: kdnssd is how kio-extras advertises and browses network
+# services, which is the same feature smb:// in Dolphin is kept for.
+net-dns/avahi                     mdnsresponder-compat
+kde-frameworks/kwindowsystem      X wayland
+# REQUIRED_USE="vala? ( introspection )", and introspection is off globally now (make.conf.in).
+# -vala rather than +introspection for the same reason libportal carries it: .vapi files are
+# build-time inputs, which is why stage 50 deletes usr/share/vala outright.
+# NB on how libsecret gets here at all: kde-frameworks/kio[kwallet] -> kwallet ->
+# kwallet-runtime -> libsecret. That is also the answer to plan/09's open question about
+# org.freedesktop.secrets for Flatpak apps — the Secret Service bridge arrives with KWallet.
+app-crypt/libsecret               -vala
+
+# These pull in binary packages from the official binhost that were built with a more
+# minimal (non-desktop) USE profile than ours; the flags force the matching source builds
 # instead of a mismatched binary, per portage's own conflict-resolution suggestions.
+# The gtk+/cairo half of this survives the GNOME removal: kde-gtk-config DEPENDs
+# x11-libs/gtk+:3[X], which is what keeps GTK3 — and behind it adwaita-icon-theme and
+# gnome-base/librsvg — in the image (plan/09 §4).
+# gui-libs/gtk (GTK4) is a different matter, and a dry-run depgraph against the pinned tree
+# says it LEAVES the image: the bridge needs only :3, breeze-gtk is a pure theme with no
+# runtime GTK dep at all, and nothing else in the Plasma set links GTK4. Its line below is
+# kept as a no-op until the first real build's expected-packages.txt confirms that — a line
+# for an absent package costs nothing, and guessing wrong in the other direction costs a
+# rebuild. Delete it (and the vulkan-loader line, whose flags exist for gtk[vulkan]) once the
+# generated allowlist agrees.
 x11-libs/libdrm             video_cards_radeon
 dev-libs/glib               dbus introspection
-# vulkan: gtkmm-4.20.0-r1 depends on >=gui-libs/gtk-4.19.4:4[vulkan?] and is itself built with
-# vulkan (global USE), so gtk must carry the flag explicitly — otherwise the two roots resolve
-# gtk differently and portage backtracks until "All ebuilds that could satisfy
-# >=gui-libs/gtk-4.19.4:4[vulkan?] have been masked". This is portage's own suggested fix.
-gui-libs/gtk                wayland X introspection vulkan
+# vulkan stays explicit even though dev-cpp/gtkmm is gone with gnome-system-monitor: gtk is
+# built with vulkan from the global USE, and pinning it here is what stops the two roots
+# resolving gtk differently and portage backtracking into "All ebuilds that could satisfy
+# >=gui-libs/gtk-4.19.4:4[vulkan?] have been masked".
+# "introspection" is dropped from both gtk lines along with the global flag — nothing in a
+# Plasma image loads a GObject typelib (see the NB in make.conf.in).
+gui-libs/gtk                wayland X vulkan
 # gtk[vulkan,X,wayland] requires >=media-libs/vulkan-loader-1.3:=[wayland?,X?], so the loader
 # has to carry the same two flags or the graph cannot resolve.
 media-libs/vulkan-loader    X wayland
-x11-libs/gtk+               wayland X introspection
+x11-libs/gtk+               wayland X
 x11-libs/cairo              X
-sys-auth/polkit             gtk introspection
+# kde, not gtk: polkit[gtk] is what pulled gnome-extra/polkit-gnome into the image, and the
+# agent this image runs is kde-plasma/polkit-kde-agent. introspection goes with the global
+# flag.
+sys-auth/polkit             kde -gtk
 x11-libs/libxkbcommon       X
 media-video/ffmpeg          vaapi
 net-print/cups               dbus
 x11-base/xwayland           libei
-app-crypt/gcr               gtk
 media-libs/libpulse         X
 media-plugins/alsa-plugins  pulseaudio
 media-libs/freetype         harfbuzz
 media-libs/libglvnd         X
+# No longer reached by the depgraph under Plasma (it came in behind the GNOME stack); kept as
+# a no-op because the flag is a compatibility-API switch other consumers may need.
 sys-libs/minizip-ng         compat
 
-# gnupg stays in @base for the sysupdate verify path (plan/03), but app-alternatives/gpg
-# pulls app-crypt/pinentry, whose qt6 flag drags dev-qt/qtbase + kde-frameworks/kwindowsystem
-# into a GNOME-only image. gcr already provides the GNOME pinentry; keep the GTK one as the
-# console/graphical fallback and leave Qt out entirely.
-app-crypt/pinentry          gtk ncurses -qt6 -efl -emacs
+# gnupg stays in @base for the sysupdate verify path (plan/03), and app-alternatives/gpg pulls
+# app-crypt/pinentry with it. Under GNOME this line read "gtk ... -qt6", because qt6 dragged
+# dev-qt/qtbase + kde-frameworks/kwindowsystem into an image that had neither. Both are this
+# image's own toolkit now, so the flag inverts: the Qt prompt matches the session, the GTK one
+# is dead weight, and ncurses stays as the console fallback.
+app-crypt/pinentry          qt6 ncurses -gtk -efl -emacs
 
 # xdg-utils drags dev-perl/Net-DBus + dev-perl/X11-Protocol, and Net-DBus brings XML-Twig and
 # the whole LWP/HTML perl stack behind it — ~37 packages. What it buys is the perl
 # xdg-screensaver implementation talking X11, which is useless in a Wayland-only session where
-# GNOME apps inhibit idle through portals. xdg-utils itself stays: it is a hard RDEPEND of
-# gnome-shell and gdm.
+# apps inhibit idle through portals. xdg-utils itself stays: it is reachable from the Plasma
+# stack the same way it was a hard RDEPEND of gnome-shell and gdm.
 #
 # -gnome is load-bearing and "-perl" is not the flag that controls this. In 1.2.1-r11 the guard
 # reads
@@ -157,48 +282,63 @@ app-crypt/pinentry          gtk ncurses -qt6 -efl -emacs
 # serve. What it costs is xdg-utils' GNOME-specific detection path in xdg-open/xdg-screensaver;
 # xdg-open still resolves handlers through gio, and idle inhibition here goes through portals.
 x11-misc/xdg-utils          -perl -gnome
+# xdg-user-dirs[gtk] (on by default from the desktop profile's global "gtk") pulls
+# x11-misc/xdg-user-dirs-gtk, which is banned in package.mask/image — it is the GNOME helper
+# that mirrors the XDG directories into GTK's bookmark file. Plasma reads user-dirs.dirs
+# itself. The mask caught this at dependency resolution, which is exactly what it is for; the
+# fix belongs here, not in the mask.
+x11-misc/xdg-user-dirs      -gtk
 
-# cairomm defaults to -X and depends on cairo[X=], which drags a second, X-less cairo binary
-# into a graph where mutter/gtk/pango all require cairo[X]. Match it to our cairo[X].
-dev-cpp/cairomm             X
+# Replaces the GNOME-era pair of poppler lines ("cairo" and "-qt6"), whose premises both
+# inverted. PDF indexing now runs through kde-frameworks/kfilemetadata[pdf], whose RDEPEND is
+# app-text/poppler[qt6(-)] — so qt6 is not merely harmless here, it is required. cairo goes off
+# because that backend exists for poppler-glib, whose only consumer was app-misc/localsearch;
+# nothing in a Plasma image links the glib frontend. poppler is still a library, not a viewer.
+app-text/poppler            qt6 -cairo
 
-# localsearch[pdf] (nautilus file indexing) needs poppler's cairo backend for PDF thumbnails
-# and metadata. Keeping indexing means keeping this on; poppler is a library, not a viewer.
-app-text/poppler            cairo
-
-# poppler defaults to qt6, which drags dev-qt/qtbase into a GNOME-only image for a library
-# only ever used headlessly here (PDF indexing).
-app-text/poppler            -qt6
-
-# ---- printer panel cascade -----------------------------------------------------------
-# gnome-control-center[cups] pulls app-admin/system-config-printer (the org.fedoraproject
-# .Config.Printing D-Bus service the panel calls), which brings net-fs/samba for SMB printer
-# discovery and dev-python/pillow via docutils. Kept deliberately so plan/03's "control-center
-# absorbs printer setup" holds; these flags are what the resulting graph needs to resolve.
-media-libs/tiff             jpeg
+# ---- samba, and what it costs --------------------------------------------------------
+# This block used to be the GNOME printer-panel cascade: gnome-control-center[cups] pulled
+# app-admin/system-config-printer, which brought net-fs/samba for SMB printer discovery and
+# dev-python/pillow via docutils. kde-plasma/print-manager talks to CUPS directly, so
+# system-config-printer, pillow and the media-libs/tiff[jpeg] line that fed it are all gone.
+#
+# samba is NOT gone, and its holder is now a deliberate choice rather than a side effect:
+# kde-apps/kio-extras[samba], for smb:// browsing in Dolphin. State the consequence here
+# rather than leaving it to be rediscovered — samba lists dev-lang/perl:= and
+# dev-perl/Parse-Yapp in COMMON_DEPEND with no USE guard, so THE IMAGE STILL SHIPS A PERL
+# INTERPRETER. That was already true under GNOME, at one more remove; this change keeps it
+# true and makes the reason a direct one. The escape hatch is kio-extras[-samba], which drops
+# samba, perl and Parse-Yapp together at the cost of smb:// (plan/06).
 net-fs/samba                client
+# REQUIRED_USE tiebreak: ngtcp2 wants exactly one crypto backend, and this line appeared
+# alongside samba's net-libs/gnutls. Kept for the first Plasma depgraph rather than guessed
+# at; drop it if "emerge -p @desktop" resolves without it.
 net-libs/ngtcp2             gnutls
 
 # libb2[openmp] RDEPENDs on "|| ( sys-devel/gcc[openmp] llvm-runtimes/clang-runtime[openmp] )"
 # for the OpenMP runtime, which portage satisfies by putting a full sys-devel/gcc in the
 # image — breaking plan/06's toolchain-free guarantee. The flag is profile-inherited, not
 # ours, and it only parallelizes BLAKE2bp hashing. Off.
-# The last two Qt entry points, and the reason dev-qt/{qtbase,qtsvg,qttranslations} were in the
-# image despite -qt6 on poppler and pinentry above. appstream[qt6] builds AppStreamQt (the
-# binding KDE Discover uses) and libportal[qt6] builds libportal-qt6 for Qt portal clients;
-# nothing in a GNOME-only image links either one. gnome-software and xdg-desktop-portal-gnome
-# consume the GLib bindings from these same two packages, which are unaffected. qtbase was
-# arriving fully loaded — USE="X cups gtk gui opengl sql sqlite vulkan wayland widgets ..." —
-# for zero consumers. libportal[-vala] for the same reason stage 50 deletes usr/share/vala:
-# .vapi files are build-time inputs.
-dev-libs/appstream          -qt6
-dev-libs/libportal          -qt6 -vala
-# ...and the package that actually kept dev-qt/qtbase in the image. The flag is "gui", not
-# "qt6": wpa_supplicant[gui] builds wpa_gui and RDEPENDs dev-qt/qtbase:6[gui,widgets] plus
-# dev-qt/qtsvg unconditionally, so disabling qt6 everywhere else changed nothing. (Same shape
-# as the "firmware" not "fwupd" and "oauth-gtk3" not "oauth" corrections above — a -qt6 that
-# silently masks nothing.) wpa_gui is a standalone Qt supplicant UI; NetworkManager owns the
-# network here and GNOME Settings is the UI, so nothing would ever launch it.
-net-wireless/wpa_supplicant -gui
+# The two flags that read exactly backwards now. Under GNOME these were "-qt6", because
+# AppStreamQt and libportal-qt6 had no consumer and dragged qtbase in for nothing. Both have a
+# consumer here: plasma-workspace RDEPENDs >=dev-libs/appstream-1[qt6] outright when
+# appstream is on (which Discover needs), and libportal-qt6 is the Qt portal client binding.
+# -gtk and -vala stay: nothing native uses the GTK portal binding, and .vapi files are
+# build-time inputs, which is the same reason stage 50 deletes usr/share/vala.
+dev-libs/appstream          qt6
+# libportal: same inversion on paper, but the dry-run depgraph says the package does not
+# arrive at all under Plasma — xdg-desktop-portal-kde does not link it and nothing else asks.
+# Left in as a no-op so that if some later Flatpak/portal change does pull it, it arrives with
+# the Qt binding rather than the GTK one. -vala for the same reason as the global flag.
+dev-libs/libportal          qt6 -gtk -vala
+# Still off, for a reason that outlived the "-qt6 everywhere" framing it was written under.
+# The flag is "gui", not "qt6": wpa_supplicant[gui] builds wpa_gui and RDEPENDs
+# dev-qt/qtbase:6[gui,widgets] plus dev-qt/qtsvg unconditionally. Qt is no longer something
+# this image is trying to avoid — but wpa_gui is a standalone supplicant UI, NetworkManager
+# owns the network here, and kde-plasma/plasma-nm is the UI, so nothing would ever launch it.
+# dbus: NetworkManager drives the supplicant over D-Bus and requires wpa_supplicant[dbus].
+# It is on globally for the target and restated here for the builder-root mirror, same as the
+# block in the Plasma section.
+net-wireless/wpa_supplicant -gui dbus
 
 app-crypt/libb2             -openmp

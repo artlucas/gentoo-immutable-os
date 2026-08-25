@@ -1,0 +1,20 @@
+# Plasma Login Manager config for @DISTRO_NAME@ — v1 images double as live media (plan/01).
+# /etc is an overlay backed by /var/overlay/etc, so this stays editable on a running machine.
+#
+# A drop-in, not a replacement config: kde-plasma/plasma-login-manager's ebuild installs its
+# own /etc/plasmalogin.conf.d/01gentoo.conf (it blanks InputMethod to drop the
+# qtvirtualkeyboard default). The 10- prefix sorts after it, so both apply.
+#
+# PLM is a fork of SDDM and keeps its config syntax, so [Autologin] User/Session/Relogin
+# carry over unchanged. CONFIRM on the first build against `man plasmalogin.conf` and the
+# defaults in /usr/share/plasmalogin/ — a key PLM does not recognise is silently ignored, and
+# the failure mode is a greeter prompting for a password on media that is supposed to be live.
+#
+# Session names /usr/share/wayland-sessions/plasma.desktop, installed by
+# kde-plasma/plasma-login-sessions[wayland]. Stage 40 asserts that file exists for exactly
+# this reason. No [General] or [Wayland] compositor block belongs here: PLM drives kwin
+# itself, which is why it RDEPENDs kwin[lock].
+[Autologin]
+User=@LIVE_USER@
+Session=plasma
+Relogin=false

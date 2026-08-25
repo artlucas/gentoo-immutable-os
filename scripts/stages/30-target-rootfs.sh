@@ -27,10 +27,11 @@ REC_CFG_HASH="$(cat "$CONFIG_ROOT/.inputs-hash" 2>/dev/null || echo none)"
 
 # 2. STALE TARGET. This stage is resumable by design: it emerges into an existing $TARGET with
 #    --changed-use, which REBUILDS packages whose flags changed but never REMOVES packages that
-#    dropped out of the graph. A USE change that is meant to delete something (say gdm[-X], to
-#    drop xorg-server) therefore leaves the package installed and shipping, while the emerge
-#    resolution — correctly — no longer lists it. Portage has no safe fix here: the sets are not
-#    this root's @world, so --depclean would consider everything orphaned. Refuse instead.
+#    dropped out of the graph. A USE change that is meant to delete something (say
+#    kwin[-lock], to drop kscreenlocker) therefore leaves the package installed and shipping,
+#    while the emerge resolution — correctly — no longer lists it. Portage has no safe fix
+#    here: the sets are not this root's @world, so --depclean would consider everything
+#    orphaned. Refuse instead.
 TARGET_HASH_FILE="$WORK/target-config-hash"
 PREV_TGT_HASH="$(cat "$TARGET_HASH_FILE" 2>/dev/null || echo none)"
 if [[ -d $TARGET/var/db/pkg && $PREV_TGT_HASH != none && $PREV_TGT_HASH != "$CUR_CFG_HASH" ]]; then
@@ -43,7 +44,7 @@ fi
 # Same "/" mirror stage 20 sets up: build.sh runs every stage in its own --rm container, so
 # stage 20's copy is already gone. Without this the depgraph resolves target packages against
 # a stock "/" and dies on phantom slot conflicts (cairo:0) and REQUIRED_USE failures
-# (net-libs/webkit-gtk) for packages the image never asked for.
+# (media-libs/libcanberra's "udev? ( alsa )") for packages the image never asked for.
 mirror_target_pkg_config
 
 # Configure-time deps that only exist in RDEPEND upstream — see config/portage/sets/buildhost
@@ -123,14 +124,22 @@ for leak in rustc clang ld as; do
 done
 [[ -d $TARGET/usr/lib/modules || -d $TARGET/lib/modules ]] \
   || die "verify: no kernel modules in target (gentoo-kernel-bin missing?)"
-# check bin/ and sbin/ both: gdm's daemon installs to /usr/sbin, not /usr/bin, and an
-# assertion that only looked in /usr/bin reported it missing from a target that had it.
+# check bin/ and sbin/ both: gdm's daemon installed to /usr/sbin, not /usr/bin, and an
+# assertion that only looked in /usr/bin reported it missing from a target that had it. The
+# same uncertainty applies to plasmalogin below — its path is inferred from the ebuild's other
+# paths (/etc/plasmalogin.conf.d, /run/plasmalogin, the plasmalogin user and its three PAM
+# stacks), not read off an installed file list — which is precisely why this check searches
+# both and dies loudly. /usr/lib/systemd/system/distro-boot-ok.service.in names the same
+# binary in a ConditionPathExists, and that one fails SILENTLY by skipping the unit.
 have_exe() { local n=$1; [[ -x $TARGET/usr/bin/$n || -x $TARGET/usr/sbin/$n ]]; }
 have_exe systemctl || die "verify: systemd missing from target"
 have_exe flatpak   || die "verify: flatpak missing from target"
 if [[ ${CONSOLE_ONLY:-0} != 1 ]]; then
-  have_exe gdm || die "verify: gdm missing from desktop target"
-  have_exe gnome-shell || die "verify: gnome-shell missing from desktop target"
+  have_exe plasmalogin  || die "verify: plasmalogin missing from desktop target (kde-plasma/plasma-login-manager)"
+  have_exe plasmashell  || die "verify: plasmashell missing from desktop target"
+  # kwin is load-bearing twice over: it is the session compositor AND the compositor Plasma
+  # Login Manager runs its greeter on. An image without it boots to a greeter and nothing else.
+  have_exe kwin_wayland || die "verify: kwin_wayland missing from desktop target"
 fi
 log "target rootfs emerged OK"
 stamp_write "$STAGE_NAME" "$(inputs_hash "$REPO/config/build.conf" "$REPO"/config/portage/sets/* "$REPO"/config/portage/package.use/*)"
