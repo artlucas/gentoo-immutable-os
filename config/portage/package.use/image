@@ -206,7 +206,13 @@ sys-apps/dbus                     X
 # kde-frameworks/kdnssd wants Avahi's Bonjour-compatibility shim, and it is a real choice
 # rather than a mirror artefact: kdnssd is how kio-extras advertises and browses network
 # services, which is the same feature smb:// in Dolphin is kept for.
-net-dns/avahi                     mdnsresponder-compat
+# -gtk: the desktop profile's global "gtk" (see xdg-user-dirs note below) turns this on by
+# default, which builds avahi-ui-gtk3's bssh/bvnc browsers — two menu entries (Avahi SSH
+# Server Browser, Avahi VNC Server Browser) for Zeroconf-discovering remote SSH/VNC hosts.
+# Nothing in the image's package set DEPENDs on avahi[gtk] (checked against the pinned tree;
+# only media-gfx/sane-backends does, and that's not in this image), so it's a pure GTK GUI
+# nobody would launch here, not a dependency.
+net-dns/avahi                     mdnsresponder-compat -gtk
 kde-frameworks/kwindowsystem      X wayland
 # REQUIRED_USE="vala? ( introspection )", and introspection is off globally now (make.conf.in).
 # -vala rather than +introspection for the same reason libportal carries it: .vapi files are
