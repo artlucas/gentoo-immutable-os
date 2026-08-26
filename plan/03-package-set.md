@@ -150,6 +150,7 @@ have firmware in linux-firmware but an immature userspace stack — out of scope
 | kde-plasma/plasma-login-manager + kde-plasma/plasma-login-sessions | login/autologin, and the `/usr/share/wayland-sessions/plasma.desktop` the greeter logs in *to*. See "Plasma Login Manager" below. Lock screen is **not** free here the way it was inside gnome-shell: `kwin[lock]` is what puts `kde-plasma/kscreenlocker` in the image |
 | kde-apps/konsole, kde-apps/dolphin | the two native utilities: terminal and files. Native (not Flatpak) because they need unrestricted host access |
 | kde-plasma/spectacle | screenshot tool — native not by the usual rule but because there is no other option: `org.kde.spectacle` has never been published to Flathub (its `flathub/org.kde.spectacle` repo carries only an unmerged "beta" branch). Pulls exactly one dependency the image didn't already have, `media-libs/opencv` (its capture region auto-detect); kpipewire, layer-shell-qt, prison and the xcb libs it also needs already ship for kwin/plasma-workspace's own screencast support. Pinned tree's only stable-`amd64` version is 6.6.6 — 6.6.6-r1 and 6.7.4-r1 are both `~amd64`, so no keyword exception was taken |
+| sys-block/partitionmanager | KDE Partition Manager — native for the same reason as Spectacle: no `org.kde.partitionmanager` has ever shipped on Flathub, plausibly because a disk partitioner is a poor fit for the Flatpak sandbox model in the first place. `IUSE` is empty; its one new dependency is `sys-libs/kpmcore` (the backend library — no `libparted`, it drives `sys-apps/util-linux` directly), and privilege escalation reuses `sys-auth/polkit-qt`, already in the image for Discover/systemsettings. Stable `amd64` at the pinned snapshot, no keyword exception |
 | kde-apps/kio-extras | the gvfs equivalent — trash, network, thumbnails, and `smb://` (see "samba" below) |
 | kde-plasma/discover (`USE="flatpak -firmware -snap"`) | GUI software center, **Flatpak backend only**. There is no `packagekit` flag; the PackageKit backend is simply not built unless firmware or snap are |
 | kde-plasma/plasma-systemmonitor | task manager |
@@ -164,8 +165,9 @@ against `/usr/lib/systemd/import-pubring.gpg`; it is a genuine runtime dependenc
 update path, listed in `@base`.
 
 Explicitly **absent** natively (Flatpak instead): browser, office, mail, media players, image
-viewers/editors, IDEs, games, chat, **archive manager and text editor**. Spectacle is the one
-carve-out, for the reason given above rather than a change of rule.
+viewers/editors, IDEs, games, chat, **archive manager and text editor**. Spectacle and KDE
+Partition Manager are the two carve-outs, for the reason given above rather than a change of
+rule.
 
 ### Plasma Login Manager, not SDDM
 
@@ -281,10 +283,15 @@ read-only root, and `/var` is 4 GiB already carrying Firefox on the freedesktop 
 - Remote: Flathub, system-wide, configured at build (`flatpak remote-add --if-not-exists
   flathub https://dl.flathub.org/repo/flathub.flatpakrepo` in the target chroot).
 - Installs live in `/var/lib/flatpak` → persist across OS updates, fully user-managed.
-- **Preinstalled set** (`FLATPAK_PREINSTALL` in `build.conf`), deliberately tiny — default:
-  `org.mozilla.firefox`. Each entry adds its runtime; Firefox + org.freedesktop.Platform is
-  ~1.5 GiB in `/var`, which is why the default stops there. Discover makes everything else
-  one click away.
+- **Preinstalled set** (`FLATPAK_PREINSTALL` in `build.conf`), default: `org.mozilla.firefox
+  org.kde.ark org.kde.kate org.kde.okular org.kde.gwenview` — a browser plus the archive
+  manager, text editor and document/image viewers that the native rule above deliberately
+  leaves out. Firefox is the expensive one: it and org.freedesktop.Platform are ~1.5 GiB in
+  `/var`. The four KDE apps cost far less each, since they share org.kde.Platform (pulled in
+  once) rather than each bringing a runtime of its own. Every ID here was checked against
+  Flathub's API before being added — the same check that caught Spectacle and KDE Partition
+  Manager NOT being there (see the native package table above). Discover makes anything beyond
+  this set one click away.
 - `FLATPAK_PREINSTALL_MODE=build|firstboot`: `build` installs during stage 40 (image works
   offline immediately); `firstboot` ships only the remote config and a oneshot unit that
   installs on first network — smaller image, needs connectivity.

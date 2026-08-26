@@ -6,9 +6,10 @@
 # session + compositor + settings + file manager + terminal + software centre, and nothing
 # else. Applications are Flatpaks (plan/03), so there is no Ark, no Kate, no Okular and no
 # Gwenview here for exactly the reasons file-roller and gnome-text-editor were dropped from
-# the GNOME set: each is one click away in Discover, and each would cost a native dependency
-# tail on a read-only root to save a Flatpak download. Spectacle (below, near dolphin/konsole)
-# is the one exception, because it isn't a choice: it is not on Flathub at all.
+# the GNOME set: each is a preinstalled Flatpak (`FLATPAK_PREINSTALL` in build.conf), and each
+# would cost a native dependency tail on a read-only root to save a Flatpak download. Spectacle
+# and KDE Partition Manager (below, near dolphin/konsole) are the two exceptions, because for
+# them it isn't a choice: neither has ever been published to Flathub.
 kde-plasma/plasma-desktop
 kde-plasma/plasma-workspace
 kde-plasma/kwin
@@ -49,6 +50,13 @@ kde-apps/konsole
 # plasma-workspace/kwin's own screencast support. Pinned tree has 6.6.6 stable; 6.6.6-r1 and
 # 6.7.4-r1 are both ~amd64 only, so no keyword exception is taken here.
 kde-plasma/spectacle
+# Native for the same reason as Spectacle above: no `org.kde.partitionmanager` (or any casing)
+# has ever shipped on Flathub — plausibly because a disk partitioner is a bad sandbox fit in
+# the first place. sys-block/, not kde-apps/ or kde-plasma/. IUSE is empty; the only dependency
+# not already in the image is sys-libs/kpmcore, the backend library — no libparted pulled in,
+# it drives sys-apps/util-linux (already in @base) directly. Privilege escalation goes through
+# sys-auth/polkit-qt, already here for Discover/systemsettings.
+sys-block/partitionmanager
 kde-apps/kio-extras              # the gvfs equivalent: trash, network, thumbnails
 kde-plasma/print-manager         #printing
 sys-power/power-profiles-daemon
