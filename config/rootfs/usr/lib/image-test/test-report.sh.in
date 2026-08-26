@@ -23,7 +23,7 @@ collect_and_report() {
     # shellcheck source=/dev/null
     . /etc/os-release
     local etc_fs graphical failed failed_list machine_id var_size flatpak_remotes
-    local resolved dns podman_rootless
+    local resolved dns podman_rootless runuser_bin
     etc_fs="$(findmnt -no FSTYPE /etc 2>/dev/null || echo none)"
     graphical="$(systemctl is-active graphical.target >/dev/null 2>&1 && echo yes || echo no)"
     failed="$(systemctl --failed --no-legend --plain 2>/dev/null | grep -c . || true)"
@@ -46,18 +46,44 @@ collect_and_report() {
     # `podman run` — no image is preinstalled, so anything that pulls would make this field a
     # test of the build host's network instead of the image. "na" when podman is not installed
     # (INCLUDE_DISTROBOX=0), which the harness treats as "nothing to assert".
-    if command -v podman >/dev/null 2>&1; then
-        podman_rootless="$(runuser -u '@LIVE_USER@' -- \
-            podman info --format '{{.Host.Security.Rootless}}' 2>/dev/null || echo no)"
-        [[ -z $podman_rootless ]] && podman_rootless=no
-    else
+    #
+    # runuser is invoked by ABSOLUTE PATH, and that is load-bearing. It installs to /usr/sbin,
+    # while Gentoo builds systemd with -Dsplit-bin=false, so a service's exec search path is
+    # `/usr/local/bin:/usr/bin` with NO sbin at all (`systemd-path search-binaries-default`).
+    # This script runs as a unit, so a bare `runuser` here is "command not found" — the same
+    # trap that makes ldconfig.service fail 203/EXEC (see stage 40). It cost a full build cycle
+    # to find, because the failure looked identical to "rootless podman is broken".
+    runuser_bin=/usr/sbin/runuser
+    [[ -x $runuser_bin ]] || runuser_bin=/usr/bin/runuser
+    if ! command -v podman >/dev/null 2>&1; then
         podman_rootless=na
+    elif [[ ! -x $runuser_bin ]]; then
+        # Distinct from "no": the image is fine and the TEST cannot run. Still fails the
+        # harness assertion, but names the reason instead of blaming podman.
+        podman_rootless=no-runuser
+    else
+        podman_rootless="$("$runuser_bin" -u '@LIVE_USER@' -- \
+            podman info --format '{{.Host.Security.Rootless}}' 2>/tmp/podman-info.err || echo no)"
+        [[ -z $podman_rootless ]] && podman_rootless=no
     fi
     report "ok version=${IMAGE_VERSION:-unknown} etc_overlay=$etc_fs graphical=$graphical" \
            "failed_units=$failed machine_id=$machine_id var_size=$var_size" \
            "flatpak_remotes=$flatpak_remotes resolved=$resolved dns=$dns" \
            "podman_rootless=$podman_rootless" \
            "failed_list=$failed_list phase=$1"
+    # Why it failed, while the guest still exists to say so. The marker line above is a single
+    # parseable line by design, so the reason goes on its own DETAIL lines — the same split
+    # dump_failed uses for failed units. Without this, "podman_rootless=no" is indistinguishable
+    # between a broken image and a broken test, and telling them apart costs a rebuild.
+    if [[ $podman_rootless != true && $podman_rootless != na ]]; then
+        echo "$MARKER-DETAIL podman_rootless=$podman_rootless runuser=$runuser_bin" > "$CONSOLE"
+        [[ -s /tmp/podman-info.err ]] \
+            && sed "s/^/$MARKER-DETAIL podman: /" /tmp/podman-info.err > "$CONSOLE"
+        "$runuser_bin" -u '@LIVE_USER@' -- id 2>&1 \
+            | sed "s/^/$MARKER-DETAIL id: /" > "$CONSOLE"
+        grep "^@LIVE_USER@:" /etc/subuid /etc/subgid 2>&1 \
+            | sed "s/^/$MARKER-DETAIL /" > "$CONSOLE"
+    fi
 }
 
 # When units failed, put their status on the console too. The guest powers off moments later,
