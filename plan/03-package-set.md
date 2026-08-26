@@ -280,9 +280,9 @@ read-only root, and `/var` is 4 GiB already carrying Firefox on the freedesktop 
   flathub https://dl.flathub.org/repo/flathub.flatpakrepo` in the target chroot).
 - Installs live in `/var/lib/flatpak` → persist across OS updates, fully user-managed.
 - **Preinstalled set** (`FLATPAK_PREINSTALL` in `build.conf`), deliberately tiny — default:
-  `org.mozilla.firefox`. Each entry adds its runtime; Firefox + org.freedesktop.Platform is
-  ~1.5 GiB in `/var`, which is why the default stops there. Discover makes everything else
-  one click away.
+  `org.mozilla.firefox org.kde.Spectacle`. Each entry adds its runtime; Firefox +
+  org.freedesktop.Platform is ~1.5 GiB in `/var`, which is why the default stops at a browser
+  and a screenshot tool. Discover makes everything else one click away.
 - `FLATPAK_PREINSTALL_MODE=build|firstboot`: `build` installs during stage 40 (image works
   offline immediately); `firstboot` ships only the remote config and a oneshot unit that
   installs on first network — smaller image, needs connectivity.
