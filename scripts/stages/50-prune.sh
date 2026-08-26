@@ -105,7 +105,13 @@ rm -rf -- "$T/var/db/pkg" "$T/var/db/repos" "$T/var/cache"/* \
           "$T/etc/portage" "$T/usr/share/portage"
 
 # ---- 3. runtime-useless residue ---------------------------------------------------
-find "$T" -xdev -name '*.la' -delete
+# -path .../var/lib/flatpak -prune: this sweep predates any Flatpak app shipping a stray *.la of
+# its own, and finding one now (see the assertion below) means it silently deleted whatever
+# matched inside Flatpak payloads on every build before this comment, unnoticed because deletion
+# runs before the assertion ever gets a chance to see the file. Flatpak app content is
+# third-party binary data outside the toolchain-free guarantee's scope (plan/06) — this pipeline
+# neither built it nor should be editing it after the fact.
+find "$T" -xdev -path "$T/var/lib/flatpak" -prune -o -name '*.la' -delete
 # Static archives. This used to read `find "$T/usr/lib64" -maxdepth 1`, and that missed 22 MiB
 # in three places, all of them one directory deeper than it looked or in the other libdir:
 # /usr/lib64/glibc-2.43/libm-2.43.a, /usr/lib/llvm/22/lib64/*.a (11.5 MiB — section 3a below
@@ -557,12 +563,20 @@ compgen -G "$T/usr/sbin/NetworkManager" >/dev/null \
   || compgen -G "$T/usr/bin/NetworkManager" >/dev/null \
   || compgen -G "$T/usr/libexec/NetworkManager" >/dev/null \
   || violation "NetworkManager binary missing after prune — the image has no network manager at all"
-find "$T" -xdev -name '*.la' 2>/dev/null | grep -q . && violation "*.la files remain"
+# Both *.la and *.a scans exclude /var/lib/flatpak: the toolchain-free guarantee (plan/06) is
+# about what THIS pipeline's own emerge puts in the target — its three layers (BDEPEND/RDEPEND
+# split, INSTALL_MASK, this sweep) are all portage-scoped by construction. Flatpak app payloads
+# arrive from Flathub as opaque third-party binaries, outside all three layers already, and
+# outside this pipeline's control — pruning inside one risks breaking an app whose own build
+# had a reason (however sloppy) to ship the file. Found when org.kde.okular's VLC-based backend
+# turned out to bundle lib/vlc/libcompat.a inside its own sandboxed files/ tree.
+find "$T" -xdev -path "$T/var/lib/flatpak" -prune -o -name '*.la' -print 2>/dev/null \
+  | grep -q . && violation "*.la files remain"
 # Same rule as *.la, and it belongs here for the same reason: a static archive is a link-time
 # input, so one surviving anywhere means a sweep grew a blind spot. This one is image-wide, not
 # scoped to the two libdirs the deletion covers — if a package ever installs a .a somewhere else,
 # this is where that should be noticed.
-a_left="$(find "$T" -xdev -name '*.a' 2>/dev/null | head -5)"
+a_left="$(find "$T" -xdev -path "$T/var/lib/flatpak" -prune -o -name '*.a' -print 2>/dev/null | head -5)"
 [[ -n $a_left ]] && violation "static archives remain: $a_left"
 # 32-bit multilib residue (section 3d). Named-pattern check rather than an ELF-class re-scan:
 # after 3d there should be no shared object or relocatable at all at /usr/lib maxdepth 1.
