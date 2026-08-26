@@ -121,6 +121,36 @@ else
     echo "  FAIL: DEBUG_INITRD does not default to 0"; DBG_LINT_OK=0
 fi
 [[ $DBG_LINT_OK == 1 ]] && echo "  ok: DEBUG_INITRD validation" || FAILED=1
+# INCLUDE_DISTROBOX gates the whole container stack (plan/13) — roughly 16 packages and the
+# rootless subuid setup. Same three properties again, plus the one that is specific to it:
+# DISTROBOX_DEFAULT_IMAGE is required when the switch is on and irrelevant when it is off, and
+# a missing default image would otherwise only surface as a template render failure in stage 40.
+DBX_LINT_OK=1
+for v in 0 1; do
+    ( load_config; INCLUDE_DISTROBOX="$v"; validate_config ) >/dev/null 2>&1 \
+        || { echo "  FAIL: INCLUDE_DISTROBOX=$v rejected"; DBX_LINT_OK=0; }
+done
+for v in "" 2 yes true -1; do
+    if ( load_config; INCLUDE_DISTROBOX="$v"; validate_config ) >/dev/null 2>&1; then
+        echo "  FAIL: INCLUDE_DISTROBOX=$v accepted"; DBX_LINT_OK=0
+    fi
+done
+if ( load_config; unset INCLUDE_DISTROBOX; validate_config; [[ $INCLUDE_DISTROBOX == 1 ]] ) >/dev/null 2>&1; then
+    :
+else
+    echo "  FAIL: INCLUDE_DISTROBOX does not default to 1"; DBX_LINT_OK=0
+fi
+if ( load_config; INCLUDE_DISTROBOX=1; DISTROBOX_DEFAULT_IMAGE=""; validate_config ) >/dev/null 2>&1; then
+    echo "  FAIL: empty DISTROBOX_DEFAULT_IMAGE accepted with INCLUDE_DISTROBOX=1"; DBX_LINT_OK=0
+fi
+( load_config; INCLUDE_DISTROBOX=0; DISTROBOX_DEFAULT_IMAGE=""; validate_config ) >/dev/null 2>&1 \
+    || { echo "  FAIL: empty DISTROBOX_DEFAULT_IMAGE rejected with INCLUDE_DISTROBOX=0"; DBX_LINT_OK=0; }
+# The shipped default must be fully qualified: a bare "debian:stable" would be resolved through
+# containers-common's unqualified-search-registries, a registry-order heuristic nothing asserts on.
+if ! ( load_config; [[ $DISTROBOX_DEFAULT_IMAGE == */*/* ]] ) >/dev/null 2>&1; then
+    echo "  FAIL: DISTROBOX_DEFAULT_IMAGE is not registry-qualified"; DBX_LINT_OK=0
+fi
+[[ $DBX_LINT_OK == 1 ]] && echo "  ok: INCLUDE_DISTROBOX validation" || FAILED=1
 
 # ---- the three hardware lists ------------------------------------------------------------
 # prune-firmware.txt, prune-microcode.txt and dracut-omit-drivers.txt are read by stages 40 and

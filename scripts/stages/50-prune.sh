@@ -301,6 +301,14 @@ rm -f -- "$T/usr/share/dbus-1/system.d/org.freedesktop.network1.conf" \
          "$T/usr/lib/sysusers.d/systemd-network.conf" \
          "$T/usr/lib/tmpfiles.d/systemd-network.conf" \
          "$T/usr/share/bash-completion/completions/networkctl"
+
+# podman[wrapper] (plan/13) ships this tmpfiles snippet to symlink /run/docker.sock at
+# /run/podman/podman.sock — the ROOTFUL API socket, which this image's preset disables and
+# nothing ever starts. The /usr/bin/docker wrapper script is kept (it execs podman directly and
+# works fine rootless); only the socket symlink goes. A path that exists and refuses every
+# connection is a worse failure than one that is simply absent: it makes a client report
+# "permission denied"/"connection refused" instead of "docker is not running".
+rm -f -- "$T/usr/lib/tmpfiles.d/podman-docker.conf"
 # Enablement symlinks. Stage 40 disables the units by preset, but preset-all also applies
 # VENDOR presets, and a symlink left pointing at a unit file we just deleted makes systemd log
 # "Unit ... not found" on every boot. Sweep the .wants/.requires dirs for danglers naming a
@@ -482,6 +490,51 @@ if [[ ${CONSOLE_ONLY:-0} != 1 ]]; then
   # loudly rather than be silently tolerated by a wildcard.
   [[ -x $T/usr/bin/balooctl6 || -x $T/usr/bin/balooctl ]] \
     || violation "balooctl missing after prune — USE=semantic-desktop did not take, so the image has no file indexer"
+fi
+# ---- the container stack (plan/13) ------------------------------------------------------
+# Every one of these fails the same invisible way: stage 70 reads a serial port and an image
+# whose rootless stack is broken still reports green, so the failure would first appear when a
+# user types `distrobox create` on real hardware.
+if [[ ${INCLUDE_DISTROBOX:-1} == 1 ]]; then
+  for b in podman distrobox distrobox-enter distrobox-create crun conmon pasta docker; do
+    [[ -x $T/usr/bin/$b || -x $T/usr/sbin/$b ]] \
+      || violation "$b missing after prune — the container stack is incomplete"
+  done
+  # THE assertion of this block. newuidmap/newgidmap are setuid-root helpers (mode 4755, NOT
+  # file capabilities — which is why EROFS carries them at all), and they are the only way an
+  # unprivileged process can claim its subuid range. A prune, a chmod sweep or a filesystem
+  # that dropped the setuid bit leaves the binaries present and rootless podman dead, with an
+  # error that names neither.
+  for b in newuidmap newgidmap; do
+    p="$T/usr/bin/$b"
+    [[ -e $p ]] || { violation "$b missing — rootless podman cannot map its subuid range"; continue; }
+    [[ $(stat -c '%a' "$p" 2>/dev/null) == 4755 ]] \
+      && continue
+    violation "$b is mode $(stat -c '%a' "$p" 2>/dev/null), expected 4755 — without the setuid bit
+  rootless podman fails with 'newuidmap: write to uid_map failed'"
+  done
+  # The ranges themselves. Stage 40 allocates them explicitly when useradd did not; this is the
+  # check that the allocation actually landed in the image rather than in a chroot's /run.
+  for f in subuid subgid; do
+    grep -q "^${LIVE_USER}:" "$T/etc/$f" 2>/dev/null \
+      || violation "/etc/$f has no range for $LIVE_USER — rootless podman would fail for the live user"
+  done
+  # Rootless means rootless: no system-wide podman API socket may be enabled. Stage 40's preset
+  # disables it, but preset-all also applies VENDOR presets, which is exactly how systemd-networkd
+  # got enabled behind our backs once already (plan/03).
+  find "$T/etc/systemd/system" -name 'podman.socket' 2>/dev/null | grep -q . \
+    && violation "podman.socket is enabled — this image runs containers rootless only"
+  [[ -e $T/usr/lib/tmpfiles.d/podman-docker.conf ]] \
+    && violation "podman-docker.conf survived section 3 — it symlinks /run/docker.sock at a rootful
+  socket this image never starts"
+else
+  # The switch has to be structural, not cosmetic: an INCLUDE_DISTROBOX=0 image that still
+  # carries podman means filter_set_file silently stopped filtering.
+  [[ -e $T/usr/bin/podman || -e $T/usr/bin/distrobox ]] \
+    && violation "INCLUDE_DISTROBOX=0 but the container stack is in the image — the #distrobox
+  set marker did not filter"
+  [[ -e $T/etc/distrobox ]] \
+    && violation "INCLUDE_DISTROBOX=0 but /etc/distrobox shipped"
 fi
 # ...but deleting /usr/src must not have taken the prebuilt out-of-tree modules with it: they
 # live in /usr/lib/modules/<kver>/, and a machine that boots without them has no NVIDIA driver

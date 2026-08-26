@@ -300,6 +300,42 @@ read-only root, and `/var` is 4 GiB already carrying Firefox on the freedesktop 
   is no second `-gtk` backend — that package is masked. This is the part that makes
   "minimal native, everything Flatpak" actually pleasant.
 
+## Container layer
+
+The third layer, after native and Flatpak, and the one the "native or Flatpak?" rule at the top
+does not cover: **a mutable userland**. Flatpak packages application windows; it has no answer
+to "I need apt, a compiler and a header package". `app-containers/distrobox` plus rootless
+`app-containers/podman` is that answer, gated on `INCLUDE_DISTROBOX` in `build.conf`
+(default 1). Full design in [plan/13](13-distrobox.md); the parts that belong in *this* file:
+
+- **Two atoms in `@base`**, marked `#distrobox` so `filter_set_file` can drop them — the same
+  mechanism `#cjk` and `#printing` use. In `@base` rather than `@desktop` because distrobox is a
+  CLI tool and the `--console-only` image wants it too. Everything else (crun, conmon,
+  catatonit, containers-common and its tail, netavark, aardvark-dns, passt, fuse-overlayfs,
+  nftables) is RDEPEND and is deliberately not listed.
+- **No keyword exception.** Every package in the stack has a stable-`amd64` version at the
+  pinned snapshot. `package.accept_keywords/image` gains nothing.
+- **Two side effects worth naming.** `containers-common` RDEPENDs `net-firewall/nftables` and
+  `net-firewall/iptables[nftables]` unconditionally, so a firewall stack enters the image that
+  nothing runs (rootless podman networks through `pasta`); and podman/netavark/aardvark-dns
+  put Go and Rust toolchains on the *builder*, which is why `builder/Dockerfile` now names
+  `dev-lang/go` and `dev-lang/rust-bin` explicitly.
+- **Rootless only.** No `podman.socket`, no rootful daemon — the system-wide units are
+  `disable`d in the preset the way `sshd.service` is, and stage 50 asserts no enablement
+  symlink survived. What makes it work is `sys-apps/shadow`'s setuid `newuidmap`/`newgidmap`
+  (mode 4755, plain setuid bits rather than file capabilities, so EROFS carries them) plus a
+  subuid range for the live user, both asserted in stage 50 and re-checked from a booted guest
+  in stage 70.
+
+**This does not contradict plan/06.** The toolchain-free guarantee is about the image: no
+compiler in the EROFS, no Portage, no `/usr/include`, all still asserted. Distrobox is where a
+compiler is *supposed* to live — in `/var`, in a container, off the read-only root, wiped by a
+factory reset — which is the same line stage 50 already draws around `/var/lib/flatpak`.
+
+Nothing is preinstalled: the first `distrobox create` pulls `DISTROBOX_DEFAULT_IMAGE`
+(`docker.io/library/debian:stable`, fully qualified on purpose) over the network, into
+`~/.local/share/containers` on the growable var partition.
+
 ## Licenses
 
 `config/portage/package.license/` accepts exactly what's needed, not `ACCEPT_LICENSE="*"`:

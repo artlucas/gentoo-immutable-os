@@ -57,6 +57,14 @@ validate_config() {
   : "${SPLASH_STUB_SCALE=1}"
   # Same ${x=y} reasoning as the two above: a build.conf predating the knob still validates.
   : "${DEBUG_INITRD=0}"
+  # ...and again for the containers switch (plan/13). Default 1 matches filter_set_file's own
+  # ${INCLUDE_DISTROBOX:-1}, so the two cannot disagree about what "unset" means.
+  : "${INCLUDE_DISTROBOX=1}"
+  # Set-but-possibly-empty, so that render_template's "is this variable defined?" check passes
+  # for config/rootfs/etc/distrobox/distrobox.conf.in even in an INCLUDE_DISTROBOX=0 build,
+  # where stage 40 deletes the rendered file again. The non-empty requirement is asserted below
+  # and only when the switch is on.
+  : "${DISTROBOX_DEFAULT_IMAGE=}"
   local v
   for v in DISTRO_ID DISTRO_NAME VERSION HOME_URL UPDATE_URL UPDATE_CHANNEL UPDATE_VERIFY \
            BUILDER_IMAGE SNAPSHOT_DATE PROFILE BINHOST_URI \
@@ -77,6 +85,12 @@ validate_config() {
   [[ $SPLASH_STUB_SCALE =~ ^[1-9][0-9]*$ ]] \
     || die "build.conf: SPLASH_STUB_SCALE must be a positive integer (got: $SPLASH_STUB_SCALE)"
   [[ $DEBUG_INITRD =~ ^[01]$ ]] || die "build.conf: DEBUG_INITRD must be 0 or 1"
+  [[ $INCLUDE_DISTROBOX =~ ^[01]$ ]] \
+    || die "build.conf: INCLUDE_DISTROBOX must be 0 or 1 (got: $INCLUDE_DISTROBOX)"
+  # Only required when the switch is on: an image built without distrobox has no use for it,
+  # and demanding it there would fail builds that legitimately never set the key.
+  [[ $INCLUDE_DISTROBOX == 0 || -n $DISTROBOX_DEFAULT_IMAGE ]] \
+    || die "build.conf: DISTROBOX_DEFAULT_IMAGE is required when INCLUDE_DISTROBOX=1"
   [[ $FLATPAK_PREINSTALL_MODE =~ ^(build|firstboot)$ ]] \
     || die "build.conf: FLATPAK_PREINSTALL_MODE must be build|firstboot"
   [[ $SNAPSHOT_DATE =~ ^[0-9]{8}$ ]] || die "build.conf: SNAPSHOT_DATE must be YYYYMMDD"
@@ -124,11 +138,28 @@ render_template() {
 # token in the basename to "${DISTRO_ID}" (files in config/rootfs use "distro" in
 # their names so the distro can be renamed in build.conf alone; e.g.
 # distro-update.in → immos-update, 50-distro.preset.in → 50-immos.preset).
+#
+# "Token" is meant literally: the name is split on '-' and '.', and only a segment that is
+# EXACTLY "distro" is rebranded. This used to be a plain substring replacement, which silently
+# mangles any filename that merely contains the word — config/rootfs/etc/distrobox.conf.in
+# installed itself as /etc/distrobox/immosbox.conf, a config file distrobox never reads and
+# nothing would have reported. Every name the overlay actually ships (distro-update,
+# 50-distro.preset, distro-boot-ok.service, ...) uses the word as a whole token, so the two
+# rules agree on all of them and differ only where the old one was wrong.
 render_dest_name() {
-  local name=$1
+  local name=$1 out="" seg delim rest
   name="${name%.in}"
-  name="${name//distro/${DISTRO_ID}}"
-  printf '%s' "$name"
+  rest="$name"
+  while [[ -n $rest ]]; do
+    if [[ $rest =~ ^([^-.]*)([-.])(.*)$ ]]; then
+      seg="${BASH_REMATCH[1]}"; delim="${BASH_REMATCH[2]}"; rest="${BASH_REMATCH[3]}"
+    else
+      seg="$rest"; delim=""; rest=""
+    fi
+    [[ $seg == distro ]] && seg="$DISTRO_ID"
+    out+="$seg$delim"
+  done
+  printf '%s' "$out"
 }
 
 # install_rootfs_overlay SRC_ROOT DST_ROOT — copies the config/rootfs tree onto the
@@ -487,7 +518,7 @@ chroot_target() {
 # ---- misc ---------------------------------------------------------------------------
 ensure_dir() { mkdir -p -- "$@"; }
 
-# filter_set_file SRC DST — strips '#cjk' / '#printing' marked lines when the
+# filter_set_file SRC DST — strips '#cjk' / '#printing' / '#distrobox' marked lines when the
 # corresponding build.conf switch is 0, and comment/blank lines otherwise pass through
 # to portage untouched (portage ignores comments itself; markers must go though).
 filter_set_file() {
@@ -497,6 +528,7 @@ filter_set_file() {
     out=$line
     if [[ $line == *'#cjk'* ]];      then [[ ${INCLUDE_CJK_FONTS:-1} == 1 ]] || continue; out="${line%%#*}"; fi
     if [[ $line == *'#printing'* ]]; then [[ ${INCLUDE_PRINTING:-1}  == 1 ]] || continue; out="${line%%#*}"; fi
+    if [[ $line == *'#distrobox'* ]]; then [[ ${INCLUDE_DISTROBOX:-1} == 1 ]] || continue; out="${line%%#*}"; fi
     printf '%s\n' "$out" >> "$dst"
   done < "$src"
 }

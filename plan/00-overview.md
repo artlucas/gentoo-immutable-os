@@ -66,6 +66,8 @@ Note on terminology: Gentoo's "stage 3" is a **tarball** (`stage3-amd64-systemd-
 | [09-kde-migration.md](09-kde-migration.md) | The GNOME → KDE Plasma 6 swap: package mapping, USE inversions, GTK residue |
 | [10-prune-audit.md](10-prune-audit.md) | Measured audit of the 0.2.0 image: what holds each package in, what can leave, ranked by shipped size |
 | [11-kernel-boot-audit.md](11-kernel-boot-audit.md) | Measured audit of the boot artifact: what is in the UKI and initrd, CPU microcode, the driver omit list, NVIDIA early KMS, the splash hand-off |
+| [12-first-boot-reboot-loop.md](12-first-boot-reboot-loop.md) | The first-boot reboot loop: repart ordering and the erofs→netfs dracut omission |
+| [13-distrobox.md](13-distrobox.md) | The mutable userland: rootless podman + distrobox, subuid setup, why it does not weaken the toolchain-free guarantee |
 
 ## Milestones
 

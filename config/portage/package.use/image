@@ -385,3 +385,40 @@ app-crypt/libb2             -openmp
 # face falls back to the nearest available weight. Nothing in the Breeze theme or the
 # fontconfig defaults (66-noto-{sans,serif,mono}.conf) selects one.
 media-fonts/noto            -extra
+
+# ---- containers / distrobox (plan/13) ---------------------------------------------------
+# Every flag below was read off the ebuilds in the pinned snapshot. Nothing in this block needs
+# a package.accept_keywords entry: the whole stack has a stable amd64 version at this snapshot
+# (podman-5.8.2, crun-1.28, conmon-2.1.13, catatonit-0.2.1, containers-common-0.64.2,
+# netavark-1.17.1, aardvark-dns-1.17.1, passt-2025.12.15, fuse-overlayfs-1.16, nftables-1.1.6,
+# distrobox-1.8.2.5). Newer versions of most of them are ~amd64; none is taken.
+#
+# seccomp/systemd: the container security profile and the sd-notify/journald integration, both
+#   of which the profile would give us anyway — restated because this file is also mirrored onto
+#   the builder root (mirror_target_pkg_config), where the global USE is not the target's.
+# wrapper: installs /usr/bin/docker, a shell wrapper that execs podman, plus a
+#   podman-docker.conf tmpfiles snippet. Accepted for muscle memory and for scripts that shell
+#   out to `docker`. Its ebuild blocker "!app-containers/docker-cli" is inert here — no docker
+#   package is in the image or ever will be. Stage 50 deletes the tmpfiles snippet: it symlinks
+#   /run/docker.sock at a rootful podman socket this image does not run.
+# -apparmor/-selinux: neither LSM is built or configured in this image; the flags would only
+#   pull sys-libs/libapparmor / the selinux policy tail for code that never activates.
+# -btrfs: sys-fs/btrfs-progs has no other consumer here and /var is ext4 (plan/01).
+app-containers/podman        seccomp systemd wrapper -apparmor -btrfs -selinux
+# The gui flag's entire effect in this ebuild is whether /usr/share/icons survives src_install.
+# Apps published out of a box by distrobox-export carry their own icons from inside the
+# container, so the host copies have no consumer.
+app-containers/distrobox     -gui
+# Required by app-containers/containers-common, which RDEPENDs iptables[nftables] outright.
+# iptables is already in the image, but built without this flag — NetworkManager's
+# connection-sharing is the only reason it is here at all — so this is a rebuild, not a new
+# package. nftables? ( net-misc/ethertypes ) comes with it.
+net-firewall/iptables        nftables
+# Arrives as an unconditional RDEPEND of containers-common and is then never run: rootless
+# podman does its networking through pasta (net-misc/passt), and netavark's nft driver talks
+# netlink rather than shelling out to `nft`. Kept minimal accordingly.
+# -python is the load-bearing one: stage 50's interpreter policy has NOT decided whether python
+#   may ship, and a firewall utility that nothing executes must not be what decides it.
+# -json/-xtables/-doc have no consumer; gmp and readline stay at their ebuild defaults because
+#   dev-libs/gmp and sys-libs/readline are already in the image and cost nothing.
+net-firewall/nftables        -python -json -xtables -doc

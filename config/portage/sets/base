@@ -39,3 +39,11 @@ app-misc/ca-certificates
 app-crypt/gnupg
 sys-apps/kbd
 sys-libs/timezone-data
+# The mutable-userland escape hatch (plan/13), gated on INCLUDE_DISTROBOX. In @base rather than
+# @desktop deliberately: distrobox is a CLI tool and belongs in the --console-only image too.
+# Two atoms only — crun, conmon, catatonit, containers-common and its tail (netavark,
+# aardvark-dns, passt, fuse-overlayfs, nftables) are all RDEPEND and must NOT be listed here.
+# Same discipline plan/03 applies to baloo's four packages: listing a transitive dep only
+# invites a version pin this set does not own.
+app-containers/podman            #distrobox
+app-containers/distrobox         #distrobox

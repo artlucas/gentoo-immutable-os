@@ -4,7 +4,9 @@ A Gentoo-built, **immutable**, Flatpak-first, minimal-KDE-Plasma Linux distribut
 (machines from roughly the last 5 years; UEFI-only). Ships as a single disk image that boots
 in VMs and from USB/disk on real hardware, with A/B atomic updates and automatic rollback.
 The shipped OS contains no compiler and no Portage — Gentoo is the build system, not the
-runtime.
+runtime. When you need one anyway, `distrobox` ships in the image: a full mutable distro in a
+rootless podman container, sharing your home and desktop, with its packages in `/var` instead of
+on the read-only root ([plan/13](plan/13-distrobox.md)).
 
 **Status: implemented, pre-first-build.** The build system is complete and offline-tested;
 the first real image build (which downloads the Gentoo stage3 container + packages) has not
@@ -22,6 +24,7 @@ been run yet. The full design lives in [`plan/`](plan/00-overview.md):
 | [07-testing](plan/07-testing.md) | QEMU smoke/update/rollback tests, hardware matrix |
 | [08-roadmap](plan/08-roadmap.md) | Installer ISO, Secure Boot, verity, tradeoffs |
 | [11-kernel-boot-audit](plan/11-kernel-boot-audit.md) | Kernel/UKI/initrd audit: microcode, driver omit list, NVIDIA early KMS |
+| [13-distrobox](plan/13-distrobox.md) | Rootless podman + distrobox: the mutable userland, and why it keeps the toolchain-free guarantee |
 
 ## Building
 

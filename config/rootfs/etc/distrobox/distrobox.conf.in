@@ -1,0 +1,18 @@
+# System-wide distrobox defaults for @DISTRO_NAME@ (plan/13).
+#
+# distrobox reads, in increasing precedence:
+#   /usr/share/distrobox/distrobox.conf
+#   /etc/distrobox/distrobox.conf      <- this file
+#   ~/.config/distrobox/distrobox.conf
+#   $DBX_* environment variables
+# so nothing here is a lock-in: a user overrides it per-account, and /etc is an overlay
+# (plan/01) so it can be replaced system-wide at runtime too.
+#
+# The image name is FULLY QUALIFIED on purpose. A bare "debian:stable" would be resolved
+# through containers-common's unqualified-search-registries, i.e. through a registry-order
+# heuristic in a config file this image does not own and does not assert on.
+#
+# Nothing is preinstalled: the first `distrobox create` pulls this image over the network,
+# into ~/.local/share/containers on the growable /var partition, where it survives A/B root
+# updates and is removed by a factory reset. See plan/13 for why no box ships in the image.
+container_image_default="@DISTROBOX_DEFAULT_IMAGE@"

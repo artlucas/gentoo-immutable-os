@@ -16,6 +16,7 @@ load_config
 # same render environment stage 40 exports
 VERIFY=yes
 export DISTRO_ID DISTRO_NAME VERSION HOME_URL UPDATE_URL LIVE_USER VERIFY FLATPAK_PREINSTALL
+export DISTROBOX_DEFAULT_IMAGE
 
 DST="$TMP/target"
 install_rootfs_overlay "$REPO_ROOT/config/rootfs" "$DST"
@@ -51,6 +52,20 @@ assert_true "preset enables rebranded boot-ok" \
 # flatpak preinstall unit got the app list
 assert_true "preinstall unit lists apps" \
     grep -q "$FLATPAK_PREINSTALL" "$DST/usr/lib/systemd/system/${DISTRO_ID}-flatpak-preinstall.service"
+
+# distrobox default image reached the rendered config (plan/13). This is the only place the
+# build.conf value is consumed, and a wrong or unrendered one fails at `distrobox create` time
+# on a user's machine, not here — hence the offline check.
+assert_file "$DST/etc/distrobox/distrobox.conf" "distrobox.conf installed"
+assert_true "distrobox.conf carries the default image" \
+    grep -q "container_image_default=\"$DISTROBOX_DEFAULT_IMAGE\"" "$DST/etc/distrobox/distrobox.conf"
+
+# The preset must keep the system-wide podman units off: rootless is the whole design (plan/13),
+# and a podman.socket enabled by a vendor preset is exactly how systemd-networkd once got in.
+PRESET="$DST/usr/lib/systemd/system-preset/50-${DISTRO_ID}.preset"
+for u in podman.service podman.socket podman-restart.service podman-auto-update.timer; do
+    assert_true "preset disables $u" grep -q "^disable $u\$" "$PRESET"
+done
 
 # permissions: bin + .sh executable, units not (skip on filesystems without exec bits)
 if [[ "$(uname -s)" == Linux ]]; then

@@ -66,6 +66,16 @@ assert_report() {  # LOG expected_version
   if [[ ${CONSOLE_ONLY:-0} != 1 ]]; then
     [[ $(field "$slog" graphical) == yes ]] || die "graphical.target not reached in guest"
   fi
+  # Rootless containers (plan/13). Asserted rather than reported, unlike dns above, because
+  # nothing in it depends on the build host's network: `podman info` reads the kernel's userns
+  # support, the setuid map helpers and the local storage driver and nothing else. "na" is the
+  # INCLUDE_DISTROBOX=0 image correctly saying it has no podman.
+  if [[ ${INCLUDE_DISTROBOX:-1} == 1 ]]; then
+    local rootless; rootless="$(field "$slog" podman_rootless)"
+    [[ $rootless == true ]] \
+      || die "guest podman is not rootless-capable (podman_rootless=$rootless) — check the subuid
+range for $LIVE_USER, the setuid bit on newuidmap/newgidmap, and CONFIG_USER_NS in the kernel"
+  fi
 }
 
 if [[ -n ${UPDATE_TEST_BASE_IMG:-} ]]; then

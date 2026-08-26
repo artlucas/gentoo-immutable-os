@@ -32,3 +32,15 @@ enable @DISTRO_ID@-flatpak-preinstall.service
 enable @DISTRO_ID@-hostname-init.service
 disable sshd.service
 disable systemd-sysupdate.timer
+# Containers are ROOTLESS here (plan/13): podman runs inside the user's own session, under
+# their subuid range, with storage in ~/.local/share/containers. The system-wide units are
+# what a rootful daemon would need, and this image has no rootful containers at all — so the
+# API socket, the restart-on-boot helper and the auto-update timer are off in the vendor
+# preset, for the same reason sshd.service above is. The per-user copies under
+# /usr/lib/systemd/user are untouched; nothing enables them either.
+# Stage 50 asserts no podman.socket enablement symlink survives.
+disable podman.service
+disable podman.socket
+disable podman-restart.service
+disable podman-auto-update.timer
+disable podman-clean-transient.service

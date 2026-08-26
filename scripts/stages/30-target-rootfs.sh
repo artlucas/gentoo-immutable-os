@@ -141,5 +141,14 @@ if [[ ${CONSOLE_ONLY:-0} != 1 ]]; then
   # Login Manager runs its greeter on. An image without it boots to a greeter and nothing else.
   have_exe kwin_wayland || die "verify: kwin_wayland missing from desktop target"
 fi
+if [[ ${INCLUDE_DISTROBOX:-1} == 1 ]]; then
+  have_exe podman    || die "verify: podman missing from target (INCLUDE_DISTROBOX=1)"
+  have_exe distrobox || die "verify: distrobox missing from target (INCLUDE_DISTROBOX=1)"
+  # crun is the OCI runtime podman actually execs, and pasta (net-misc/passt) is what gives a
+  # rootless container a network. Both arrive only as RDEPENDs — of containers-common — so
+  # neither is named in @base and a USE-flag change could drop either without touching a set.
+  have_exe crun      || die "verify: crun missing from target (app-containers/containers-common RDEPEND)"
+  have_exe pasta     || die "verify: pasta missing from target (net-misc/passt) — rootless networking"
+fi
 log "target rootfs emerged OK"
 stamp_write "$STAGE_NAME" "$(inputs_hash "$REPO/config/build.conf" "$REPO"/config/portage/sets/* "$REPO"/config/portage/package.use/*)"

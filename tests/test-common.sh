@@ -50,6 +50,11 @@ assert_eq "${DISTRO_ID}-boot-ok.service" "$(render_dest_name distro-boot-ok.serv
 assert_eq "50-${DISTRO_ID}.preset"       "$(render_dest_name 50-distro.preset.in)"   "mid-name token rename"
 assert_eq "fstab"                        "$(render_dest_name fstab)"                 "plain file untouched"
 assert_eq "os-release"                   "$(render_dest_name os-release.in)"         "strip .in only"
+# The rewrite is token-wise, not substring-wise: "distrobox" is its own word and must survive
+# intact, or /etc/distrobox/distrobox.conf ships as immosbox.conf and distrobox never reads it.
+assert_eq "distrobox.conf"               "$(render_dest_name distrobox.conf.in)"     "distro as a substring is NOT rebranded"
+assert_eq "distrobox"                    "$(render_dest_name distrobox)"             "bare substring untouched"
+assert_eq "${DISTRO_ID}"                 "$(render_dest_name distro)"                "bare token rebranded"
 
 # ---- layout math ---------------------------------------------------------------------------
 compute_layout 1024 6144 4096
@@ -68,12 +73,26 @@ assert_contains "$GPT_TYPE_VAR" "$script" "var type GUID"
 assert_eq 2 "$(grep -c "$GPT_TYPE_ROOT_X64" <<<"$script")" "two root-typed partitions"
 
 # ---- filter_set_file --------------------------------------------------------------------------
-printf 'pkg/a\npkg/cjk-thing  #cjk\npkg/print-thing #printing\n# comment\n' > "$TMP/set"
-INCLUDE_CJK_FONTS=0 INCLUDE_PRINTING=1 filter_set_file "$TMP/set" "$TMP/set.out"
+printf 'pkg/a\npkg/cjk-thing  #cjk\npkg/print-thing #printing\npkg/box-thing #distrobox\n# comment\n' > "$TMP/set"
+INCLUDE_CJK_FONTS=0 INCLUDE_PRINTING=1 INCLUDE_DISTROBOX=1 filter_set_file "$TMP/set" "$TMP/set.out"
 assert_false "cjk line dropped"    grep -q cjk-thing "$TMP/set.out"
 assert_true  "printing line kept"  grep -q print-thing "$TMP/set.out"
 assert_false "marker comment stripped from kept line" grep -q '#printing' "$TMP/set.out"
 assert_true  "plain line kept"     grep -q 'pkg/a' "$TMP/set.out"
+assert_true  "distrobox line kept when INCLUDE_DISTROBOX=1" grep -q box-thing "$TMP/set.out"
+assert_false "distrobox marker stripped from kept line" grep -q '#distrobox' "$TMP/set.out"
+
+# ...and the other way round: the switch has to actually remove the packages, or an
+# INCLUDE_DISTROBOX=0 image silently ships the whole container stack anyway.
+INCLUDE_CJK_FONTS=1 INCLUDE_PRINTING=1 INCLUDE_DISTROBOX=0 filter_set_file "$TMP/set" "$TMP/set.off"
+assert_false "distrobox line dropped when INCLUDE_DISTROBOX=0" grep -q box-thing "$TMP/set.off"
+assert_true  "cjk line kept when its own switch is 1"          grep -q cjk-thing "$TMP/set.off"
+assert_true  "plain line still kept"                           grep -q 'pkg/a'   "$TMP/set.off"
+
+# Unset must mean 1, in filter_set_file and validate_config alike — a build.conf written
+# before this knob existed still has to produce the same image the default does.
+( unset INCLUDE_DISTROBOX; filter_set_file "$TMP/set" "$TMP/set.unset" )
+assert_true "distrobox line kept when the switch is unset" grep -q box-thing "$TMP/set.unset"
 
 # ---- inputs_hash ---------------------------------------------------------------------------------
 printf 'aaa' > "$TMP/h1"; printf 'bbb' > "$TMP/h2"

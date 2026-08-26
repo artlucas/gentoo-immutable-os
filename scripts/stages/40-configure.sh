@@ -20,8 +20,15 @@ VERIFY="$([[ $UPDATE_VERIFY == 1 ]] && echo yes || echo no)"
 # because both halves come from build.conf and neither is a plain @TOKEN@ substitution.
 SPLASH_STATUS_LEFT="$(printf '%s · V%s · AMD64' "$UPDATE_CHANNEL" "$VERSION" | tr '[:lower:]' '[:upper:]')"
 export DISTRO_ID DISTRO_NAME VERSION HOME_URL UPDATE_URL LIVE_USER VERIFY FLATPAK_PREINSTALL
-export UPDATE_CHANNEL SPLASH_STATUS_LEFT
+export UPDATE_CHANNEL SPLASH_STATUS_LEFT DISTROBOX_DEFAULT_IMAGE
 install_rootfs_overlay "$REPO/config/rootfs" "$TARGET"
+
+# The overlay ships /etc/distrobox unconditionally (install_rootfs_overlay walks the whole
+# tree); an image built without the container stack must not carry a config file for a binary
+# it does not have.
+if [[ ${INCLUDE_DISTROBOX:-1} != 1 ]]; then
+  rm -rf -- "${TARGET:?}/etc/distrobox"
+fi
 
 # permissions the generic overlay rules can't know:
 [[ -f $TARGET/etc/sudoers.d/wheel ]] && chmod 0440 "$TARGET/etc/sudoers.d/wheel"
@@ -92,6 +99,28 @@ fi
 if ! chroot_target "$TARGET" "id -u '$LIVE_USER'" >/dev/null 2>&1; then
   chroot_target "$TARGET" "useradd -m -G wheel,video,audio -s /bin/bash '$LIVE_USER'"
   chroot_target "$TARGET" "echo '$LIVE_USER:$LIVE_USER_PASSWORD' | chpasswd"
+fi
+
+# Subordinate UID/GID ranges — what makes podman ROOTLESS (plan/13). Without them
+# newuidmap/newgidmap have nothing to map and every `podman`/`distrobox` invocation fails with
+# "cannot find UID/GID for user", at first use, long after this build.
+#
+# useradd above has PROBABLY already done this: the target's /etc/login.defs ships active
+# SUB_UID_MIN/SUB_UID_COUNT lines, and sys-apps/shadow's pkg_postinst touches /etc/subuid and
+# /etc/subgid, which is the condition shadow allocates on. "Probably" is not a guarantee that
+# survives a shadow bump or a login.defs change, so the range is claimed explicitly when it is
+# missing, and asserted outright in stage 50.
+if [[ ${INCLUDE_DISTROBOX:-1} == 1 ]]; then
+  if ! chroot_target "$TARGET" "grep -q '^$LIVE_USER:' /etc/subuid" 2>/dev/null; then
+    log "allocating subuid range for $LIVE_USER (useradd did not)"
+    chroot_target "$TARGET" "usermod --add-subuids 100000-165535 '$LIVE_USER'" \
+      || die "could not allocate subuids for $LIVE_USER — rootless podman would not work"
+  fi
+  if ! chroot_target "$TARGET" "grep -q '^$LIVE_USER:' /etc/subgid" 2>/dev/null; then
+    log "allocating subgid range for $LIVE_USER (useradd did not)"
+    chroot_target "$TARGET" "usermod --add-subgids 100000-165535 '$LIVE_USER'" \
+      || die "could not allocate subgids for $LIVE_USER — rootless podman would not work"
+  fi
 fi
 
 # unit presets shipped by the overlay decide what's enabled

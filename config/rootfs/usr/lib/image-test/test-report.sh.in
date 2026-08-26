@@ -23,7 +23,7 @@ collect_and_report() {
     # shellcheck source=/dev/null
     . /etc/os-release
     local etc_fs graphical failed failed_list machine_id var_size flatpak_remotes
-    local resolved dns
+    local resolved dns podman_rootless
     etc_fs="$(findmnt -no FSTYPE /etc 2>/dev/null || echo none)"
     graphical="$(systemctl is-active graphical.target >/dev/null 2>&1 && echo yes || echo no)"
     failed="$(systemctl --failed --no-legend --plain 2>/dev/null | grep -c . || true)"
@@ -40,9 +40,23 @@ collect_and_report() {
     # asserted, or a build behind a captive portal would fail the smoke test.
     resolved="$(systemctl is-active systemd-resolved.service >/dev/null 2>&1 && echo yes || echo no)"
     dns="$(getent ahostsv4 gentoo.org >/dev/null 2>&1 && echo yes || echo no)"
+    # The one field that proves the whole rootless chain at once (plan/13): CONFIG_USER_NS in
+    # the kernel, the setuid newuidmap/newgidmap surviving EROFS, a subuid range for the live
+    # user, and a storage driver that works on the ext4 /var. Deliberately `podman info` and not
+    # `podman run` — no image is preinstalled, so anything that pulls would make this field a
+    # test of the build host's network instead of the image. "na" when podman is not installed
+    # (INCLUDE_DISTROBOX=0), which the harness treats as "nothing to assert".
+    if command -v podman >/dev/null 2>&1; then
+        podman_rootless="$(runuser -u '@LIVE_USER@' -- \
+            podman info --format '{{.Host.Security.Rootless}}' 2>/dev/null || echo no)"
+        [[ -z $podman_rootless ]] && podman_rootless=no
+    else
+        podman_rootless=na
+    fi
     report "ok version=${IMAGE_VERSION:-unknown} etc_overlay=$etc_fs graphical=$graphical" \
            "failed_units=$failed machine_id=$machine_id var_size=$var_size" \
            "flatpak_remotes=$flatpak_remotes resolved=$resolved dns=$dns" \
+           "podman_rootless=$podman_rootless" \
            "failed_list=$failed_list phase=$1"
 }
 

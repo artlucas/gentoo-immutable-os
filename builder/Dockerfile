@@ -58,6 +58,15 @@ RUN printf 'FEATURES="${FEATURES} getbinpkg"\n' >> /etc/portage/make.conf \
 #    cannot emit BMP — its formats are png/pdf/ps/svg — and BMP is the only container the EFI
 #    stub reads. Named explicitly because it was already present here transitively, and a
 #    dependency that arrives by accident is one a graph change can remove by accident.
+#  - dev-lang/go + dev-lang/rust-bin: BDEPENDs of the container stack (plan/13) — podman and
+#    go-md2man are Go, netavark and aardvark-dns are Rust. BDEPEND always installs to the
+#    builder's "/", never to $TARGET, so these would arrive on their own during stage 30's
+#    target emerge. They are listed HERE anyway for two reasons. First, cost: pulled in ad hoc
+#    they are re-resolved against a fresh work volume, while a line in this file is a cached
+#    Docker layer served from the binhost. Second, and the real one: virtual/rust is satisfied
+#    by EITHER dev-lang/rust or dev-lang/rust-bin, and with neither installed portage is free
+#    to pick the from-source one — hours of compiling a toolchain for two 10 MiB binaries.
+#    Installing rust-bin first makes the installed provider the one portage keeps.
 #  - gnupg + sec-keys/openpgp-keys-gentoo-release + getuto: trust store for binhost
 #    signature verification, needed by every emerge that runs against "/" — this one and the
 #    buildhost set in stage 30. It also used to be needed for stage 30's TARGET emerge, whose
@@ -162,6 +171,8 @@ RUN echo 'app-emulation/qemu qemu_softmmu_targets_x86_64 -qemu_softmmu_targets_i
       gnome-base/librsvg \
       media-fonts/ibm-plex \
       dev-python/pillow \
+      dev-lang/go \
+      dev-lang/rust-bin \
  && emerge --quiet-build=y --oneshot --usepkg --getbinpkg sys-apps/systemd app-text/xmlto \
  && GETUTO_EXTERNAL_REFRESH=0 getuto
 
