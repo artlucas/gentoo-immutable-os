@@ -94,6 +94,31 @@ assert_true  "plain line still kept"                           grep -q 'pkg/a'  
 ( unset INCLUDE_DISTROBOX; filter_set_file "$TMP/set" "$TMP/set.unset" )
 assert_true "distrobox line kept when the switch is unset" grep -q box-thing "$TMP/set.unset"
 
+# ---- seed_merged_usr -------------------------------------------------------------------------
+# The exact stage3 shape, asserted link by link. Getting /usr/sbin wrong produced an image with
+# no console login at all and nothing red anywhere (see the function's own comment), so "it
+# booted" is not evidence this is right — only the link targets are.
+SEED="$TMP/seedroot"; mkdir -p "$SEED"
+seed_merged_usr "$SEED"
+assert_eq "usr/bin"   "$(readlink "$SEED/bin")"      "/bin -> usr/bin"
+assert_eq "usr/bin"   "$(readlink "$SEED/sbin")"     "/sbin -> usr/bin (NOT usr/sbin)"
+assert_eq "usr/lib"   "$(readlink "$SEED/lib")"      "/lib -> usr/lib"
+assert_eq "usr/lib64" "$(readlink "$SEED/lib64")"    "/lib64 -> usr/lib64"
+assert_eq "bin"       "$(readlink "$SEED/usr/sbin")" "/usr/sbin -> bin (sbin is merged)"
+assert_true "/usr/bin is a real directory" test -d "$SEED/usr/bin" -a ! -L "$SEED/usr/bin"
+# The property all of that exists for: a binary installed to any sbin path is reachable at the
+# /usr/bin path every Gentoo systemd unit hardcodes.
+: > "$SEED/usr/sbin/agetty"
+assert_true "a binary installed to /usr/sbin resolves at /usr/bin" test -e "$SEED/usr/bin/agetty"
+assert_true "...and at /sbin"                                      test -e "$SEED/sbin/agetty"
+# Idempotent: stage 30 is resumable and calls this on every run.
+seed_merged_usr "$SEED"
+assert_eq "bin" "$(readlink "$SEED/usr/sbin")" "re-seeding leaves /usr/sbin alone"
+# A pre-existing REAL /usr/sbin is the old broken layout and must be refused, not silently kept.
+SPLIT="$TMP/splitroot"; mkdir -p "$SPLIT/usr/sbin"
+assert_false "a real /usr/sbin is rejected" \
+    bash -c 'source "$1"/scripts/lib/common.sh 2>/dev/null; seed_merged_usr "$2"' _ "$REPO_ROOT" "$SPLIT"
+
 # ---- inputs_hash ---------------------------------------------------------------------------------
 printf 'aaa' > "$TMP/h1"; printf 'bbb' > "$TMP/h2"
 h_a="$(inputs_hash "$TMP/h1" "$TMP/h2")"

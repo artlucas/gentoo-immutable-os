@@ -308,15 +308,50 @@ stamp_write()   { mkdir -p -- "$STATE_DIR"; printf '%s' "$2" > "$(stamp_path "$1
 # while the other ~1300 binaries live in /usr/bin. The 23.0 profile is merged-usr, and
 # systemd >=255 refuses to boot a split-usr system, so such an image never comes up. It also
 # silently breaks every /usr/lib/modules and /usr/lib/firmware path the later stages use.
+#
+# SBIN IS MERGED INTO BIN TOO, and that half is easy to get wrong, because a layout with a real
+# /usr/sbin looks perfectly reasonable and boots. A stage3 on the 23.0 profile has:
+#
+#     /bin -> usr/bin     /sbin -> usr/bin     /usr/sbin -> bin     (one inode per binary)
+#
+# NOT /sbin -> usr/sbin with /usr/sbin a directory of its own. This pipeline seeded the latter
+# until 0.3.0, which left 259 binaries in a /usr/sbin that nothing else in the system believes
+# in — and the systemd units are what disbelieve it. Gentoo builds systemd with
+# -Dsplit-bin=false, so every unit it ships names /usr/bin/<tool> for helpers that util-linux
+# installs to sbin. The result was four dead units:
+#
+#     getty@.service, serial-getty@.service, console-getty.service, container-getty@.service
+#         ExecStart=-/usr/bin/agetty ...        (agetty was only at /usr/sbin/agetty)
+#
+# i.e. THE IMAGE HAD NO TEXT CONSOLE LOGIN AT ALL, on tty1 or serial. Invisible for two
+# reasons: the desktop autologins to Plasma so nobody reaches a console, and the "-" prefix on
+# those ExecStart lines tells systemd to ignore the 203/EXEC, so the units respawn silently and
+# never reach failed state — `systemctl --failed` stays empty and stage 70's failed_units=0
+# assertion passes. It surfaced only when a serial login for manual testing never got a prompt.
+# The same layout is why /usr/sbin/runuser was off the service PATH (see the note in
+# usr/lib/image-test/test-report.sh.in).
 seed_merged_usr() {
   local t=$1 d
-  ensure_dir "$t/usr/bin" "$t/usr/sbin" "$t/usr/lib" "$t/usr/lib64"
+  ensure_dir "$t/usr/bin" "$t/usr/lib" "$t/usr/lib64"
+  # /usr/sbin first and separately: it points at bin *within* /usr, not at usr/bin from the
+  # root, so it cannot go through the loop below.
+  if [[ ! -L $t/usr/sbin ]]; then
+    [[ -d $t/usr/sbin ]] && die "target has a real /usr/sbin directory — it was populated under
+  the old sbin-split layout, and the binaries in it are invisible to every systemd unit that
+  names /usr/bin/<tool>. Wipe the work volume and re-run stage 30:
+  docker volume rm -f \${DISTRO_ID:-immos}-work"
+    ln -s bin "$t/usr/sbin"
+  fi
+  # /sbin joins /bin at usr/bin — both, deliberately, not usr/sbin.
   for d in bin sbin lib lib64; do
     [[ -L $t/$d ]] && continue
     [[ -d $t/$d ]] && die "target has a real /$d directory — it was populated before the
   merged-/usr symlinks existed (split-usr). Wipe the work volume and re-run stage 30:
   docker volume rm -f \${DISTRO_ID:-immos}-work"
-    ln -s "usr/$d" "$t/$d"
+    case $d in
+      bin|sbin) ln -s usr/bin "$t/$d" ;;
+      *)        ln -s "usr/$d" "$t/$d" ;;
+    esac
   done
 }
 

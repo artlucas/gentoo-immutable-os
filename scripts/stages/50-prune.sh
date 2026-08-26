@@ -648,6 +648,22 @@ m32="$(find "$T/usr/lib" -maxdepth 1 -type f \( -name '*.so' -o -name '*.so.*' -
 # when nobody can debug it. Caught by a mutation test of 3e, not by a build.
 [[ -d $T/usr/lib/terminfo || -d $T/usr/share/terminfo ]] \
   || violation "terminfo is gone — the dangling-link sweep in 3e cut too deep"
+# ...and the console that terminfo exists for must actually be reachable. Gentoo builds systemd
+# with -Dsplit-bin=false, so every getty unit it ships says ExecStart=-/usr/bin/agetty; a root
+# whose /usr/sbin is a real directory rather than a symlink to bin leaves agetty somewhere no
+# unit looks. The "-" prefix then swallows the 203/EXEC, the unit respawns forever, and
+# `systemctl --failed` stays clean — so this ships as "no way to log in at a console" with every
+# other check green. That was true of every image before 0.3.0 (see seed_merged_usr).
+# Asserted as a resolvable PATH-style lookup, not as a file test on one location, because that
+# is the question the units actually ask.
+[[ -L $T/usr/sbin ]] \
+  || violation "/usr/sbin is not a symlink to bin — the merged-usr seed regressed to sbin-split,
+  which strands ~259 binaries where no systemd unit will look for them (agetty, and with it
+  every getty, is the one that bites)"
+[[ -x $T/usr/bin/agetty ]] \
+  || violation "no /usr/bin/agetty — getty@, serial-getty@, console-getty and container-getty@
+  all name that exact path and all fail 203/EXEC silently, leaving the image with no text
+  console login on tty1 or serial"
 # ...and the counterpart: 3d deletes by ELF class inside a directory that also holds live files,
 # so assert the most load-bearing of them is still there. systemd reads /usr/lib/os-release on
 # every boot and /etc/os-release is a symlink to it.
