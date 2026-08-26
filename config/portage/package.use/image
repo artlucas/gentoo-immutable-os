@@ -166,13 +166,24 @@ dev-qt/qtdeclarative              opengl vulkan
 dev-qt/qt5compat                  icu qml
 # Same shape: qttools[widgets] DEPENDs ~dev-qt/qtbase[opengl=]. Note this is NOT the "designer"
 # flag — that one is off globally (make.conf.in) and stays off.
-# assistant/linguist/qdbus default ON in qttools' own IUSE and none of our packages need them
-# (nothing in expected-packages.txt DEPENDs on qttools[assistant|linguist|qdbus] — checked
-# against the pinned tree). Left on they ship three menu entries with no audience on this
-# image: Qt Assistant (a docs viewer for Qt's own API docs), Qt Linguist (a translation-file
-# editor for Qt app developers), and the Qt D-Bus Viewer (a D-Bus debugger) — all
-# developer-facing tools, not something a user of the built image would ever launch.
-dev-qt/qttools                    opengl -assistant -linguist -qdbus
+# assistant/linguist default ON in qttools' own IUSE and none of our packages need them (no
+# REQUIRED_USE or RDEPEND anywhere in the pinned tree asks for qttools[assistant|linguist]).
+# Left on they ship two menu entries with no audience on this image: Qt Assistant (a docs
+# viewer for Qt's own API docs) and Qt Linguist (a translation-file editor for Qt app
+# developers) — developer-facing tools, not something a user of the built image would launch.
+#
+# qdbus is NOT the same case, discovered the first time "emerge ... @desktop" was actually run
+# to completion rather than inspected: kde-plasma/plasma-workspace-6.6.6 RDEPENDs
+# ">=dev-qt/qttools-${QTMIN}:*[qdbus]" unconditionally (used for its own D-Bus tooling, not
+# optional). Forcing it off — as an earlier pass here did, on the same "no consumer" reasoning
+# that correctly holds for assistant/linguist — makes the @desktop depgraph unsatisfiable.
+# +widgets is qttools' own default and is turned off here specifically to avoid the
+# qdbus+widgets combination building the qdbusviewer GUI (RDEPEND gates it behind
+# "widgets? ( !dev-qt/qdbusviewer:5 )"): plasma-workspace's own need is qtbase[dbus,xml], with
+# no REQUIRED_USE anywhere asking for qttools[widgets], so turning it off keeps the qdbus CLI
+# and code-gen tools (qdbuscpp2xml/qdbusxml2cpp, which other KDE packages' build systems invoke)
+# without reintroducing the D-Bus viewer menu entry the earlier pass meant to drop.
+dev-qt/qttools                    opengl qdbus -assistant -linguist -widgets
 dev-qt/qtmultimedia               opengl vulkan qml
 dev-qt/qtquick3d                  opengl vulkan
 # (qtbase's "cups" above is the Qt half of the printing decision: kde-plasma/print-manager and
