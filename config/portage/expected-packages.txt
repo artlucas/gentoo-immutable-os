@@ -4,6 +4,11 @@
 # deliberate package-set change; never edit an entry to make a red build go green.
 #
 # Generated 2026-08-25 from the first KDE Plasma build (615 entries, was 521 under GNOME).
+# Updated 2026-08-26: +12 entries for the Spectacle (media-libs/opencv and its own build deps:
+# dev-cpp/abseil-cpp, dev-cpp/eigen, dev-libs/flatbuffers, dev-libs/protobuf, virtual/jpeg;
+# plus media-libs/kquickimageeditor, dev-qt/qtimageformats, media-libs/libmng) and KDE
+# Partition Manager (sys-libs/kpmcore) additions — see plan/03. Purely additive: nothing
+# dropped out of the graph.
 #
 # The GNOME-namespace entries below are the enumerated residue of plan/09 §4, not leftovers:
 #   gnome-base/librsvg          RDEPEND of adwaita-icon-theme (SVG icon loading)
@@ -112,6 +117,8 @@ app-text/iso-codes
 app-text/libpaper
 app-text/poppler
 app-text/poppler-data
+dev-cpp/abseil-cpp
+dev-cpp/eigen
 dev-cpp/highway
 dev-db/lmdb
 dev-db/sqlite
@@ -127,6 +134,7 @@ dev-libs/double-conversion
 dev-libs/elfutils
 dev-libs/ell
 dev-libs/expat
+dev-libs/flatbuffers
 dev-libs/fribidi
 dev-libs/glib
 dev-libs/gmp
@@ -178,6 +186,7 @@ dev-libs/nspr
 dev-libs/nss
 dev-libs/openssl
 dev-libs/popt
+dev-libs/protobuf
 dev-libs/qcoro
 dev-libs/snowball-stemmer
 dev-libs/wayland
@@ -204,6 +213,7 @@ dev-python/urllib3
 dev-qt/qt5compat
 dev-qt/qtbase
 dev-qt/qtdeclarative
+dev-qt/qtimageformats
 dev-qt/qtlocation
 dev-qt/qtmultimedia
 dev-qt/qtpositioning
@@ -341,6 +351,7 @@ kde-plasma/polkit-kde-agent
 kde-plasma/powerdevil
 kde-plasma/print-manager
 kde-plasma/qqc2-breeze-style
+kde-plasma/spectacle
 kde-plasma/systemsettings
 kde-plasma/xdg-desktop-portal-kde
 llvm-core/llvm
@@ -372,6 +383,7 @@ media-libs/glu
 media-libs/gmmlib
 media-libs/harfbuzz
 media-libs/jbig2dec
+media-libs/kquickimageeditor
 media-libs/lcms
 media-libs/libaom
 media-libs/libass
@@ -389,6 +401,7 @@ media-libs/libjpeg-turbo
 media-libs/libjxl
 media-libs/libldac
 media-libs/libmad
+media-libs/libmng
 media-libs/libogg
 media-libs/libpng
 media-libs/libpulse
@@ -399,6 +412,7 @@ media-libs/libva-intel-media-driver
 media-libs/libvorbis
 media-libs/libwebp
 media-libs/mesa
+media-libs/opencv
 media-libs/openjpeg
 media-libs/opus
 media-libs/pcaudiolib
@@ -498,6 +512,7 @@ sys-auth/passwdqc
 sys-auth/polkit
 sys-auth/polkit-qt
 sys-block/parted
+sys-block/partitionmanager
 sys-boot/plymouth
 sys-devel/gcc
 sys-devel/gcc-config
@@ -518,6 +533,7 @@ sys-kernel/linux-headers
 sys-libs/gdbm
 sys-libs/glibc
 sys-libs/gpm
+sys-libs/kpmcore
 sys-libs/libblockdev
 sys-libs/libcap
 sys-libs/libcap-ng
@@ -543,6 +559,7 @@ virtual/acl
 virtual/dist-kernel
 virtual/editor
 virtual/glu
+virtual/jpeg
 virtual/krb5
 virtual/libcrypt
 virtual/libelf
