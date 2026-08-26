@@ -166,7 +166,13 @@ dev-qt/qtdeclarative              opengl vulkan
 dev-qt/qt5compat                  icu qml
 # Same shape: qttools[widgets] DEPENDs ~dev-qt/qtbase[opengl=]. Note this is NOT the "designer"
 # flag — that one is off globally (make.conf.in) and stays off.
-dev-qt/qttools                    opengl
+# assistant/linguist/qdbus default ON in qttools' own IUSE and none of our packages need them
+# (nothing in expected-packages.txt DEPENDs on qttools[assistant|linguist|qdbus] — checked
+# against the pinned tree). Left on they ship three menu entries with no audience on this
+# image: Qt Assistant (a docs viewer for Qt's own API docs), Qt Linguist (a translation-file
+# editor for Qt app developers), and the Qt D-Bus Viewer (a D-Bus debugger) — all
+# developer-facing tools, not something a user of the built image would ever launch.
+dev-qt/qttools                    opengl -assistant -linguist -qdbus
 dev-qt/qtmultimedia               opengl vulkan qml
 dev-qt/qtquick3d                  opengl vulkan
 # (qtbase's "cups" above is the Qt half of the printing decision: kde-plasma/print-manager and
