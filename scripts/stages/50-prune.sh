@@ -138,12 +138,32 @@ if [[ -d $T/usr/share/locale ]]; then
   done
 fi
 
-# firmware classes outside the desktop/laptop scope
-if [[ -f $REPO/config/prune-firmware.txt && -d $T/usr/lib/firmware ]]; then
-  while IFS= read -r line; do
-    [[ -z $line || $line == \#* ]] && continue
-    rm -rf -- "$T/usr/lib/firmware/$line"
-  done < "$REPO/config/prune-firmware.txt"
+# firmware and microcode classes outside the desktop/laptop scope.
+#
+# This loop used to live here and ONLY here, which is what plan/10 recorded as its one unclosed
+# finding: stage 40 builds the initrd before this stage runs, so the prune list reached the root
+# filesystem and never the UKI. Every 0.2.1 machine carried the full qcom ARM SoC tree on its ESP
+# and re-downloaded it with every A/B update. The deletion now happens in stage 40 immediately
+# before dracut (section 2c); the call here is the idempotent guard that keeps `--from 50` — and
+# every assertion below — meaning what it says.
+prune_hardware_trees "$T"
+
+# ...and now that the UKI exists and carries the early cpio, the microcode has no second reader.
+# /usr/lib/firmware/{intel,amd}-ucode is consulted at exactly one moment in this image's life:
+# stage 40 packing it into the UKI. The kernel loads microcode from that early cpio, before any
+# filesystem is mounted; the only thing that would ever read the root filesystem's copy is a late
+# reload through /sys/devices/system/cpu/microcode/reload, which nothing here does, and fwupd is
+# not installed. 13 MiB after the signature prune, and it compresses poorly — microcode is
+# already-compact binary, so this is nearly a megabyte of EROFS per megabyte deleted.
+#
+# THE ORDERING HAZARD THIS CREATES is real and is covered where it bites: a later
+# `build.sh --from 40` would run dracut against a target this stage already stripped and produce
+# a UKI with an empty early cpio — booting fine, and silently unpatched on every CPU. Stage 40
+# asserts GenuineIntel.bin and AuthenticAMD.bin are in the initrd it just built, so that path
+# fails loudly instead.
+if [[ -d $T/usr/lib/firmware/intel-ucode || -d $T/usr/lib/firmware/amd-ucode ]]; then
+  log "removing CPU microcode from the root filesystem (the UKI's early cpio is the only reader)"
+  rm -rf -- "$T/usr/lib/firmware/intel-ucode" "$T/usr/lib/firmware/amd-ucode"
 fi
 
 # dev files: headers, pkg-config/cmake metadata, GIR XML, vala bindings. This used to be an
@@ -360,6 +380,57 @@ prune_dangling_links() {
 prune_dangling_links "$T/usr/lib/modules" 2
 prune_dangling_links "$T/usr/lib" 1
 
+# ---- 3f. kernel modules that are dead by construction ---------------------------------
+# RUNS AFTER 3e ON PURPOSE. depmod at the end of this section reads the module directory, and
+# until 3e has swept them that directory still holds three symlinks pointing into the /usr/src
+# tree section 3 deleted. depmod survives them — it exits 0 — but prints three
+# "ERROR: fstatat(3, System.map): No such file or directory" lines into the build log, which is
+# exactly the kind of alarming-but-meaningless output that costs someone an hour later. Ordering
+# this after the sweep also means depmod indexes the tree in its final shape.
+#
+# NOT a general module prune. plan/11 deliberately leaves that out of scope — the module tree is
+# 623 MiB and a class-based cut of it (InfiniBand, DVB tuners, enterprise NICs) is a bigger
+# surface than this change wants. Everything below is a module that CANNOT load on this image,
+# not one that is merely unlikely to:
+#
+#   nouveau.ko (+ mxm-wmi.ko, which nothing else in the tree pulls) — x11-drivers/nvidia-drivers
+#     blacklists nouveau unconditionally in /etc/modprobe.d/nvidia.conf, VIDEO_CARDS no longer
+#     builds for it (plan/03), and prune-firmware.txt class 3 has already deleted every GSP blob
+#     it would request. It has been out of the initrd since 0.2.2; this is the root filesystem's
+#     copy, 7.6 MiB of a driver modprobe refuses to touch.
+#   kheaders.ko — CONFIG_IKHEADERS, whose whole job is handing the running kernel's headers to a
+#     BPF or systemtap build. plan/06 guarantees there is no compiler to hand them to.
+#   the in-kernel selftests — test_bpf, ext4-inode-test, fat_test, the KUnit framework and its
+#     helpers: 126 files, 13.4 MiB, loaded only by a test harness no image ships.
+#     config/dracut-omit-drivers.txt keeps the same set out of the initrd; the two halves of that
+#     decision should move together.
+MOD_ROOT="$T/usr/lib/modules"
+if [[ -d $MOD_ROOT ]]; then
+  # Same "exactly one" guard as stage 40, and for the same reason: with two module trees present
+  # this would depmod one of them and leave the other describing files it no longer has.
+  mapfile -t KVERS < <(find "$MOD_ROOT" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort)
+  (( ${#KVERS[@]} == 1 )) \
+    || die "expected exactly one kernel in $MOD_ROOT, found ${#KVERS[@]}: ${KVERS[*]:-<none>}"
+  KVER="${KVERS[0]}"
+  n_mod=0
+  while IFS= read -r -d '' m; do
+    rm -f -- "$m"; n_mod=$((n_mod + 1))
+  done < <(find "$MOD_ROOT/$KVER" -type f \
+             \( -name 'nouveau.ko*'  -o -name 'mxm-wmi.ko*' -o -name 'kheaders.ko*' \
+             -o -name 'test_*.ko*'   -o -name '*-test.ko*'  -o -name '*_test.ko*' \
+             -o -name '*kunit*.ko*' \) -print0)
+  log "dead modules: removed $n_mod (nouveau, kheaders, in-kernel selftests)"
+
+  # depmod is not optional after deleting modules, and the failure it prevents is a confusing
+  # one: modules.dep and modules.alias still name every file that just went, and modprobe turns
+  # a stale dependency line into "module not found" for the module that DEPENDED on it rather
+  # than for the one actually missing. Regenerate against the target root so the indexes describe
+  # what ships. (-b resolves $T/lib/modules, which is the merged-/usr symlink seed_merged_usr
+  # created, so this reads the same tree that was just pruned.)
+  require_cmds depmod
+  depmod -b "$T" "$KVER" || die "depmod failed after the dead-module prune"
+fi
+
 # ---- 4. THE ASSERTIONS (build fails if any trips) ------------------------------------
 fail=0
 violation() { warn "PRUNE VIOLATION: $*"; fail=1; }
@@ -408,6 +479,32 @@ fi
 # virtio VM.
 find "$T/usr/lib/modules" -name 'nvidia*.ko*' 2>/dev/null | grep -q . \
   || violation "no nvidia*.ko in /usr/lib/modules — the /usr/src prune cut too deep"
+# ...and section 3f must not have taken them either. The dead-module sweep matches on names, and
+# "nouveau" and "nvidia" are one careless glob apart — a `-name 'n*.ko'` slip would remove the
+# only GPU driver this image has and show up nowhere until a machine boots to a black screen.
+if find "$T/usr/lib/modules" -name 'nouveau.ko*' 2>/dev/null | grep -q .; then
+  violation "nouveau.ko survived section 3f — it is blacklisted by nvidia.conf and its firmware is
+  already pruned, so it can only ever be dead weight"
+fi
+# CPU microcode must be gone from the root filesystem: the UKI's early cpio is the only reader
+# (see the note in section 3). Stage 40 asserts the other half — that the UKI actually has it.
+for d in intel-ucode amd-ucode; do
+  [[ -e $T/usr/lib/firmware/$d ]] \
+    && violation "/usr/lib/firmware/$d survived the prune — it is dead weight on a read-only root
+  and the UKI already carries the copy the kernel loads"
+done
+# The module indexes must describe what actually ships. A stale modules.dep does not fail at
+# build time and does not fail at boot; it fails the first time something modprobes a module whose
+# recorded dependency was deleted, and it reports the error against the wrong module.
+if [[ -n ${KVER:-} && -f $T/usr/lib/modules/$KVER/modules.dep ]]; then
+  dep_missing="$(comm -23 \
+    <(sed 's/:/ /' "$T/usr/lib/modules/$KVER/modules.dep" | tr ' ' '\n' | sed '/^$/d' | LC_ALL=C sort -u) \
+    <(cd "$T/usr/lib/modules/$KVER" && find . -name '*.ko*' -printf '%P\n' | LC_ALL=C sort -u) \
+    | head -5)"
+  [[ -n $dep_missing ]] \
+    && violation "modules.dep names files that are not in the image (did depmod run after the
+  prune?): $(tr '\n' ' ' <<<"$dep_missing")"
+fi
 [[ -e $T/var/db/pkg    ]] && violation "VDB still present"
 [[ -e $T/var/db/repos  ]] && violation "ebuild repo still present"
 [[ -e $T/etc/portage   ]] && violation "/etc/portage still present"
@@ -541,4 +638,5 @@ done
 
 du -xsm "$T" | tail -n1 | tee -a "$REPORT_DIR/size-report.txt"
 log "prune complete, all assertions passed"
-stamp_write "$STAGE_NAME" "$(inputs_hash "$REPO/config/build.conf" "$REPO/config/prune-firmware.txt")"
+stamp_write "$STAGE_NAME" "$(inputs_hash "$REPO/config/build.conf" \
+  "$REPO/config/prune-firmware.txt" "$REPO/config/prune-microcode.txt")"

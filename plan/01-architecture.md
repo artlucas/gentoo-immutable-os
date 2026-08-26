@@ -86,8 +86,11 @@ Built entirely in the builder (never on the target — the target has no dracut/
    kernel modules dracut's `drm` module pulls in behind it. That is what puts the boot splash
    on screen before the root pivot rather than after it; the theme is built in stage 40 from
    `config/branding/` and must exist before dracut runs.
-   Early-KMS firmware is *not* packed into the initrd (kernel loads GPU firmware from
-   `/usr/lib/firmware` post-switch-root; keeps the UKI small).
+   Early-KMS firmware *is* in the initrd, and always was — dracut pulls whatever the DRM modules
+   declare in `MODULE_FIRMWARE`, so amdgpu's 84 MiB rode along from the moment the splash pulled
+   the `drm` module in. [plan/11](11-kernel-boot-audit.md) finding 4 made that deliberate rather
+   than incidental by adding the NVIDIA modules too, since without them plymouth had no DRM
+   device at all on NVIDIA and fell back to text.
 2. `ukify build --linux=<vmlinuz> --initrd=<initrd> --cmdline="root=PARTLABEL=root_${VERSION} rootfstype=erofs ro nvidia-drm.modeset=1 quiet" --os-release=@<target>/etc/os-release --output=${DISTRO_ID}_${VERSION}.efi`
 
 Cmdline notes: `nvidia-drm.modeset=1` is required for NVIDIA Wayland; harmless without the GPU.
@@ -96,6 +99,8 @@ The splash adds `splash plymouth.ignore-serial-consoles loglevel=3 rd.udev.log_l
 vt.global_cursor_default=0`. `plymouth.ignore-serial-consoles` is load-bearing, not cosmetic:
 without it plymouthd claims `ttyS0` as a text display and mirrors forwarded systemd status onto
 the serial log stage 70 scans for failure patterns.
+`rd.shell=0 rd.emergency=reboot` are added unless `DEBUG_INITRD=1`, and they are what makes the
+rollback below *automatic* rather than merely available — see the note under it.
 
 ### Automatic Boot Assessment (rollback)
 
@@ -110,6 +115,14 @@ systemd-boot's built-in boot counting:
 - If tries hit `+0-3`, systemd-boot skips the entry and boots the next-highest version — the
   previous UKI, whose rootfs still sits in the other slot. **Automatic rollback, no server, no
   agent.**
+
+The counter is decremented when systemd-boot *starts* an entry, not when the boot finishes, so a
+failure that hangs still burns a try — but only one per power cycle, and only if a human is there
+to press the button. That was the gap `rd.shell=0 rd.emergency=reboot` closes: an initrd that
+cannot mount the root slot used to sit at a dracut emergency prompt indefinitely, so falling back
+to the previous UKI took three manual power cycles. It now spends the three tries by itself, in
+seconds ([plan/11](11-kernel-boot-audit.md) finding 8). `DEBUG_INITRD=1` in `build.conf` restores
+the shell for development images.
 
 What counts as a "successful boot" is defined by what `boot-complete.target` requires. We wire
 in `systemd-boot-check-no-failures.service` plus a tiny `immos-boot-ok.service` that asserts

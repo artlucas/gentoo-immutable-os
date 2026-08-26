@@ -1,0 +1,118 @@
+# Intel CPU microcode signatures pruned from the image (stage 40, BEFORE dracut).
+# One family-model prefix per line, matched as usr/lib/firmware/intel-ucode/<prefix>*.
+# Lines starting with # ignored.
+#
+# WHY THIS FILE EXISTS AT ALL, AND WHY IT IS WORTH MORE THAN ITS SIZE SUGGESTS.
+# sys-firmware/intel-microcode installs 315 signature files, 34.5 MiB, covering every Intel CPU
+# from the Pentium 4 to the current Xeon. dracut's --early-microcode packs all of them into the
+# initrd's EARLY CPIO — which the kernel reads before it can decompress anything, so that cpio is
+# stored UNCOMPRESSED, by design. Measured on the 0.2.2 UKI: 34.8 MiB of a 135.5 MiB UKI is this
+# tree, a quarter of the whole boot artifact, and every A/B update downloads it. A megabyte cut
+# here is a megabyte off the ESP and off every update; a megabyte cut from the root filesystem is
+# worth roughly a third of that after EROFS compression.
+#
+# WHY THIS PRUNE IS SAFER THAN THE FIRMWARE ONE, not riskier. prune-firmware.txt warns that
+# getting it wrong produces a machine with no network. Microcode has no such failure mode: a CPU
+# whose signature is absent simply runs on the microcode its firmware already loaded. What is
+# lost is the OS-side errata and security update, not the ability to boot. The rule is therefore
+# the same as prune-firmware.txt's — hardware this image cannot be installed on — but the cost of
+# being wrong is a degraded machine rather than a dead one.
+#
+# NOT TOUCHED: amd-ucode/ (0.3 MiB, all of it current AMD desktop/laptop parts, nothing to gain)
+# and the amd-ucode side of the early cpio. Both classes below are Intel-only.
+#
+# NB on how this reaches the UKI. Stage 40 applies this list BEFORE it runs dracut, which is the
+# whole point — plan/10 records that the firmware prune ran in stage 50, after dracut, and so
+# never reached the UKI at all. Stage 50 re-applies it as a guard and then deletes what is left,
+# because the UKI carries the only copy anything ever reads (see the assertion in stage 40).
+
+# ---- class 1: socket-server, Xeon Phi and server-Atom parts -------------------------
+# Sold only as datacenter silicon; outside plan/03's desktop/laptop scope for exactly the reason
+# the server NICs in prune-firmware.txt are. 21.0 MiB, and the top two entries are 12 MiB of it.
+#
+# THREE ENTRIES HERE ARE ARGUABLE AND GO ANYWAY, stated rather than left to be rediscovered:
+#   06-8f  Sapphire Rapids. Its Xeon W-2400/3400 siblings ARE sold as workstations — this is the
+#          single largest entry at 5.75 MiB, and a workstation is a desktop. It goes because a
+#          2023 Xeon W is outside the hardware window the README states, and because the cost of
+#          being wrong is one missing errata update rather than a machine that will not boot.
+#   06-55  Skylake-SP, which shares a signature with the Skylake-X/W HEDT parts (i9-79xx, 2017).
+#   06-ae  Granite Rapids-D, the edge/telco variant of 06-ad.
+06-8f
+06-ad
+06-ae
+06-af
+06-dd
+06-cf
+06-6a
+06-6c
+06-55
+06-57
+06-85
+06-5f
+06-4d
+06-86
+06-b6
+
+# ---- class 2: pre-2015 parts and phone/tablet Atom SoCs -----------------------------
+# 1.9 MiB. Two kinds of entry on one date rule — the README targets "machines from roughly the
+# last 5 years", and none of these was sold inside it:
+#
+#   Pentium 4 through Broadwell (0f-*, 06-0*, 06-1*, 06-2*, 06-3*, and the two Broadwell client
+#   models). This also subsumes the HEDT/EP parts that share a signature with a desktop
+#   Extreme-edition chip — 06-2d, 06-3e, 06-3f, 06-4f — which is why they are here rather than
+#   in class 1: they are out of scope on age, not only on socket.
+#
+#   06-4a / 06-5a / 06-5d: Merrifield, Moorefield and SoFIA. Phone and tablet Atom SoCs that were
+#   never fitted to a PC at all, so they cannot appear here regardless of date.
+#
+# KEPT DELIBERATELY, though they look like they belong here: 06-37 (Bay Trail), 06-4c (Braswell/
+# Cherry Trail), 06-5c (Apollo Lake) and 06-7a (Gemini Lake) are the budget Atom-class CLIENT
+# parts, and plan/08 names them explicitly as in scope ("Budget Atom-class CPUs sold within the
+# window lack AVX2" is why the image has no AVX2 floor). Pruning those would contradict a
+# documented decision to support them.
+0f-00
+0f-01
+0f-02
+0f-03
+0f-04
+0f-06
+06-01
+06-03
+06-05
+06-06
+06-07
+06-08
+06-09
+06-0a
+06-0b
+06-0d
+06-0e
+06-0f
+06-15
+06-16
+06-17
+06-1a
+06-1c
+06-1d
+06-1e
+06-25
+06-26
+06-2a
+06-2c
+06-2d
+06-2e
+06-2f
+06-35
+06-36
+06-3a
+06-3c
+06-3d
+06-3e
+06-3f
+06-45
+06-46
+06-47
+06-4f
+06-4a
+06-5a
+06-5d

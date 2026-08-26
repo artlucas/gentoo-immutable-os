@@ -101,6 +101,84 @@ if [[ $SPLASH_LINT_OK == 1 ]]; then
 else
     FAILED=1
 fi
+# DEBUG_INITRD decides whether a broken root slot drops to a dracut shell or reboots into the
+# other slot, i.e. whether plan/01's automatic rollback is automatic. Same three properties as
+# SPLASH_BACKEND above: both values accepted, anything else rejected, absent key defaults — a
+# build.conf predating the knob must still validate.
+DBG_LINT_OK=1
+for v in 0 1; do
+    ( load_config; DEBUG_INITRD="$v"; validate_config ) >/dev/null 2>&1 \
+        || { echo "  FAIL: DEBUG_INITRD=$v rejected"; DBG_LINT_OK=0; }
+done
+for v in "" 2 yes true -1; do
+    if ( load_config; DEBUG_INITRD="$v"; validate_config ) >/dev/null 2>&1; then
+        echo "  FAIL: DEBUG_INITRD=$v accepted"; DBG_LINT_OK=0
+    fi
+done
+if ( load_config; unset DEBUG_INITRD; validate_config; [[ $DEBUG_INITRD == 0 ]] ) >/dev/null 2>&1; then
+    :
+else
+    echo "  FAIL: DEBUG_INITRD does not default to 0"; DBG_LINT_OK=0
+fi
+[[ $DBG_LINT_OK == 1 ]] && echo "  ok: DEBUG_INITRD validation" || FAILED=1
+
+# ---- the three hardware lists ------------------------------------------------------------
+# prune-firmware.txt, prune-microcode.txt and dracut-omit-drivers.txt are read by stages 40 and
+# 50 and drive deletions on a root filesystem and the contents of the UKI. All three are mostly
+# comment by design, so the failure they invite is a typo that parses to nothing and silently
+# prunes nothing — which looks exactly like success. Check the shape offline, where it is free.
+section "hardware list files"
+LIST_OK=1
+for l in prune-firmware.txt prune-microcode.txt dracut-omit-drivers.txt; do
+    f="$REPO_ROOT/config/$l"
+    if [[ ! -f $f ]]; then
+        echo "  FAIL: $l missing"; LIST_OK=0; continue
+    fi
+    mapfile -t ENTRIES < <(read_list_file "$f")
+    if (( ${#ENTRIES[@]} == 0 )); then
+        echo "  FAIL: $l parses to zero entries"; LIST_OK=0; continue
+    fi
+    printf '  ok   %s (%d entries)\n' "$l" "${#ENTRIES[@]}"
+done
+# prune-firmware.txt names paths under /usr/lib/firmware and is applied with rm -rf as root.
+BAD="$(read_list_file "$REPO_ROOT/config/prune-firmware.txt" | grep -E '^/|\.\.' || true)"
+if [[ -n $BAD ]]; then
+    printf '  FAIL: prune-firmware.txt has absolute or traversing entries:\n%s\n' "$BAD"; LIST_OK=0
+fi
+# prune-microcode.txt entries are bare signature prefixes, matched as intel-ucode/<entry>*.
+BAD="$(read_list_file "$REPO_ROOT/config/prune-microcode.txt" | grep -Ev '^[0-9a-f]{2}-[0-9a-f]{2}$' || true)"
+if [[ -n $BAD ]]; then
+    printf '  FAIL: prune-microcode.txt entries must be ff-mm signature prefixes:\n%s\n' "$BAD"; LIST_OK=0
+fi
+# ...and it must not name a signature the image is meant to keep. plan/08 puts budget Atom-class
+# client CPUs explicitly in scope (they are why the image has no AVX2 floor), so pruning one of
+# them would contradict a documented decision — and would do it invisibly, on hardware no test
+# here runs on.
+for keep in 06-37 06-4c 06-5c 06-7a; do
+    if read_list_file "$REPO_ROOT/config/prune-microcode.txt" | grep -qx "$keep"; then
+        echo "  FAIL: prune-microcode.txt prunes $keep, an in-scope Atom-class client CPU (plan/08)"
+        LIST_OK=0
+    fi
+done
+# dracut-omit-drivers.txt is matched against MODULE NAMES; a path-shaped entry is a silent no-op
+# (see that file's header, and the empirical check in plan/11).
+BAD="$(read_list_file "$REPO_ROOT/config/dracut-omit-drivers.txt" | grep -E '/' || true)"
+if [[ -n $BAD ]]; then
+    printf '  FAIL: dracut-omit-drivers.txt has path-shaped entries (dracut matches names):\n%s\n' "$BAD"; LIST_OK=0
+fi
+# ...and it must never omit a module this image boots on. erofs is the root filesystem, overlay
+# is the /etc overlay, and the nvidia trio is the early-KMS splash: a too-greedy regex here is
+# the difference between a UKI that shrank and one that cannot mount its own root.
+for m in erofs overlay nvme sd_mod ahci nvidia nvidia_modeset nvidia_drm amdgpu i915 xe virtio_blk usb_storage; do
+    HIT="$(read_list_file "$REPO_ROOT/config/dracut-omit-drivers.txt" \
+        | sed 's/-/_/g' | while IFS= read -r p; do [[ $m =~ ^${p}$ ]] && echo "$p"; done)"
+    if [[ -n $HIT ]]; then
+        echo "  FAIL: dracut-omit-drivers.txt pattern '$HIT' would omit '$m', which this image boots on"
+        LIST_OK=0
+    fi
+done
+[[ $LIST_OK == 1 ]] && echo "  ok: hardware lists well-formed" || FAILED=1
+
 # sets must not reference obviously bogus atoms (basic shape check)
 BAD_ATOMS="$(grep -hEv '^\s*(#|$)' "$REPO_ROOT"/config/portage/sets/* \
     | sed 's/\s*#.*$//' | grep -Ev '^[a-z0-9-]+/[A-Za-z0-9._+-]+\s*$' || true)"

@@ -1,0 +1,160 @@
+# Kernel modules kept OUT of the initramfs (stage 40, passed to dracut --omit-drivers).
+# One module-name pattern per line. Lines starting with # ignored.
+#
+# READ THIS BEFORE ADDING A LINE — the flag does not do what its name suggests.
+# dracut wraps every entry as "^<entry>$" and rewrites "-" to "_" (dracut:2091,2099), and
+# dracut-install's -N matches the MODULE NAME, never the path. Verified directly against the
+# builder's dracut 111:
+#
+#     -N '^lpfc$'                    -> lpfc.ko excluded
+#     -N '^drivers/scsi/lpfc/.*$'    -> lpfc.ko INSTALLED
+#     -N '^.*scsi/lpfc.*$'           -> lpfc.ko INSTALLED
+#
+# So a path-shaped entry is a silent no-op: no error, no warning, and the only symptom is a UKI
+# that did not shrink. Write module names (extended-regex metacharacters are fine, and "-" may
+# be spelled either way since dracut normalises it). Stage 40 asserts afterwards that none of
+# these names is in the built initrd, which is what turns a mistyped entry into a failed build.
+#
+# WHAT BELONGS HERE, AND WHAT DOES NOT. This list is about the INITRAMFS only — everything below
+# stays in the root filesystem's module tree, where a user can still modprobe it by hand or mount
+# such a volume after boot. The test for admission is narrow: the initrd of this image mounts
+# exactly two filesystems, the erofs root named by root=PARTLABEL= and the ext4 /var carrying
+# x-initrd.mount, both on a local GPT disk. A driver that could only ever matter for some OTHER
+# root device, or for a network this initrd does not bring up (dracut's "network" module is
+# omitted), cannot be reached before switch-root by construction.
+#
+# Measured on the 0.2.2 initrd: the 60 modules these patterns match are 56.7 MiB of a 374 MiB
+# uncompressed initramfs, and dropping a module drops the firmware it declares with it — which is
+# how the nouveau entry in class 6 was worth 151 MiB.
+
+# ---- class 1: Fibre Channel / SAN / iSCSI-offload HBAs -------------------------------
+# 13 MiB. Storage reached over a fabric. The root device here is a partition on a local disk,
+# and NVMe and AHCI are BUILT IN to this kernel (checked against modules.builtin), so the
+# controllers that actually matter are not modules at all.
+lpfc
+qla2xxx
+qla4xxx
+bfa
+efct
+fnic
+csiostor
+qedf
+bnx2fc
+snic
+be2iscsi
+bnx2i
+qedi
+cxgb3i
+cxgb4i
+libcxgbi
+
+# ---- class 2: SCSI/NVMe target and NVMe-over-Fabrics ---------------------------------
+# 2 MiB. The target stack is for a machine that SERVES storage to others; this one consumes it.
+# nvme_core/nvme are builtin and unaffected — only the fabrics transports go.
+target_core_mod
+target_core_.*
+tcm_.*
+nvmet
+nvmet_.*
+nvme-fc
+nvme-fabrics
+nvme-rdma
+nvme-tcp
+
+# ---- class 3: InfiniBand / RDMA ------------------------------------------------------
+# 2.2 MiB. Not desktop or laptop hardware in any configuration.
+ib_.*
+rdma_.*
+iw_.*
+
+# ---- class 4: cluster and network filesystems ----------------------------------------
+# 22 MiB, the largest class. None of these can be the root or /var filesystem of this image.
+# NB cifs is here even though Dolphin browses smb:// — KIO does that through libsmbclient in
+# userspace, not through the kernel client, and the kernel client stays in the root module tree
+# for anyone who wants `mount -t cifs` after boot.
+# netfs and cachefiles go with them: they exist only as the shared cache layer under ceph, afs,
+# cifs, nfs and 9p, every one of which is omitted here.
+cifs
+ocfs2
+ocfs2_.*
+gfs2
+dlm
+ceph
+libceph
+kafs
+rxrpc
+sunrpc
+ubifs
+nilfs2
+jfs
+f2fs
+orangefs
+9p
+9pnet.*
+netfs
+fscache
+cachefiles
+# The NFS helper modules, and the key-type module those clients use to resolve server names.
+# nfs.ko itself is not in the initrd (dracut's "nfs" module is omitted), so these three are
+# already orphans; dns_resolver has no consumer left once cifs, ceph, kafs and nfs are gone.
+nfs_acl
+nfs_localio
+grace
+dns_resolver
+
+# ---- class 5: clustered and layered block devices ------------------------------------
+# 3.5 MiB. Same reasoning as class 4, one layer down.
+drbd
+dm-vdo
+bcache
+
+# ---- class 6: dead here, or present only for an offload path -------------------------
+# 12 MiB.
+#
+# nouveau moved here from a literal --omit-drivers argument in 40-configure.sh. Unchanged in
+# effect and unchanged in reasoning: x11-drivers/nvidia-drivers blacklists it in
+# /etc/modprobe.d/nvidia.conf (which IS copied into the initrd), VIDEO_CARDS does not build it,
+# and prune-firmware.txt class 3 has already deleted the GSP blobs it would ask for. Without
+# this line dracut's driver sweep pulls nouveau.ko and instmods drags ~151 MiB of firmware in
+# behind it (plan/10). It takes mxm_wmi with it, which nothing else in the initrd needs.
+nouveau
+#
+# mac80211/cfg80211: dracut's "network" module is omitted, so the initrd brings up no network at
+# all and a wireless stack in it has nothing to do.
+mac80211
+cfg80211
+# ...and the wireless drivers those two would have carried. Only the MediaTek mt76 family reaches
+# the initrd at all, and only because its SDIO variant trips dracut's mmc sweep. Left behind they
+# would be six modules whose mac80211/cfg80211 dependency this list just removed — loadable by
+# nothing. The Wi-Fi drivers and every mt76xx FIRMWARE blob stay in the root filesystem, where
+# NetworkManager uses them; this is the initrd only.
+mt76.*
+mt79.*
+#
+# qed and cxgb4 are Ethernet drivers, and they are in the initrd only because their FCoE/iSCSI
+# offload paths export block-layer symbols that dracut's generic sweep greps for. Their NIC
+# halves are useless here for the same reason mac80211 is. This is also why no general
+# enumeration of Ethernet drivers is needed: with "network" omitted, these are the only ones
+# dracut pulls at all.
+qed
+cxgb4
+cxgb4vf
+#
+# QuickAssist: Intel's crypto/compression accelerator cards, server parts.
+intel_qat
+qat_.*
+#
+# In-kernel selftests (CONFIG_*_KUNIT_TEST and friends): test_bpf, ext4-inode-test, fat_test and
+# 123 siblings, 13.4 MiB in the module tree. They exist to be loaded by a test harness, which no
+# image ships and no initrd is. Stage 50 deletes the same set from the root filesystem; this is
+# the initrd half of one decision.
+#
+# The three patterns cover both spellings, and they can, because dracut normalises "-" to "_" on
+# BOTH sides — in the pattern (dracut:2091) and in the module name it compares against. Verified:
+# -N '^.*_test$' excludes hid-uclogic-test.ko as well as fat_test.ko. That is also why no
+# dash-spelled pattern can be written here at all; it would be rewritten before it was used.
+# ".*kunit.*" rather than ".*_kunit" so it also catches the framework itself (kunit.ko), the
+# per-subsystem helpers (drm_kunit_helpers) and the plural (vkms-kunit-tests).
+test_.*
+.*_test
+.*kunit.*

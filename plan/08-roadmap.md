@@ -53,6 +53,12 @@ Secure Boot for a full trust chain.
   `COMMON_FLAGS`, its own binpkg cache (the image compiles what it ships, so the two variants
   cannot share one) and its own update channel; the generic image remains the compatibility
   floor.
+- **Own the kernel config** — `sys-kernel/gentoo-kernel` instead of `-bin`. The single largest
+  remaining lever, and the one thing [plan/11](11-kernel-boot-audit.md) could not touch: the
+  generic dist-kernel ships 4910 modules / 623 MiB, has no `DRM_SIMPLEDRM` (so the modeset-gap
+  tradeoff below stays), and cannot compress modules. A config cut to this image's hardware scope
+  would be worth more than every prune in plan/10 and plan/11 combined. The cost is owning that
+  config across every kernel bump, and a source kernel build in the pipeline.
 - **Fingerprint (fprintd), IPU6/MIPI camera stack (libcamera)** as ecosystems mature.
 - **ARM64** — the pipeline is arch-parameterizable in principle (crossdev or native arm64
   builder); explicitly out of scope until AMD64 is solid.
@@ -73,7 +79,7 @@ Secure Boot for a full trust chain.
 | No Secure Boot in v1 | Owner decision; documented "disable in firmware"; roadmap #2 |
 | Boot splash cannot render a passphrase prompt | `sys-boot/plymouth[-pango]`: all splash text is pre-rendered to PNG at build time, so no font ships in the image. Costs nothing today (no LUKS, no fsck prompt); adding full-disk encryption means turning `pango` back on first — it pulls no new packages, since pango/cairo/libpng are already there for the GTK theming bridge |
 | Possible brief console flash between firmware logo and splash | `gentoo-kernel-bin` is a binary dist-kernel and `/usr/src` is pruned, so the graphics config is whatever Gentoo ships and cannot be changed without leaving `-bin`. Verified against the 6.18.43 config: `CONFIG_FRAMEBUFFER_CONSOLE_DEFERRED_TAKEOVER=y` (good), but `DRM_SIMPLEDRM`, `DRM_EFIDRM`, `DRM_VESADRM` and `SYSFB_SIMPLEFB` are all **unset**, and `CONFIG_FB_DEVICE` is unset too — so there is no generic firmware-framebuffer DRM device and no `/dev/fb0` either. Plymouth must wait for a real DRM driver, and plymouth's `frame-buffer.so` renderer can never be the fallback. Pre-empting the firmware logo is now possible via `SPLASH_BACKEND=both` (a `.splash` section in the UKI, see [04](04-image-and-boot.md)), but that covers only the pre-kernel window; closing the modeset gap itself needs a kernel with simpledrm, i.e. `sys-kernel/gentoo-kernel` with a custom config |
-| NVIDIA machines get no splash until after the root pivot | The proprietary modules live in `/usr/lib/modules/<kver>/video/` and are **not** in the initrd (dracut's `drm` module globs `drivers/gpu/drm` only), while `/etc/modprobe.d/nvidia.conf` — which *is* in the initrd — blacklists `nouveau`. So the initrd has no usable DRM device on NVIDIA at all: plymouth waits out `DeviceTimeout=8` and falls back to text. Fix is `--add-drivers "nvidia nvidia-drm nvidia-modeset"` in stage 40. (The related ~150 MiB of nouveau GSP firmware that used to ride along in the initrd for that blacklisted driver is gone: stage 40's dracut invocation now passes `--omit-drivers 'nouveau'`, plan/10.) |
+| ~~NVIDIA machines get no splash until after the root pivot~~ | **RESOLVED 2026-08-25 ([plan/11](11-kernel-boot-audit.md) finding 4).** Stage 40 now passes `--add-drivers "nvidia nvidia_modeset nvidia_drm"`, and `usr/lib/modprobe.d/10-nvidia-drm.conf` adds `softdep nvidia post: nvidia-modeset nvidia-drm` — the missing half, since neither of those two modules has a modalias for udev to match and nothing in the initrd would otherwise load them. Cost is +71.5 MiB on the UKI, almost all of it the GSP firmware dracut pulls from `nvidia.ko`'s `MODULE_FIRMWARE`; taken deliberately with the numbers in hand. Still needs confirming on real NVIDIA hardware — stage 70's virtio guest cannot see a splash |
 | UEFI-only, no BIOS | 5-year hardware window is UEFI-universal |
 | Full-image (non-delta) updates | Simplicity + sysupdate stock behavior; roadmap #4 |
 | No hibernation (zram-only swap) | Avoids swap-partition sizing and resume-offset fragility on an immutable, repartition-on-first-boot design |
@@ -97,9 +103,13 @@ Secure Boot for a full trust chain.
    fall back *to*: `kde-plasma/kwin` is Wayland-only and `kwin-x11` is not installed. So if this
    fails on NVIDIA it fails at the session level and the fix is session-wide, not greeter-only.
 5. `bash-completion`/zsh data: keep or prune — size report decides (marked REVISIT in 06).
-6. **Restore a retain-splash hand-off.** `gdm[plymouth]` quit the splash itself with
-   `--retain-splash` once the greeter had painted, so there was no black frame between splash
-   and login. Plasma Login Manager has no equivalent, so `plymouth-quit.service` tears the
-   splash down and `plasmalogin.service` is merely ordered after `plymouth-quit-wait` — a
-   deterministic hand-off, but a visible one. Worth a look at whether PLM can be made to run
-   `plymouth quit --retain-splash` from a drop-in `ExecStartPre`/`ExecStartPost`.
+6. ~~**Restore a retain-splash hand-off.**~~ **RESOLVED 2026-08-25 ([plan/11](11-kernel-boot-audit.md)
+   finding 7)** — though not the way this question proposed, and the difference is worth keeping.
+   Running `plymouth quit --retain-splash` from a drop-in `ExecStartPre` on `plasmalogin.service`
+   does *not* work: PLM's own vendor unit already carries `After=plymouth-quit.service`, so
+   `Conflicts=` is a race rather than a guarantee, and ordering PLM after `plymouth-quit-wait`
+   while PLM is the only thing that quits plymouthd deadlocks the two units. What works is
+   changing the teardown instead of who performs it — a drop-in on `plymouth-quit.service`
+   replacing its `ExecStart` with `plymouth quit --retain-splash`, leaving every ordering alone.
+   Removed on `--console-only`, where agetty draws into the same framebuffer. Still needs a
+   visual check in QEMU; nothing automated here can see it.

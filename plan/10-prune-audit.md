@@ -573,6 +573,14 @@ the stage-50 audit gate passed against the unmodified `expected-packages.txt`.
 
 ### The UKI did not shrink, and that is a finding
 
+> **CLOSED 2026-08-25 — see [plan/11](11-kernel-boot-audit.md).** The stage-ordering fix below is
+> implemented: `prune_hardware_trees()` in `scripts/lib/common.sh` now runs from stage 40 as
+> section 2c, immediately before dracut, with stage 50 keeping an idempotent copy as a guard. It
+> was the first of the two candidate fixes named at the end of this section, chosen for the reason
+> given there. plan/11 also found the larger thing this section did not look for: a quarter of the
+> UKI was CPU microcode sitting in the *uncompressed* early CPIO, which the same reordering made
+> prunable. Numbers and the full audit are in that document; everything below is left as written.
+
 `immos_0.2.1.efi` is the same 240.7 MiB as 0.2.0, and its initrd still contains **272 MiB of
 firmware — including every blob finding 2 just deleted**. The cause is stage ordering:
 `40-configure.sh` runs dracut, `50-prune.sh` runs the firmware prune, and 40 comes first. So

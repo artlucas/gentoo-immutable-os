@@ -224,9 +224,48 @@ done
   — the theme names ModuleName=script and plymouthd would have nothing to interpret it with."
 log "boot splash theme installed at $THEME_DIR (dracut helper: $PPI)"
 
+# The splash-to-greeter hand-off (plymouth-quit.service.d/10-retain-splash.conf) hardcodes this
+# path. systemd's "-" prefix swallows a 203/EXEC just as it swallows a non-zero exit, so a
+# plymouth binary that moved would not fail anything — the splash would simply go back to
+# blanking the screen before the greeter, silently, which is the regression that drop-in exists
+# to remove.
+RETAIN_DROPIN="$TARGET/usr/lib/systemd/system/plymouth-quit.service.d/10-retain-splash.conf"
+[[ -x $TARGET/usr/bin/plymouth ]] \
+  || die "verify: /usr/bin/plymouth missing from target — plymouth-quit.service.d/10-retain-splash.conf
+  names that exact path and systemd would ignore its absence"
+# ...and it is a DESKTOP-only drop-in. On --console-only the next thing to touch the screen is
+# agetty, which renders its login prompt into the same framebuffer — a retained splash would sit
+# behind the text rather than being replaced by a greeter. That image keeps the plain teardown.
+if [[ ${CONSOLE_ONLY:-0} == 1 && -f $RETAIN_DROPIN ]]; then
+  log "console-only image: removing the retain-splash drop-in (no greeter to hand off to)"
+  rm -f -- "$RETAIN_DROPIN"
+  rmdir -- "$(dirname -- "$RETAIN_DROPIN")" 2>/dev/null || true
+fi
+
+# ---- 2c. firmware + microcode prune, BEFORE dracut -----------------------------------
+# This has to happen here rather than in stage 50, and the reason is the finding plan/10 closed
+# with rather than solved: stage 50 runs AFTER this stage, so config/prune-firmware.txt only ever
+# reached the root filesystem. The 0.2.1 UKI still carried every blob the list names — the qcom
+# ARM SoC firmware included — on the ESP of every installed machine and in every A/B update.
+#
+# The microcode half is why this is worth more than tidiness. dracut's --early-microcode packs
+# /usr/lib/firmware/{intel,amd}-ucode into the initrd's EARLY cpio, which the kernel must read
+# before it can decompress anything and which is therefore stored UNCOMPRESSED. On the 0.2.2 UKI
+# that was 34.8 MiB of 135.5 — a quarter of the boot artifact, at 1 byte saved per byte pruned.
+#
+# Stage 50 calls this again as a guard, so `--from 50` converges too. Idempotent either way.
+prune_hardware_trees "$TARGET"
+
 # ---- 3. initrd + UKI (built HERE, in the builder — the target has no dracut) --------
-KVER="$(basename -- "$(find "$TARGET/usr/lib/modules" -mindepth 1 -maxdepth 1 -type d | head -n1)")"
-[[ -n $KVER ]] || die "cannot determine kernel version from target modules"
+# Exactly one, asserted. This used to be `find … | head -n1`, which picks an ARBITRARY directory
+# in readdir order — so a target that ever ended up with two module trees (a kernel bump merged
+# into an existing root, say) would build a UKI for whichever one the filesystem happened to list
+# first, with a kernel and a module set that disagree. Nothing downstream would notice: the image
+# builds, boots as far as the initrd, and then has no drivers.
+mapfile -t KVERS < <(find "$TARGET/usr/lib/modules" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort)
+(( ${#KVERS[@]} == 1 )) \
+  || die "expected exactly one kernel in $TARGET/usr/lib/modules, found ${#KVERS[@]}: ${KVERS[*]:-<none>}"
+KVER="${KVERS[0]}"
 log "kernel: $KVER"
 
 KERNEL_IMG=""
@@ -295,21 +334,55 @@ for l in "$TARGET"/usr/lib64/libply*.so* "$TARGET"/usr/lib/libply*.so*; do
   [[ -e $l ]] && PLYMOUTH_LIBS+=("${l#"$TARGET"}")
 done
 (( ${#PLYMOUTH_LIBS[@]} )) || die "no libply* libraries in $TARGET — is sys-boot/plymouth installed?"
+
+# The driver omit list. Moved out of a literal argument (it used to read --omit-drivers "nouveau")
+# into config/dracut-omit-drivers.txt, which carries the class-by-class reasoning the way
+# prune-firmware.txt does — and, more to the point, carries the warning that dracut matches these
+# against the module NAME and not the path, so a path-shaped entry is a silent no-op.
+# nouveau is still in there, unchanged in effect; it just has company now.
+mapfile -t OMIT_DRIVERS < <(read_list_file "$REPO/config/dracut-omit-drivers.txt")
+(( ${#OMIT_DRIVERS[@]} )) || die "config/dracut-omit-drivers.txt parsed to nothing"
+log "omitting ${#OMIT_DRIVERS[@]} driver patterns from the initrd"
+
+# NVIDIA early KMS. Closes the plan/08 tradeoff "NVIDIA machines get no splash until after the
+# root pivot": the initrd had no usable DRM device on NVIDIA at all, so plymouthd waited out
+# DeviceTimeout=8 and fell back to text on every NVIDIA machine, every boot, silently.
+#
+# --add-drivers, deliberately NOT --force-drivers. The force variant also writes a modules-load.d
+# entry, which would load nvidia.ko on every AMD and Intel machine too — a pointless probe and
+# ~30 MiB of resident driver on hardware it will never bind. Autoloading is left to udev, which
+# matches nvidia.ko's PCI aliases; the other two modules have no modalias at all and are pulled
+# in behind it by the softdep in usr/lib/modprobe.d/10-nvidia-drm.conf (installed by the overlay
+# in section 1, and copied into the initrd by dracut along with the rest of modprobe.d).
+#
+# COST, measured on 0.2.2 and stated here because it is the one change that makes the UKI bigger:
+# nvidia.ko 24.3 + nvidia-modeset 4.5 + nvidia-drm 0.5 MiB, and — the expensive half — nvidia.ko
+# declares MODULE_FIRMWARE for gsp_tu10x.bin (28.7) and gsp_ga10x.bin (69.5), so dracut pulls
+# 98 MiB of GSP firmware in behind them. +71.5 MiB compressed, nearly all of it the firmware,
+# which only compresses to 84%. nvidia-uvm and nvidia-peermem are NOT listed: they are the CUDA
+# side, nothing in an initrd touches them, and the verify block below asserts they stayed out.
+NVIDIA_DRIVERS="nvidia nvidia_modeset nvidia_drm"
+
 dracut --force --no-hostonly --reproducible \
   --sysroot "$TARGET" --kver "$KVER" \
   --add "systemd etc-overlay systemd-repart plymouth" \
   --install "${PLYMOUTH_LIBS[*]}" \
-  --omit "network network-legacy nfs iscsi lvm mdraid multipath dmraid cifs brltty" \
-  --omit-drivers "nouveau" \
+  --omit "network network-legacy nfs iscsi lvm mdraid multipath dmraid cifs brltty virtfs virtiofs lunmask nvdimm qemu-net resume" \
+  --omit-drivers "${OMIT_DRIVERS[*]}" \
+  --add-drivers "$NVIDIA_DRIVERS" \
+  --compress "zstd -19 -T0" \
   --early-microcode \
   "$INITRD"
-# --omit-drivers nouveau: x11-drivers/nvidia-drivers blacklists nouveau via
-# /etc/modprobe.d/nvidia.conf (also carried into the initrd), so it can never modprobe by
-# modalias here — early-boot nouveau was already dead, just not absent. Without this flag
-# dracut's default driver sweep (70kernel-modules with $drivers unset) pulls every module the
-# kernel has, nouveau.ko included, and instmods drags its ~151 MiB of GSP firmware in behind
-# it (plan/10). Surgical: drops nouveau.ko + mxm-wmi.ko only, leaves amdgpu/i915/xe/radeon's
-# modules and firmware untouched, so early KMS on AMD/Intel is unaffected.
+# The six --omit additions, all of them dracut modules for a root device this image never has:
+# virtfs/virtiofs (VM shared folders as root — the 9p driver goes with them in the omit list),
+# lunmask (SAN LUN masking), nvdimm (pmem), qemu-net (no network in the initrd at all) and
+# resume (plan/08: zram-only swap, no hibernation, so there is no resume= to honour). "qemu"
+# itself stays — stage 70's guest boots virtio-blk.
+#
+# --compress: dracut's auto-detected default is "zstd -15" (dracut:3253). -19 measured 69.9 ->
+# 61.2 MiB on the trimmed tree, for build time and nothing else; dracut's own
+# check_kernel_compress_support already guards whether the kernel can read zstd at all, and the
+# level does not change that answer.
 
 # take the borrowed dracut tree back out of the image, keeping the module the overlay ships
 rm -rf -- "$DRACUT_LIB"
@@ -349,8 +422,19 @@ case $SPLASH_BACKEND in
   plymouth|both) SPLASH_TOKENS+=(splash) ;;
   stub|none)     SPLASH_TOKENS+=(plymouth.enable=0) ;;
 esac
-CMDLINE="root=PARTLABEL=$ROOT_PARTLABEL rootfstype=erofs ro nvidia-drm.modeset=1 console=tty0 console=ttyS0 quiet ${SPLASH_TOKENS[*]} plymouth.ignore-serial-consoles loglevel=3 rd.udev.log_level=3 vt.global_cursor_default=0"
-log "splash backend: $SPLASH_BACKEND"
+# Initrd failure policy (DEBUG_INITRD in build.conf). On the default (0) a root filesystem that
+# cannot be found or mounted REBOOTS rather than dropping to a dracut emergency shell. That is
+# what makes plan/01's automatic rollback actually automatic: systemd-boot decrements an entry's
+# tries counter when it BOOTS it, but a machine parked at an emergency prompt never finishes the
+# attempt — so a bad slot used to need three manual power cycles before sd-boot gave up on it and
+# fell through to the previous UKI. Rebooting spends those three tries by itself, in seconds.
+# rd.shell=0 is the half that matters on a machine with no keyboard attached; rd.emergency=reboot
+# is the half that matters on one that has.
+RECOVERY_TOKENS=()
+[[ ${DEBUG_INITRD:-0} == 1 ]] || RECOVERY_TOKENS+=(rd.shell=0 rd.emergency=reboot)
+
+CMDLINE="root=PARTLABEL=$ROOT_PARTLABEL rootfstype=erofs ro nvidia-drm.modeset=1 console=tty0 console=ttyS0 quiet ${SPLASH_TOKENS[*]} plymouth.ignore-serial-consoles loglevel=3 rd.udev.log_level=3 vt.global_cursor_default=0 ${RECOVERY_TOKENS[*]}"
+log "splash backend: $SPLASH_BACKEND; initrd emergency shell: ${DEBUG_INITRD:-0}"
 
 # The stub bitmap is composed from the PNGs install_branding() just rasterised, so it cannot
 # drift from the Plymouth theme — one set of sources, one rasterisation, two consumers.
@@ -423,6 +507,83 @@ if command -v lsinitrd >/dev/null 2>&1; then
   for a in slab-top slab-mid slab-bot wordmark status-left status-right; do
     has "themes/$DISTRO_ID/$a.png" || die "verify: initrd theme is missing $a.png"
   done
+
+  # ---- CPU microcode ------------------------------------------------------------------
+  # Stage 50 deletes /usr/lib/firmware/{intel,amd}-ucode from the root filesystem, because the
+  # early cpio built right here is the only copy anything ever reads. That creates exactly one
+  # dangerous ordering: a later `build.sh --from 40` runs dracut against a target the previous
+  # run already stripped, and --early-microcode then contributes NOTHING. The image boots
+  # perfectly and every Intel and AMD machine silently runs on whatever microcode its firmware
+  # loaded. Nothing else in this repo would ever notice, so assert it here.
+  has 'kernel/x86/microcode/GenuineIntel.bin' \
+    || die "verify: the initrd's early cpio has no Intel microcode. If this build resumed with
+  --from 40, the target's intel-ucode tree was already deleted by a previous stage 50 — rebuild
+  from stage 30, or restore sys-firmware/intel-microcode into the target first."
+  has 'kernel/x86/microcode/AuthenticAMD.bin' \
+    || die "verify: the initrd's early cpio has no AMD microcode (same cause as the Intel check
+  above — see sys-firmware/intel-microcode / linux-firmware's amd-ucode in the target)."
+
+  # ---- NVIDIA early KMS ---------------------------------------------------------------
+  # All three modules AND the GSP firmware, individually. nvidia.ko alone gets a splash on
+  # nothing: without nvidia-modeset and nvidia-drm no DRM device is ever registered, and without
+  # the GSP blobs nvidia.ko cannot initialise a Turing-or-later GPU at all. Each absence looks
+  # identical from outside — plymouth times out and falls back to text — which is precisely the
+  # failure this change exists to remove.
+  for m in video/nvidia.ko video/nvidia-modeset.ko video/nvidia-drm.ko; do
+    has "$m\$" || die "verify: initrd is missing $m — NVIDIA machines would get no splash before
+  the root pivot, which is the plan/08 tradeoff --add-drivers was added to close."
+  done
+  for b in gsp_ga10x.bin gsp_tu10x.bin; do
+    has "firmware/nvidia/.*/$b" \
+      || die "verify: initrd has the nvidia modules but not $b — nvidia.ko would fail to
+  initialise the GPU. dracut pulls this from nvidia.ko's MODULE_FIRMWARE; check that stage 2c's
+  prune did not take /usr/lib/firmware/nvidia/<version>/ with it (prune-firmware.txt class 3 is
+  scoped to the nouveau codename directories and must never carry a bare 'nvidia' entry)."
+  done
+  # ...and the CUDA half must have stayed out. --add-drivers pulls dependencies, not siblings, so
+  # this holds today; it is asserted because "add the nvidia drivers" is exactly the line a future
+  # edit would widen to a glob, and nvidia-uvm is 5.1 MiB of initrd for a compute API no initrd
+  # has ever called.
+  if has 'nvidia-uvm\.ko'; then
+    die "verify: initrd contains nvidia-uvm.ko — that is the CUDA driver, useless before
+  switch-root. Only nvidia, nvidia-modeset and nvidia-drm belong in NVIDIA_DRIVERS."
+  fi
+  # The softdep that makes the other two load at all. nvidia.ko is autoloaded by udev from its
+  # PCI alias; nvidia-modeset and nvidia-drm have no modalias and would sit there unloaded.
+  has 'modprobe.d/10-nvidia-drm.conf' \
+    || die "verify: initrd has the nvidia modules but not usr/lib/modprobe.d/10-nvidia-drm.conf —
+  udev autoloads nvidia.ko and nothing would ever load nvidia-modeset/nvidia-drm behind it."
+
+  # ---- the filesystems this initrd actually mounts -------------------------------------
+  # erofs for the root and overlay for the /etc overlay module. ext4 (/var, x-initrd.mount) is
+  # BUILT IN to this kernel and is correctly absent from the module list — do not "fix" that by
+  # adding an ext4.ko check here. These two are asserted because the omit list below is the kind
+  # of thing that grows a too-greedy regex, and a missing erofs.ko is an unbootable image.
+  has 'fs/erofs/erofs\.ko' \
+    || die "verify: initrd has no erofs.ko — root=PARTLABEL=... rootfstype=erofs cannot mount"
+  has 'fs/overlayfs/overlay\.ko' \
+    || die "verify: initrd has no overlay.ko — the etc-overlay dracut module cannot mount /etc"
+
+  # ---- the omit list actually took ------------------------------------------------------
+  # This is the check that turns a mistyped entry in config/dracut-omit-drivers.txt into a failed
+  # build instead of a UKI that quietly did not shrink. dracut matches these against the module
+  # NAME with "-" normalised to "_" and the pattern anchored at both ends, so reproduce exactly
+  # that here rather than grepping for the raw strings.
+  mapfile -t INITRD_MODS < <(grep -oE '[^/]+\.ko(\.[a-z0-9]+)?$' <<<"$INITRD_LIST" \
+    | sed -E 's/\.ko(\.[a-z0-9]+)?$//; s/-/_/g' | sort -u)
+  if (( ${#INITRD_MODS[@]} == 0 )); then
+    warn "verify: no kernel modules found in the initrd listing — omit-list check skipped"
+  else
+    _omit_alt="$(printf '%s|' "${OMIT_DRIVERS[@]//-/_}")"
+    leaked="$(printf '%s\n' "${INITRD_MODS[@]}" | grep -E "^(${_omit_alt%|})\$" || true)"
+    if [[ -n $leaked ]]; then
+      die "verify: config/dracut-omit-drivers.txt names these, but they are in the initrd anyway:
+  $(tr '\n' ' ' <<<"$leaked")
+  dracut matches --omit-drivers against the MODULE NAME, not the path — a path-shaped entry is a
+  silent no-op (see the header of that file)."
+    fi
+    log "initrd: ${#INITRD_MODS[@]} modules, none matching the ${#OMIT_DRIVERS[@]} omit patterns"
+  fi
 else
   warn "lsinitrd not available — initrd splash contents unverified"
 fi
@@ -464,6 +625,16 @@ if [[ ${CONSOLE_ONLY:-0} != 1 ]]; then
   # which is exactly why the outcome is asserted rather than the exit status trusted.
   compgen -G "$TARGET/etc/systemd/system/display-manager.service" >/dev/null \
     || die "verify: plasmalogin.service not enabled (preset did not take — no display-manager.service alias)"
+  # The splash-to-greeter hand-off, both halves. The drop-in's empty "ExecStart=" is what stops
+  # systemd running the vendor's plain `plymouth quit` first and resetting the console anyway, so
+  # it is asserted rather than assumed — an editor tidying away a line that looks like a typo
+  # would put the black frame back with nothing to show for it.
+  [[ -f $RETAIN_DROPIN ]] \
+    || die "verify: plymouth-quit.service.d/10-retain-splash.conf missing from a desktop image —
+  the greeter would paint over a blanked screen (plan/08 open question 6)"
+  grep -qE '^ExecStart=$' "$RETAIN_DROPIN" \
+    || die "verify: 10-retain-splash.conf has no empty ExecStart= reset — ExecStart is additive in
+  a Type=oneshot unit, so the vendor's plain 'plymouth quit' would still run first"
   # KWallet auto-unlock. Gentoo's PLM ebuild ships PAM stacks that already carry
   #   -auth    optional pam_kwallet5.so
   #   -session optional pam_kwallet5.so auto_start
@@ -493,4 +664,9 @@ for m in resolve systemd myhostname; do
     || die "verify: /etc/nsswitch.conf uses the $m module but libnss_$m is not installed"
 done
 log "configure complete; UKI at $UKI_DIR/$UKI_NAME"
-stamp_write "$STAGE_NAME" "$(inputs_hash "$REPO/config/build.conf")"
+# The three hardware lists are stage-40 inputs now, not just stage-50 ones: section 2c prunes
+# firmware and microcode before dracut, and the omit list decides what goes into the initrd. A
+# stamp that did not cover them would let an edit to any of the three be skipped on a resume.
+stamp_write "$STAGE_NAME" "$(inputs_hash "$REPO/config/build.conf" \
+  "$REPO/config/prune-firmware.txt" "$REPO/config/prune-microcode.txt" \
+  "$REPO/config/dracut-omit-drivers.txt")"

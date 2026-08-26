@@ -55,6 +55,8 @@ validate_config() {
   # request for the default. Unset defaults; empty falls through to the pattern check below.
   : "${SPLASH_BACKEND=plymouth}"
   : "${SPLASH_STUB_SCALE=1}"
+  # Same ${x=y} reasoning as the two above: a build.conf predating the knob still validates.
+  : "${DEBUG_INITRD=0}"
   local v
   for v in DISTRO_ID DISTRO_NAME VERSION HOME_URL UPDATE_URL UPDATE_CHANNEL UPDATE_VERIFY \
            BUILDER_IMAGE SNAPSHOT_DATE PROFILE BINHOST_URI \
@@ -74,6 +76,7 @@ validate_config() {
     || die "build.conf: SPLASH_BACKEND must be plymouth|stub|both|none (got: $SPLASH_BACKEND)"
   [[ $SPLASH_STUB_SCALE =~ ^[1-9][0-9]*$ ]] \
     || die "build.conf: SPLASH_STUB_SCALE must be a positive integer (got: $SPLASH_STUB_SCALE)"
+  [[ $DEBUG_INITRD =~ ^[01]$ ]] || die "build.conf: DEBUG_INITRD must be 0 or 1"
   [[ $FLATPAK_PREINSTALL_MODE =~ ^(build|firstboot)$ ]] \
     || die "build.conf: FLATPAK_PREINSTALL_MODE must be build|firstboot"
   [[ $SNAPSHOT_DATE =~ ^[0-9]{8}$ ]] || die "build.conf: SNAPSHOT_DATE must be YYYYMMDD"
@@ -355,6 +358,75 @@ prune_binhost_binpkgs() {
   # The index still lists what was just deleted; portage rebuilds it on the next populate.
   if (( n > 0 )); then rm -f -- "$dir/Packages" "$dir/Packages.gz"; fi
   printf '%s' "$n"
+}
+
+# ---- hardware trees this image can never load (firmware, microcode) ------------------
+# read_list_file PATH — print the meaningful lines of one of the config/*.txt hardware lists:
+# comments dropped (whole-line and trailing), surrounding whitespace trimmed, blanks removed.
+#
+# Shared rather than repeated, because all three of these files (prune-firmware.txt,
+# prune-microcode.txt, dracut-omit-drivers.txt) are mostly comment by design — the reasoning for
+# each entry is the point of the file — and three near-identical sed scripts is three places for
+# the parsing to drift apart.
+read_list_file() {
+  local f=${1:?read_list_file: path required}
+  [[ -f $f ]] || die "list file not found: $f"
+  sed -E 's/#.*//; s/^[[:space:]]+//; s/[[:space:]]+$//; /^$/d' -- "$f"
+}
+
+# prune_hardware_trees TARGET — delete the firmware and the CPU microcode signatures this image
+# can never load, per config/prune-firmware.txt and config/prune-microcode.txt.
+#
+# ORDERING IS THE ENTIRE POINT OF THIS FUNCTION EXISTING. The firmware prune used to live only in
+# stage 50, which runs AFTER stage 40 builds the initrd — so plan/10 measured a 0.2.1 UKI still
+# carrying every blob the prune list names and recorded it as an open finding ("The UKI did not
+# shrink, and that is a finding"). Stage 40 now calls this immediately before dracut and stage 50
+# calls it again as a guard, so the lists reach the root filesystem AND the UKI no matter which
+# --from a build resumed at. Idempotent by construction: every deletion is of a path that may
+# already be gone.
+prune_hardware_trees() {
+  local t=${1:?prune_hardware_trees: TARGET required}
+  local fw="$t/usr/lib/firmware" entry f n=0 m=0
+  if [[ ! -d $fw ]]; then
+    warn "prune_hardware_trees: $fw does not exist — nothing to prune"
+    return 0
+  fi
+
+  if [[ -f $REPO/config/prune-firmware.txt ]]; then
+    while IFS= read -r entry; do
+      # The list is repo-controlled, but it is also the one file here that names paths, and a
+      # leading "/" or a ".." in it would delete outside the firmware tree with root privileges.
+      [[ $entry == /* || $entry == *..* ]] \
+        && die "prune-firmware.txt: refusing unsafe entry '$entry'"
+      [[ -e $fw/$entry ]] || continue
+      rm -rf -- "${fw:?}/$entry"
+      n=$((n + 1))
+    done < <(read_list_file "$REPO/config/prune-firmware.txt")
+    log "firmware prune: removed $n tree(s) named in prune-firmware.txt"
+  fi
+
+  # Microcode entries are PREFIXES of signature filenames (06-8f matches 06-8f-04, 06-8f-05, …),
+  # not directories, so they cannot share the loop above.
+  local uc="$fw/intel-ucode"
+  if [[ -d $uc && -f $REPO/config/prune-microcode.txt ]]; then
+    while IFS= read -r entry; do
+      [[ $entry == */* || $entry == *..* ]] \
+        && die "prune-microcode.txt: entries are bare signature prefixes, got '$entry'"
+      for f in "$uc/$entry"*; do
+        [[ -f $f ]] || continue
+        rm -f -- "$f"
+        m=$((m + 1))
+      done
+    done < <(read_list_file "$REPO/config/prune-microcode.txt")
+    # A list that matched everything would produce a UKI whose early cpio carries no Intel
+    # microcode at all — which boots perfectly and is silently wrong on every Intel machine.
+    # Stage 40 asserts the UKI end of this; assert the tree end here, where the deletion happens.
+    compgen -G "$uc/06-*" >/dev/null \
+      || die "prune-microcode.txt matched every Intel signature — the image would ship microcode
+  for no current CPU at all. Check the class 2 date rule in that file."
+    log "microcode prune: removed $m Intel signature(s), $(find "$uc" -type f | wc -l) kept"
+  fi
+  return 0
 }
 
 # ---- chroot into the target (Linux/container only) ----------------------------------

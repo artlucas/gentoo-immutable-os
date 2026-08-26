@@ -44,9 +44,15 @@ GPT type UUIDs matter: root partitions use the discoverable-partitions **root (x
 and var uses the **var** type, so systemd tooling (repart, gpt-auto for var fallback,
 sysupdate `MatchPartitionType=root`) recognizes them.
 
-Default sizes (build.conf): ESP 1 GiB (2 UKIs ≈ 2×250 MiB + slack — the boot splash pulled the
-DRM modules into the initrd and took the UKI from ~105 MiB to ~242 MiB), root slots 6 GiB each,
-var 4 GiB initial → ~17 GiB raw image, grows on first boot.
+Default sizes (build.conf): ESP 1 GiB, root slots 6 GiB each, var 4 GiB initial → ~17 GiB raw
+image, grows on first boot.
+
+The ESP budget is 2 UKIs plus slack, and the UKI has moved twice since it was sized. The boot
+splash first pulled the DRM modules into the initrd and took it from ~105 to ~242 MiB; dropping
+nouveau's GSP firmware brought it to 135.5 (plan/10); [plan/11](11-kernel-boot-audit.md) then cut
+22 MiB of server CPU microcode and 100 initrd modules and spent +71.5 MiB adding the NVIDIA
+modules and *their* GSP firmware, for a **measured 168.7 MiB**. Two of those is 337 MiB of the
+1 GiB ESP — 3× headroom, down from 7.5×, and still comfortable. `ESP_SIZE_MIB` has not changed.
 
 ## Boot media usage
 
@@ -120,13 +126,17 @@ over whatever the firmware left on screen. ESC switches to the boot log.
   `--console-only` images, with the `multi-user.target` drop-in guaranteeing the units are
   wanted. `plasmalogin.service` carries an `After=plymouth-quit-wait.service` drop-in so the
   greeter paints after the teardown rather than racing it.
-  This is a regression against the GNOME image and a deliberate one: `gdm[plymouth]` conflicted
-  with `plymouth-quit.service` and quit the splash itself with `--retain-splash` once the
-  greeter had painted, so there was no black frame at all. Plasma Login Manager has no
-  retain-splash equivalent. Restoring that hand-off is a [roadmap](08-roadmap.md) item.
-- **UKI size:** the plymouth dracut module depends on dracut's `drm` module, so the initrd now
-  carries the DRM kernel modules — the UKI went from ~105 MiB to ~242 MiB. Two of those is
-  484 MiB of the 1 GiB ESP, which fits with room, but it is now the dominant ESP consumer.
+  The black frame that ordering used to guarantee is gone as of
+  [plan/11](11-kernel-boot-audit.md) finding 7: a drop-in on `plymouth-quit.service` replaces its
+  `ExecStart` with `plymouth quit --retain-splash`, which skips the console reset and leaves the
+  last frame on the framebuffer for kwin to paint over. Changing the teardown rather than who
+  performs it is what makes this work at all — the gdm-shaped alternative (`Conflicts=` plus an
+  `ExecStartPre` on the display manager) is a race against PLM's own vendor
+  `After=plymouth-quit.service`, and deadlocks if ordered after `plymouth-quit-wait`. Stage 40
+  removes the drop-in on `--console-only`, where agetty draws into the same framebuffer.
+- **UKI size:** the plymouth dracut module depends on dracut's `drm` module, so the initrd
+  carries the DRM kernel modules, and finding 4 added the NVIDIA ones and their GSP firmware on
+  top. Currently 168.7 MiB measured; see the ESP budget above. It is the dominant ESP consumer.
 - **dracut's `45plymouth` module is not sysroot-clean**, and both halves of that fail silently.
   It hands its payload to `plymouth-populate-initrd` without setting `PLYMOUTH_SYSROOT`, and
   that helper resolves the splash plugins' libraries with a non-sysroot-aware `ldd`. Stage 40
