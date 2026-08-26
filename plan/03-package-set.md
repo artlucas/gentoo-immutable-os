@@ -149,6 +149,7 @@ have firmware in linux-firmware but an immature userspace stack — out of scope
 | kde-plasma/polkit-kde-agent | the polkit authentication agent (`sys-auth/polkit[kde]`, replacing `polkit[gtk]` → polkit-gnome) |
 | kde-plasma/plasma-login-manager + kde-plasma/plasma-login-sessions | login/autologin, and the `/usr/share/wayland-sessions/plasma.desktop` the greeter logs in *to*. See "Plasma Login Manager" below. Lock screen is **not** free here the way it was inside gnome-shell: `kwin[lock]` is what puts `kde-plasma/kscreenlocker` in the image |
 | kde-apps/konsole, kde-apps/dolphin | the two native utilities: terminal and files. Native (not Flatpak) because they need unrestricted host access |
+| kde-plasma/spectacle | screenshot tool — native not by the usual rule but because there is no other option: `org.kde.spectacle` has never been published to Flathub (its `flathub/org.kde.spectacle` repo carries only an unmerged "beta" branch). Pulls exactly one dependency the image didn't already have, `media-libs/opencv` (its capture region auto-detect); kpipewire, layer-shell-qt, prison and the xcb libs it also needs already ship for kwin/plasma-workspace's own screencast support. Pinned tree's only stable-`amd64` version is 6.6.6 — 6.6.6-r1 and 6.7.4-r1 are both `~amd64`, so no keyword exception was taken |
 | kde-apps/kio-extras | the gvfs equivalent — trash, network, thumbnails, and `smb://` (see "samba" below) |
 | kde-plasma/discover (`USE="flatpak -firmware -snap"`) | GUI software center, **Flatpak backend only**. There is no `packagekit` flag; the PackageKit backend is simply not built unless firmware or snap are |
 | kde-plasma/plasma-systemmonitor | task manager |
@@ -163,7 +164,8 @@ against `/usr/lib/systemd/import-pubring.gpg`; it is a genuine runtime dependenc
 update path, listed in `@base`.
 
 Explicitly **absent** natively (Flatpak instead): browser, office, mail, media players, image
-viewers/editors, IDEs, games, chat, **archive manager and text editor**.
+viewers/editors, IDEs, games, chat, **archive manager and text editor**. Spectacle is the one
+carve-out, for the reason given above rather than a change of rule.
 
 ### Plasma Login Manager, not SDDM
 

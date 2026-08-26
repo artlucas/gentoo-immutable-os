@@ -7,7 +7,8 @@
 # else. Applications are Flatpaks (plan/03), so there is no Ark, no Kate, no Okular and no
 # Gwenview here for exactly the reasons file-roller and gnome-text-editor were dropped from
 # the GNOME set: each is one click away in Discover, and each would cost a native dependency
-# tail on a read-only root to save a Flatpak download.
+# tail on a read-only root to save a Flatpak download. Spectacle (below, near dolphin/konsole)
+# is the one exception, because it isn't a choice: it is not on Flathub at all.
 kde-plasma/plasma-desktop
 kde-plasma/plasma-workspace
 kde-plasma/kwin
@@ -39,6 +40,15 @@ kde-plasma/plasma-login-sessions
 kde-frameworks/breeze-icons
 kde-apps/dolphin
 kde-apps/konsole
+# Native because Flathub has no Spectacle: flathub/org.kde.spectacle carries only an unmerged
+# "beta" branch (5 open PRs, 1 open issue, never released) — no `org.kde.Spectacle` or
+# `org.kde.spectacle` app has ever shipped. kde-plasma/, not kde-apps/: the ebuild moved
+# category upstream. Pulls one dependency not already in the image: media-libs/opencv
+# (unconditional RDEPEND, used for the region auto-detect on capture). Everything else it
+# needs — kpipewire, layer-shell-qt, prison, the xcb libs — is already pulled in by
+# plasma-workspace/kwin's own screencast support. Pinned tree has 6.6.6 stable; 6.6.6-r1 and
+# 6.7.4-r1 are both ~amd64 only, so no keyword exception is taken here.
+kde-plasma/spectacle
 kde-apps/kio-extras              # the gvfs equivalent: trash, network, thumbnails
 kde-plasma/print-manager         #printing
 sys-power/power-profiles-daemon
