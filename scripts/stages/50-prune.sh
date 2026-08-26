@@ -111,7 +111,11 @@ rm -rf -- "$T/var/db/pkg" "$T/var/db/repos" "$T/var/cache"/* \
 # runs before the assertion ever gets a chance to see the file. Flatpak app content is
 # third-party binary data outside the toolchain-free guarantee's scope (plan/06) — this pipeline
 # neither built it nor should be editing it after the fact.
-find "$T" -xdev -path "$T/var/lib/flatpak" -prune -o -name '*.la' -delete
+# Two-stage rather than "-prune -o ... -delete" in one expression: -delete implies -depth, and
+# GNU find refuses to combine -depth with -prune ("prune does nothing when -depth is in
+# effect") — this is the standard find gotcha, not a stylistic choice.
+find "$T" -xdev -path "$T/var/lib/flatpak" -prune -o -name '*.la' -print0 2>/dev/null \
+  | xargs -0 --no-run-if-empty rm -f --
 # Static archives. This used to read `find "$T/usr/lib64" -maxdepth 1`, and that missed 22 MiB
 # in three places, all of them one directory deeper than it looked or in the other libdir:
 # /usr/lib64/glibc-2.43/libm-2.43.a, /usr/lib/llvm/22/lib64/*.a (11.5 MiB — section 3a below
