@@ -9,6 +9,14 @@
 # plus media-libs/kquickimageeditor, dev-qt/qtimageformats, media-libs/libmng) and KDE
 # Partition Manager (sys-libs/kpmcore) additions — see plan/03. Purely additive: nothing
 # dropped out of the graph.
+# Updated 2026-08-26 (0.3.0): +16 entries for the container layer — app-containers/{podman,
+# distrobox} and the tail they pull: crun, conmon, catatonit, containers-{common,image,storage,
+# shortnames}, netavark, aardvark-dns, net-misc/{passt,ethertypes}, sys-fs/fuse-overlayfs, and
+# net-firewall/nftables + net-libs/libnftnl. See plan/13. Purely additive again: 16 added, 0
+# dropped, measured against the real depgraph. The nftables pair is NOT used by anything here —
+# containers-common RDEPENDs it and iptables[nftables] unconditionally, and rootless podman
+# networks through pasta. net-firewall/iptables is unchanged in this list because it was already
+# present; it only gained a USE flag (and a rebuild).
 #
 # The GNOME-namespace entries below are the enumerated residue of plan/09 §4, not leftovers:
 #   gnome-base/librsvg          RDEPEND of adwaita-icon-theme (SVG icon loading)
@@ -93,6 +101,17 @@ app-arch/ncompress
 app-arch/tar
 app-arch/xz-utils
 app-arch/zstd
+app-containers/aardvark-dns
+app-containers/catatonit
+app-containers/conmon
+app-containers/containers-common
+app-containers/containers-image
+app-containers/containers-shortnames
+app-containers/containers-storage
+app-containers/crun
+app-containers/distrobox
+app-containers/netavark
+app-containers/podman
 app-crypt/argon2
 app-crypt/gnupg
 app-crypt/gpgme
@@ -439,6 +458,7 @@ net-dns/c-ares
 net-dns/libidn
 net-dns/libidn2
 net-firewall/iptables
+net-firewall/nftables
 net-fs/cifs-utils
 net-fs/samba
 net-libs/glib-networking
@@ -450,6 +470,7 @@ net-libs/libmbim
 net-libs/libmicrohttpd
 net-libs/libmnl
 net-libs/libndp
+net-libs/libnftnl
 net-libs/libpcap
 net-libs/libproxy
 net-libs/libpsl
@@ -461,11 +482,13 @@ net-libs/nghttp2
 net-libs/nghttp3
 net-libs/ngtcp2
 net-misc/curl
+net-misc/ethertypes
 net-misc/iputils
 net-misc/mobile-broadband-provider-info
 net-misc/modemmanager
 net-misc/networkmanager
 net-misc/openssh
+net-misc/passt
 net-misc/rsync
 net-misc/socat
 net-print/cups
@@ -524,6 +547,7 @@ sys-fs/dosfstools
 sys-fs/e2fsprogs
 sys-fs/fuse
 sys-fs/fuse-common
+sys-fs/fuse-overlayfs
 sys-fs/lvm2
 sys-fs/udev-init-scripts
 sys-fs/udisks
