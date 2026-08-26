@@ -172,18 +172,20 @@ dev-qt/qt5compat                  icu qml
 # viewer for Qt's own API docs) and Qt Linguist (a translation-file editor for Qt app
 # developers) — developer-facing tools, not something a user of the built image would launch.
 #
-# qdbus is NOT the same case, discovered the first time "emerge ... @desktop" was actually run
-# to completion rather than inspected: kde-plasma/plasma-workspace-6.6.6 RDEPENDs
-# ">=dev-qt/qttools-${QTMIN}:*[qdbus]" unconditionally (used for its own D-Bus tooling, not
-# optional). Forcing it off — as an earlier pass here did, on the same "no consumer" reasoning
-# that correctly holds for assistant/linguist — makes the @desktop depgraph unsatisfiable.
-# +widgets is qttools' own default and is turned off here specifically to avoid the
-# qdbus+widgets combination building the qdbusviewer GUI (RDEPEND gates it behind
-# "widgets? ( !dev-qt/qdbusviewer:5 )"): plasma-workspace's own need is qtbase[dbus,xml], with
-# no REQUIRED_USE anywhere asking for qttools[widgets], so turning it off keeps the qdbus CLI
-# and code-gen tools (qdbuscpp2xml/qdbusxml2cpp, which other KDE packages' build systems invoke)
-# without reintroducing the D-Bus viewer menu entry the earlier pass meant to drop.
-dev-qt/qttools                    opengl qdbus -assistant -linguist -widgets
+# qdbus and widgets are NOT the same case as assistant/linguist, both discovered the first time
+# "emerge ... @desktop" was actually run to completion rather than inspected:
+# kde-plasma/plasma-workspace-6.6.6 RDEPENDs ">=dev-qt/qttools-${QTMIN}:*[qdbus]" unconditionally
+# (its own D-Bus tooling), and kde-plasma/kwin-6.6.6 separately RDEPENDs
+# ">=dev-qt/qttools-${QTMIN}:6[widgets]". Forcing either off — as an earlier pass here did for
+# qdbus, on the same "no consumer" reasoning that correctly holds for assistant/linguist — makes
+# the @desktop depgraph unsatisfiable. USE is resolved once per package, not per consumer, so
+# there is no way to give plasma-workspace its qdbus without also giving kwin its widgets.
+# Tried disabling widgets alone first (qdbus's own RDEPEND only blocks on
+# "widgets? ( !dev-qt/qdbusviewer:5 )", suggesting plasma-workspace didn't need it) — kwin's
+# separate hard RDEPEND rules that out. The qdbus+widgets combination therefore does build
+# qdbusviewer (a D-Bus debugger) and put its entry back in the menu; that is accepted here as
+# the unavoidable cost of two unconditional RDEPENDs, not a reversal of the intent to drop it.
+dev-qt/qttools                    opengl qdbus -assistant -linguist
 dev-qt/qtmultimedia               opengl vulkan qml
 dev-qt/qtquick3d                  opengl vulkan
 # (qtbase's "cups" above is the Qt half of the printing decision: kde-plasma/print-manager and
