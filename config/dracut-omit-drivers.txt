@@ -66,14 +66,30 @@ nvme-tcp
 ib_.*
 rdma_.*
 iw_.*
+# RNBD/RTRS: a block device exported over RDMA, i.e. the consumer half of the ib_*/rdma_*/iw_*
+# modules above. Left in, they are three modules whose every dependency this class just removed.
+rnbd_client
+rtrs_client
+rtrs_core
 
 # ---- class 4: cluster and network filesystems ----------------------------------------
 # 22 MiB, the largest class. None of these can be the root or /var filesystem of this image.
 # NB cifs is here even though Dolphin browses smb:// — KIO does that through libsmbclient in
 # userspace, not through the kernel client, and the kernel client stays in the root module tree
 # for anyone who wants `mount -t cifs` after boot.
-# netfs and cachefiles go with them: they exist only as the shared cache layer under ceph, afs,
-# cifs, nfs and 9p, every one of which is omitted here.
+# cachefiles goes with them: on-demand caching for ceph, afs, cifs, nfs and 9p, every one of
+# which is omitted here. fscache is kept as a name only — this kernel has no fscache.ko, the
+# code having been merged into netfs.ko, so the entry matches nothing today.
+#
+# netfs IS NOT IN THIS LIST, AND MUST NOT BE PUT BACK. It reads like the same kind of orphan —
+# it was in fact listed here once, on exactly that reasoning — but since 6.10 erofs.ko links
+# against it (`modinfo -F depends erofs` prints "netfs"), and erofs is THIS IMAGE'S ROOT
+# FILESYSTEM. Omitting it does not fail the build and does not remove erofs.ko: dracut runs
+# depmod over the initrd tree, so erofs.ko keeps its place and merely loses its dependency line
+# in modules.dep. modprobe then insmods it bare, the kernel rejects it with "Unknown symbol
+# __fscache_acquire_volume", mount reports the perfectly misleading "unknown filesystem type
+# 'erofs'", and the initrd reboots — forever, because rd.emergency=reboot. The verify block in
+# stage 40 now checks every initrd module's dependency closure, which is what catches this.
 cifs
 ocfs2
 ocfs2_.*
@@ -91,9 +107,10 @@ f2fs
 orangefs
 9p
 9pnet.*
-netfs
 fscache
 cachefiles
+# rbd is the Ceph RADOS block device — the consumer half of ceph/libceph just above it.
+rbd
 # The NFS helper modules, and the key-type module those clients use to resolve server names.
 # nfs.ko itself is not in the initrd (dracut's "nfs" module is omitted), so these three are
 # already orphans; dns_resolver has no consumer left once cifs, ceph, kafs and nfs are gone.
@@ -139,6 +156,8 @@ mt79.*
 qed
 cxgb4
 cxgb4vf
+# chcr is the Chelsio crypto accelerator, which binds to cxgb4 and to nothing else.
+chcr
 #
 # QuickAssist: Intel's crypto/compression accelerator cards, server parts.
 intel_qat

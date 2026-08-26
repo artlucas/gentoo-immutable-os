@@ -287,8 +287,21 @@ if [[ $KERNEL_IMG != "$WORK/vmlinuz-$KVER" ]]; then
 fi
 log "kernel image: $KERNEL_IMG"
 
-# our dracut module must be visible to the *builder's* dracut
-cp -r "$TARGET/usr/lib/dracut/modules.d/90etc-overlay" /usr/lib/dracut/modules.d/
+# our dracut modules must be visible to the *builder's* dracut. Discovered from the overlay
+# source rather than listed here, so adding a module is one directory and nothing else.
+mapfile -t DRACUT_MODS < <(
+  cd "$REPO/config/rootfs/usr/lib/dracut/modules.d" && printf '%s\n' */
+)
+DRACUT_MODS=("${DRACUT_MODS[@]%/}")
+(( ${#DRACUT_MODS[@]} )) \
+  || die "no dracut modules under config/rootfs/usr/lib/dracut/modules.d"
+for _m in "${DRACUT_MODS[@]}"; do
+  [[ -d $TARGET/usr/lib/dracut/modules.d/$_m ]] \
+    || die "dracut module $_m is in config/rootfs but not in the target — overlay not applied?"
+  rm -rf -- "/usr/lib/dracut/modules.d/$_m"
+  cp -r "$TARGET/usr/lib/dracut/modules.d/$_m" /usr/lib/dracut/modules.d/
+done
+log "custom dracut modules: ${DRACUT_MODS[*]}"
 
 # dracut is a builder tool and is deliberately not part of the image's package set, but
 # --sysroot resolves BOTH dracutbasedir and every module file dracut-install copies relative
@@ -298,9 +311,11 @@ cp -r "$TARGET/usr/lib/dracut/modules.d/90etc-overlay" /usr/lib/dracut/modules.d
 # loginit, rdsosreport, shutdown and dracut-util into the initramfs. So: lend the target a
 # full copy for the duration of the run, then take it away again.
 DRACUT_LIB="$TARGET/usr/lib/dracut"
-OVERLAY_MOD_KEEP="$WORK/90etc-overlay.keep"
-rm -rf -- "$OVERLAY_MOD_KEEP"
-[[ -d $DRACUT_LIB/modules.d/90etc-overlay ]] && cp -a "$DRACUT_LIB/modules.d/90etc-overlay" "$OVERLAY_MOD_KEEP"
+MODS_KEEP="$WORK/dracut-modules.keep"
+rm -rf -- "$MODS_KEEP"; ensure_dir "$MODS_KEEP"
+for _m in "${DRACUT_MODS[@]}"; do
+  [[ -d $DRACUT_LIB/modules.d/$_m ]] && cp -a "$DRACUT_LIB/modules.d/$_m" "$MODS_KEEP/$_m"
+done
 ensure_dir "$DRACUT_LIB"
 cp -a /usr/lib/dracut/. "$DRACUT_LIB/"
 
@@ -365,7 +380,7 @@ NVIDIA_DRIVERS="nvidia nvidia_modeset nvidia_drm"
 
 dracut --force --no-hostonly --reproducible \
   --sysroot "$TARGET" --kver "$KVER" \
-  --add "systemd etc-overlay systemd-repart plymouth" \
+  --add "systemd etc-overlay systemd-repart repart-sysroot plymouth" \
   --install "${PLYMOUTH_LIBS[*]}" \
   --omit "network network-legacy nfs iscsi lvm mdraid multipath dmraid cifs brltty virtfs virtiofs lunmask nvdimm qemu-net resume" \
   --omit-drivers "${OMIT_DRIVERS[*]}" \
@@ -384,13 +399,14 @@ dracut --force --no-hostonly --reproducible \
 # check_kernel_compress_support already guards whether the kernel can read zstd at all, and the
 # level does not change that answer.
 
-# take the borrowed dracut tree back out of the image, keeping the module the overlay ships
+# take the borrowed dracut tree back out of the image, keeping the modules the overlay ships
 rm -rf -- "$DRACUT_LIB"
-if [[ -d $OVERLAY_MOD_KEEP ]]; then
+for _m in "${DRACUT_MODS[@]}"; do
+  [[ -d $MODS_KEEP/$_m ]] || continue
   ensure_dir "$DRACUT_LIB/modules.d"
-  cp -a "$OVERLAY_MOD_KEEP" "$DRACUT_LIB/modules.d/90etc-overlay"
-  rm -rf -- "$OVERLAY_MOD_KEEP"
-fi
+  cp -a "$MODS_KEEP/$_m" "$DRACUT_LIB/modules.d/$_m"
+done
+rm -rf -- "$MODS_KEEP"
 [[ -s $INITRD ]] || die "dracut produced no initrd at $INITRD"
 
 # console order matters: the LAST console= becomes /dev/console for userspace. With
@@ -564,6 +580,14 @@ if command -v lsinitrd >/dev/null 2>&1; then
   has 'fs/overlayfs/overlay\.ko' \
     || die "verify: initrd has no overlay.ko — the etc-overlay dracut module cannot mount /etc"
 
+  # First-boot growth. Without this drop-in the stock systemd-repart.service runs before dracut
+  # has mounted /sysroot, cannot find a disk to work on, and exits 1 — which is not one of the
+  # unit's tolerated exit codes, so the initrd goes to emergency and reboots. See
+  # config/rootfs/usr/lib/dracut/modules.d/90repart-sysroot/module-setup.sh.
+  has 'systemd-repart\.service\.d/10-sysroot\.conf' \
+    || die "verify: initrd has no systemd-repart.service.d/10-sysroot.conf — the repart-sysroot
+  dracut module did not install, and first boot would fail in the initrd and reboot forever"
+
   # ---- the omit list actually took ------------------------------------------------------
   # This is the check that turns a mistyped entry in config/dracut-omit-drivers.txt into a failed
   # build instead of a UKI that quietly did not shrink. dracut matches these against the module
@@ -583,6 +607,46 @@ if command -v lsinitrd >/dev/null 2>&1; then
   silent no-op (see the header of that file)."
     fi
     log "initrd: ${#INITRD_MODS[@]} modules, none matching the ${#OMIT_DRIVERS[@]} omit patterns"
+
+    # ---- ...and did not break what stayed behind -----------------------------------------
+    # The check above proves the omit list took effect. It says nothing about what the removals
+    # BROKE, and that failure is silent by construction: dracut runs depmod over the initrd
+    # tree, so a module whose dependency was omitted keeps its .ko and merely loses the
+    # dependency line in modules.dep. modprobe then insmods it bare and the kernel rejects it
+    # with "Unknown symbol". Nothing is logged at build time; the symptom arrives at boot.
+    #
+    # That is exactly how omitting netfs made erofs.ko unloadable — the ROOT filesystem module,
+    # present, passing the has() check above, and unable to mount, so every boot died in the
+    # initrd and rd.emergency=reboot looped forever with only "Failed to start Repartition Root
+    # Disk" on the console. See the netfs paragraph in config/dracut-omit-drivers.txt.
+    #
+    # So resolve each initrd module against the TARGET's modules.dep — the complete one, before
+    # dracut pruned it — and require the whole closure to be inside the initrd.
+    TARGET_DEP="$TARGET/usr/lib/modules/$KVER/modules.dep"
+    if [[ ! -f $TARGET_DEP ]]; then
+      warn "verify: $TARGET_DEP not found — initrd dependency-closure check skipped"
+    else
+      broken="$(printf '%s\n' "${INITRD_MODS[@]}" | awk '
+        NR == FNR { present[$0] = 1; next }
+        /\.ko:/ {
+          mod = $1; sub(/:$/, "", mod); sub(/.*\//, "", mod); sub(/\.ko$/, "", mod)
+          gsub(/-/, "_", mod)
+          if (!(mod in present)) next
+          for (i = 2; i <= NF; i++) {
+            dep = $i; sub(/.*\//, "", dep); sub(/\.ko$/, "", dep); gsub(/-/, "_", dep)
+            if (!(dep in present)) print "  " mod " needs " dep
+          }
+        }' - "$TARGET_DEP" | sort -u)"
+      if [[ -n $broken ]]; then
+        die "verify: these initrd modules have dependencies that are NOT in the initrd, so the
+  kernel would refuse to load them (\"Unknown symbol\"):
+$broken
+  Either drop the dependency's pattern from config/dracut-omit-drivers.txt, or omit the module
+  that needs it as well. Do NOT ignore this for a filesystem or block driver — if the module is
+  erofs, overlay or ext4, the image cannot boot at all."
+      fi
+      log "initrd: dependency closure complete for all ${#INITRD_MODS[@]} modules"
+    fi
   fi
 else
   warn "lsinitrd not available — initrd splash contents unverified"
