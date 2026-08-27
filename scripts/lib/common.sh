@@ -47,13 +47,18 @@ load_config() {
 
 validate_config() {
   # Defaulted rather than required: a build.conf written before the splash-backend switch
-  # existed still has to validate, and "plymouth" is what those images already did.
+  # existed still has to validate, and "both" — stub bitmap plus KMS splash — is the whole
+  # timeline, so it is the right thing for a config that did not say.
   #
   # ${x=y}, NOT ${x:=y}. The colon form also substitutes for an EMPTY value, which would make
-  # a truncated `SPLASH_BACKEND=""` silently mean "plymouth" instead of failing — every other
+  # a truncated `SPLASH_BACKEND=""` silently mean "both" instead of failing — every other
   # key here dies on empty, and an empty value in a hand-edited build.conf is a typo, not a
   # request for the default. Unset defaults; empty falls through to the pattern check below.
-  : "${SPLASH_BACKEND=plymouth}"
+  #
+  # NB the value "plymouth" is deliberately NOT accepted as an alias for "kms". Plymouth is
+  # gone (plan/14); silently reinterpreting the old name would let a stale build.conf produce
+  # an image whose splash is not the one it asked for, with nothing said about it.
+  : "${SPLASH_BACKEND=both}"
   : "${SPLASH_STUB_SCALE=1}"
   # Same ${x=y} reasoning as the two above: a build.conf predating the knob still validates.
   : "${DEBUG_INITRD=0}"
@@ -80,8 +85,8 @@ validate_config() {
     [[ ${!n} =~ ^[0-9]+$ ]] || die "build.conf: $n must be an integer MiB count"
   done
   [[ $UPDATE_VERIFY =~ ^[01]$ ]] || die "build.conf: UPDATE_VERIFY must be 0 or 1"
-  [[ $SPLASH_BACKEND =~ ^(plymouth|stub|both|none)$ ]] \
-    || die "build.conf: SPLASH_BACKEND must be plymouth|stub|both|none (got: $SPLASH_BACKEND)"
+  [[ $SPLASH_BACKEND =~ ^(kms|stub|both|none)$ ]] \
+    || die "build.conf: SPLASH_BACKEND must be kms|stub|both|none (got: $SPLASH_BACKEND)"
   [[ $SPLASH_STUB_SCALE =~ ^[1-9][0-9]*$ ]] \
     || die "build.conf: SPLASH_STUB_SCALE must be a positive integer (got: $SPLASH_STUB_SCALE)"
   [[ $DEBUG_INITRD =~ ^[01]$ ]] || die "build.conf: DEBUG_INITRD must be 0 or 1"
@@ -190,17 +195,19 @@ install_rootfs_overlay() {
 
 # ---- branding / boot splash ------------------------------------------------------
 # The zoom factor SVG sources are rasterised at. Everything in config/branding is authored in
-# pixels at the 1920x1080 design baseline, and the plymouth theme divides by the same number
-# (ASSET_ZOOM in distro.script.in) — changing it in one place only silently resizes the splash.
+# pixels at the 1920x1080 design baseline, and config/branding/make-splash-assets.py divides by
+# the same number (ASSET_ZOOM there) — changing it in one place only silently resizes the splash.
 BRANDING_ZOOM=4
 
-# install_branding SRC_DIR THEME_DIR — build the plymouth theme into the target.
-#   *.svg / *.svg.in            → rasterised to THEME_DIR/<name>.png (templates rendered first)
-#   *.plymouth.in / *.script.in → rendered and rebranded through render_dest_name
-#   anything else (README, the wordmark generator) is ignored on purpose.
-# Only PNGs and the two theme files are installed: the SVG sources are build inputs and must
-# not end up in the image.
-install_branding() {
+# render_branding SRC_DIR OUT_DIR — rasterise the branding SVGs for the splash generator.
+#   *.svg / *.svg.in  → OUT_DIR/<name>.png at BRANDING_ZOOM (templates rendered first)
+#   anything else (README, the wordmark generator, the python) is ignored on purpose.
+#
+# OUT_DIR is a BUILD directory, not a path in the image. Nothing here ships: the PNGs are the
+# input to make-splash-assets.py, which composes them into the two artefacts that do ship — the
+# UKI's .splash bitmap and the KMS splash's tile container. That is the whole reason the image
+# needs no image decoder and no font at boot.
+render_branding() {
   local src=$1 dst=$2
   [[ -d $src ]] || die "branding source missing: $src"
   require_cmds rsvg-convert
@@ -226,11 +233,6 @@ install_branding() {
         # whole function return 1 whenever the last file processed took the false branch, and
         # stages would abort here having done all the work correctly.
         if [[ -n $tmp ]]; then rm -f -- "$tmp"; tmp=""; fi
-        ;;
-      *.plymouth.in|*.script.in)
-        name="$(render_dest_name "$base")"
-        render_template "$f" "$dst/$name"
-        chmod 0644 -- "$dst/$name"
         ;;
     esac
   done

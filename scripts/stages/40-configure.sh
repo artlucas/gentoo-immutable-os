@@ -289,50 +289,74 @@ target_umount "$TARGET"
 trap - EXIT
 
 # ---- 2b. boot splash -----------------------------------------------------------------
-# Must run BEFORE dracut: dracut's plymouth module copies the theme out of $TARGET into the
-# initramfs, so a theme installed afterwards would exist on the root filesystem and be missing
-# from the initrd — i.e. no splash until the root pivot, which is most of the boot.
-THEME_DIR="$TARGET/usr/share/plymouth/themes/$DISTRO_ID"
-install_branding "$REPO/config/branding" "$THEME_DIR"
-# Both dracut and plymouthd resolve the default theme through this symlink. install_rootfs_overlay
-# copies regular files only, so it is made here — same reason as the resolv.conf link above.
-ln -sfn "$DISTRO_ID/$DISTRO_ID.plymouth" "$TARGET/usr/share/plymouth/themes/default.plymouth"
-# dracut's plymouth module (45plymouth) locates plymouth through its own helper and, if that
-# helper is not in the sysroot, its check() returns 1 and dracut SKIPS THE MODULE ENTIRELY —
-# no error, no warning, just an initrd with no splash in it. Fail here instead, where the
-# message can say what is wrong.
-PPI=""
-for c in /usr/libexec/plymouth /usr/lib64/plymouth /usr/lib/plymouth; do
-  [[ -x $TARGET$c/plymouth-populate-initrd ]] && { PPI="$c"; break; }
-done
-[[ -n $PPI ]] \
-  || die "plymouth-populate-initrd not found under $TARGET/{usr/libexec,usr/lib64,usr/lib}/plymouth
-  — dracut's plymouth module would silently install nothing and the image would boot bare."
-PLYMOUTH_PLUGIN_DIR=""
-for c in /usr/lib64/plymouth /usr/lib/plymouth; do
-  [[ -f $TARGET$c/script.so ]] && { PLYMOUTH_PLUGIN_DIR="$c"; break; }
-done
-[[ -n $PLYMOUTH_PLUGIN_DIR ]] \
-  || die "plymouth's script plugin not found under $TARGET/{usr/lib64,usr/lib}/plymouth
-  — the theme names ModuleName=script and plymouthd would have nothing to interpret it with."
-log "boot splash theme installed at $THEME_DIR (dracut helper: $PPI)"
+# Two artefacts, one set of sources, and neither of them is a theme in the image.
+#
+#   $WORK/branding/*.png      rasterised from config/branding/*.svg — BUILD INPUTS ONLY
+#   $TARGET/usr/share/$ID/splash.bin   the KMS splash's tile container (ships)
+#   $WORK/splash-$VERSION.bmp          the UKI's .splash section, built in section 3 (ships
+#                                      inside the UKI, not on the root filesystem)
+#
+# Nothing about this has to run before dracut any more, which is the point: the initrd carries
+# no splash at all now. It stays here because the .splash bitmap is a ukify input and ukify runs
+# in section 3.
+BRANDING_PNG="$WORK/branding"
+rm -rf -- "$BRANDING_PNG"
+render_branding "$REPO/config/branding" "$BRANDING_PNG"
 
-# The splash-to-greeter hand-off (plymouth-quit.service.d/10-retain-splash.conf) hardcodes this
-# path. systemd's "-" prefix swallows a 203/EXEC just as it swallows a non-zero exit, so a
-# plymouth binary that moved would not fail anything — the splash would simply go back to
-# blanking the screen before the greeter, silently, which is the regression that drop-in exists
-# to remove.
-RETAIN_DROPIN="$TARGET/usr/lib/systemd/system/plymouth-quit.service.d/10-retain-splash.conf"
-[[ -x $TARGET/usr/bin/plymouth ]] \
-  || die "verify: /usr/bin/plymouth missing from target — plymouth-quit.service.d/10-retain-splash.conf
-  names that exact path and systemd would ignore its absence"
-# ...and it is a DESKTOP-only drop-in. On --console-only the next thing to touch the screen is
-# agetty, which renders its login prompt into the same framebuffer — a retained splash would sit
-# behind the text rather than being replaced by a greeter. That image keeps the plain teardown.
-if [[ ${CONSOLE_ONLY:-0} == 1 && -f $RETAIN_DROPIN ]]; then
-  log "console-only image: removing the retain-splash drop-in (no greeter to hand off to)"
-  rm -f -- "$RETAIN_DROPIN"
-  rmdir -- "$(dirname -- "$RETAIN_DROPIN")" 2>/dev/null || true
+SPLASH_SHARE="$TARGET/usr/share/$DISTRO_ID"
+SPLASH_ASSETS="$SPLASH_SHARE/splash.bin"
+ensure_dir "$SPLASH_SHARE"
+python3 "$REPO/config/branding/make-splash-assets.py" \
+  --asset-dir "$BRANDING_PNG" --sprites "$SPLASH_ASSETS" \
+  || die "splash sprite generation failed"
+[[ -s $SPLASH_ASSETS ]] || die "splash sprite container is empty: $SPLASH_ASSETS"
+chmod 0644 -- "$SPLASH_ASSETS"
+
+# The splash program. Compiled HERE, by the builder's gcc, and linked -static.
+#
+# It cannot be built in the target: stage 30 emerges with ROOT=$TARGET and never chroots, so
+# there is no way to invoke the image's own toolchain, and stage 50 deletes the compiler
+# anyway (plan/06's toolchain-free guarantee). -static removes the question entirely — the
+# binary has no ABI relationship with the image's libraries, which is also what makes it
+# immune to the library pruning stage 50 does after this.
+#
+# -ffile-prefix-map keeps the builder's absolute source path out of the binary, so two builds
+# of the same commit produce the same bytes (the erofs is meant to be reproducible; see
+# plan/08 roadmap 6).
+SPLASH_BIN="$TARGET/usr/bin/$DISTRO_ID-splash"
+gcc -std=c11 -O2 -static -Wall -Wextra -Werror \
+    -ffile-prefix-map="$REPO"=. \
+    -DSPLASH_ASSET_PATH="\"/usr/share/$DISTRO_ID/splash.bin\"" \
+    -o "$SPLASH_BIN" "$REPO/config/splash/splash.c" \
+  || die "boot splash did not compile"
+strip "$SPLASH_BIN" || true
+chmod 0755 -- "$SPLASH_BIN"
+log "boot splash: $(basename -- "$SPLASH_BIN") $(stat -c%s "$SPLASH_BIN") bytes, assets $(stat -c%s "$SPLASH_ASSETS") bytes"
+
+# The KMS splash is a DESKTOP-only thing, for the same reason the old retain-splash drop-in was.
+# On --console-only the next thing to touch the screen is agetty — and because this program
+# holds a framebuffer on the CRTC, fbcon would render the login prompt into a buffer nobody is
+# scanning out. The result is not "text behind a logo", it is an invisible console. So the unit
+# and its udev rule come back out of that image entirely.
+SPLASH_UNIT="$TARGET/usr/lib/systemd/system/$DISTRO_ID-splash.service"
+SPLASH_RULE="$TARGET/usr/lib/udev/rules.d/70-$DISTRO_ID-splash.rules"
+if [[ ${CONSOLE_ONLY:-0} == 1 ]]; then
+  log "console-only image: removing the KMS splash unit and udev rule (agetty owns the screen)"
+  rm -f -- "$SPLASH_UNIT" "$SPLASH_RULE"
+else
+  [[ -f $SPLASH_UNIT ]] \
+    || die "verify: $SPLASH_UNIT missing — the overlay in config/rootfs did not install it"
+  [[ -f $SPLASH_RULE ]] \
+    || die "verify: $SPLASH_RULE missing — nothing would ever start the splash"
+  # The unit's ConditionKernelCommandLine and the token section 3 puts on the cmdline are two
+  # independently rendered strings that have to be the same one. If they drift, SPLASH_BACKEND
+  # stops working in the direction that fails silently: the splash draws in every mode,
+  # including the ones that asked for no splash at all.
+  grep -qx "ConditionKernelCommandLine=!$DISTRO_ID.splash=0" "$SPLASH_UNIT" \
+    || die "verify: $SPLASH_UNIT does not carry ConditionKernelCommandLine=!$DISTRO_ID.splash=0
+  — SPLASH_BACKEND=stub and =none would not actually disable the splash."
+  grep -q "$DISTRO_ID-splash.service" "$SPLASH_RULE" \
+    || die "verify: 70-$DISTRO_ID-splash.rules does not name $DISTRO_ID-splash.service"
 fi
 
 # ---- 2c. firmware + microcode prune, BEFORE dracut -----------------------------------
@@ -413,35 +437,6 @@ ensure_dir "$DRACUT_LIB"
 cp -a /usr/lib/dracut/. "$DRACUT_LIB/"
 
 INITRD="$WORK/initrd-$VERSION.img"
-# dracut's 45plymouth module does NOT honour --sysroot for its payload. It hands the work to
-# plymouth-populate-initrd without setting PLYMOUTH_SYSROOT, so the helper reads the BUILDER's
-# filesystem — which has no plymouth at all — and quietly installs nothing but the two binaries
-# dracut itself copies. That produced an initrd with plymouthd in it, an EMPTY theme directory,
-# and no script plugin or DRM renderer: a splash that could never draw. module-setup.sh runs
-# the helper with stderr sent to /dev/null, so there was not one word of warning.
-#
-# The helper documents these variables for exactly this case ("For running on a
-# (cross-compiled) sysroot"). PLYMOUTH_PLUGIN_PATH has to be given too: its default is
-# "$(plymouth --get-splash-plugin-path)", which runs the builder's absent plymouth. Same-arch
-# here, so the default ldd is fine — inst_library copies from under the sysroot regardless.
-export PLYMOUTH_SYSROOT="$TARGET"
-export PLYMOUTH_THEME_NAME="$DISTRO_ID"
-export PLYMOUTH_PLUGIN_PATH="$PLYMOUTH_PLUGIN_DIR"
-
-# ...and one thing PLYMOUTH_SYSROOT does NOT fix. plymouth-populate-initrd resolves the splash
-# plugins' shared libraries with a plain `ldd`, which — unlike dracut's installer — is not
-# sysroot-aware: run from the builder, which has no plymouth on it, it cannot resolve
-# libply-splash-graphics.so.5 and drops it without a word. script.so links against exactly that
-# one library, so plymouthd's dlopen() of the theme's plugin fails and plymouth falls back to
-# its grey text splash — every boot, no error, nothing in the journal. The other libply
-# libraries survive only incidentally, because plymouthd itself links them and dracut installs
-# plymouthd's dependencies correctly. dracut's --install DOES resolve against the sysroot, so
-# name them there instead of trusting the helper.
-PLYMOUTH_LIBS=()
-for l in "$TARGET"/usr/lib64/libply*.so* "$TARGET"/usr/lib/libply*.so*; do
-  [[ -e $l ]] && PLYMOUTH_LIBS+=("${l#"$TARGET"}")
-done
-(( ${#PLYMOUTH_LIBS[@]} )) || die "no libply* libraries in $TARGET — is sys-boot/plymouth installed?"
 
 # The driver omit list. Moved out of a literal argument (it used to read --omit-drivers "nouveau")
 # into config/dracut-omit-drivers.txt, which carries the class-by-class reasoning the way
@@ -452,32 +447,34 @@ mapfile -t OMIT_DRIVERS < <(read_list_file "$REPO/config/dracut-omit-drivers.txt
 (( ${#OMIT_DRIVERS[@]} )) || die "config/dracut-omit-drivers.txt parsed to nothing"
 log "omitting ${#OMIT_DRIVERS[@]} driver patterns from the initrd"
 
-# NVIDIA early KMS. Closes the plan/08 tradeoff "NVIDIA machines get no splash until after the
-# root pivot": the initrd had no usable DRM device on NVIDIA at all, so plymouthd waited out
-# DeviceTimeout=8 and fell back to text on every NVIDIA machine, every boot, silently.
+# The initrd has NO GRAPHICS IN IT, and "drm" in the --omit list is what enforces that.
 #
-# --add-drivers, deliberately NOT --force-drivers. The force variant also writes a modules-load.d
-# entry, which would load nvidia.ko on every AMD and Intel machine too — a pointless probe and
-# ~30 MiB of resident driver on hardware it will never bind. Autoloading is left to udev, which
-# matches nvidia.ko's PCI aliases; the other two modules have no modalias at all and are pulled
-# in behind it by the softdep in usr/lib/modprobe.d/10-nvidia-drm.conf (installed by the overlay
-# in section 1, and copied into the initrd by dracut along with the rest of modprobe.d).
+# This is the change plan/14 exists for. dracut's 45plymouth module depends on its drm module,
+# so as long as a splash lived in the initrd the initrd also carried the DRM driver tree and —
+# because dracut follows MODULE_FIRMWARE — every firmware blob those drivers declare. plan/11
+# finding 4 then added nvidia/nvidia-modeset/nvidia-drm on top, dragging 98 MiB of GSP firmware
+# with them, purely so plymouthd would find a DRM device before the root pivot. That was
+# +71.5 MiB of UKI, on an ESP that holds two of them.
 #
-# COST, measured on 0.2.2 and stated here because it is the one change that makes the UKI bigger:
-# nvidia.ko 24.3 + nvidia-modeset 4.5 + nvidia-drm 0.5 MiB, and — the expensive half — nvidia.ko
-# declares MODULE_FIRMWARE for gsp_tu10x.bin (28.7) and gsp_ga10x.bin (69.5), so dracut pulls
-# 98 MiB of GSP firmware in behind them. +71.5 MiB compressed, nearly all of it the firmware,
-# which only compresses to 84%. nvidia-uvm and nvidia-peermem are NOT listed: they are the CUDA
-# side, nothing in an initrd touches them, and the verify block below asserts they stayed out.
-NVIDIA_DRIVERS="nvidia nvidia_modeset nvidia_drm"
+# None of it was ever needed to BOOT. The initrd mounts exactly two filesystems, the erofs root
+# and the ext4 /var, both on a local GPT disk. The splash it was carrying all that weight for is
+# now drawn after switch-root by $DISTRO_ID-splash, out of the root filesystem, where a GPU
+# driver costs nothing extra because the image ships it anyway.
+#
+# Omitting the module rather than merely not adding it is deliberate: "drm" is a dependency
+# other dracut modules can pull in, so leaving it to chance is how it comes back silently. The
+# verify block below asserts no drivers/gpu module and no nvidia*.ko survived into the initrd,
+# which turns a future regression into a failed build instead of a UKI that quietly regrew.
+#
+# The cmdline keeps nvidia-drm.modeset=1 and the image keeps usr/lib/modprobe.d/10-nvidia-drm.conf:
+# those are about the BOOTED system now — nvidia-modeset and nvidia-drm have no modalias, so
+# without the softdep nothing loads them, and then neither the splash nor kwin gets a DRM device.
 
 dracut --force --no-hostonly --reproducible \
   --sysroot "$TARGET" --kver "$KVER" \
-  --add "systemd etc-overlay systemd-repart repart-sysroot plymouth" \
-  --install "${PLYMOUTH_LIBS[*]}" \
-  --omit "network network-legacy nfs iscsi lvm mdraid multipath dmraid cifs brltty virtfs virtiofs lunmask nvdimm qemu-net resume" \
+  --add "systemd etc-overlay systemd-repart repart-sysroot" \
+  --omit "drm network network-legacy nfs iscsi lvm mdraid multipath dmraid cifs brltty virtfs virtiofs lunmask nvdimm qemu-net resume" \
   --omit-drivers "${OMIT_DRIVERS[*]}" \
-  --add-drivers "$NVIDIA_DRIVERS" \
   --compress "zstd -19 -T0" \
   --early-microcode \
   "$INITRD"
@@ -508,28 +505,35 @@ rm -rf -- "$MODS_KEEP"
 # watched the serial port and timed out. tty0 stays listed so the screen still shows the boot.
 #
 # Splash flags, and why each is here:
-#   splash                          show the graphical theme rather than plymouth's details view
-#   plymouth.ignore-serial-consoles LOAD-BEARING. console=ttyS0 above would otherwise make
-#                                   plymouthd claim the serial port as a text display and mirror
-#                                   forwarded systemd status onto it — straight into the log
-#                                   stage 70 scans for "Failed to mount" and friends.
 #   loglevel / rd.udev.log_level    keep stray printk from punching through the splash. Safe for
 #                                   stage 70: "Kernel panic" is level 0 and always prints, and
 #                                   both the IMAGE-TEST marker and systemd's own messages are
 #                                   userspace writes to /dev/console, unaffected by printk level.
+#   quiet                           the other half of that. With CONFIG_FRAMEBUFFER_CONSOLE_
+#                                   DEFERRED_TAKEOVER=y, no console output means fbcon never
+#                                   takes the framebuffer, which is what lets the systemd-stub
+#                                   bitmap survive all the way through the initrd now that the
+#                                   initrd loads no DRM driver to modeset over it.
 #   vt.global_cursor_default=0      no blinking text cursor over the splash
 #
-# The two splash tokens are chosen by SPLASH_BACKEND (build.conf). Note what does NOT change
-# with it: plymouth stays merged, its theme stays installed, and the dracut plymouth module
-# stays in the --add list above, so the initrd payload and every assertion in the verify block
-# below hold in all four modes. Turning plymouth "off" is exactly the one condition its own
-# unit ships with — ConditionKernelCommandLine=!plymouth.enable=0 on plymouth-start.service,
-# present in both the initrd copy and the rootfs copy — and nothing else. Switching backends
-# is therefore a rerun of stages 40-60, not a rebuild.
+# Two tokens that used to be here are gone with plymouth (plan/14): "splash", which only ever
+# meant "plymouth graphical mode", and "plymouth.ignore-serial-consoles", which existed because
+# plymouthd would otherwise claim ttyS0 as a text display and mirror systemd status into the log
+# stage 70 scans. $DISTRO_ID-splash never opens a serial port.
+#
+# SPLASH_BACKEND (build.conf) selects between the two halves of the splash by adding at most one
+# token, and NOTHING ELSE about the image changes with it — the splash binary, its assets, its
+# unit and its udev rule are installed in all four modes. "$DISTRO_ID.splash=0" is the single
+# condition the unit itself carries, so switching backends stays a rerun of stages 40-60 rather
+# than a rebuild:
+#
+#   both  stub bitmap, then the KMS splash at the first modeset   (.splash section, no token)
+#   stub  the stub bitmap alone; black from the modeset onward     (.splash section, token)
+#   kms   no pre-kernel image; splash from the first modeset       (no section, no token)
+#   none  neither — the control when comparing the other three     (no section, token)
 SPLASH_TOKENS=()
 case $SPLASH_BACKEND in
-  plymouth|both) SPLASH_TOKENS+=(splash) ;;
-  stub|none)     SPLASH_TOKENS+=(plymouth.enable=0) ;;
+  stub|none) SPLASH_TOKENS+=("$DISTRO_ID.splash=0") ;;
 esac
 # Initrd failure policy (DEBUG_INITRD in build.conf). On the default (0) a root filesystem that
 # cannot be found or mounted REBOOTS rather than dropping to a dracut emergency shell. That is
@@ -542,17 +546,20 @@ esac
 RECOVERY_TOKENS=()
 [[ ${DEBUG_INITRD:-0} == 1 ]] || RECOVERY_TOKENS+=(rd.shell=0 rd.emergency=reboot)
 
-CMDLINE="root=PARTLABEL=$ROOT_PARTLABEL rootfstype=erofs ro nvidia-drm.modeset=1 console=tty0 console=ttyS0 quiet ${SPLASH_TOKENS[*]} plymouth.ignore-serial-consoles loglevel=3 rd.udev.log_level=3 vt.global_cursor_default=0 ${RECOVERY_TOKENS[*]}"
+CMDLINE="root=PARTLABEL=$ROOT_PARTLABEL rootfstype=erofs ro nvidia-drm.modeset=1 console=tty0 console=ttyS0 quiet ${SPLASH_TOKENS[*]} loglevel=3 rd.udev.log_level=3 vt.global_cursor_default=0 ${RECOVERY_TOKENS[*]}"
 log "splash backend: $SPLASH_BACKEND; initrd emergency shell: ${DEBUG_INITRD:-0}"
 
-# The stub bitmap is composed from the PNGs install_branding() just rasterised, so it cannot
-# drift from the Plymouth theme — one set of sources, one rasterisation, two consumers.
+# The stub bitmap comes out of the same script and the same PNGs as the KMS splash's sprites in
+# section 2b, so the two halves of the splash cannot drift — one set of sources, one layout
+# function, two outputs. That matters more here than it did with plymouth: the stub image and
+# the KMS frame are now the same still picture at the same brightness, and they meet on screen
+# at the first modeset, where any disagreement reads as a jump.
 UKIFY_SPLASH=()
 if [[ $SPLASH_BACKEND == stub || $SPLASH_BACKEND == both ]]; then
   STUB_BMP="$WORK/splash-$VERSION.bmp"
   require_cmds python3
-  python3 "$REPO/config/branding/make-stub-bmp.py" \
-    --theme-dir "$THEME_DIR" --output "$STUB_BMP" --scale "$SPLASH_STUB_SCALE" \
+  python3 "$REPO/config/branding/make-splash-assets.py" \
+    --asset-dir "$BRANDING_PNG" --bmp "$STUB_BMP" --scale "$SPLASH_STUB_SCALE" \
     || die "stub splash bitmap generation failed"
   [[ -s $STUB_BMP ]] || die "stub splash bitmap is empty: $STUB_BMP"
   UKIFY_SPLASH+=(--splash="$STUB_BMP")
@@ -575,15 +582,41 @@ grep -q "ID=$DISTRO_ID" "$TARGET/etc/os-release"          || die "verify: os-rel
 
 # Boot splash. Every piece is checked because the splash is invisible to every automated test
 # we have: stage 70 reads a serial port, so an image that boots to a black screen passes it.
-[[ -f $THEME_DIR/$DISTRO_ID.script ]]   || die "verify: splash theme script missing"
-[[ -f $THEME_DIR/$DISTRO_ID.plymouth ]] || die "verify: splash theme manifest missing"
-for a in slab-top slab-mid slab-bot wordmark status-left status-right; do
-  [[ -s $THEME_DIR/$a.png ]] || die "verify: splash asset $a.png missing or empty"
-done
-[[ -L $TARGET/usr/share/plymouth/themes/default.plymouth ]] \
-  || die "verify: default.plymouth symlink missing — dracut and plymouthd both resolve the theme through it"
-[[ -x $TARGET/usr/sbin/plymouthd || -x $TARGET/usr/bin/plymouthd ]] \
-  || die "verify: plymouthd missing from target (is sys-boot/plymouth in @base?)"
+#
+# The binary must be STATICALLY linked, and this is the assertion that matters most in the whole
+# block. A dynamic build works perfectly here and in every check below, then stops working after
+# stage 50's toolchain split and library sweep — a failure that appears one stage later, in a
+# different image, as a splash that silently never draws.
+# Asked as "does it have a PT_INTERP segment?" rather than by grepping file(1) for the words
+# "statically linked": PT_INTERP is the thing that actually makes the kernel go looking for a
+# dynamic loader, so its absence IS the property being asserted, and the answer does not depend
+# on which magic database the builder happens to ship.
+if readelf -l "$SPLASH_BIN" 2>/dev/null | grep -q 'INTERP'; then
+  die "verify: $SPLASH_BIN is dynamically linked (it has a PT_INTERP segment). The image has no
+  compiler and stage 50 prunes libraries out from under it; a dynamic splash binary would fail
+  to exec at boot with nothing on screen and nothing in the journal."
+fi
+[[ -x $SPLASH_BIN ]] || die "verify: $SPLASH_BIN is not executable"
+
+# The asset container, parsed the way config/splash/splash.c parses it. Checking that the file
+# merely exists says nothing: a truncated or misgenerated container is a splash that loads
+# nothing and exits 0, i.e. a black screen with no error anywhere.
+python3 - "$SPLASH_ASSETS" <<'PYEOF' || die "verify: splash asset container is malformed"
+import struct, sys
+blob = open(sys.argv[1], "rb").read()
+assert blob[:8] == b"IMSPLSH1", "bad magic"
+bg, n = struct.unpack_from("<II", blob, 8)
+assert 0 < n <= 16, f"implausible tile count {n}"
+assert bg == 0x0A0D11, f"background {bg:#08x} is not the brand #0a0d11"
+scales = set()
+for i in range(n):
+    scale, anchor, w, h, ox, oy, off = struct.unpack_from("<7I", blob, 16 + i * 28)
+    assert 0 < w <= 16384 and 0 < h <= 16384, f"tile {i} has implausible extent {w}x{h}"
+    assert anchor in (0, 1, 2), f"tile {i} has unknown anchor {anchor}"
+    assert off + w * h * 4 <= len(blob), f"tile {i} pixels run past the end of the file"
+    scales.add(scale)
+assert scales == {1, 2}, f"expected sprite scales 1 and 2, got {sorted(scales)}"
+PYEOF
 # ...and it has to be IN THE INITRD, not merely in the target. dracut --sysroot can report
 # success while silently installing nothing — that is the trap documented at the lend/borrow
 # dance above, and it would show up only as a splash that never appears before the root pivot.
@@ -594,28 +627,29 @@ if command -v lsinitrd >/dev/null 2>&1; then
   # That false negative is what failed the first build with the payload sitting in the initrd.
   INITRD_LIST="$(lsinitrd "$INITRD" 2>/dev/null || true)"
   has() { grep -q -- "$1" <<<"$INITRD_LIST"; }
-  has 'plymouthd$' \
-    || die "verify: initrd carries no plymouthd — the dracut plymouth module did not install"
-  # The theme and the plugin that interprets it come from plymouth-populate-initrd, which is
-  # the half that silently reads the wrong filesystem when PLYMOUTH_SYSROOT is unset. Assert
-  # them individually: "plymouthd is present" says nothing about whether it can draw.
-  has "themes/$DISTRO_ID/$DISTRO_ID.script" \
-    || die "verify: initrd has plymouthd but not the $DISTRO_ID theme (PLYMOUTH_SYSROOT wrong?)"
-  has 'plymouth/script.so' \
-    || die "verify: initrd has the theme but not script.so — nothing would interpret it"
-  has 'renderers/drm.so' \
-    || die "verify: initrd has no DRM renderer — the splash would fall back to text"
-  # Presence is not enough: a plugin whose libraries are missing dlopen()s to nothing and
-  # plymouth falls back silently. Check what each one actually links against.
-  for so in "$PLYMOUTH_PLUGIN_DIR/script.so" "$PLYMOUTH_PLUGIN_DIR/renderers/drm.so"; do
-    while read -r lib; do
-      [[ -z $lib ]] && continue
-      has "$lib" || die "verify: $so needs $lib, which is not in the initrd — plymouth would dlopen() it, fail, and silently fall back to the text splash"
-    done < <(objdump -p "$TARGET$so" 2>/dev/null | awk '/NEEDED/{print $2}')
-  done
-  for a in slab-top slab-mid slab-bot wordmark status-left status-right; do
-    has "themes/$DISTRO_ID/$a.png" || die "verify: initrd theme is missing $a.png"
-  done
+  # ---- no graphics in the initrd ------------------------------------------------------
+  # The assertion plan/14 turns on. dracut's "drm" module is in the --omit list above, but it is
+  # a module OTHER modules can depend on, so the way it comes back is silently — someone adds a
+  # dracut module in a year's time, the initrd regrows the DRM tree and the firmware behind it,
+  # and the only symptom is a UKI that got 70 MiB bigger for no reason anybody notices.
+  #
+  # There is nothing to trade off here. The initrd mounts an erofs root and an ext4 /var and
+  # then switch-roots; it has no use for a GPU, and the splash that used to need one is now
+  # drawn out of the root filesystem after the pivot.
+  GPU_IN_INITRD="$(grep -E 'drivers/gpu/|/nvidia[-_.]|/nvidia\.ko' <<<"$INITRD_LIST" || true)"
+  if [[ -n $GPU_IN_INITRD ]]; then
+    die "verify: the initrd contains graphics drivers, which nothing in it can use:
+$(head -n 20 <<<"$GPU_IN_INITRD")
+  dracut's 'drm' module is omitted in the call above; something has pulled it back in as a
+  dependency. See plan/14 — this is 70+ MiB of UKI and the reason plymouth was removed."
+  fi
+  # The firmware those drivers drag behind them, checked separately: dracut follows
+  # MODULE_FIRMWARE, so the GSP blobs are ~98 MiB that arrive without any module name matching
+  # the pattern above if only the firmware half regresses.
+  if grep -qE 'firmware/nvidia/|gsp_[a-z0-9]+\.bin' <<<"$INITRD_LIST"; then
+    die "verify: the initrd carries NVIDIA GSP firmware. Nothing in the initrd loads nvidia.ko
+  any more; this is ~98 MiB of ESP for a splash that no longer lives here."
+  fi
 
   # ---- CPU microcode ------------------------------------------------------------------
   # Stage 50 deletes /usr/lib/firmware/{intel,amd}-ucode from the root filesystem, because the
@@ -631,37 +665,6 @@ if command -v lsinitrd >/dev/null 2>&1; then
   has 'kernel/x86/microcode/AuthenticAMD.bin' \
     || die "verify: the initrd's early cpio has no AMD microcode (same cause as the Intel check
   above — see sys-firmware/intel-microcode / linux-firmware's amd-ucode in the target)."
-
-  # ---- NVIDIA early KMS ---------------------------------------------------------------
-  # All three modules AND the GSP firmware, individually. nvidia.ko alone gets a splash on
-  # nothing: without nvidia-modeset and nvidia-drm no DRM device is ever registered, and without
-  # the GSP blobs nvidia.ko cannot initialise a Turing-or-later GPU at all. Each absence looks
-  # identical from outside — plymouth times out and falls back to text — which is precisely the
-  # failure this change exists to remove.
-  for m in video/nvidia.ko video/nvidia-modeset.ko video/nvidia-drm.ko; do
-    has "$m\$" || die "verify: initrd is missing $m — NVIDIA machines would get no splash before
-  the root pivot, which is the plan/08 tradeoff --add-drivers was added to close."
-  done
-  for b in gsp_ga10x.bin gsp_tu10x.bin; do
-    has "firmware/nvidia/.*/$b" \
-      || die "verify: initrd has the nvidia modules but not $b — nvidia.ko would fail to
-  initialise the GPU. dracut pulls this from nvidia.ko's MODULE_FIRMWARE; check that stage 2c's
-  prune did not take /usr/lib/firmware/nvidia/<version>/ with it (prune-firmware.txt class 3 is
-  scoped to the nouveau codename directories and must never carry a bare 'nvidia' entry)."
-  done
-  # ...and the CUDA half must have stayed out. --add-drivers pulls dependencies, not siblings, so
-  # this holds today; it is asserted because "add the nvidia drivers" is exactly the line a future
-  # edit would widen to a glob, and nvidia-uvm is 5.1 MiB of initrd for a compute API no initrd
-  # has ever called.
-  if has 'nvidia-uvm\.ko'; then
-    die "verify: initrd contains nvidia-uvm.ko — that is the CUDA driver, useless before
-  switch-root. Only nvidia, nvidia-modeset and nvidia-drm belong in NVIDIA_DRIVERS."
-  fi
-  # The softdep that makes the other two load at all. nvidia.ko is autoloaded by udev from its
-  # PCI alias; nvidia-modeset and nvidia-drm have no modalias and would sit there unloaded.
-  has 'modprobe.d/10-nvidia-drm.conf' \
-    || die "verify: initrd has the nvidia modules but not usr/lib/modprobe.d/10-nvidia-drm.conf —
-  udev autoloads nvidia.ko and nothing would ever load nvidia-modeset/nvidia-drm behind it."
 
   # ---- the filesystems this initrd actually mounts -------------------------------------
   # erofs for the root and overlay for the /etc overlay module. ext4 (/var, x-initrd.mount) is
@@ -759,8 +762,8 @@ if [[ $SPLASH_BACKEND == stub || $SPLASH_BACKEND == both ]]; then
     die "verify: SPLASH_BACKEND=$SPLASH_BACKEND but the UKI has no .splash section"
   fi
 else
-  # The converse: a leftover .splash in a plymouth-only build would paint an image the kernel
-  # then blanks, which reads as a flicker no one ordered.
+  # The converse: a leftover .splash in a kms-only or none build would paint an image the
+  # kernel then blanks, which reads as a flicker no one ordered.
   if grep -q '\.splash' <<<"$UKI_SECTIONS"; then
     die "verify: SPLASH_BACKEND=$SPLASH_BACKEND but the UKI carries a .splash section"
   fi
@@ -782,16 +785,11 @@ if [[ ${CONSOLE_ONLY:-0} != 1 ]]; then
   # which is exactly why the outcome is asserted rather than the exit status trusted.
   compgen -G "$TARGET/etc/systemd/system/display-manager.service" >/dev/null \
     || die "verify: plasmalogin.service not enabled (preset did not take — no display-manager.service alias)"
-  # The splash-to-greeter hand-off, both halves. The drop-in's empty "ExecStart=" is what stops
-  # systemd running the vendor's plain `plymouth quit` first and resetting the console anyway, so
-  # it is asserted rather than assumed — an editor tidying away a line that looks like a typo
-  # would put the black frame back with nothing to show for it.
-  [[ -f $RETAIN_DROPIN ]] \
-    || die "verify: plymouth-quit.service.d/10-retain-splash.conf missing from a desktop image —
-  the greeter would paint over a blanked screen (plan/08 open question 6)"
-  grep -qE '^ExecStart=$' "$RETAIN_DROPIN" \
-    || die "verify: 10-retain-splash.conf has no empty ExecStart= reset — ExecStart is additive in
-  a Type=oneshot unit, so the vendor's plain 'plymouth quit' would still run first"
+  # There is deliberately NOTHING here about a splash-to-greeter hand-off, and that absence is
+  # the result plan/14 was after. The splash drops DRM master the moment it has painted, so the
+  # greeter needs no ordering against it, no Conflicts=, and no drop-in on either unit — kwin
+  # takes master, modesets, and the splash notices and exits. plan/08 open question 6 and
+  # plan/11 finding 7 were both about machinery that no longer exists.
   # KWallet auto-unlock. Gentoo's PLM ebuild ships PAM stacks that already carry
   #   -auth    optional pam_kwallet5.so
   #   -session optional pam_kwallet5.so auto_start
@@ -842,6 +840,12 @@ log "configure complete; UKI at $UKI_DIR/$UKI_NAME"
 # The three hardware lists are stage-40 inputs now, not just stage-50 ones: section 2c prunes
 # firmware and microcode before dracut, and the omit list decides what goes into the initrd. A
 # stamp that did not cover them would let an edit to any of the three be skipped on a resume.
+#
+# The splash sources are in the hash for the same reason and it is the one that bites daily:
+# `build.sh --from 40` is the documented iteration loop for the splash, and a stamp that ignored
+# splash.c would happily skip the stage that compiles it, leaving the previous binary in place
+# while the log says the build succeeded.
 stamp_write "$STAGE_NAME" "$(inputs_hash "$REPO/config/build.conf" \
   "$REPO/config/prune-firmware.txt" "$REPO/config/prune-microcode.txt" \
-  "$REPO/config/dracut-omit-drivers.txt")"
+  "$REPO/config/dracut-omit-drivers.txt" \
+  "$REPO/config/splash/splash.c" "$REPO/config/branding/make-splash-assets.py")"

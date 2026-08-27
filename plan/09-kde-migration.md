@@ -439,6 +439,10 @@ drives `kwin` itself, which is why it RDEPENDs `kwin[lock]`.
 
 ### Add `config/rootfs/usr/lib/systemd/system/plasmalogin.service.d/10-plymouth.conf`
 
+> **Superseded.** Plymouth and this drop-in were removed in
+> [plan/14](14-boot-splash-kms.md); the KMS splash needs no ordering against the greeter at all.
+> Kept as the record of what the migration did at the time.
+
 ```ini
 [Unit]
 # GDM had a plymouth USE flag: it conflicted with plymouth-quit.service and quit the splash
@@ -486,6 +490,8 @@ The leading `-` makes each line a no-op when the module is absent, so keeping
 `/etc/pam.d` edit that an SDDM-based plan would have needed in stage 40.
 
 ### `config/rootfs/usr/lib/systemd/system/multi-user.target.d/10-plymouth-quit.conf`
+
+> **Superseded**, same as above — see [plan/14](14-boot-splash-kms.md).
 
 Body unchanged; rewrite the trailing comment. The `gdm[plymouth]` carve-out is gone —
 `plymouth-quit.service` now tears the splash down on **both** the desktop and console-only

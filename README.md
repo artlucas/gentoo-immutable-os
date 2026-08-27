@@ -54,8 +54,8 @@ into it, so the first build takes hours. Those builds are cached as binpkgs in t
 `bash tests/run-tests.sh` — offline suite (no Gentoo downloads, no root): bash syntax on
 every script incl. rendered templates, CR-byte lint, config lint, and unit/integration
 tests (config validation, templating/rebranding, GPT layout math + dd assembly simulation,
-update-CLI behavior against mocked systemd tools, build.sh dry-run wiring, boot-splash theme
-and asset consistency). Runs on Git
+update-CLI behavior against mocked systemd tools, build.sh dry-run wiring, boot-splash asset
+and cmdline-token consistency). Runs on Git
 Bash, WSL, or Linux. Shellcheck runs when available (e.g.
 `docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:stable -x -S warning <files>`).
 

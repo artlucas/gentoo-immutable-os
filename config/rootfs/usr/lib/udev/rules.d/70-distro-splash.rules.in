@@ -1,0 +1,7 @@
+# Start the boot splash as soon as a DRM device exists. This is the whole trigger: the initrd
+# carries no GPU driver any more, so the first card node appears after switch-root when udev
+# autoloads amdgpu/i915/xe/nvidia/virtio_gpu, and that is exactly the moment the systemd-stub
+# bitmap stops being scanned out.
+#
+# render nodes (renderD*) are skipped: they cannot modeset.
+ACTION=="add|change", SUBSYSTEM=="drm", KERNEL=="card[0-9]*", TAG+="systemd", ENV{SYSTEMD_WANTS}+="@DISTRO_ID@-splash.service"

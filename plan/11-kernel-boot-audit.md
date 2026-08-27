@@ -5,6 +5,15 @@ root EROFS down 20% and ended with one finding still open, stated as a heading: 
 shrink, and that is a finding."* This document is that finding chased down, plus the first
 measured audit of what the boot artifact actually contains.
 
+> **Findings 4 and 7 were superseded on 2026-08-27 by
+> [plan/14](14-boot-splash-kms.md), which removed Plymouth.** Finding 4's +71.5 MiB of NVIDIA
+> modules and GSP firmware existed so plymouthd could draw in the initrd; the initrd carries no
+> graphics at all now. Finding 7's `--retain-splash` teardown solved a hand-off that no longer
+> exists, because the replacement drops DRM master instead of quitting. **The numbers in this
+> document are not restated there and are still the baseline** — everything else here (the
+> microcode prune, the omit list, the compression, the dead-module sweep, `rd.emergency=reboot`,
+> the `KVER` guard) stands unchanged.
+
 Everything below is measured against the real `0.2.2` artefacts in the `immos-work` volume — the
 post-prune target and `initrd-0.2.2.img` — and every "after" number comes from a full dracut run
 against a copy of that target with the changes applied, not from an estimate.
@@ -153,7 +162,7 @@ explicitly — nothing load-bearing: `erofs`, `overlay`, `amdgpu`, `i915`, `xe`,
 `usb_storage` and the nvidia trio are all untouched. The offline suite pins that last part with a
 list of module names no pattern may ever match.
 
-### 4. NVIDIA early KMS — the one change that makes the UKI bigger
+### 4. NVIDIA early KMS — the one change that makes the UKI bigger *(superseded by [plan/14](14-boot-splash-kms.md))*
 
 plan/08's tradeoff read: *"NVIDIA machines get no splash until after the root pivot… the initrd
 has no usable DRM device on NVIDIA at all: plymouth waits out `DeviceTimeout=8` and falls back to
@@ -229,7 +238,7 @@ three `ERROR: fstatat(3, System.map): No such file or directory` lines into the 
 alarming, meaningless, and the kind of thing that costs somebody an hour. Verified silent in the
 new order.
 
-### 7. The greeter hand-off, and the design that did not work
+### 7. The greeter hand-off, and the design that did not work *(superseded by [plan/14](14-boot-splash-kms.md))*
 
 plan/08 open question 6: `plymouth-quit.service` tears the splash down and `plasmalogin.service`
 is merely ordered after `plymouth-quit-wait.service` — deterministic, but visibly black between
@@ -328,9 +337,11 @@ from the initrd, and `firmware/intel` fell 6.36 → 2.71 MiB.
   `drivers/media` (52), enterprise NIC families and SAN HBAs are ~130 MiB installed and ~50 MiB of
   EROFS on the same reasoning as `prune-firmware.txt`. Out of scope by decision; finding 6 takes
   only what is dead by construction.
-- **Leaving `gentoo-kernel-bin`.** See "Two things that look like levers" above. `DRM_SIMPLEDRM`
-  would close plan/08's remaining modeset-gap tradeoff, and a non-generic module set would be worth
-  far more than anything in this document — at the cost of owning a kernel config.
+- **Leaving `gentoo-kernel-bin`.** See "Two things that look like levers" above. A non-generic
+  module set would be worth far more than anything in this document — at the cost of owning a
+  kernel config. (`DRM_SIMPLEDRM` was the other half of the argument when this was written;
+  [plan/14](14-boot-splash-kms.md) covers the pre-modeset window with the EFI stub, so it is now
+  a nicety rather than the fix for anything.)
 - **`SC2115` in `50-prune.sh:189`** (`rm -rf -- "$slot"/{include,share,bin}`) is pre-existing and
   untouched; `$slot` comes from a glob and cannot be empty. Noted so the next shellcheck run
   knows it is not new.
@@ -342,10 +353,10 @@ from the initrd, and `firmware/intel` fell 6.36 → 2.71 MiB.
 | 1 | prune firmware/microcode before dracut (`prune_hardware_trees`) | enables 2; closes plan/10's open finding | done |
 | 2 | `config/prune-microcode.txt`, client-only signatures | −22.2 UKI, −22 root | done |
 | 3 | `config/dracut-omit-drivers.txt`, 68 name patterns | −100 modules, −56.7 uncompressed | done |
-| 4 | NVIDIA early KMS + modprobe softdep | +71.5 UKI; splash on NVIDIA from first modeset | done |
+| 4 | NVIDIA early KMS + modprobe softdep | +71.5 UKI; splash on NVIDIA from first modeset | done, **reversed by [plan/14](14-boot-splash-kms.md)** (the modprobe softdep stays) |
 | 5 | initrd `zstd -19` | −8.7 on the trimmed tree | done |
 | 6 | dead modules + `depmod` | −26 root (129 files) | done |
-| 7 | retain-splash teardown | no black frame at the greeter | done, **needs a visual check** |
+| 7 | retain-splash teardown | no black frame at the greeter | done, **superseded by [plan/14](14-boot-splash-kms.md)** (drop-master needs no teardown) |
 | 8 | `rd.emergency=reboot` behind `DEBUG_INITRD` | rollback without three power cycles | done |
 | 9 | `KVER` guard in stages 40 and 50 | correctness | done |
 
@@ -353,3 +364,6 @@ Findings 7 and 4 are the two that no automated test in this repo can see — sta
 port, so a black screen and a perfect splash are indistinguishable to it. Both need QEMU
 (`scripts/run-vm.sh`), and finding 4 needs real NVIDIA hardware to confirm the thing it was built
 for.
+
+That visual check is what eventually found them wanting: the splash was black in QEMU, which is
+what [plan/14](14-boot-splash-kms.md) was written to fix. Both findings are superseded there.

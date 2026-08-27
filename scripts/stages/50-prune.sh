@@ -602,18 +602,21 @@ compgen -G "$T/usr/lib/systemd/system/systemd-networkd*" >/dev/null \
   || violation "/usr/lib/systemd/network/99-default.link removed — udev link policy is not networkd's, the prune cut too deep"
 # The boot splash, in full. None of this is reachable by any automated test we have — stage 70
 # reads a serial port, so an image whose splash was pruned to nothing boots to a black screen
-# and still reports green. The theme, the plugin that interprets it and the renderer that draws
-# it each fail differently and each fail silently.
-[[ -f $T/usr/share/plymouth/themes/$DISTRO_ID/$DISTRO_ID.script ]] \
-  || violation "plymouth theme script missing after prune"
-[[ -L $T/usr/share/plymouth/themes/default.plymouth ]] \
-  || violation "default.plymouth symlink missing after prune"
-compgen -G "$T/usr/lib64/plymouth/script.so" >/dev/null \
-  || compgen -G "$T/usr/lib/plymouth/script.so" >/dev/null \
-  || violation "plymouth script plugin missing after prune — the theme cannot be interpreted"
-compgen -G "$T/usr/lib64/plymouth/renderers/drm.so" >/dev/null \
-  || compgen -G "$T/usr/lib/plymouth/renderers/drm.so" >/dev/null \
-  || violation "plymouth DRM renderer missing after prune — the splash would fall back to text"
+# and still reports green.
+#
+# It is asserted HERE, after the prune, as well as in stage 40, because this stage is where it
+# would plausibly be lost: section 3b's toolchain split and the /usr/share sweeps both run over
+# the two paths below. The binary is static precisely so that no library prune can break it —
+# but nothing stops a prune deleting the binary or its assets outright.
+[[ -x $T/usr/bin/$DISTRO_ID-splash ]] \
+  || violation "/usr/bin/$DISTRO_ID-splash missing after prune — the image would boot to a black screen"
+[[ -s $T/usr/share/$DISTRO_ID/splash.bin ]] \
+  || violation "/usr/share/$DISTRO_ID/splash.bin missing after prune — the splash binary would find no assets and exit silently"
+# Console-only images have neither (stage 40 removes them: agetty owns the framebuffer there).
+if [[ -f $T/usr/lib/systemd/system/$DISTRO_ID-splash.service ]]; then
+  [[ -f $T/usr/lib/udev/rules.d/70-$DISTRO_ID-splash.rules ]] \
+    || violation "the splash unit survived the prune but its udev rule did not — nothing would start it"
+fi
 
 # NetworkManager itself is the whole point of removing networkd; assert it outlived it.
 compgen -G "$T/usr/sbin/NetworkManager" >/dev/null \

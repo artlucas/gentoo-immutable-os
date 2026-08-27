@@ -1,8 +1,0 @@
-[Plymouth Theme]
-Name=@DISTRO_NAME@
-Description=@DISTRO_NAME@ boot splash — pulsing logomark on the brand field
-ModuleName=script
-
-[script]
-ImageDir=/usr/share/plymouth/themes/@DISTRO_ID@
-ScriptFile=/usr/share/plymouth/themes/@DISTRO_ID@/@DISTRO_ID@.script

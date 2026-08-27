@@ -34,7 +34,7 @@ objcopy -O binary --only-section=.linux  out/uki/immos_0.2.0.efi vmlinuz
 objcopy -O binary --only-section=.initrd out/uki/immos_0.2.0.efi initrd.img
 qemu-system-x86_64 ... -kernel vmlinuz -initrd initrd.img \
   -append 'root=PARTLABEL=root_0.2.0 rootfstype=erofs ro console=ttyS0 loglevel=6 \
-           systemd.journald.forward_to_console=1 rd.emergency=poweroff plymouth.enable=0'
+           systemd.journald.forward_to_console=1 rd.emergency=poweroff immos.splash=0'
 ```
 
 `systemd.journald.forward_to_console=1` is the load-bearing part — it puts the initrd journal on

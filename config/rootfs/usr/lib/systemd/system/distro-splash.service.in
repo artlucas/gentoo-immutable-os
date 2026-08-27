@@ -1,0 +1,31 @@
+# @DISTRO_NAME@ boot splash — the KMS half. See plan/14 and config/splash/splash.c.
+#
+# Started by 70-@DISTRO_ID@-splash.rules the moment a DRM card appears, which is the earliest
+# reachable moment and needs no systemd-udev-settle. On a multi-GPU machine the rule fires more
+# than once; the repeats are no-ops while this unit is active, and the program enumerates every
+# card itself.
+#
+# There is deliberately NO ordering against the greeter in either direction. The program drops
+# DRM master as soon as it has painted, so the compositor can take over whenever it likes and
+# the splash notices afterwards and exits. Every previous attempt to sequence a splash teardown
+# against the display manager was either a race or a deadlock — see plan/11 finding 7.
+[Unit]
+Description=@DISTRO_NAME@ boot splash
+# DefaultDependencies=no keeps it out of the basic.target ordering it would otherwise wait on;
+# there is nothing it needs beyond the device that triggered it.
+DefaultDependencies=no
+Conflicts=shutdown.target
+Before=shutdown.target
+# The single token that turns the splash off, exactly as plymouth-start.service used
+# "!plymouth.enable=0". Stage 40 puts "@DISTRO_ID@.splash=0" on the UKI cmdline for
+# SPLASH_BACKEND=stub and =none, so switching backends stays a stages 40-60 rerun rather than
+# a rebuild.
+ConditionKernelCommandLine=!@DISTRO_ID@.splash=0
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/@DISTRO_ID@-splash
+# It exits 0 on every failure path by design (a splash must never hold up or fail a boot), so
+# there is nothing to restart and nothing to report.
+Restart=no
+TimeoutStopSec=2

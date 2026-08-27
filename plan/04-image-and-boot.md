@@ -47,12 +47,13 @@ sysupdate `MatchPartitionType=root`) recognizes them.
 Default sizes (build.conf): ESP 1 GiB, root slots 6 GiB each, var 4 GiB initial → ~17 GiB raw
 image, grows on first boot.
 
-The ESP budget is 2 UKIs plus slack, and the UKI has moved twice since it was sized. The boot
-splash first pulled the DRM modules into the initrd and took it from ~105 to ~242 MiB; dropping
-nouveau's GSP firmware brought it to 135.5 (plan/10); [plan/11](11-kernel-boot-audit.md) then cut
-22 MiB of server CPU microcode and 100 initrd modules and spent +71.5 MiB adding the NVIDIA
-modules and *their* GSP firmware, for a **measured 168.7 MiB**. Two of those is 337 MiB of the
-1 GiB ESP — 3× headroom, down from 7.5×, and still comfortable. `ESP_SIZE_MIB` has not changed.
+The ESP budget is 2 UKIs plus slack, and the UKI has moved several times since it was sized —
+every move driven by the boot splash. It first pulled the DRM modules into the initrd and went
+from ~105 to ~242 MiB; dropping nouveau's GSP firmware brought it to 135.5 (plan/10);
+[plan/11](11-kernel-boot-audit.md) cut 22 MiB of server CPU microcode and 100 initrd modules and
+then spent +71.5 MiB adding the NVIDIA modules and *their* GSP firmware, for a measured
+168.7 MiB. [plan/14](14-boot-splash-kms.md) removes the splash from the initrd entirely and takes
+the whole graphics payload with it. `ESP_SIZE_MIB` has not changed through any of this.
 
 ## Boot media usage
 
@@ -112,61 +113,49 @@ proper menu title.
 
 ## Boot splash
 
-From the first DRM device to the Plasma Login Manager greeter the screen shows the Immos splash — the pulsing
-logomark on `#0a0d11`, the wordmark, and a `<channel> · V<version> · AMD64` status line — drawn
-over whatever the firmware left on screen. ESC switches to the boot log.
+From the firmware handing over to the Plasma Login Manager greeter the screen shows the Immos
+splash — the logomark on `#0a0d11`, the wordmark, and a `<channel> · V<version> · AMD64` status
+line. ESC reveals the boot log. Plymouth was removed in [plan/14](14-boot-splash-kms.md); the
+full design and its rationale live there, and this is the summary.
 
-- **Theme:** plymouth's `script` plugin. Sources live in `config/branding/` as SVG (text, so the
-  suite's CR-byte scan and `.gitattributes` stay happy); stage 40 rasterises them with
-  `rsvg-convert` into `/usr/share/plymouth/themes/${ID}/` **before** dracut runs, because
-  dracut's `45plymouth` module copies the theme out of the target into the initrd.
-- **Cmdline additions:** see [01](01-architecture.md). `plymouth.ignore-serial-consoles` is the
-  one that matters for CI.
-- **Hand-off:** `plymouth-quit.service` tears the splash down, on **both** the desktop and
-  `--console-only` images, with the `multi-user.target` drop-in guaranteeing the units are
-  wanted. `plasmalogin.service` carries an `After=plymouth-quit-wait.service` drop-in so the
-  greeter paints after the teardown rather than racing it.
-  The black frame that ordering used to guarantee is gone as of
-  [plan/11](11-kernel-boot-audit.md) finding 7: a drop-in on `plymouth-quit.service` replaces its
-  `ExecStart` with `plymouth quit --retain-splash`, which skips the console reset and leaves the
-  last frame on the framebuffer for kwin to paint over. Changing the teardown rather than who
-  performs it is what makes this work at all — the gdm-shaped alternative (`Conflicts=` plus an
-  `ExecStartPre` on the display manager) is a race against PLM's own vendor
-  `After=plymouth-quit.service`, and deadlocks if ordered after `plymouth-quit-wait`. Stage 40
-  removes the drop-in on `--console-only`, where agetty draws into the same framebuffer.
-- **UKI size:** the plymouth dracut module depends on dracut's `drm` module, so the initrd
-  carries the DRM kernel modules, and finding 4 added the NVIDIA ones and their GSP firmware on
-  top. Currently 168.7 MiB measured; see the ESP budget above. It is the dominant ESP consumer.
-- **dracut's `45plymouth` module is not sysroot-clean**, and both halves of that fail silently.
-  It hands its payload to `plymouth-populate-initrd` without setting `PLYMOUTH_SYSROOT`, and
-  that helper resolves the splash plugins' libraries with a non-sysroot-aware `ldd`. Stage 40
-  therefore sets `PLYMOUTH_SYSROOT`/`PLYMOUTH_THEME_NAME`/`PLYMOUTH_PLUGIN_PATH` itself and
-  passes the `libply*` libraries to dracut's own `--install`. Without the first, the initrd gets
-  an empty theme directory and no plugins; without the second, `script.so` is present but
-  `libply-splash-graphics.so.5` is not, `dlopen` fails, and plymouth falls back to a grey text
-  splash with nothing logged anywhere. Stage 40 asserts both, including every `NEEDED` library
-  of `script.so` and `drm.so`.
-- **`.splash` section in the UKI: available, off by default.** `SPLASH_BACKEND` in `build.conf`
-  selects `plymouth` (default, what v1 shipped), `stub`, `both`, or `none`. The stub image is
-  composed by `config/branding/make-stub-bmp.py` from the same PNGs the theme uses, so the two
-  cannot drift. What it buys and what it does not:
-  - `systemd-stub` draws it **before the kernel starts**, which is the one window plymouth
-    cannot reach — it needs a DRM device, and this kernel has no simpledrm (see [08](08-roadmap.md)).
-  - It is drawn **once**, and it dies at the first modeset. There is no animation, no progress,
-    and nothing redraws it: `stub` alone leaves the screen black from the first DRM driver all
-    the way to the greeter, which is the majority of the boot. `both` is the combination that covers
-    the whole timeline; `stub` alone is a downgrade, not a replacement.
-  - The stub fills the screen **black** and blits the bitmap **1:1, centred, without scaling**
-    (`src/boot/splash.c`). Hence `SPLASH_STUB_SCALE`, and hence the bitmap's black background
-    rather than the theme's `#0a0d11` — a brand-coloured canvas would seam against the fill.
-  - The section is measured into **PCR 11**. Changing the splash changes that measurement, so
-    it matters to any future TPM-sealed policy the way the kernel and cmdline already do.
-- **Plymouth is never uninstalled by any of this.** In all four modes it stays merged, its theme
-  stays in `/usr/share/plymouth/themes/`, and it stays in the initrd with every stage-40
-  assertion about its payload still enforced. "Off" is the single cmdline token its own unit
-  already tests for: `ConditionKernelCommandLine=!plymouth.enable=0` on `plymouth-start.service`,
-  which ships in both the initrd and rootfs copies. Switching backends is a rerun of stages
-  40–60, not a rebuild.
+**Two halves, because no single mechanism can cover the whole boot on this kernel.**
+`gentoo-kernel-bin` has no `DRM_SIMPLEDRM` and no `CONFIG_FB_DEVICE`, so there is no
+firmware-framebuffer DRM device and no `/dev/fb0` at all. Before the kernel starts, only the EFI
+stub can draw; after it, only a DRM client can.
+
+- **`systemd-stub` `.splash` section** — a BMP blitted by the stub before the kernel starts.
+  systemd-stub fills the screen black and blits the bitmap **1:1, centred, without scaling**
+  (`src/boot/splash.c`), which is why the canvas is black rather than the brand `#0a0d11` (a
+  brand-coloured canvas would seam against the fill) and why `SPLASH_STUB_SCALE` exists: there is
+  no resolution to query before `ExitBootServices`. The section is measured into **PCR 11**, so
+  changing the splash changes that measurement the way the kernel and cmdline already do.
+- **`<id>-splash`** — a static ~800-line C program on the read-only root, drawing on DRM with
+  kernel uapi ioctls and no libdrm. Started by a udev rule the moment a `card*` device appears.
+
+**The stub image now survives the whole initrd**, which it did not before: the initrd loads no
+DRM driver any more, and `quiet` plus `CONFIG_FRAMEBUFFER_CONSOLE_DEFERRED_TAKEOVER=y` means
+nothing takes the framebuffer, so nothing modesets until after switch-root.
+
+- **Assets:** `config/branding/` SVG sources (text, so the suite's CR-byte scan and
+  `.gitattributes` stay happy). Stage 40 rasterises them with `rsvg-convert` into a **work
+  directory**, and `make-splash-assets.py` composes both artefacts from those PNGs — the stub BMP
+  and `/usr/share/<id>/splash.bin`, a container of opaque pre-composited BGRX tiles. Neither the
+  SVGs nor the PNGs enter the image, so it needs no font and no image decoder at boot.
+- **Hand-off:** there isn't one, and that is the point. The splash drops DRM master as soon as it
+  has painted, so kwin can take master whenever it likes; the splash notices its CRTC is showing
+  someone else's framebuffer and exits. No `Conflicts=`, no drop-ins, no ordering in either
+  direction — plan/08 open question 6 and plan/11 finding 7 were both about machinery that no
+  longer exists. Stage 40 removes the unit and udev rule on `--console-only`, where agetty owns
+  the framebuffer.
+- **UKI size:** this is where the change pays. The plymouth dracut module depended on dracut's
+  `drm` module, so the initrd carried the DRM module tree plus every blob those drivers declare
+  through `MODULE_FIRMWARE`, and plan/11 finding 4 added the NVIDIA modules and 98 MiB of GSP
+  firmware on top. `--omit drm` removes all of it; stage 40 asserts no `drivers/gpu` module and
+  no GSP firmware survives into the initrd.
+- **`SPLASH_BACKEND`** in `build.conf` selects `both` (default), `stub`, `kms` or `none`. Nothing
+  about the image changes with it except at most one cmdline token: the binary, its assets, its
+  unit and its rule are installed in all four modes, and `ConditionKernelCommandLine=!<id>.splash=0`
+  on the unit is the whole switch. Switching backends is a rerun of stages 40–60, not a rebuild.
 
 ## fstab (shipped in image, immutable lower)
 

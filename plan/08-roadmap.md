@@ -55,10 +55,12 @@ Secure Boot for a full trust chain.
   floor.
 - **Own the kernel config** — `sys-kernel/gentoo-kernel` instead of `-bin`. The single largest
   remaining lever, and the one thing [plan/11](11-kernel-boot-audit.md) could not touch: the
-  generic dist-kernel ships 4910 modules / 623 MiB, has no `DRM_SIMPLEDRM` (so the modeset-gap
-  tradeoff below stays), and cannot compress modules. A config cut to this image's hardware scope
-  would be worth more than every prune in plan/10 and plan/11 combined. The cost is owning that
-  config across every kernel bump, and a source kernel build in the pipeline.
+  generic dist-kernel ships 4910 modules / 623 MiB and cannot compress modules. A config cut to
+  this image's hardware scope would be worth more than every prune in plan/10 and plan/11
+  combined. The cost is owning that config across every kernel bump, and a source kernel build
+  in the pipeline. It would also give the splash a firmware framebuffer to draw on
+  (`DRM_SIMPLEDRM`), which is now a nicety rather than the fix for anything —
+  [plan/14](14-boot-splash-kms.md) covers the pre-modeset window with the EFI stub instead.
 - **Fingerprint (fprintd), IPU6/MIPI camera stack (libcamera)** as ecosystems mature.
 - **ARM64** — the pipeline is arch-parameterizable in principle (crossdev or native arm64
   builder); explicitly out of scope until AMD64 is solid.
@@ -77,9 +79,9 @@ Secure Boot for a full trust chain.
 | Pascal (GTX 10-series) & older NVIDIA → no working GPU driver | `kernel-open` covers Turing+ only; pre-Turing machines fall outside the 5-year target. `nouveau` is dropped from `VIDEO_CARDS` and was never a live fallback anyway — `nvidia-drivers` blacklists it unconditionally (plan/03, plan/10). Revisit only if user demand appears (would require the legacy proprietary branch and a second driver variant) |
 | No 3-way `/etc` merge (overlay upper shadows vendor changes) | OSTree-grade merge machinery is not worth v1 complexity; `immos-update etc-diff` gives visibility |
 | No Secure Boot in v1 | Owner decision; documented "disable in firmware"; roadmap #2 |
-| Boot splash cannot render a passphrase prompt | `sys-boot/plymouth[-pango]`: all splash text is pre-rendered to PNG at build time, so no font ships in the image. Costs nothing today (no LUKS, no fsck prompt); adding full-disk encryption means turning `pango` back on first — it pulls no new packages, since pango/cairo/libpng are already there for the GTK theming bridge |
-| Possible brief console flash between firmware logo and splash | `gentoo-kernel-bin` is a binary dist-kernel and `/usr/src` is pruned, so the graphics config is whatever Gentoo ships and cannot be changed without leaving `-bin`. Verified against the 6.18.43 config: `CONFIG_FRAMEBUFFER_CONSOLE_DEFERRED_TAKEOVER=y` (good), but `DRM_SIMPLEDRM`, `DRM_EFIDRM`, `DRM_VESADRM` and `SYSFB_SIMPLEFB` are all **unset**, and `CONFIG_FB_DEVICE` is unset too — so there is no generic firmware-framebuffer DRM device and no `/dev/fb0` either. Plymouth must wait for a real DRM driver, and plymouth's `frame-buffer.so` renderer can never be the fallback. Pre-empting the firmware logo is now possible via `SPLASH_BACKEND=both` (a `.splash` section in the UKI, see [04](04-image-and-boot.md)), but that covers only the pre-kernel window; closing the modeset gap itself needs a kernel with simpledrm, i.e. `sys-kernel/gentoo-kernel` with a custom config |
-| ~~NVIDIA machines get no splash until after the root pivot~~ | **RESOLVED 2026-08-25 ([plan/11](11-kernel-boot-audit.md) finding 4).** Stage 40 now passes `--add-drivers "nvidia nvidia_modeset nvidia_drm"`, and `usr/lib/modprobe.d/10-nvidia-drm.conf` adds `softdep nvidia post: nvidia-modeset nvidia-drm` — the missing half, since neither of those two modules has a modalias for udev to match and nothing in the initrd would otherwise load them. Cost is +71.5 MiB on the UKI, almost all of it the GSP firmware dracut pulls from `nvidia.ko`'s `MODULE_FIRMWARE`; taken deliberately with the numbers in hand. Still needs confirming on real NVIDIA hardware — stage 70's virtio guest cannot see a splash |
+| Boot splash cannot render a passphrase prompt, or any text at all | Every glyph is pre-rendered to pixels at build time and the splash ships as opaque tiles ([plan/14](14-boot-splash-kms.md)), so no font, no text engine and no image decoder is in the image or the boot path. Costs nothing today (no LUKS, no fsck prompt). This was previously a USE-flag decision (`sys-boot/plymouth[-pango]`, reversible by flipping the flag); it is now structural — adding full-disk encryption would mean giving the splash program a text renderer, or handing the prompt to something else entirely |
+| No generic firmware framebuffer: the splash must be two programs, not one | `gentoo-kernel-bin` is a binary dist-kernel and `/usr/src` is pruned, so the graphics config is whatever Gentoo ships and cannot be changed without leaving `-bin`. Verified against the 6.18.43 config: `CONFIG_FRAMEBUFFER_CONSOLE_DEFERRED_TAKEOVER=y` (good, and load-bearing), but `DRM_SIMPLEDRM`, `DRM_EFIDRM`, `DRM_VESADRM` and `SYSFB_SIMPLEFB` are all **unset**, and `CONFIG_FB_DEVICE` is unset too — so there is no generic firmware-framebuffer DRM device and no `/dev/fb0` either. Nothing can draw before the first real KMS driver except the EFI stub, and every fbdev-era splash is impossible outright. [plan/14](14-boot-splash-kms.md) covers the timeline with two pieces instead of one: the stub's `.splash` bitmap up to the first modeset, and a DRM client after it. The remaining gap is now the *modeset itself*, not the minutes around it |
+| ~~NVIDIA machines get no splash until after the root pivot~~ | **MOOT since 2026-08-27 ([plan/14](14-boot-splash-kms.md)).** plan/11 finding 4 fixed this by putting the three nvidia modules in the initrd at a cost of +71.5 MiB of UKI, nearly all of it GSP firmware. No splash runs before the root pivot on *any* GPU now — the stub bitmap covers that window on all hardware equally, and the initrd carries no graphics at all. `10-nvidia-drm.conf`'s softdep stays and is still the only thing that loads `nvidia-drm`; its scope is now the booted system |
 | UEFI-only, no BIOS | 5-year hardware window is UEFI-universal |
 | Full-image (non-delta) updates | Simplicity + sysupdate stock behavior; roadmap #4 |
 | No hibernation (zram-only swap) | Avoids swap-partition sizing and resume-offset fragility on an immutable, repartition-on-first-boot design |
@@ -103,13 +105,13 @@ Secure Boot for a full trust chain.
    fall back *to*: `kde-plasma/kwin` is Wayland-only and `kwin-x11` is not installed. So if this
    fails on NVIDIA it fails at the session level and the fix is session-wide, not greeter-only.
 5. `bash-completion`/zsh data: keep or prune — size report decides (marked REVISIT in 06).
-6. ~~**Restore a retain-splash hand-off.**~~ **RESOLVED 2026-08-25 ([plan/11](11-kernel-boot-audit.md)
-   finding 7)** — though not the way this question proposed, and the difference is worth keeping.
-   Running `plymouth quit --retain-splash` from a drop-in `ExecStartPre` on `plasmalogin.service`
-   does *not* work: PLM's own vendor unit already carries `After=plymouth-quit.service`, so
-   `Conflicts=` is a race rather than a guarantee, and ordering PLM after `plymouth-quit-wait`
-   while PLM is the only thing that quits plymouthd deadlocks the two units. What works is
-   changing the teardown instead of who performs it — a drop-in on `plymouth-quit.service`
-   replacing its `ExecStart` with `plymouth quit --retain-splash`, leaving every ordering alone.
-   Removed on `--console-only`, where agetty draws into the same framebuffer. Still needs a
-   visual check in QEMU; nothing automated here can see it.
+6. ~~**Restore a retain-splash hand-off.**~~ **CLOSED 2026-08-27
+   ([plan/14](14-boot-splash-kms.md)).** Answered twice, and the second answer is that the
+   question was the wrong shape. plan/11 finding 7 solved it within plymouth by changing the
+   teardown rather than who performs it (a drop-in replacing `plymouth-quit.service`'s
+   `ExecStart` with `plymouth quit --retain-splash`) — correct, and still four coupled units.
+   The KMS splash drops DRM master the moment it has painted, so kwin can take master whenever
+   it likes and the splash notices afterwards and exits. There is nothing to order, nothing to
+   conflict with, and nothing left in the image that mentions the splash except its own unit and
+   udev rule. Both the race and the deadlock this question spent two rounds on are gone with the
+   coupling that created them.

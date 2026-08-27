@@ -1,12 +1,19 @@
 # Branding assets (build-only — none of these files ship in the image)
 
-Sources for the Plymouth boot splash. Stage 40 renders the `*.in` templates, rasterises every
-SVG to PNG with `rsvg-convert`, and installs the result plus the theme files into
-`$TARGET/usr/share/plymouth/themes/<distro>/`. The SVGs themselves never enter the image.
+Sources for the boot splash. Stage 40 renders the `*.in` templates and rasterises every SVG to
+PNG with `rsvg-convert` into a **work directory**, then `make-splash-assets.py` composes those
+PNGs into the two artefacts that do ship:
 
-They live here rather than under `config/rootfs/` for two reasons: they are build inputs, not
-image content (same as `config/keys/`), and `render_dest_name()` rewrites `distro` in file
-*basenames* only — a `config/rootfs/.../themes/distro/` **directory** would never be renamed.
+| artefact | where it goes | which window of the boot it covers |
+|---|---|---|
+| `splash.bin` (sprite tiles) | `/usr/share/<distro>/` on the root filesystem | first modeset → greeter, drawn by `config/splash/splash.c` |
+| `splash-<ver>.bmp` | the UKI's `.splash` PE section | firmware → first modeset, blitted by `systemd-stub` |
+
+Neither the SVGs nor the PNGs enter the image. That is the point: the splash ships as
+pre-composited pixels, so the image needs no font, no image decoder and no text engine at boot.
+
+They live here rather than under `config/rootfs/` because they are build inputs, not image
+content — the same reason `config/keys/` is where it is.
 
 Everything here is text on purpose. `tests/run-tests.sh` byte-scans every file in the repo for
 CR bytes, so a committed PNG or TTF would fail the offline suite; keeping the sources vector
@@ -18,13 +25,17 @@ also means the splash rescales for any panel instead of being pinned to one reso
 | `wordmark.svg` | "immos" in Archivo Bold, **glyphs converted to `<path>`** — see below |
 | `status-left.svg.in` | bottom-left field; `@SPLASH_STATUS_LEFT@` is composed in stage 40 from `UPDATE_CHANNEL` and `VERSION` |
 | `status-right.svg` | bottom-right "PRESS ESC FOR DETAILS" hint |
-| `distro.plymouth.in` | theme manifest → `<distro>.plymouth` |
-| `distro.script.in` | the theme itself → `<distro>.script` |
 | `outline-wordmark.py` | the one-time generator for `wordmark.svg` (not run by the build) |
-| `make-stub-bmp.py` | composes the `systemd-stub` `.splash` bitmap from the PNGs above, when `SPLASH_BACKEND` includes the stub. Run by stage 40, after the rasterise pass — same sources, same rasterisation, so the stub image and the Plymouth theme cannot drift |
+| `make-splash-assets.py` | composes **both** shipped artefacts from the PNGs above. Run once by stage 40, after the rasterise pass |
 
-Assets are authored at the **1920×1080 design baseline** in CSS pixels and rasterised at 4×;
-the theme script scales by `scale / 4`. Do not change the zoom in one place only.
+`make-splash-assets.py` produces both outputs from one `compose_block()` on purpose. The two
+halves of the splash meet on screen at the first modeset, so any drift in geometry or brightness
+between them shows up exactly there, as a jump. It also holds the layout constants (`MARK_BOX`,
+`GAP`, `PAD_X`, `PAD_Y`) that used to be duplicated in the Plymouth theme script.
+
+Assets are authored at the **1920×1080 design baseline** in CSS pixels and rasterised at 4×
+(`BRANDING_ZOOM` in `scripts/lib/common.sh`); the generator divides by its own `ASSET_ZOOM`.
+Do not change the zoom in one place only — `tests/test-splash-assets.sh` asserts the two agree.
 
 ## Design provenance
 

@@ -76,19 +76,23 @@ fi
 # validate, anything else must be rejected, and an absent key must default (build.conf files
 # predating the switch still have to load).
 SPLASH_LINT_OK=1
-for v in plymouth stub both none; do
+for v in kms stub both none; do
     ( load_config; SPLASH_BACKEND="$v"; validate_config ) >/dev/null 2>&1 \
         || { echo "  FAIL: SPLASH_BACKEND=$v rejected"; SPLASH_LINT_OK=0; }
 done
-for v in Plymouth stub,both "" bogus; do
+# "plymouth" is in the reject list on purpose, not by omission. It was an accepted value until
+# plan/14 removed plymouth, so it is exactly the value a stale build.conf still carries, and
+# quietly treating it as an alias for "kms" would build an image whose splash is not the one
+# the config asked for while saying nothing.
+for v in plymouth Plymouth stub,both "" bogus; do
     if ( load_config; SPLASH_BACKEND="$v"; validate_config ) >/dev/null 2>&1; then
         echo "  FAIL: SPLASH_BACKEND=$v accepted"; SPLASH_LINT_OK=0
     fi
 done
-if ( load_config; unset SPLASH_BACKEND SPLASH_STUB_SCALE; validate_config; [[ $SPLASH_BACKEND == plymouth ]] ) >/dev/null 2>&1; then
+if ( load_config; unset SPLASH_BACKEND SPLASH_STUB_SCALE; validate_config; [[ $SPLASH_BACKEND == both ]] ) >/dev/null 2>&1; then
     :
 else
-    echo "  FAIL: SPLASH_BACKEND does not default to plymouth"; SPLASH_LINT_OK=0
+    echo "  FAIL: SPLASH_BACKEND does not default to both"; SPLASH_LINT_OK=0
 fi
 for v in 0 -1 1.5 x; do
     # shellcheck disable=SC2034  # read by validate_config, which runs in this same subshell
