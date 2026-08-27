@@ -180,6 +180,39 @@ distrobox-export --app gimp             # its launcher appears in the Plasma men
 Storage is `~/.local/share/containers` → `/var/home/<user>/…`, so boxes survive A/B updates and
 are removed by a factory reset (plan/05). `distrobox rm dev` and the compiler is gone.
 
+## Verified on the 0.3.0 image
+
+Driven over the serial console of a booted guest (`run-vm.sh --disk-size 40G`), not inferred
+from the build:
+
+```
+/dev/vda4  27G  2.8G  23G  11% /var
+distrobox create --name dev --yes
+    Trying to pull docker.io/library/debian:stable...
+    Copying blob 21267a18de01 [====================>] 46.2MiB / 47.1MiB
+    Distrobox 'dev' successfully created.
+podman images   -> docker.io/library/debian:stable 248 MB
+podman ps -a    -> dev  Created  docker.io/library/debian:stable
+distrobox enter dev -- sh -c 'cat /etc/debian_version; id -u; touch ~/made-in-box; ...'
+    Starting container... [OK]   Installing basic packages... [OK]
+    Setting up sudo... [OK]      Container Setup Complete!
+    13.6          <- Debian 13.6 inside the box
+    1000          <- same uid as the host user: the rootless mapping works
+    done-inside
+ls -l ~/made-in-box -> -rw-r--r-- 1 live live 0 /home/live/made-in-box
+/dev/vda4  27G  3.6G  22G  14% /var
+```
+
+The last two lines are the point of the whole feature: a file written from inside the
+container is on the host's `$HOME` with the host user's ownership, and the packages that made
+it possible cost `/var` 0.8 GiB rather than costing the read-only root anything.
+
+**That 0.8 GiB is also why `--disk-size` exists.** A stock image's `/var` is 3.9 GiB with
+~2.8 GiB already spent on Firefox and the KDE flatpaks, leaving under a gigabyte — enough to
+*just* land the base image and nothing else, so the first `apt install` in the box would fail
+on a full disk. On real hardware repart grows `/var` into the whole drive at first boot and
+the problem never arises; it is specific to booting the image file directly in a VM.
+
 ## Known consequences
 
 - **`/var` pressure.** A Debian box is ~400 MiB pulled plus whatever gets installed into it.
