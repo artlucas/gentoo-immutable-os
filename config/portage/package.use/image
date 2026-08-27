@@ -59,19 +59,8 @@ sys-kernel/installkernel    -dracut -grub -systemd-boot
 # ebuild's copy would be discarded anyway. (-generic-uki for the same reason: our UKI is
 # assembled by ukify in stage 40, with our cmdline and os-release.)
 sys-kernel/gentoo-kernel-bin -initramfs -generic-uki
-# Boot splash. Every glyph and shape on screen is a PNG rasterised at build time from
-# config/branding (stage 40, via rsvg-convert), so plymouth needs no text engine of its own:
-# -pango drops the label plugin and -freetype the encryption-prompt renderer. -gtk removes the
-# X11 renderer, which cannot apply to a UKI booting straight into DRM. drm and udev are the
-# renderer and the device discovery this image actually boots on.
-# The ESC "details" view was the one behaviour these flags put at risk, since it is plymouthd's
-# own plugin rather than the theme's. Verified in QEMU on the shipping image: pressing ESC
-# during the splash renders the full systemd boot log with its [ OK ] markers. If a future
-# plymouth bump regresses that, turn pango back on — pango, cairo and libpng are already in the
-# image for the GTK theming bridge, so it costs no extra packages.
-# Version note: 22.02.122-r4 is the amd64 stable; 24.004.60 is ~amd64 AND package-masked
-# upstream for breakage, so no package.accept_keywords entry belongs with this.
-sys-boot/plymouth           drm udev -pango -freetype -gtk
+# (No boot-splash package. sys-boot/plymouth and its five USE flags were removed in plan/14 —
+# the splash is a static binary this pipeline compiles, not a package it merges.)
 
 # ---- Plasma session ---------------------------------------------------------------
 # Every flag below was read off the 6.6.6 / 26.04.3 ebuilds in the pinned snapshot, not

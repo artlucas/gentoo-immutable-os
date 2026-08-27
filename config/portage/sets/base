@@ -18,9 +18,9 @@ sys-libs/pam
 sys-auth/pambase
 sys-apps/systemd
 sys-apps/dbus
-# Boot splash. In @base rather than @desktop because it runs from the initrd, long before any
-# desktop exists — and because the --console-only image is branded too.
-sys-boot/plymouth
+# NB there is deliberately no boot-splash package here. sys-boot/plymouth was removed in
+# plan/14: the splash is now config/splash/splash.c, ~800 lines compiled -static by stage 40,
+# so it needs no package, no theme engine and no libraries in the image at all.
 sys-auth/polkit
 sys-fs/e2fsprogs
 sys-fs/dosfstools

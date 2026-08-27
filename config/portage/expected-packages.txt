@@ -18,6 +18,11 @@
 # networks through pasta. net-firewall/iptables is unchanged in this list because it was already
 # present; it only gained a USE flag (and a rebuild).
 #
+# Updated 2026-08-27 (plan/14): -1 entry, sys-boot/plymouth. Exactly one, checked against the
+# real VDB before the removal: every package plymouth RDEPENDed (libpng, libdrm, cairo, pango,
+# virtual/udev) is held by between 5 and 15 other packages, so nothing left the graph behind it.
+# Its replacement adds no entry at all — the splash is compiled from source in this repo.
+#
 # The GNOME-namespace entries below are the enumerated residue of plan/09 §4, not leftovers:
 #   gnome-base/librsvg          RDEPEND of adwaita-icon-theme (SVG icon loading)
 #   gnome-base/dconf            GSettings backend the GTK theming bridge reads
@@ -536,7 +541,6 @@ sys-auth/polkit
 sys-auth/polkit-qt
 sys-block/parted
 sys-block/partitionmanager
-sys-boot/plymouth
 sys-devel/gcc
 sys-devel/gcc-config
 sys-devel/gettext
