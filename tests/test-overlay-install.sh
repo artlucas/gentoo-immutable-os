@@ -33,6 +33,15 @@ assert_file "$DST/usr/bin/${DISTRO_ID}-update" "update CLI rebranded"
 assert_file "$DST/usr/lib/systemd/system/${DISTRO_ID}-boot-ok.service" "boot-ok unit rebranded"
 assert_file "$DST/usr/lib/systemd/system-preset/50-${DISTRO_ID}.preset" "preset rebranded"
 assert_file "$DST/usr/lib/tmpfiles.d/${DISTRO_ID}-state.conf" "tmpfiles rebranded"
+# The splash pair, and the udev rule in particular: render_dest_name() rewrites the segment
+# "distro" wherever it falls in a basename, so "70-distro-splash.rules.in" has to survive both
+# the leading numeric prefix and the two-part suffix. If it does not, the rule installs under a
+# name udev still reads but which names a unit that does not exist — a splash that never starts,
+# on an image where nothing else would notice.
+assert_file "$DST/usr/lib/systemd/system/${DISTRO_ID}-splash.service" "splash unit rebranded"
+assert_file "$DST/usr/lib/udev/rules.d/70-${DISTRO_ID}-splash.rules" "splash udev rule rebranded"
+assert_true "the installed rule starts the installed unit" \
+    grep -q "${DISTRO_ID}-splash.service" "$DST/usr/lib/udev/rules.d/70-${DISTRO_ID}-splash.rules"
 [[ -e $DST/usr/bin/distro-update || -e $DST/usr/bin/distro-update.in ]] \
     && _fail "unrebranded artifact left behind" || _pass
 
