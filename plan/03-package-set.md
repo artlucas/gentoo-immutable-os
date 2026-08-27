@@ -9,7 +9,7 @@ an application window → Flatpak.
 
 > The desktop was GNOME through 0.1.0 and is Plasma from this change on (plan/09). The rule
 > above did not change, and neither did anything below the desktop: boot, EROFS root, UKI,
-> A/B sysupdate, the `/etc` overlay, the plymouth splash and image assembly are untouched. The
+> A/B sysupdate, the `/etc` overlay, the boot splash and image assembly are untouched. The
 > Plasma set is a **1:1 functional mirror** of the GNOME one, not a full Plasma install.
 
 Profile: `default/linux/amd64/23.0/desktop/plasma/systemd` (merged-usr). Target

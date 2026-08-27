@@ -49,15 +49,20 @@ RUN printf 'FEATURES="${FEATURES} getbinpkg"\n' >> /etc/portage/make.conf \
 #  - dracut: initrd for the UKI (stage 40)
 #  - qemu + OVMF: boot tests (stage 70)
 #  - librsvg (rsvg-convert) + media-fonts/ibm-plex: rasterise the boot-splash SVGs in
-#    config/branding into the plymouth theme (stage 40). Both are BUILD tools and never enter
-#    the image — that is the whole point: the splash ships as PNGs so no font has to. They live
-#    here rather than in config/portage/sets/buildhost because that set is emerged in stage 30,
-#    and every stage runs in its own --rm container, so a stage-30 install is gone by stage 40.
-#  - dev-python/pillow: composes the systemd-stub .splash bitmap from those same PNGs when
-#    SPLASH_BACKEND includes the stub (stage 40, config/branding/make-stub-bmp.py). rsvg-convert
-#    cannot emit BMP — its formats are png/pdf/ps/svg — and BMP is the only container the EFI
-#    stub reads. Named explicitly because it was already present here transitively, and a
-#    dependency that arrives by accident is one a graph change can remove by accident.
+#    config/branding to PNG (stage 40). Both are BUILD tools and never enter the image — that
+#    is the whole point: the splash ships as pre-composited pixels, so no font, no text engine
+#    and no image decoder has to. They live here rather than in config/portage/sets/buildhost
+#    because that set is emerged in stage 30, and every stage runs in its own --rm container,
+#    so a stage-30 install is gone by stage 40.
+#  - dev-python/pillow: composes BOTH shipped splash artefacts from those PNGs (stage 40,
+#    config/branding/make-splash-assets.py) — the systemd-stub .splash bitmap and the KMS
+#    splash's tile container. rsvg-convert can emit neither: its formats are png/pdf/ps/svg,
+#    while BMP is the only container the EFI stub reads and the tiles are raw BGRX. Named
+#    explicitly because it was already present here transitively, and a dependency that arrives
+#    by accident is one a graph change can remove by accident.
+#  - gcc (from the stage3): compiles config/splash/splash.c -static into the image (stage 40).
+#    The image itself has no compiler and stage 30 never chroots, so the splash cannot be built
+#    in the target; -static is what makes a binary built here safe to run there. See plan/14.
 #  - dev-lang/go + dev-lang/rust-bin: BDEPENDs of the container stack (plan/13) — podman and
 #    go-md2man are Go, netavark and aardvark-dns are Rust. BDEPEND always installs to the
 #    builder's "/", never to $TARGET, so these would arrive on their own during stage 30's
