@@ -126,7 +126,7 @@ struct output {
     int card_fd;
     uint32_t crtc_id;
     uint32_t fb_id;
-    uint32_t handle; /* dumb buffer handle, kept only so the failure paths can free it */
+    uint32_t handle; /* recorded for diagnostics; the buffer is freed by close(2), not by us */
 };
 
 static struct output outputs[MAX_OUTPUTS];
@@ -436,6 +436,7 @@ static int paint_card(const char *path, const struct assets *a)
         free(connectors); free(crtcs); free(encoders); free(fbs);
         goto err;
     }
+    uint32_t n_conn = res.count_connectors, n_crtc = res.count_crtcs;
     res.connector_id_ptr = (uint64_t)(uintptr_t)connectors;
     res.crtc_id_ptr = (uint64_t)(uintptr_t)crtcs;
     res.encoder_id_ptr = (uint64_t)(uintptr_t)encoders;
@@ -444,13 +445,21 @@ static int paint_card(const char *path, const struct assets *a)
         free(connectors); free(crtcs); free(encoders); free(fbs);
         goto err;
     }
+    /* The second call re-reports the counts, and they can be LARGER than the first call said —
+     * a hotplug between the two is all it takes. The kernel fills only as many entries as we
+     * asked for, but it writes back the true total, so trusting count_* here would walk off the
+     * end of these allocations. Iterate over what was actually allocated instead. */
+    if (res.count_connectors < n_conn)
+        n_conn = res.count_connectors;
+    if (res.count_crtcs < n_crtc)
+        n_crtc = res.count_crtcs;
 
     /* One CRTC can drive only one output, so a CRTC handed to one connector must not be
      * offered to the next. */
-    uint8_t *crtc_taken = calloc(res.count_crtcs, 1);
+    uint8_t *crtc_taken = calloc(n_crtc ? n_crtc : 1, 1);
     int painted = 0;
 
-    for (uint32_t ci = 0; crtc_taken && ci < res.count_connectors; ci++) {
+    for (uint32_t ci = 0; crtc_taken && ci < n_conn; ci++) {
         struct drm_mode_get_connector conn = { 0 };
         conn.connector_id = connectors[ci];
         if (xioctl(fd, DRM_IOCTL_MODE_GETCONNECTOR, &conn) != 0)
@@ -465,6 +474,7 @@ static int paint_card(const char *path, const struct assets *a)
             free(modes); free(conn_encoders);
             continue;
         }
+        uint32_t n_modes = conn.count_modes, n_enc = conn.count_encoders;
         conn.modes_ptr = (uint64_t)(uintptr_t)modes;
         conn.encoders_ptr = (uint64_t)(uintptr_t)conn_encoders;
         conn.count_props = 0;
@@ -474,12 +484,18 @@ static int paint_card(const char *path, const struct assets *a)
             free(modes); free(conn_encoders);
             continue;
         }
+        /* Clamped for the same reason as the resource counts above: the connector is re-probed
+         * on this call and can come back with more modes than the allocation was sized for. */
+        if (conn.count_modes < n_modes)
+            n_modes = conn.count_modes;
+        if (conn.count_encoders < n_enc)
+            n_enc = conn.count_encoders;
 
         /* The driver sorts modes best-first, so modes[0] is already the right answer on every
          * driver we ship — but DRM_MODE_TYPE_PREFERRED is the flag that actually says so, and
          * honouring it is what stops a stale EDID from putting the splash in 640x480. */
         struct drm_mode_modeinfo *mode = &modes[0];
-        for (uint32_t mi = 0; mi < conn.count_modes; mi++) {
+        for (uint32_t mi = 0; mi < n_modes; mi++) {
             if (modes[mi].type & DRM_MODE_TYPE_PREFERRED) {
                 mode = &modes[mi];
                 break;
@@ -491,7 +507,7 @@ static int paint_card(const char *path, const struct assets *a)
          * hardware is set up for — then every other encoder it lists. */
         int done = 0;
         for (uint32_t pass = 0; pass < 2 && !done; pass++) {
-            for (uint32_t ei = 0; ei < conn.count_encoders && !done; ei++) {
+            for (uint32_t ei = 0; ei < n_enc && !done; ei++) {
                 uint32_t enc_id = conn_encoders[ei];
                 if (pass == 0 && (conn.encoder_id == 0 || enc_id != conn.encoder_id))
                     continue;
@@ -502,7 +518,7 @@ static int paint_card(const char *path, const struct assets *a)
                 if (xioctl(fd, DRM_IOCTL_MODE_GETENCODER, &enc) != 0)
                     continue;
 
-                for (uint32_t k = 0; k < res.count_crtcs && !done; k++) {
+                for (uint32_t k = 0; k < n_crtc && !done; k++) {
                     if (crtc_taken[k] || !(enc.possible_crtcs & (1u << k)))
                         continue;
                     if (show_on_crtc(fd, crtcs[k], conn.connector_id, mode, a) == 0) {
