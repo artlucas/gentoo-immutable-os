@@ -125,10 +125,27 @@ QEMU=(qemu-system-x86_64
   # --disk-size replaces this with a qcow2 overlay of a larger virtual size; see above.
   -drive "$DISK_ARG"
   -netdev user,id=n0 -device virtio-net-pci,netdev=n0
-  # -vga none suppresses q35's default VGA adapter, which would otherwise sit alongside
-  # virtio-gpu and give the guest two heads (two tabs in the QEMU window). The kernel
-  # console still goes to the serial port, not to this display.
-  -vga none -device virtio-gpu)
+  # virtio-VGA, not plain virtio-gpu, and the difference is the whole boot splash.
+  #
+  # OVMF drives a bare `-device virtio-gpu` through VirtioGpuDxe, whose framebuffer is a
+  # host-side virtio resource released at ExitBootServices. The systemd-stub splash therefore
+  # DIES the moment the kernel starts, and since this kernel has no simpledrm nothing can draw
+  # again until the first real modeset — measured with QMP screendumps at 0.4s intervals, that
+  # was 6.9 seconds of black screen between the stub image and the KMS splash. virtio-VGA is
+  # the same virtio-gpu device with a VGA-compatible linear framebuffer in a PCI BAR, which is
+  # what OVMF then uses and what SURVIVES the handover: same measurement, zero black frames,
+  # the stub image holding until the KMS splash takes over from it.
+  #
+  # This makes the guest MORE representative of the hardware in scope, not less. A real UEFI
+  # machine's GOP is a linear framebuffer in a BAR that persists after ExitBootServices, exactly
+  # like this; the bare virtio-gpu case is the unusual one. The guest still binds virtio_gpu —
+  # virtio-VGA is one device, so this is still one head, which is what -vga none was for.
+  #
+  # If the splash ever has to survive firmware whose framebuffer does NOT persist, that needs a
+  # kernel with DRM_SIMPLEDRM and nothing else will do (plan/08 roadmap 5, plan/14).
+  #
+  # The kernel console still goes to the serial port, not to this display.
+  -vga none -device virtio-vga)
 
 if [[ -n $TEST_MODE ]]; then
   QEMU+=(-smbios "type=11,value=io.systemd.credential:${DISTRO_ID}.test=${TEST_MODE}")

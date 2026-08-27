@@ -59,6 +59,30 @@ The middle band is a genuine improvement that came free: previously the initrd l
 driver, so the stub image died at a modeset seconds into the boot and plymouth had to re-draw.
 Now nothing modesets until after the pivot.
 
+**It depends on one property of the firmware, and that is worth stating plainly because the
+first QEMU test failed on it.** The stub image survives into the kernel only if the framebuffer
+the firmware set up still exists after `ExitBootServices`. On a real UEFI machine it does — the
+GOP is a linear framebuffer in a PCI BAR and nothing takes it away. Under QEMU with a bare
+`-device virtio-gpu` it does **not**: OVMF drives that through VirtioGpuDxe, whose framebuffer
+is a host-side virtio resource released at handover, so the image dies the instant the kernel
+starts and, with no simpledrm, nothing can draw again until the first modeset.
+
+Measured with QMP screendumps every 0.4 s:
+
+| QEMU display | stub image visible | black | KMS splash |
+|---|---|---|---|
+| `-vga none -device virtio-gpu` | 1.2 – 2.0 s | **6.9 s** | 8.9 s |
+| `-vga std` | 1.2 – 7.7 s | 0.4 s | 8.1 s |
+| `-vga none -device virtio-vga` | 1.2 – 8.5 s | **none** | 8.9 s |
+
+`scripts/run-vm.sh` therefore uses **virtio-VGA** — the same virtio-gpu device with a
+VGA-compatible framebuffer in a BAR, so it is still one head and the guest still binds
+`virtio_gpu`. That is not a workaround for the test rig: it makes the guest behave like the
+UEFI machines this image targets, and the bare virtio-gpu case is the unrepresentative one.
+
+Firmware whose framebuffer genuinely does not persist is the one case this design cannot cover,
+and closing it needs `DRM_SIMPLEDRM` — see "Open / not verified".
+
 ## The design
 
 ### 1. Drop DRM master immediately after painting
@@ -306,8 +330,30 @@ the stub image before the kernel, the image persisting through the initrd, the K
 appearing at the modeset with no jump, the greeter painting over it, and ESC revealing the log
 once and staying text.
 
+## Verified in QEMU
+
+Booted from the assembled image with QMP screendumps every 0.4 s (`-vga none -device
+virtio-vga`, the harness in `scripts/run-vm.sh`):
+
+```
+1.2 s   systemd-stub blits the .splash bitmap
+1.2 – 8.5 s   it stays on screen, through the kernel and the whole initrd
+8.9 s   the KMS splash takes over — no black frame at the hand-off
+12.6 s  kwin modesets for the greeter
+13.8 s  the greeter paints
+```
+
+The one residual black frame is **12.6 → 13.8 s, between the splash and the greeter**, and it is
+not ours: the splash still owns a lit framebuffer at 12.6 s, and what blanks it is kwin
+modesetting to its own buffer before it has painted anything into it. Nothing on this side can
+prevent that — dropping master is what lets kwin modeset whenever it likes, which is the design
+— and it is the same ~1 s plymouth's `--retain-splash` could not close either. Reducing it is a
+compositor-startup question, not a splash one.
+
 ## Open / not verified
 
+- **Real hardware of any kind.** Everything above is QEMU. The firmware-framebuffer property the
+  stub half depends on is the thing to confirm first.
 - **Real NVIDIA hardware.** Same status as plan/11 finding 4, which was never confirmed on
   hardware either.
 - **Panels above 1080p**, i.e. the scale-2 sprite path. The chooser is exercised by the offline
