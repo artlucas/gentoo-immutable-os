@@ -23,7 +23,7 @@ collect_and_report() {
     # shellcheck source=/dev/null
     . /etc/os-release
     local etc_fs graphical failed failed_list machine_id var_size flatpak_remotes
-    local resolved dns podman_rootless runuser_bin
+    local resolved dns podman_rootless runuser_bin sound live_uid
     etc_fs="$(findmnt -no FSTYPE /etc 2>/dev/null || echo none)"
     graphical="$(systemctl is-active graphical.target >/dev/null 2>&1 && echo yes || echo no)"
     failed="$(systemctl --failed --no-legend --plain 2>/dev/null | grep -c . || true)"
@@ -66,11 +66,65 @@ collect_and_report() {
             podman info --format '{{.Host.Security.Rootless}}' 2>/tmp/podman-info.err || echo no)"
         [[ -z $podman_rootless ]] && podman_rootless=no
     fi
+    # Sound. The 0.3.0 regression this field exists for: PipeWire's user units were never
+    # enabled, nothing listened on the pulse socket, and the only symptom was KDE's volume
+    # applet saying "Connection to the sound service lost" on a booted desktop — every
+    # assertion above stayed green.
+    #
+    # `pactl info` rather than `systemctl --user is-enabled`: this goes through libpulse to
+    # $XDG_RUNTIME_DIR/pulse/native, the exact path the applet takes. An enablement symlink
+    # that exists but never produces a live socket still reads as "enabled".
+    #
+    # Zero sinks is fine and is NOT what this measures — QEMU boots with no audio device. The
+    # applet's failure is a connection failure, so connecting is the whole assertion.
+    #
+    # Polled, because this is the one check that depends on the USER session rather than the
+    # system one: `is-system-running --wait` above returns while autologin is still bringing up
+    # the live user's manager, and the socket unit appears with it.
+    #
+    # 20s, and the ceiling matters as much as the floor. Socket activation answers the first
+    # connect immediately once the user manager is up, so this only ever spends the race; but
+    # stage 70 kills the guest at TIMEOUT=300s with KVM, and a poll long enough to eat that
+    # budget would turn a clean "sound=no" report into an opaque timeout — losing exactly the
+    # diagnosis the DETAIL lines below exist to preserve.
+    live_uid="$(id -u '@LIVE_USER@' 2>/dev/null || true)"
+    # "na" is a --console-only image correctly saying it has no sound stack: @desktop is what
+    # pulls media-video/pipewire in, and pactl comes with it. Probed rather than templated from
+    # CONSOLE_ONLY, so the field tracks what is actually installed.
+    if ! command -v pactl >/dev/null 2>&1; then
+        sound=na
+    elif [[ -z $live_uid || ! -x $runuser_bin ]]; then
+        sound=no-runuser
+    else
+        sound=no
+        for _ in $(seq 20); do
+            if "$runuser_bin" -u '@LIVE_USER@' -- \
+                env "XDG_RUNTIME_DIR=/run/user/$live_uid" \
+                pactl info >/tmp/pactl-info.out 2>/tmp/pactl-info.err; then
+                sound=ok; break
+            fi
+            sleep 1
+        done
+    fi
     report "ok version=${IMAGE_VERSION:-unknown} etc_overlay=$etc_fs graphical=$graphical" \
            "failed_units=$failed machine_id=$machine_id var_size=$var_size" \
            "flatpak_remotes=$flatpak_remotes resolved=$resolved dns=$dns" \
-           "podman_rootless=$podman_rootless" \
+           "podman_rootless=$podman_rootless sound=$sound" \
            "failed_list=$failed_list phase=$1"
+    # Same split as podman below: the marker line stays one parseable line, the reason goes on
+    # DETAIL lines while the guest still exists to say it. "sound=no" alone cannot distinguish
+    # "units not enabled" from "server up but refusing the connection", and telling those two
+    # apart is otherwise a rebuild.
+    if [[ $sound != ok && $sound != na ]]; then
+        [[ -s /tmp/pactl-info.err ]] \
+            && sed "s/^/$MARKER-DETAIL pactl: /" /tmp/pactl-info.err > "$CONSOLE"
+        "$runuser_bin" -u '@LIVE_USER@' -- \
+            env "XDG_RUNTIME_DIR=/run/user/$live_uid" \
+            systemctl --user is-active pipewire-pulse.socket pipewire.service wireplumber.service 2>&1 \
+            | paste -sd, - | sed "s/^/$MARKER-DETAIL pw-units: /" > "$CONSOLE"
+        ls -l "/run/user/$live_uid/pulse/native" 2>&1 \
+            | sed "s/^/$MARKER-DETAIL pulse-socket: /" > "$CONSOLE"
+    fi
     # Why it failed, while the guest still exists to say so. The marker line above is a single
     # parseable line by design, so the reason goes on its own DETAIL lines — the same split
     # dump_failed uses for failed units. Without this, "podman_rootless=no" is indistinguishable

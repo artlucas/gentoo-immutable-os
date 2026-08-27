@@ -96,9 +96,40 @@ else
 fi
 
 # live user (v1 live-style images; the future installer replaces this)
+#
+# Groups, and why these three: wheel is sudo/polkit (see /etc/sudoers.d/wheel and
+# 49-wheel.rules), video is DRM/KMS access. "pipewire" is the realtime path — PipeWire ships
+# /etc/security/limits.d/25-pw-rlimits.conf granting rtprio 95 / nice -19 to @pipewire and
+# nothing else, and this image has no rtkit-daemon to fall back to, so a user outside the
+# group gets a sound server with no RT scheduling at all (xruns under load).
+#
+# "audio" is deliberately NOT here, on media-video/pipewire's own pkg_postinst advice: device
+# access comes from logind/uaccess ACLs on the active session, not from the group, and static
+# audio-group membership is what breaks device hand-off on fast user switching.
+#
+# The group comes from acct-group/pipewire, pulled in by @desktop — a --console-only image has
+# neither, and useradd fails outright on a group that does not exist rather than skipping it.
+LIVE_USER_GROUPS="wheel,video"
+if chroot_target "$TARGET" "getent group pipewire" >/dev/null 2>&1; then
+  LIVE_USER_GROUPS="$LIVE_USER_GROUPS,pipewire"
+else
+  [[ ${CONSOLE_ONLY:-0} == 1 ]] \
+    || die "no 'pipewire' group in a desktop image — acct-group/pipewire is missing, so the
+  RT limits in /etc/security/limits.d/25-pw-rlimits.conf could never apply to anyone"
+fi
 if ! chroot_target "$TARGET" "id -u '$LIVE_USER'" >/dev/null 2>&1; then
-  chroot_target "$TARGET" "useradd -m -G wheel,video,audio -s /bin/bash '$LIVE_USER'"
+  chroot_target "$TARGET" "useradd -m -G '$LIVE_USER_GROUPS' -s /bin/bash '$LIVE_USER'"
   chroot_target "$TARGET" "echo '$LIVE_USER:$LIVE_USER_PASSWORD' | chpasswd"
+else
+  # The target persists in the work volume between runs, so on a resumed build (`--from 40`,
+  # which the README documents for recovering from a failure) useradd above never runs and any
+  # change to the group list would silently never apply. Reconcile it instead of trusting
+  # whatever a previous run set — `-G` REPLACES the supplementary list, which is the point:
+  # dropping "audio" has to actually drop it. The useradd above is the only thing in the build
+  # that touches this user's groups (the subuid/subgid usermod below does not), so there is no
+  # other membership to preserve.
+  chroot_target "$TARGET" "usermod -G '$LIVE_USER_GROUPS' '$LIVE_USER'" \
+    || die "could not reconcile supplementary groups for $LIVE_USER"
 fi
 
 # Subordinate UID/GID ranges — what makes podman ROOTLESS (plan/13). Without them
@@ -139,6 +170,39 @@ if [[ -f $PRESET_FILE ]]; then
     chroot_target "$TARGET" "systemctl disable '$unit'" >/dev/null 2>&1 \
       || warn "could not disable $unit (may be static or absent)"
   done < <(sed -nE 's/^disable[[:space:]]+([^[:space:]]+).*/\1/p' "$PRESET_FILE")
+fi
+
+# ---- the sound server -------------------------------------------------------------------
+# preset-all above is SYSTEM units only. PipeWire is a per-user service and ships nothing that
+# enables itself, which is how 0.3.0 booted with no sound server at all and KDE's volume applet
+# showed "Connection to the sound service lost" on every login.
+#
+# There is no autostart fallback to rely on: media-video/pipewire wraps /etc/xdg/autostart/
+# pipewire.desktop and /usr/bin/gentoo-pipewire-launcher in `if ! use systemd`, and this image
+# is a systemd profile — so neither is installed and the user units are the ONLY start path.
+# /etc/pulse/client.conf ships `autospawn = no`, so libpulse cannot paper over it either: the
+# pulse client just fails to connect, which is the message the applet is reporting verbatim.
+#
+# Targeted `--global enable`, NOT `--global preset-all`. Gentoo ships no catch-all user preset,
+# so systemd's compiled-in default policy is "enable" and preset-all pulls in every user unit
+# in the image that has an [Install] section — measured on this rootfs: podman.socket,
+# podman.service, podman-auto-update.timer, speech-dispatcher.socket, the gpg-agent sockets,
+# mpris-proxy, machines.target. The podman ones directly contradict the vendor preset's
+# rootless-only rule (see 50-@DISTRO_ID@.preset), and stage 50's guard only scans
+# /etc/systemd/system, so nothing downstream would have caught it.
+#
+# Sockets, not services: pipewire-pulse.socket is what the applet connects to, and
+# pipewire-pulse.service then pulls in pipewire.service (BindsTo) and wireplumber via
+# pipewire-session-manager.service (Wants). Enabling wireplumber.service is what writes both
+# that alias and pipewire.service.wants/wireplumber.service. This is the same set Fedora and
+# Arch ship, and it means a session that never touches audio never starts the daemons.
+PW_USER_UNITS=(pipewire.socket pipewire-pulse.socket wireplumber.service)
+if [[ -f $TARGET/usr/lib/systemd/user/pipewire-pulse.socket ]]; then
+  log "enabling sound server user units: ${PW_USER_UNITS[*]}"
+  chroot_target "$TARGET" "systemctl --global enable ${PW_USER_UNITS[*]}" \
+    || die "could not enable the PipeWire user units — the image would boot without sound"
+elif [[ ${CONSOLE_ONLY:-0} != 1 ]]; then
+  die "no pipewire-pulse.socket in a desktop image — is media-video/pipewire[sound-server] installed?"
 fi
 
 # ldconfig.service is static, so it cannot be disabled — only masked. It must be masked here:
@@ -737,6 +801,24 @@ if [[ ${CONSOLE_ONLY:-0} != 1 ]]; then
   compgen -G "$TARGET/usr/lib64/security/pam_kwallet"*.so >/dev/null \
     || compgen -G "$TARGET/usr/lib/security/pam_kwallet"*.so >/dev/null \
     || warn "verify: no pam_kwallet module — KWallet will prompt instead of auto-unlocking"
+  # Sound. Asserted on the SYMLINKS rather than on `systemctl --global enable`'s exit status,
+  # for the same reason the display-manager alias above is: enablement that silently did not
+  # take produces an image whose only symptom is a desktop with no audio, found by a user.
+  [[ -L $TARGET/etc/systemd/user/sockets.target.wants/pipewire-pulse.socket ]] \
+    || die "verify: pipewire-pulse.socket not enabled for users — nothing would listen on
+  \$XDG_RUNTIME_DIR/pulse/native and KDE's volume applet reports 'Connection to the sound
+  service lost' (autospawn is off in /etc/pulse/client.conf, so libpulse cannot recover)"
+  [[ -L $TARGET/etc/systemd/user/sockets.target.wants/pipewire.socket ]] \
+    || die "verify: pipewire.socket not enabled for users"
+  # wireplumber is the session manager: without it PipeWire runs but adopts no ALSA card, so
+  # the applet connects and then shows no output devices at all.
+  [[ -L $TARGET/etc/systemd/user/pipewire.service.wants/wireplumber.service ]] \
+    || die "verify: wireplumber.service not enabled — PipeWire would start with no session
+  manager, and no audio device would ever be adopted"
+  # The live user must be able to reach those RT limits, or the group membership above was lost.
+  chroot_target "$TARGET" "id -nG '$LIVE_USER'" 2>/dev/null | tr ' ' '\n' | grep -qx pipewire \
+    || die "verify: $LIVE_USER is not in the 'pipewire' group — no rtprio/nice limits apply
+  (there is no rtkit-daemon in this image to fall back to)"
 fi
 
 # DNS wiring: every piece of it, because each half is useless alone — nsswitch pointing at a

@@ -65,6 +65,15 @@ assert_report() {  # LOG expected_version
   [[ $(field "$slog" dns) == yes ]] || warn "guest could not resolve a public name (dns=no) — network-dependent, not failing the test"
   if [[ ${CONSOLE_ONLY:-0} != 1 ]]; then
     [[ $(field "$slog" graphical) == yes ]] || die "graphical.target not reached in guest"
+    # Sound. Asserted, not merely reported: unlike dns above, nothing in it depends on the
+    # build host — the guest has no audio device either way, and this measures whether a client
+    # can CONNECT to the pulse socket, which is exactly what KDE's volume applet does. A green
+    # smoke test with no audio at all is what this exists to stop happening twice.
+    local snd; snd="$(field "$slog" sound)"
+    [[ $snd == ok ]] \
+      || die "guest has no sound server (sound=$snd) — nothing is listening on the pulse
+socket. Check that stage 40 enabled pipewire.socket, pipewire-pulse.socket and
+wireplumber.service for users; see the IMAGE-TEST-DETAIL pactl/pw-units lines above"
   fi
   # Rootless containers (plan/13). Asserted rather than reported, unlike dns above, because
   # nothing in it depends on the build host's network: `podman info` reads the kernel's userns
