@@ -172,8 +172,11 @@ dev-qt/qt5compat                  icu qml
 # Tried disabling widgets alone first (qdbus's own RDEPEND only blocks on
 # "widgets? ( !dev-qt/qdbusviewer:5 )", suggesting plasma-workspace didn't need it) — kwin's
 # separate hard RDEPEND rules that out. The qdbus+widgets combination therefore does build
-# qdbusviewer (a D-Bus debugger) and put its entry back in the menu; that is accepted here as
-# the unavoidable cost of two unconditional RDEPENDs, not a reversal of the intent to drop it.
+# qdbusviewer (a D-Bus debugger) and put its entry back in the menu — which is a cost of the two
+# unconditional RDEPENDs, not a reversal of the intent to drop it. USE has no move left here, so
+# the app is deleted after the merge instead: stage 50 section 3g removes its .desktop entry,
+# icon and binary and asserts that qdbus itself survives. Anyone re-litigating these flags should
+# read that section too; the two halves only make sense together.
 dev-qt/qttools                    opengl qdbus -assistant -linguist
 dev-qt/qtmultimedia               opengl vulkan qml
 dev-qt/qtquick3d                  opengl vulkan

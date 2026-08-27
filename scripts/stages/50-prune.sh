@@ -449,6 +449,34 @@ if [[ -d $MOD_ROOT ]]; then
   depmod -b "$T" "$KVER" || die "depmod failed after the dead-module prune"
 fi
 
+# ---- 3g. Qt D-Bus Viewer: the one menu entry USE could not take away -------------------
+# config/portage/package.use/image explains at length why dev-qt/qttools ships with BOTH qdbus
+# (plasma-workspace RDEPENDs it) and widgets (kwin RDEPENDs it), and that the combination builds
+# qdbusviewer whether this image wants it or not. USE is resolved once per package, so there is
+# no flag that keeps qdbus for plasma-workspace while dropping the GUI debugger — the only place
+# left to act is here, after the package is merged.
+#
+# What it is: a Qt-branded D-Bus object browser (Name=Qt D-Bus Viewer, Categories=Development;
+# Debugger;) that lands in the application menu of an image whose users are not debugging Qt
+# applications — the same "developer tool with no audience on this image" case already made for
+# Qt Assistant and Qt Linguist, which USE=-assistant -linguist does handle.
+#
+# The whole app goes, not just its .desktop file: the binary is unreachable from the menu once
+# the entry is gone, and nothing in the pinned tree RDEPENDs qdbusviewer (qttools' only mention
+# of it is the "widgets? ( !dev-qt/qdbusviewer:5 )" slot blocker). qdbus — the CLI tool
+# plasma-workspace actually asked for — is a DIFFERENT binary and is deliberately left alone.
+#
+# /usr/bin/qdbusviewer6 is a relative symlink into /usr/lib64/qt6/bin and must be named here:
+# section 3e sweeps /usr/lib/modules and /usr/lib only, so a dangling link in /usr/bin would
+# survive to ship.
+if [[ -e $T/usr/share/applications/qdbusviewer.desktop ]]; then
+  log "removing the Qt D-Bus Viewer app (menu entry, icon and binary) — see package.use/image"
+  rm -f -- "$T/usr/share/applications/qdbusviewer.desktop" \
+           "$T/usr/share/icons/hicolor/128x128/apps/qdbusviewer.png" \
+           "$T/usr/bin/qdbusviewer6" \
+           "$T/usr/lib64/qt6/bin/qdbusviewer"
+fi
+
 # ---- 4. THE ASSERTIONS (build fails if any trips) ------------------------------------
 fail=0
 violation() { warn "PRUNE VIOLATION: $*"; fail=1; }
@@ -490,6 +518,17 @@ if [[ ${CONSOLE_ONLY:-0} != 1 ]]; then
   # loudly rather than be silently tolerated by a wildcard.
   [[ -x $T/usr/bin/balooctl6 || -x $T/usr/bin/balooctl ]] \
     || violation "balooctl missing after prune — USE=semantic-desktop did not take, so the image has no file indexer"
+  # Section 3g deletes the Qt D-Bus Viewer by path, and a Qt bump that renames any of those
+  # paths would make every rm a silent no-op — the entry would simply reappear in the menu with
+  # nothing in the log to say so. Assert on the .desktop file (the menu is what this is about)
+  # and on the binary, and keep qdbus itself in view: it must SURVIVE, since plasma-workspace's
+  # RDEPEND on qttools[qdbus] is the whole reason qdbusviewer got built.
+  [[ -e $T/usr/share/applications/qdbusviewer.desktop ]] \
+    && violation "qdbusviewer.desktop is back in the menu — section 3g's paths no longer match what qttools installs"
+  [[ -e $T/usr/lib64/qt6/bin/qdbusviewer || -e $T/usr/bin/qdbusviewer6 ]] \
+    && violation "qdbusviewer binary survived the prune — section 3g deleted the wrong path"
+  [[ -x $T/usr/bin/qdbus6 || -x $T/usr/bin/qdbus ]] \
+    || violation "qdbus missing after prune — section 3g took the CLI tool plasma-workspace depends on, not just the viewer"
 fi
 # ---- the container stack (plan/13) ------------------------------------------------------
 # Every one of these fails the same invisible way: stage 70 reads a serial port and an image
