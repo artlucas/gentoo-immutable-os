@@ -73,6 +73,17 @@ assert_true "self-test reports a sound= field" \
     grep -q 'sound=\$sound' "$REPORT"
 assert_true "self-test runs the probe as the live user" \
     grep -q "XDG_RUNTIME_DIR=/run/user/\$live_uid" "$REPORT"
+# The headless guest never logs anyone in, so the probe has to bring a user manager up itself.
+# It must do that with linger: `systemctl start user@<uid>.service` was measured timing out,
+# because logind owns that unit and tears it down for a user with no session and no linger.
+assert_true "self-test lingers the live user to get a user manager" \
+    grep -q 'loginctl enable-linger' "$REPORT"
+assert_false "self-test does not start user@ behind logind's back" \
+    grep -qE '^\s*systemctl start "user@' "$REPORT"
+# field() must ignore DETAIL lines, or a run that emits them reports empty values for every
+# field and the failure is misattributed (it surfaced as "guest version=, expected 0.3.0").
+assert_true "stage 70 field() filters DETAIL lines" \
+    grep -q 'grep -v -- "\$MARKER-DETAIL"' "$TEST_STAGE"
 assert_true "stage 70 asserts on the sound field" \
     grep -q 'field "\$slog" sound' "$TEST_STAGE"
 assert_true "stage 70 fails when sound is not ok" \

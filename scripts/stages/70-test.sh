@@ -48,7 +48,12 @@ boot_and_watch() {
   wait "$qpid" 2>/dev/null || true
 }
 
-field() { grep "$MARKER" "$1" | tail -n1 | tr ' ' '\n' | sed -n "s/^$2=//p"; }
+# DETAIL lines are excluded, not just deprioritised: MARKER is "IMAGE-TEST:" and the detail
+# prefix is "$MARKER-DETAIL", so a plain grep matches both and `tail -n1` would read whichever
+# came last. The guest prints its DETAIL lines AFTER the report, so any run that emitted them
+# used to yield empty fields for everything — reporting "guest version=, expected 0.3.0" for
+# what was really a sound failure, i.e. hiding the diagnosis the DETAIL lines exist to give.
+field() { grep "$MARKER" "$1" | grep -v -- "$MARKER-DETAIL" | tail -n1 | tr ' ' '\n' | sed -n "s/^$2=//p"; }
 
 assert_report() {  # LOG expected_version
   local slog=$1 want_ver=$2

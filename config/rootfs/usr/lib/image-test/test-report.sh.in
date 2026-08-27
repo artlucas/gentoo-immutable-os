@@ -78,15 +78,34 @@ collect_and_report() {
     # Zero sinks is fine and is NOT what this measures — QEMU boots with no audio device. The
     # applet's failure is a connection failure, so connecting is the whole assertion.
     #
-    # Polled, because this is the one check that depends on the USER session rather than the
-    # system one: `is-system-running --wait` above returns while autologin is still bringing up
-    # the live user's manager, and the socket unit appears with it.
+    # A user manager has to be conjured first: there is no login to piggyback on. The
+    # smoke-test guest runs `-display none`, so plasmalogin has no display to open a session on
+    # and autologin never happens — graphical=yes above is the SYSTEM target and says nothing
+    # about a user session. The first run of this check proved it, reporting
+    # "/run/user/1000: No such file or directory" and an unreachable user bus.
     #
-    # 20s, and the ceiling matters as much as the floor. Socket activation answers the first
-    # connect immediately once the user manager is up, so this only ever spends the race; but
-    # stage 70 kills the guest at TIMEOUT=300s with KVM, and a poll long enough to eat that
-    # budget would turn a clean "sound=no" report into an opaque timeout — losing exactly the
-    # diagnosis the DETAIL lines below exist to preserve.
+    # enable-linger, and NOT `systemctl start user@<uid>.service`. That was tried first and
+    # fails, measured in the guest:
+    #
+    #     user@1000.service: start operation timed out. Terminating.
+    #     user@1000.service: Failed with result 'timeout'.
+    #
+    # logind owns user@.service. Starting it behind logind's back races the teardown logind
+    # performs for a user with no sessions and no linger — /run/user/1000 does get created, but
+    # the manager never reaches active, and the connect then fails for a reason that has
+    # nothing to do with the sound stack. Lingering is the supported way to have a user manager
+    # without a login, and with it the same probe returns
+    # "Server Name: PulseAudio (on PipeWire 1.6.7)".
+    #
+    # It writes /var/lib/systemd/linger/@LIVE_USER@, i.e. it mutates the guest — which is
+    # confined to the harness: this unit is ConditionCredential=@DISTRO_ID@.test, so it never
+    # runs on real hardware or on a normally booted image.
+    #
+    # Polled afterwards because the socket units appear as the manager reaches sockets.target,
+    # which is where stage 40's enablement symlinks take effect. 20s, and the ceiling matters
+    # as much as the floor: stage 70 kills the guest at TIMEOUT=300s with KVM, and a poll long
+    # enough to eat that budget would turn a clean "sound=no" report into an opaque timeout —
+    # losing exactly the diagnosis the DETAIL lines below exist to preserve.
     live_uid="$(id -u '@LIVE_USER@' 2>/dev/null || true)"
     # "na" is a --console-only image correctly saying it has no sound stack: @desktop is what
     # pulls media-video/pipewire in, and pactl comes with it. Probed rather than templated from
@@ -97,6 +116,7 @@ collect_and_report() {
         sound=no-runuser
     else
         sound=no
+        loginctl enable-linger '@LIVE_USER@' >/dev/null 2>&1 || true
         for _ in $(seq 20); do
             if "$runuser_bin" -u '@LIVE_USER@' -- \
                 env "XDG_RUNTIME_DIR=/run/user/$live_uid" \
@@ -118,6 +138,11 @@ collect_and_report() {
     if [[ $sound != ok && $sound != na ]]; then
         [[ -s /tmp/pactl-info.err ]] \
             && sed "s/^/$MARKER-DETAIL pactl: /" /tmp/pactl-info.err > "$CONSOLE"
+        # First thing to read: it separates "the user manager never came up" (a problem with
+        # this test) from "it came up and the sound units are not enabled" (a problem with the
+        # image). Without it the two look identical — both just fail to reach the user bus.
+        echo "$MARKER-DETAIL user-manager: user@$live_uid.service=$(systemctl is-active "user@$live_uid.service" 2>&1)" \
+            > "$CONSOLE"
         "$runuser_bin" -u '@LIVE_USER@' -- \
             env "XDG_RUNTIME_DIR=/run/user/$live_uid" \
             systemctl --user is-active pipewire-pulse.socket pipewire.service wireplumber.service 2>&1 \
