@@ -461,10 +461,23 @@ log "omitting ${#OMIT_DRIVERS[@]} driver patterns from the initrd"
 # now drawn after switch-root by $DISTRO_ID-splash, out of the root filesystem, where a GPU
 # driver costs nothing extra because the image ships it anyway.
 #
-# Omitting the module rather than merely not adding it is deliberate: "drm" is a dependency
-# other dracut modules can pull in, so leaving it to chance is how it comes back silently. The
-# verify block below asserts no drivers/gpu module and no nvidia*.ko survived into the initrd,
-# which turns a future regression into a failed build instead of a UKI that quietly regrew.
+# BOTH "drm" and "plymouth" are OMITTED rather than merely not added, and plymouth's entry is
+# not defensive — it is required. dracut assembles a default module set from every module whose
+# check() passes, and 45plymouth's passes on the mere presence of plymouth-populate-initrd and
+# the two binaries in the sysroot (45plymouth/module-setup.sh:38). So dropping it from --add
+# achieves nothing at all while sys-boot/plymouth is installed: dracut picks it up by itself,
+# it declares depends() on drm, and the run then dies with
+#
+#     dracut[E]: Module 'plymouth' depends on module 'drm', which can't be installed
+#
+# which is exactly what happened the first time this was built. Once the package is gone
+# check() fails and the module is skipped, so the entry becomes belt-and-braces — worth keeping
+# for the day something reintroduces plymouth as somebody else's dependency.
+#
+# "drm" earns its omission the same way: it is a module OTHER modules can pull in, so leaving it
+# to chance is how the GPU tree comes back silently. The verify block below asserts no
+# drivers/gpu module and no nvidia*.ko survived into the initrd, which turns a future regression
+# into a failed build instead of a UKI that quietly regrew.
 #
 # The cmdline keeps nvidia-drm.modeset=1 and the image keeps usr/lib/modprobe.d/10-nvidia-drm.conf:
 # those are about the BOOTED system now — nvidia-modeset and nvidia-drm have no modalias, so
@@ -473,7 +486,7 @@ log "omitting ${#OMIT_DRIVERS[@]} driver patterns from the initrd"
 dracut --force --no-hostonly --reproducible \
   --sysroot "$TARGET" --kver "$KVER" \
   --add "systemd etc-overlay systemd-repart repart-sysroot" \
-  --omit "drm network network-legacy nfs iscsi lvm mdraid multipath dmraid cifs brltty virtfs virtiofs lunmask nvdimm qemu-net resume" \
+  --omit "drm simpledrm plymouth network network-legacy nfs iscsi lvm mdraid multipath dmraid cifs brltty virtfs virtiofs lunmask nvdimm qemu-net resume" \
   --omit-drivers "${OMIT_DRIVERS[*]}" \
   --compress "zstd -19 -T0" \
   --early-microcode \

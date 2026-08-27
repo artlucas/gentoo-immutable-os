@@ -53,7 +53,9 @@ from ~105 to ~242 MiB; dropping nouveau's GSP firmware brought it to 135.5 (plan
 [plan/11](11-kernel-boot-audit.md) cut 22 MiB of server CPU microcode and 100 initrd modules and
 then spent +71.5 MiB adding the NVIDIA modules and *their* GSP firmware, for a measured
 168.7 MiB. [plan/14](14-boot-splash-kms.md) removes the splash from the initrd entirely and takes
-the whole graphics payload with it. `ESP_SIZE_MIB` has not changed through any of this.
+the whole graphics payload with it: **169.6 → 59.9 MiB measured**, so two UKIs are 120 MiB of the
+1 GiB ESP and headroom goes from 3.0× back to 8.6× — better than the 7.5× it was sized at before
+any splash existed. `ESP_SIZE_MIB` has not changed through any of this.
 
 ## Boot media usage
 

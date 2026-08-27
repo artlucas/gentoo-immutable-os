@@ -207,12 +207,27 @@ This is the repo's first compiled artifact — everything else is shell, Python 
 -  --omit "network network-legacy nfs ... resume" \
 -  --add-drivers "nvidia nvidia_modeset nvidia_drm" \
 +  --add "systemd etc-overlay systemd-repart repart-sysroot" \
-+  --omit "drm network network-legacy nfs ... resume" \
++  --omit "drm simpledrm plymouth network network-legacy nfs ... resume" \
 ```
 
-Omitting `drm` rather than merely not adding it is deliberate: it is a module other dracut
-modules can pull in as a dependency, and that is how it would come back — silently, as a UKI that
-grew 70 MiB for no reason anyone notices.
+**Both entries are omissions rather than absences, and `plymouth`'s is not defensive — it is
+required.** dracut assembles a default module set from every module whose `check()` passes, and
+`45plymouth`'s passes on the mere presence of `plymouth-populate-initrd` and the two binaries in
+the sysroot (`45plymouth/module-setup.sh:38`). Dropping it from `--add` therefore achieves
+nothing at all while the package is installed: dracut picks it up by itself, it declares
+`depends() { echo drm; }`, and the run dies with
+
+```
+dracut[E]: Module 'plymouth' depends on module 'drm', which can't be installed
+```
+
+which is exactly what the first build of this change did. Once the package is gone `check()`
+fails and the module is skipped, so the entry becomes belt-and-braces — worth keeping for the day
+something reintroduces plymouth as somebody else's dependency.
+
+`drm` earns its omission the same way: it is a module *other* modules can pull in, so leaving it
+to chance is how the GPU tree comes back — silently, as a UKI that grew 110 MiB for no reason
+anyone notices.
 
 Stage 40 asserts, over the `lsinitrd` listing, that **no `drivers/gpu/` module and no `nvidia*`
 module** is present, and separately that **no NVIDIA GSP firmware** is, since dracut follows
@@ -240,17 +255,31 @@ invisible console.
 
 ## Measured
 
-*(To be filled in from the build: UKI before/after, initrd module count, and the sizes of the two
-new artefacts. plan/11's baseline is 168.7 MiB / 735 modules, and the 0.3.0 artefact on disk is
-177.9 MB.)*
+Stage 40 run against the 0.3.0 target, before and after, on the same machine and the same
+kernel — so this is a like-for-like rebuild of the boot artifact and nothing else.
 
-| | 0.3.0 | after | Δ |
+| | before | after | Δ |
 |---|---|---|---|
-| UKI | 168.7 MiB | | |
-| modules in the initrd | 735 | | |
-| `drivers/gpu` modules in the initrd | many | **0** (asserted) | |
-| splash binary (root EROFS) | — | ~760 KiB static | |
-| `splash.bin` (root EROFS) | — | ~845 KiB | |
+| **UKI** (`immos_0.3.0.efi`) | **169.6 MiB** | **59.9 MiB** | **−109.8 MiB, −65%** |
+| main initrd | 147.9 MiB | 38.1 MiB | −109.7 MiB, −74% |
+| modules in the initrd | 735 | 673 | −62 |
+| `drivers/gpu` + `nvidia*` modules in the initrd | many | **0** | asserted by stage 40 |
+| NVIDIA GSP firmware in the initrd | 98 MiB | **0** | asserted by stage 40 |
+| splash binary on the root EROFS | — | 676 KiB | static, stripped |
+| `splash.bin` on the root EROFS | — | 845 KiB | scales 1 and 2 |
+
+Two UKIs on the 1 GiB ESP is now **120 MiB, 8.6× headroom** — up from 3.0×, and better than the
+7.5× the ESP was originally sized for before any splash existed. `ESP_SIZE_MIB` does not move.
+
+The initrd and the UKI fell by the same 110 MiB, which is the whole story in one line: every byte
+removed was graphics, and the initrd is where all of it was. Note that only 62 *modules* left —
+the bulk is firmware those modules declared through `MODULE_FIRMWARE` and dracut pulled in behind
+them. The image pays about 1.5 MiB on the root filesystem for the replacement.
+
+Verified in the produced initrd: zero matches for `drivers/gpu/`, `nvidia`, `firmware/nvidia/` or
+`gsp_*.bin`; `erofs.ko`, `overlay.ko`, both microcode blobs and the repart drop-in all still
+present; the dependency closure complete for all 673 modules; and no file mentioning plymouth
+(the single `lsinitrd` hit is dracut's own record of the `--omit` argument).
 
 ## Verification
 
