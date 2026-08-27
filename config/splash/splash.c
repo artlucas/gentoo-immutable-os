@@ -810,7 +810,37 @@ int main(int argc, char **argv)
         struct timespec now;
         clock_gettime(CLOCK_MONOTONIC, &now);
         if (now.tv_sec - started.tv_sec >= SPLASH_MAX_SECONDS) {
-            reveal_console();
+            /* Two very different situations reach this line, and they want opposite things.
+             *
+             * The boot really is stalled — then showing the log is the whole point of having a
+             * backstop, because otherwise the machine sits on a logo with no way to find out
+             * why short of someone happening to press ESC.
+             *
+             * Or the desktop is up and we simply did not notice: on a multi-head machine the
+             * compositor may have lit a CRTC we are not watching, leaving ours still showing
+             * our own framebuffer forever. Dumping the kernel log and raising the console
+             * loglevel underneath a running session would be pure vandalism.
+             *
+             * Asking whether anyone else holds DRM master separates them exactly. A compositor
+             * is always master; if nothing is, nothing is driving the display. Taking master to
+             * find out is safe *here* specifically because a successful acquisition proves
+             * nobody else wanted it, and it is handed straight back — which is why this is done
+             * once, at the backstop, rather than on every tick where it would race a compositor
+             * that is only just starting up.
+             */
+            int idle = 1;
+            for (int i = 0; i < n_cards; i++) {
+                if (xioctl(card_fds[i], DRM_IOCTL_SET_MASTER, NULL) == 0)
+                    xioctl(card_fds[i], DRM_IOCTL_DROP_MASTER, NULL);
+                else
+                    idle = 0;
+            }
+            if (idle) {
+                reveal_console();
+            } else {
+                for (int i = 0; i < n_cards; i++)
+                    close(card_fds[i]);
+            }
             break;
         }
 
