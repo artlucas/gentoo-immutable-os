@@ -134,6 +134,13 @@ bcache
 # and prune-firmware.txt class 3 has already deleted the GSP blobs it would ask for. Without
 # this line dracut's driver sweep pulls nouveau.ko and instmods drags ~151 MiB of firmware in
 # behind it (plan/10). It takes mxm_wmi with it, which nothing else in the initrd needs.
+#
+# REDUNDANT since plan/14, and kept deliberately. Stage 40 now passes --omit drm, so no GPU
+# driver reaches the initrd by any route and this line has nothing left to match. It stays
+# because it costs nothing and because it is the belt to that braces: if dracut's drm module
+# ever comes back as some other module's dependency, this is what keeps the 151 MiB out while
+# somebody works out why. The same applies to the mt76 entries below, which exist only because
+# nouveau's removal stranded them.
 nouveau
 #
 # mac80211/cfg80211: dracut's "network" module is omitted, so the initrd brings up no network at
