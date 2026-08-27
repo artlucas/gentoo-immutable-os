@@ -136,13 +136,21 @@ both outputs.
 `config/rootfs/usr/lib/udev/rules.d/70-distro-splash.rules.in`:
 
 ```
-ACTION=="add|change", SUBSYSTEM=="drm", KERNEL=="card[0-9]*", TAG+="systemd", ENV{SYSTEMD_WANTS}+="@DISTRO_ID@-splash.service"
+ACTION=="add", SUBSYSTEM=="drm", KERNEL=="card[0-9]*", TAG+="systemd", ENV{SYSTEMD_WANTS}+="@DISTRO_ID@-splash.service"
 ```
 
 Event-driven off the DRM device appearing, which is the earliest reachable moment and needs no
 `systemd-udev-settle`. Repeat triggers on a multi-GPU machine are no-ops while the unit is
 active; the program enumerates every card itself. Render nodes are excluded — they cannot
 modeset.
+
+`ACTION=="add"` only, deliberately not `add|change`: a card emits `change` on every connector
+hotplug, so `|change` made each monitor plugged into a running desktop a fresh start request for
+a unit that had long since exited — a boot splash over somebody's session. Cards are added once
+and udev replays `add` at coldplug, so nothing is missed. The program is safe against a spurious
+late start anyway, and by construction rather than luck: it takes DRM master before it draws, a
+running compositor already holds it, so the attempt fails and it exits without touching the
+screen. The rule narrows the window; the master acquisition closes it.
 
 `SPLASH_BACKEND` keeps four values, `plymouth` renamed to `kms` and the default moved to `both`:
 
