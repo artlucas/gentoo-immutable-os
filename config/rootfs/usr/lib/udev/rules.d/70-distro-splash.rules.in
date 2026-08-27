@@ -3,5 +3,16 @@
 # autoloads amdgpu/i915/xe/nvidia/virtio_gpu, and that is exactly the moment the systemd-stub
 # bitmap stops being scanned out.
 #
-# render nodes (renderD*) are skipped: they cannot modeset.
-ACTION=="add|change", SUBSYSTEM=="drm", KERNEL=="card[0-9]*", TAG+="systemd", ENV{SYSTEMD_WANTS}+="@DISTRO_ID@-splash.service"
+# ACTION=="add" only, deliberately NOT "add|change". A card emits `change` whenever a connector
+# is hotplugged — every monitor plugged into a running desktop — and each one would be a fresh
+# start request for a unit that has long since exited, i.e. a boot splash painted over somebody's
+# session. Cards themselves are added once, and udev replays `add` at coldplug, so nothing is
+# missed by leaving `change` out.
+#
+# The splash is safe against a spurious late start anyway, and by construction rather than by
+# luck: it takes DRM master before it draws anything, and a running compositor already holds it,
+# so the attempt fails and the program exits without touching the screen. This rule narrows the
+# window; that is what closes it.
+#
+# Render nodes (renderD*) are skipped: they cannot modeset.
+ACTION=="add", SUBSYSTEM=="drm", KERNEL=="card[0-9]*", TAG+="systemd", ENV{SYSTEMD_WANTS}+="@DISTRO_ID@-splash.service"
