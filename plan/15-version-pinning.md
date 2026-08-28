@@ -1,6 +1,6 @@
 # 15 — Version Pinning and the Offline Archive
 
-**Status: implemented 2026-08-27; verified by a full locked build and an offline rebuild 2026-08-28.** Scope is *which packages, at which versions* a build
+**Status: implemented 2026-08-27; verified 2026-08-28 by a full locked build, an offline rebuild, and a GLSA-driven relock.** Scope is *which packages, at which versions* a build
 produces, and keeping the inputs that produced them. Bit-identical output is a different goal
 and stays where it is, in [08-roadmap.md](08-roadmap.md) item 6.
 
@@ -202,6 +202,13 @@ entries) is in the tree, so this works offline. Its default solver is
 asks. Package names are read from `-l`, whose one-line-per-GLSA format is far steadier to parse
 than `-p`'s prose.
 
+Two details that are not optional, both found by running the thing (see the record below).
+**Detection reads `image.lock`, never the target root**: stage 50 deletes that VDB, and
+`glsa-check` says "not affected" about an empty root in exactly the words it uses for a clean
+one. **The emerge clears the target's `world_sets` first**: stage 30 records `@locked-image`
+there, portage enforces it on every later emerge into that root, and a relaxed set placed beside
+it simply loses to the pins it still carries — silently, with `Total: 0 packages` and exit 0.
+
 Output follows the flow `expected-packages.txt` already establishes: write
 `out/reports/image.lock.generated` and `out/reports/lock.diff`, then stop. Nothing is committed
 for you.
@@ -396,10 +403,87 @@ The archive stage 90 produced for this run is 16 GB / 90,134 files — 921 distf
 676 binpkgs, the whole `/var/lib/flatpak` tree with deploys hardlinked, the signed upstream
 snapshot, both container images, the locks, `build.conf` and the provenance file.
 
-**Still not exercised:** `relock.sh` against a real GLSA hit. Also note the archive's builder
-half remains incomplete — the builder-closure distfile fetch still fails on
-`qttools[-linguist]`, so the builder can be *loaded* offline but not *rebuilt from source*
-offline. Rebuilding the image, which is what this layer is for, is unaffected.
+Note the archive's builder half remains incomplete — the builder-closure distfile fetch still
+fails on `qttools[-linguist]`, so the builder can be *loaded* offline but not *rebuilt from
+source* offline. Rebuilding the image, which is what this layer is for, is unaffected.
+
+### `relock.sh --security` against a real GLSA, run 2026-08-28
+
+**The path works, and getting it there took three fixes.** All three failed the same way: exit 0,
+a cheerful message, and no work done. That is the failure mode this whole document exists to
+make impossible, and `--security` had three instances of it stacked on top of each other.
+
+**Provoking a real hit took some doing, and the reason is itself reassuring.** No GLSA in the
+pinned `20260820` tree affects the 0.3.0 closure, and neither does the newest database available
+(`20260827`, eleven advisories newer). `glsa-202608-20` *does* name `sys-apps/acl` and
+`sys-apps/attr` — but at `<unaffected range="ge">2.4.0</unaffected>` / `2.6.0`, and 0.3.0 ships
+exactly `acl-2.4.0-r2` and `attr-2.6.0`. Genuinely unaffected, which is the expected steady state
+for a lock resolved from that same tree: it is the *newest* tree, so it has the *fixed* versions.
+
+So the scenario was built the way a real patch release arrives — an older release meeting a newer
+advisory — using nothing synthetic. `image.lock` was rolled back to `acl-2.3.2-r3` and
+`attr-2.5.2-r1`, both **stable amd64 in the pinned tree**, both in `glsa-202608-20`'s vulnerable
+range. Stage 20's pre-flight confirmed they exist (`655 atoms, 0 not in the pinned tree`) and
+stage 30 built a target root from them (`no drift: 655 atoms, all at their locked versions`).
+
+| | |
+|---|---|
+| detection | `1 GLSA(s) affect this image: 202608-20 … CVE-2026-54369,CVE-2026-54370,CVE-2026-54371` |
+| atom extraction | `releasing: sys-apps/acl sys-apps/attr` |
+| **least change** | **`653 atoms held at their locked versions, 2 released to re-resolve`** |
+| emerge | `Total: 2 packages (2 upgrades, 2 binaries)` — `acl-2.4.0-r2 [2.3.2-r3]`, `attr-2.6.0 [2.5.2-r1]` |
+| `lock.diff` | 2 version changes, 0 added, 0 removed |
+| **acceptance** | **the regenerated lock is byte-identical to the committed 0.3.0 `image.lock`** |
+
+That last row is the strong form of the claim: a GLSA-driven relock of a deliberately vulnerable
+lock lands exactly on the released one. Two atoms moved because an advisory said so; 653 did not
+move because nothing said they should.
+
+#### Three silent failures, in the order they surfaced
+
+**1. `glsa-check` reports "not affected" against an empty root.** Exit 0, same words as a clean
+result. Stage 50 *deletes* `$TARGET/var/db/pkg`, so an empty root is the normal state after any
+completed build — meaning `--security`, pointed at `$TARGET`, returned a confident all-clear for
+every release it had never actually checked. Detection now synthesizes its root from
+`image.lock`, reading SLOT out of the pinned tree's `md5-cache` (GLSA `<package>` entries carry
+slot restrictions, so a defaulted SLOT misses quietly). Verified equivalent, not assumed: the
+real 655-package VDB and the synthesized one both return `202608-20`. The change is also a
+straight improvement — "does release X have a known vulnerability?" is now a seconds-long query
+against any tree, for any release whose lock is in git, with no target root and no rebuild.
+
+**2. The mode never reached the container.** `relock.sh` re-execs itself into the builder with
+no arguments and passes the mode in the environment — but `MODE=atoms ATOMS=() RUNTIME=auto` sat
+at column 0, *above* the host/container split, so it clobbered the `-e MODE=` the host had just
+set. Every mode arrived as `atoms` with an empty atom list. `--security` skipped GLSA detection
+entirely, held all 655 atoms, released none, emerged nothing, and printed the full "review
+`out/reports/lock.diff` and commit it" epilogue. `--builder` and `--flatpak` were dead the same
+way. Arguments are now parsed in the host branch only, and the container half *asserts* `MODE`
+rather than defaulting it — defaulting is precisely what made "did nothing" and "found nothing"
+identical from the outside.
+
+**3. `world_sets` outranked the relock.** Stage 30 records `@locked-image` in
+`$TARGET/var/lib/portage/world_sets`, and portage enforces `world_sets` on every later emerge
+into that root. So `@relock-target` did not *replace* the old pins, it sat beside them and lost:
+
+```
+WARNING: One or more updates/rebuilds have been skipped due to a dependency conflict:
+  (sys-apps/acl-2.4.0-r2 ... binary scheduled for merge) conflicts with
+    =sys-apps/acl-2.3.2-r3 required by @locked-image
+Total: 0 packages, Size of downloads: 0 KiB
+```
+
+A `WARNING`, then exit 0, then `no drift`, then the commit-it epilogue. The relock now clears the
+target's set memberships first and emerges `--oneshot`, so it neither loses to the previous run's
+sets nor leaves its own behind — the failed first attempt had already added `@relock-target` to
+`world_sets`, so the next run would have inherited one more thing pinning the atoms it was trying
+to release.
+
+#### Still not exercised
+
+`relock.sh --all` against a *newer* tree, which is what would demonstrate the gap between
+least-change and wholesale — on the pinned tree both move the same two atoms, because the lock
+already is that tree's `--all` resolution. Showing the gap needs `SNAPSHOT_DATE` bumped, and that
+is a pin move with its own verification, not a footnote to this one.
 
 ### What the first real build cost, and why
 

@@ -28,25 +28,33 @@ REPO_ROOT="$(dirname -- "$SCRIPT_DIR")"
 # printing a shellcheck directive as if it were help text.
 usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; }
 
-MODE=atoms ATOMS=() RUNTIME=auto
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --security) MODE=security; shift ;;
-    --all)      MODE=all; shift ;;
-    --builder)  MODE=builder; shift ;;
-    --flatpak)  MODE=flatpak; shift ;;
-    --runtime)  RUNTIME="$2"; shift 2 ;;
-    -h|--help)  usage; exit 0 ;;
-    -*)         echo "unknown argument: $1 (see --help)" >&2; exit 1 ;;
-    *)          ATOMS+=("$1"); shift ;;
-  esac
-done
-
 # ---------------------------------------------------------------------------------------
 # Host half: dispatch into the builder, with the same mounts build.sh uses. Re-execs this
 # same file rather than adding a second script, so the modes and their comments live together.
+#
+# Arguments are parsed HERE ONLY. The container half is re-exec'd with no arguments and takes
+# its instructions from the environment, so a default assigned out at the top of the file would
+# clobber the -e MODE= this branch passes in — which is precisely what it used to do. Every
+# mode arrived inside the container as "atoms" with an empty atom list, so --security skipped
+# GLSA detection entirely, held all 655 atoms, released none, emerged nothing, and then printed
+# the whole "review out/reports/lock.diff and commit it" epilogue. Exit 0, no diff, no work
+# done, no way to tell from the output that it had not run.
 # ---------------------------------------------------------------------------------------
 if [[ ${RELOCK_IN_CONTAINER:-0} != 1 ]]; then
+  MODE=atoms ATOMS=() RUNTIME=auto
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --security) MODE=security; shift ;;
+      --all)      MODE=all; shift ;;
+      --builder)  MODE=builder; shift ;;
+      --flatpak)  MODE=flatpak; shift ;;
+      --runtime)  RUNTIME="$2"; shift 2 ;;
+      -h|--help)  usage; exit 0 ;;
+      -*)         echo "unknown argument: $1 (see --help)" >&2; exit 1 ;;
+      *)          ATOMS+=("$1"); shift ;;
+    esac
+  done
+
   export REPO="$REPO_ROOT" OUT="$REPO_ROOT/out" WORK="${WORK:-$REPO_ROOT/out/work}"
   export STAGE_NAME=relock
   # shellcheck source=lib/common.sh
@@ -83,7 +91,13 @@ source "$SCRIPT_DIR/lib/common.sh"
 load_config
 ensure_dir "$OUT/logs"; exec > >(tee -a "$OUT/logs/relock.log") 2>&1
 tree_assert
+
+# Both come from the host half's -e flags. MODE is asserted rather than defaulted: defaulting it
+# is what silently turned every mode into "atoms" and made a --security run that did nothing
+# look exactly like one that found nothing.
+MODE="${MODE:?relock.sh: MODE is unset — the host half passes it with -e MODE=}"
 read -r -a ATOMS <<< "${ATOMS:-}"
+log "mode: $MODE${ATOMS[0]+ (${ATOMS[*]})}"
 
 IMAGE_LOCK="$LOCK_DIR/image.lock"
 PC="$CONFIG_ROOT/etc/portage"
@@ -122,16 +136,70 @@ if [[ $MODE == builder ]]; then
   NB the builder image must then be rebuilt so its own root matches the lock it ships."
 fi
 
+# glsa_vdb LOCK ROOT — a throwaway VDB holding exactly the lock's atoms, which is all
+# glsa-check needs in order to match. SLOT is read out of the pinned tree's md5-cache and is
+# not decoration: GLSA <package> entries carry slot restrictions, so a defaulted SLOT can fail
+# to match and hand back an all-clear that is simply wrong.
+glsa_vdb() {
+  local lock=${1:?glsa_vdb: lock required} root=${2:?glsa_vdb: root required}
+  local md5="$TREE_DIR/gentoo/metadata/md5-cache"
+  local atom cpv cat pf pn d slot sib n=0 approx=0
+  [[ -d $md5 ]] || die "no md5-cache at $md5 — the pinned tree is not populated.
+  Reconcile it first:  scripts/build.sh --only 10"
+  rm -rf -- "$root"; ensure_dir "$root/var/db/pkg"
+  while read -r atom; do
+    cpv="${atom#=}"; cat="${cpv%%/*}"; pf="${cpv#*/}"
+    d="$root/var/db/pkg/$cat/$pf"; mkdir -p -- "$d"
+    printf '%s\n' "$pf"  > "$d/PF"
+    printf '%s\n' "$cat" > "$d/CATEGORY"
+    printf 'gentoo\n'    > "$d/repository"
+    printf '%s\n' "$n"   > "$d/COUNTER"
+    slot=""
+    if [[ -f $md5/$cat/$pf ]]; then
+      slot="$(sed -n 's/^SLOT=//p' "$md5/$cat/$pf")"
+    else
+      # The exact version is gone from the tree — the normal case straight after a snapshot
+      # bump, which is exactly when --security is run. A sibling version's SLOT is a far
+      # better guess than "0"; slots move rarely, and a wrong one here means a missed GLSA.
+      pn="$(atom_name "$pf")"
+      sib="$(compgen -G "$md5/$cat/$pn-[0-9]*" 2>/dev/null | head -n1 || true)"
+      [[ -n $sib ]] && slot="$(sed -n 's/^SLOT=//p' "$sib")"
+      approx=$((approx + 1))
+    fi
+    printf '%s\n' "${slot:-0}" > "$d/SLOT"
+    n=$((n + 1))
+  done < <(lock_atoms "$lock")
+  (( n > 0 )) || die "$lock holds no atoms — there is nothing to check"
+  log "checking $n locked atoms against the GLSA database in the tree dated $(tree_date)"
+  (( approx == 0 )) \
+    || warn "$approx of $n locked atoms are no longer in the tree; their SLOT was taken from a
+  sibling version. Those are also the atoms most likely to need releasing anyway."
+}
+
 # ---- the image lock ----------------------------------------------------------------------
 [[ -d $PC ]] || die "no config root at $CONFIG_ROOT — run:  scripts/build.sh --from 20 --only 20"
 
-# --security: ask portage which installed packages have a GLSA against them. glsa-check's
+# --security: ask portage which packages in the lock have a GLSA against them. glsa-check's
 # default solver is getMinUpgrade(minimize=True) — a LEAST-CHANGE upgrade, which is exactly the
 # question a patch release asks. The package names come from `-l`, whose one-line-per-GLSA
 # format ("<id> [U] <title> ( cat/pkg  cat/pkg )") is far steadier to parse than -p's prose.
+#
+# Detection runs against a VDB synthesized from image.lock, NOT against $TARGET. Two reasons,
+# the first of which is a bug this line used to have:
+#
+#   1. glsa-check answers "This system is not affected by any of the listed GLSAs", exit 0,
+#      against an EMPTY root just as cheerfully as against a clean one — and stage 50 DELETES
+#      $TARGET/var/db/pkg, so an empty root is the normal state after any completed build.
+#      Pointed at $TARGET, this reported "nothing to relock" for a release it had never
+#      actually checked. A silent all-clear is the worst available answer to a security
+#      question, and it is indistinguishable from the true one.
+#   2. The lock is the authoritative record of what a release resolved, and it is in git. So
+#      "does 0.3.0 have a known vulnerability?" becomes a seconds-long query answerable for any
+#      past release against any tree, with no rebuild and no target root.
 if [[ $MODE == security ]]; then
-  log "checking $TARGET against the GLSA database in the pinned tree"
-  mapfile -t GLSA_IDS < <(ROOT="$TARGET" PORTAGE_CONFIGROOT="$CONFIG_ROOT" \
+  GLSA_ROOT="$WORK/.glsa-root"
+  glsa_vdb "$IMAGE_LOCK" "$GLSA_ROOT"
+  mapfile -t GLSA_IDS < <(ROOT="$GLSA_ROOT" PORTAGE_CONFIGROOT="$CONFIG_ROOT" \
     glsa-check -n -q -t all 2>/dev/null | grep -E '^[0-9]{6}-[0-9]+$' || true)
   if (( ${#GLSA_IDS[@]} == 0 )); then
     log "no GLSA affects the locked package set — nothing to relock"
@@ -139,8 +207,8 @@ if [[ $MODE == security ]]; then
     exit 0
   fi
   log "${#GLSA_IDS[@]} GLSA(s) affect this image:"
-  ROOT="$TARGET" PORTAGE_CONFIGROOT="$CONFIG_ROOT" glsa-check -n -c -l "${GLSA_IDS[@]}" 2>/dev/null || true
-  mapfile -t ATOMS < <(ROOT="$TARGET" PORTAGE_CONFIGROOT="$CONFIG_ROOT" \
+  ROOT="$GLSA_ROOT" PORTAGE_CONFIGROOT="$CONFIG_ROOT" glsa-check -n -c -l "${GLSA_IDS[@]}" 2>/dev/null || true
+  mapfile -t ATOMS < <(ROOT="$GLSA_ROOT" PORTAGE_CONFIGROOT="$CONFIG_ROOT" \
     glsa-check -n -l "${GLSA_IDS[@]}" 2>/dev/null \
     | sed -n 's/.*(\(.*\)).*/\1/p' | tr ' ' '\n' | grep -E '^[a-z0-9-]+/' | sort -u)
   (( ${#ATOMS[@]} )) || die "GLSAs were reported but no package names could be read out of
@@ -191,10 +259,40 @@ else
   SETS=(@relock-target)
 fi
 
+# The relock EMERGE, unlike the detection above, does need the real target root: it re-resolves
+# against what is actually installed there. Stage 50 deletes that VDB at the end of every build,
+# so say so, rather than silently merging 655 packages into an empty root and calling the result
+# a relock.
+VDB_N=$( { vdb_atoms "$TARGET" || true; } | wc -l )
+(( VDB_N > 0 )) || die "$TARGET holds no installed packages — stage 50 deletes the VDB at the end
+  of a build, so a relock needs the target root rebuilt first:
+      scripts/build.sh --only 20 && scripts/build.sh --only 30
+  (detection above needs none of this; it reads config/portage/lock/image.lock.)"
+log "relocking against $VDB_N packages installed in $TARGET"
+
+# Clear the target root's set memberships first. Stage 30 records @locked-image in
+# $TARGET/var/lib/portage/world_sets, and portage enforces world_sets on every later emerge into
+# that root — so the relaxed set below does not REPLACE the old pins, it merely sits beside them
+# and loses to them. The symptom is not an error:
+#
+#   WARNING: One or more updates/rebuilds have been skipped due to a dependency conflict:
+#     (sys-apps/acl-2.4.0-r2 ... binary scheduled for merge) conflicts with
+#       =sys-apps/acl-2.3.2-r3 required by @locked-image
+#   Total: 0 packages, Size of downloads: 0 KiB
+#
+# followed by exit 0, "no drift", and the "review the diff and commit it" epilogue at the bottom
+# of this file — a relock that relocked nothing, reported as a relock that found nothing to do.
+# Stage 30 owns this file and rewrites it, and a relock already ends by telling you to rebuild.
+WORLD_SETS="$TARGET/var/lib/portage/world_sets"
+if [[ -s $WORLD_SETS ]]; then
+  log "clearing the target's world_sets ($(tr '\n' ' ' < "$WORLD_SETS")) — they still carry the old pins"
+  : > "$WORLD_SETS"
+fi
+
 mirror_target_pkg_config
 log "emerging ${SETS[*]} into $TARGET"
 ROOT="$TARGET" PORTAGE_CONFIGROOT="$CONFIG_ROOT" \
-  emerge --verbose --usepkg --with-bdeps=n --changed-use --update --quiet-build=y "${SETS[@]}"
+  emerge --verbose --usepkg --with-bdeps=n --changed-use --update --oneshot --quiet-build=y "${SETS[@]}"
 
 vdb_atoms "$TARGET" | lock_write "$REPORT_DIR/image.lock.generated" \
   "image.lock — the pre-prune --root=\$TARGET closure, exactly as stage 30 resolves it"

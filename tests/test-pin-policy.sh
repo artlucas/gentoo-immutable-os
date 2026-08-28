@@ -196,6 +196,30 @@ assert_true "stage 90 does not let binpkgs satisfy the fetch" \
     grep -q -- '--fetchonly --usepkg=n' "$S90"
 assert_true "stage 90 archives the flatpak objects" grep -q 'create-usb' "$S90"
 
+# relock.sh --security. glsa-check answers "This system is not affected by any of the listed
+# GLSAs", exit 0, against an EMPTY root exactly as cheerfully as against a clean one — and stage
+# 50 DELETES $TARGET/var/db/pkg at the end of every build, so pointing detection at $TARGET
+# returned a silent all-clear for a release nothing had ever actually checked. Detection reads
+# image.lock instead, which is both always present and the authoritative record of the release.
+RELOCK="$REPO_ROOT/scripts/relock.sh"
+SEC_BLOCK="$(sed -n '/MODE == security/,/^fi$/p' "$RELOCK")"
+assert_true "relock.sh detects GLSAs from the lock" grep -q 'glsa_vdb "\$IMAGE_LOCK"' "$RELOCK"
+assert_false "relock.sh never points glsa-check at the target root" \
+    grep -q 'ROOT="\$TARGET"' <(printf '%s\n' "$SEC_BLOCK")
+assert_true "…and reads SLOT from the tree, which GLSA atoms match on" \
+    grep -q 'md5-cache' "$RELOCK"
+assert_true "relock.sh refuses to relock into an empty target root" \
+    grep -q 'VDB_N > 0' "$RELOCK"
+
+# relock.sh re-execs itself into the builder with no arguments and passes the mode in the
+# environment. A top-level "MODE=atoms" default therefore CLOBBERED it: every mode reached the
+# container as "atoms", so --security skipped GLSA detection, released nothing, emerged nothing,
+# and still printed the "review the diff and commit it" epilogue. A column-0 MODE= assignment is
+# the signature of that bug returning.
+assert_false "relock.sh does not default MODE before it dispatches" grep -q '^MODE=atoms' "$RELOCK"
+assert_true "relock.sh's container half requires MODE to be passed in" \
+    grep -q 'MODE:?relock.sh: MODE is unset' "$RELOCK"
+
 BUILD="$REPO_ROOT/scripts/build.sh"
 assert_true "build.sh mounts the tree volume at /var/db/repos" grep -q '/var/db/repos' "$BUILD"
 assert_true "build.sh builds from the repo root with -f" grep -q -- '-f "\$REPO_ROOT/builder/Dockerfile"' "$BUILD"
