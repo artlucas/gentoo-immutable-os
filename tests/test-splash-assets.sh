@@ -157,4 +157,45 @@ else
     echo "  (rsvg-convert absent — skipping the rasterise pass; stage 10 requires it)"
 fi
 
+# ---- the initrd GPU assertion must not fire on config files -------------------------------
+# plan/14's guard exists to catch a dracut module dragging the DRM tree back into the initrd —
+# 70+ MiB of UKI, arriving silently. Its first regex was '/nvidia[-_.]', which puts a literal
+# '.' in the character class and so matched etc/modprobe.d/nvidia.conf: 1488 bytes of
+# "blacklist nouveau" that nvidia-drivers installs and dracut sweeps in with the rest of
+# /etc/modprobe.d. That failed a build whose initrd was completely clean, and the message told
+# the reader to go looking for a dependency that was never pulled in.
+#
+# Both directions are pinned here: a real driver or its firmware must still be caught, and a
+# config file must not be.
+gpu_match() {
+    awk '
+      { p = $NF }
+      p ~ /drivers\/gpu\//                            { print; next }
+      p ~ /(^|\/)nvidia[^\/]*\.ko(\.(xz|zst|gz))?$/   { print; next }
+      p ~ /(^|\/)firmware\/nvidia\//                  { print; next }
+    ' <<<"$1"
+}
+for good in \
+    "-rw-r--r-- 1 root root 1488 Aug  5 09:19 etc/modprobe.d/nvidia.conf" \
+    "-rw-r--r-- 1 root root  100 Aug  5 09:19 etc/nvidia-something.conf" \
+    "-rw-r--r-- 1 root root  100 Aug  5 09:19 usr/lib/modules/6.18/kernel/fs/erofs/erofs.ko.xz"; do
+    if [[ -n $(gpu_match "$good") ]]; then
+        _fail "initrd GPU guard false-positives on: ${good##* }"
+    else _pass; fi
+done
+for bad in \
+    "-rw-r--r-- 1 root root 200000 Aug  5 09:19 usr/lib/modules/6.18/kernel/drivers/gpu/drm/drm.ko.xz" \
+    "-rw-r--r-- 1 root root 900000 Aug  5 09:19 usr/lib/modules/6.18/video/nvidia.ko.zst" \
+    "-rw-r--r-- 1 root root 100000 Aug  5 09:19 usr/lib/firmware/nvidia/ad10x/gsp.bin"; do
+    if [[ -z $(gpu_match "$bad") ]]; then
+        _fail "initrd GPU guard misses a real driver: ${bad##* }"
+    else _pass; fi
+done
+# ...and the shipped stage must actually use that shape, not the old loose one. Comment lines
+# are excluded because the fix's own comment quotes the broken pattern in order to explain it.
+S40="$REPO_ROOT/scripts/stages/40-configure.sh"
+if grep -v '^[[:space:]]*#' "$S40" | grep -q "nvidia\[-_\.\]"; then
+    _fail "stage 40 still uses the loose /nvidia[-_.] pattern, which matches nvidia.conf"
+else _pass; fi
+
 finish

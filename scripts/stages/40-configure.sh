@@ -713,7 +713,22 @@ if command -v lsinitrd >/dev/null 2>&1; then
   # There is nothing to trade off here. The initrd mounts an erofs root and an ext4 /var and
   # then switch-roots; it has no use for a GPU, and the splash that used to need one is now
   # drawn out of the root filesystem after the pivot.
-  GPU_IN_INITRD="$(grep -E 'drivers/gpu/|/nvidia[-_.]|/nvidia\.ko' <<<"$INITRD_LIST" || true)"
+  # Matched against the PATH and restricted to kernel modules and firmware, because the
+  # obvious pattern is wrong in a way that fails a perfectly good build. '/nvidia[-_.]' puts a
+  # literal '.' in the character class, so it matches etc/modprobe.d/nvidia.conf — 1488 bytes
+  # of "blacklist nouveau" that nvidia-drivers installs and dracut sweeps in with the rest of
+  # /etc/modprobe.d. That is not a graphics driver, it is not 70 MiB, and there is nothing to
+  # act on when it is reported.
+  #
+  # What must still be caught is the real regression this guards: a dracut module pulling the
+  # DRM tree back in. Those arrive as .ko files under drivers/gpu/ or as nvidia*.ko, plus the
+  # firmware behind them — all three are matched below, and a config file is not.
+  GPU_IN_INITRD="$(awk '
+    { p = $NF }
+    p ~ /drivers\/gpu\//                            { print; next }
+    p ~ /(^|\/)nvidia[^\/]*\.ko(\.(xz|zst|gz))?$/    { print; next }
+    p ~ /(^|\/)firmware\/nvidia\//                   { print; next }
+  ' <<<"$INITRD_LIST" || true)"
   if [[ -n $GPU_IN_INITRD ]]; then
     die "verify: the initrd contains graphics drivers, which nothing in it can use:
 $(head -n 20 <<<"$GPU_IN_INITRD")
