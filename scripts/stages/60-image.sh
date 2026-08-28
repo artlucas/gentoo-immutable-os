@@ -24,7 +24,37 @@ IMG="$OUT/$IMG_NAME"
 ROOT_STAGE="$STAGING/root"
 rsync -aHAX --exclude '/var/*' "$TARGET/" "$ROOT_STAGE/"
 ROOT_EROFS="$OUT/$ROOT_IMG_NAME"
-mkfs.erofs -z "$EROFS_COMPRESSION" -T0 --all-root "$ROOT_EROFS" "$ROOT_STAGE"
+# The EROFS build timestamp, stamped onto EVERY inode (mkfs.erofs applies --all-time by
+# default). It has to be deterministic — two builds of the same commit are meant to produce the
+# same bytes — and it must not be ZERO, which is what this used to pass.
+#
+# -T0 cost the image its autologin, and the reason is worth stating in full because nothing in
+# the build or the boot says a word about it. Plasma Login Manager decides whether to read
+# /etc/plasmalogin.conf.d by taking the newest mtime under it and comparing that against its own
+# "config already loaded" timestamp, which starts zero-initialised. Clamp every inode to the
+# epoch and that comparison concludes nothing is newer than never: the drop-in is never parsed,
+# [Autologin] User stays empty, and the daemon skips straight to the greeter. It skips SILENTLY
+# — both "Autologin failed!" and "Unable to find autologin session entry" live inside the branch
+# an empty username never enters, so the journal shows a clean, successful greeter start and no
+# error of any kind. That is why this looked like a config bug for as long as it did; the config
+# was correct the whole time and was simply never read.
+#
+# Measured in the guest against the shipped 0.3.0 image: restarting plasmalogin with the config
+# untouched autologins nobody, and `touch /etc/plasmalogin.conf.d` — an mtime, not one byte of
+# content — followed by the same restart puts the live user on seat0 immediately.
+#
+# SNAPSHOT_DATE is the source because it is already a build.conf pin: stable across rebuilds and
+# machines, and it moves only when the inputs it names move. SOURCE_DATE_EPOCH overrides it if
+# the caller exports one, which is the cross-project convention for exactly this value.
+if [[ -z ${SOURCE_DATE_EPOCH:-} ]]; then
+  SOURCE_DATE_EPOCH="$(date -u -d "${SNAPSHOT_DATE:0:4}-${SNAPSHOT_DATE:4:2}-${SNAPSHOT_DATE:6:2}" +%s)" \
+    || die "could not derive a build timestamp from SNAPSHOT_DATE=$SNAPSHOT_DATE"
+fi
+[[ $SOURCE_DATE_EPOCH =~ ^[0-9]+$ && $SOURCE_DATE_EPOCH -gt 0 ]] \
+  || die "SOURCE_DATE_EPOCH must be a positive integer, got '${SOURCE_DATE_EPOCH}' — a zero mtime
+on /etc is what stops Plasma Login Manager reading its config at all (see the note above)"
+log "erofs timestamp: $SOURCE_DATE_EPOCH ($(date -u -d "@$SOURCE_DATE_EPOCH" '+%Y-%m-%d %H:%M:%S UTC'))"
+mkfs.erofs -z "$EROFS_COMPRESSION" -T"$SOURCE_DATE_EPOCH" --all-root "$ROOT_EROFS" "$ROOT_STAGE"
 
 root_bytes="$(stat -c%s "$ROOT_EROFS")"
 slot_bytes="$((ROOT_SLOT_SIZE_MIB * 1024 * 1024))"

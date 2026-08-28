@@ -6,9 +6,16 @@
 # qtvirtualkeyboard default). The 10- prefix sorts after it, so both apply.
 #
 # PLM is a fork of SDDM and keeps its config syntax, so [Autologin] User/Session/Relogin
-# carry over unchanged. CONFIRM on the first build against `man plasmalogin.conf` and the
-# defaults in /usr/share/plasmalogin/ — a key PLM does not recognise is silently ignored, and
-# the failure mode is a greeter prompting for a password on media that is supposed to be live.
+# carry over unchanged. CONFIRMED against plasma-login-manager 6.6.6's own Configuration.h: the
+# section is [Autologin], the keys are User/Session/Relogin, and Session names a file in
+# .../wayland-sessions with the ".desktop" appended for you, so "plasma" is right.
+#
+# THE FILE BEING CORRECT IS NOT ENOUGH, and this is the trap to know about before editing it:
+# PLM only reads this directory when its newest mtime beats a zero-initialised "already loaded"
+# stamp, so every inode in the image needs a non-zero mtime or nothing here is ever parsed and
+# the greeter comes up with no error logged anywhere. Stage 60 stamps SOURCE_DATE_EPOCH for
+# exactly this reason; it shipped as -T0 (the Unix epoch) through 0.3.0, and autologin was dead
+# in every one of those images. Stage 70 now asserts autologin=yes so it cannot regress quietly.
 #
 # Session names /usr/share/wayland-sessions/plasma.desktop, installed by
 # kde-plasma/plasma-login-sessions[wayland]. Stage 40 asserts that file exists for exactly

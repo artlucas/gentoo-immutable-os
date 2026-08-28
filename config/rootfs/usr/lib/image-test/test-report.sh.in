@@ -23,7 +23,8 @@ collect_and_report() {
     # shellcheck source=/dev/null
     . /etc/os-release
     local etc_fs graphical failed failed_list machine_id var_size flatpak_remotes
-    local resolved dns podman_rootless runuser_bin sound live_uid
+    local resolved dns podman_rootless runuser_bin sound live_uid autologin
+    local _as _an _ac
     etc_fs="$(findmnt -no FSTYPE /etc 2>/dev/null || echo none)"
     graphical="$(systemctl is-active graphical.target >/dev/null 2>&1 && echo yes || echo no)"
     failed="$(systemctl --failed --no-legend --plain 2>/dev/null | grep -c . || true)"
@@ -78,11 +79,18 @@ collect_and_report() {
     # Zero sinks is fine and is NOT what this measures — QEMU boots with no audio device. The
     # applet's failure is a connection failure, so connecting is the whole assertion.
     #
-    # A user manager has to be conjured first: there is no login to piggyback on. The
-    # smoke-test guest runs `-display none`, so plasmalogin has no display to open a session on
-    # and autologin never happens — graphical=yes above is the SYSTEM target and says nothing
-    # about a user session. The first run of this check proved it, reporting
-    # "/run/user/1000: No such file or directory" and an unreachable user bus.
+    # A user manager is conjured rather than borrowed from the login. That USED to be because
+    # "the guest runs -display none, so plasmalogin never autologins" — which was wrong, and
+    # wrong in a way that hid a real bug for two releases. `-display none` is a HOST-side flag:
+    # it only stops QEMU opening a window, and the guest still sees the same -device virtio-vga
+    # either way. Autologin was failing on real hardware too, for the epoch-mtime reason stage
+    # 60 now documents at length, and this comment is what explained the symptom away.
+    #
+    # The linger stays anyway, and not out of caution: it makes the sound probe independent of
+    # whether anyone is logged in, so sound= keeps measuring the sound stack instead of quietly
+    # becoming a second autologin test. autologin= below is the honest one, and it is sampled
+    # BEFORE enable-linger runs — lingering opens a "manager" session for the live user, which
+    # would otherwise look exactly like a successful login.
     #
     # enable-linger, and NOT `systemctl start user@<uid>.service`. That was tried first and
     # fails, measured in the guest:
@@ -107,6 +115,34 @@ collect_and_report() {
     # enough to eat that budget would turn a clean "sound=no" report into an opaque timeout —
     # losing exactly the diagnosis the DETAIL lines below exist to preserve.
     live_uid="$(id -u '@LIVE_USER@' 2>/dev/null || true)"
+    # Autologin (plan/01: a v1 image doubles as live media and must reach the desktop with no
+    # prompt). Asked of logind via seat0's ACTIVE session rather than by grepping
+    # `loginctl list-sessions` columns, because that answers the question that matters — who is
+    # on the screen — and is immune to the extra sessions this script itself creates. A failed
+    # autologin leaves the greeter active there instead, i.e. Name=plasmalogin Class=greeter,
+    # which is reported rather than merely denied.
+    #
+    # Polled: the report runs after `systemctl is-system-running --wait`, but the session is
+    # opened by plasmalogin outside that settle, so a cold start can still be mid-login here.
+    # 15s, bounded for the same reason the sound poll is — stage 70 kills the guest at 300s.
+    if ! command -v plasmalogin >/dev/null 2>&1; then
+        autologin=na
+    else
+        autologin=no
+        for _ in $(seq 15); do
+            _as="$(loginctl show-seat seat0 --property=ActiveSession --value 2>/dev/null)"
+            if [[ -n ${_as:-} ]]; then
+                _an="$(loginctl show-session "$_as" --property=Name --value 2>/dev/null)"
+                _ac="$(loginctl show-session "$_as" --property=Class --value 2>/dev/null)"
+                if [[ $_an == '@LIVE_USER@' && $_ac == user ]]; then
+                    autologin=yes; break
+                fi
+                # No spaces: the report below is one space-separated key=value line.
+                autologin="no(${_an:-none}/${_ac:-none})"
+            fi
+            sleep 1
+        done
+    fi
     # "na" is a --console-only image correctly saying it has no sound stack: @desktop is what
     # pulls media-video/pipewire in, and pactl comes with it. Probed rather than templated from
     # CONSOLE_ONLY, so the field tracks what is actually installed.
@@ -129,7 +165,7 @@ collect_and_report() {
     report "ok version=${IMAGE_VERSION:-unknown} etc_overlay=$etc_fs graphical=$graphical" \
            "failed_units=$failed machine_id=$machine_id var_size=$var_size" \
            "flatpak_remotes=$flatpak_remotes resolved=$resolved dns=$dns" \
-           "podman_rootless=$podman_rootless sound=$sound" \
+           "podman_rootless=$podman_rootless sound=$sound autologin=$autologin" \
            "failed_list=$failed_list phase=$1"
     # Same split as podman below: the marker line stays one parseable line, the reason goes on
     # DETAIL lines while the guest still exists to say it. "sound=no" alone cannot distinguish

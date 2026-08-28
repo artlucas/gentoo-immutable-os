@@ -14,9 +14,13 @@ outputs: out/${ID}-${VER}.img  (+ .img.zst)   out/release parts (erofs + uki, re
 
 Steps:
 
-1. **Root image:** `mkfs.erofs -z lz4hc,12 -T0 --all-root out/root-${VER}.erofs /work/target`
+1. **Root image:** `mkfs.erofs -z lz4hc,12 -T$SOURCE_DATE_EPOCH --all-root out/root-${VER}.erofs /work/target`
    (zstd `-z zstd,15` is a build.conf option; lz4hc default favors runtime speed).
-   `-T0` clamps timestamps for reproducibility.
+   `-T` clamps timestamps for reproducibility, and the value must be **non-zero** — it defaults
+   to `SNAPSHOT_DATE` at midnight UTC. This was `-T0` up to and including 0.3.0, which silently
+   disabled autologin: Plasma Login Manager reloads `/etc/plasmalogin.conf.d` only when its
+   newest mtime beats a zero-initialised "already loaded" stamp, so an epoch mtime meant the
+   config was never parsed and the greeter appeared with nothing logged. See stage 60.
 2. **var image:** stage a `/work/var-staging` tree (flatpak store moved out of target's
    `/var/lib/flatpak`, overlay skeleton `overlay/etc/{upper,work}`, `home/`), then
    `mkfs.ext4 -d /work/var-staging -L var out/var.img ${VAR_SIZE_INITIAL}` — `-d` populates

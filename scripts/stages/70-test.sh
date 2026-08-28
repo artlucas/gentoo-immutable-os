@@ -79,6 +79,18 @@ assert_report() {  # LOG expected_version
       || die "guest has no sound server (sound=$snd) — nothing is listening on the pulse
 socket. Check that stage 40 enabled pipewire.socket, pipewire-pulse.socket and
 wireplumber.service for users; see the IMAGE-TEST-DETAIL pactl/pw-units lines above"
+    # Autologin. A v1 image is live media (plan/01); a greeter asking for a password is a
+    # broken image, not a cosmetic issue. This went unasserted through 0.2.x and 0.3.0 and was
+    # broken in all of them — every inode carried an epoch mtime, so plasmalogin never read its
+    # own config and fell back to the greeter without logging one word about it. Nothing else in
+    # this report catches that: graphical=yes is the SYSTEM target and stays green throughout.
+    # The value carries the seat's actual active session on failure, e.g. no(plasmalogin/greeter).
+    local al; al="$(field "$slog" autologin)"
+    [[ $al == yes ]] \
+      || die "guest did not autologin $LIVE_USER (autologin=$al) — seat0's active session is not
+a live-user session. Check [Autologin] in /etc/plasmalogin.conf.d/10-autologin.conf, and check
+that stage 60 stamped a NON-ZERO mtime on the erofs (SOURCE_DATE_EPOCH); an epoch mtime makes
+plasmalogin skip its config silently"
   fi
   # Rootless containers (plan/13). Asserted rather than reported, unlike dns above, because
   # nothing in it depends on the build host's network: `podman info` reads the kernel's userns
