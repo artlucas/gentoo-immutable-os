@@ -57,6 +57,11 @@ for f in "$IMAGE_LOCK" "$BUILDER_LOCK"; do
     # Sorted and unique, so a diff of two locks is a diff of their contents and not of their order.
     if diff -q <(lock_atoms "$f") <(lock_atoms "$f" | LC_ALL=C sort -u) >/dev/null; then _pass
     else _fail "$n is not sorted/unique"; fi
+    # World-readable: mktemp gives 0600 and mv preserves it, so a lock written without an
+    # explicit chmod is unreadable by anyone but its author while git records 100644.
+    assert_true "$n is world-readable" test -r "$f"
+    perm="$(stat -c '%a' "$f" 2>/dev/null || echo '')"
+    assert_match '^6?44$' "$perm" "$n has sane permissions (got ${perm:-unknown})"
     # The header is the whole reason a lock is reviewable rather than merely trusted.
     assert_eq "$SNAPSHOT_DATE" "$(lock_header_value "$f" SNAPSHOT_DATE)" "$n header records the tree pin"
     assert_eq "$(portage_config_hash)" "$(lock_header_value "$f" PORTAGE_CONFIG_HASH)" \

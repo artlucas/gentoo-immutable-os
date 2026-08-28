@@ -526,6 +526,11 @@ lock_write() {
     printf '#\n'
     LC_ALL=C sort -u
   } > "$tmp"
+  # mktemp creates 0600 and mv preserves it, so without this the committed locks end up
+  # unreadable by anyone but their author — git records 100644, so a fresh clone disagrees with
+  # the machine that wrote them. It also propagates: stage 90 copies the locks into the archive,
+  # where it made three manifest entries unverifiable from the host.
+  chmod 0644 -- "$tmp"
   mv -f -- "$tmp" "$f"
 }
 
