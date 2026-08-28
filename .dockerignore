@@ -1,0 +1,9 @@
+# Build context for builder/Dockerfile. The context is the REPO ROOT (not builder/) because
+# the Dockerfile COPYs config/portage/lock/builder.lock — see plan/15 layer 3.
+#
+# Everything below is either huge, machine-local, or both. out/ alone is tens of GB once a
+# vendor archive exists, and Docker sends the whole context to the daemon before reading the
+# first instruction.
+out/
+.git/
+.claude/

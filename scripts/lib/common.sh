@@ -72,7 +72,7 @@ validate_config() {
   : "${DISTROBOX_DEFAULT_IMAGE=}"
   local v
   for v in DISTRO_ID DISTRO_NAME VERSION HOME_URL UPDATE_URL UPDATE_CHANNEL UPDATE_VERIFY \
-           BUILDER_IMAGE SNAPSHOT_DATE PROFILE BINHOST_URI \
+           BUILDER_IMAGE SNAPSHOT_DATE PROFILE BINHOST_URI TREE_REPO TREE_COMMIT \
            ESP_SIZE_MIB ROOT_SLOT_SIZE_MIB VAR_SIZE_MIB EROFS_COMPRESSION \
            LIVE_USER LOCALE_GEN LOCALES_KEEP FLATPAK_PREINSTALL_MODE; do
     [[ -n ${!v:-} ]] || die "build.conf: $v is required"
@@ -99,6 +99,11 @@ validate_config() {
   [[ $FLATPAK_PREINSTALL_MODE =~ ^(build|firstboot)$ ]] \
     || die "build.conf: FLATPAK_PREINSTALL_MODE must be build|firstboot"
   [[ $SNAPSHOT_DATE =~ ^[0-9]{8}$ ]] || die "build.conf: SNAPSHOT_DATE must be YYYYMMDD"
+  # Full 40-hex only. An abbreviated SHA is not accepted even though git would resolve it: the
+  # codeload tarball endpoint stage 10 fetches from requires the full form, and a short SHA
+  # there 404s with nothing to say which of the two pins was wrong.
+  [[ $TREE_COMMIT =~ ^[0-9a-f]{40}$ ]] \
+    || die "build.conf: TREE_COMMIT must be a full 40-character commit SHA (got: $TREE_COMMIT)"
 }
 
 init_paths() {
@@ -279,12 +284,204 @@ sha256_file() { sha256sum -- "$1" | cut -d' ' -f1; }
 # expected-packages.txt is deliberately excluded: it is the audit gate's DATA, not an input to
 # the config root, and it is rewritten every time the package set legitimately changes — hashing
 # it would make the guards below fire on their own output.
+#
+# config/portage/lock/ is excluded for the same reason, one step stronger. The locks do not just
+# record the resolution, they CONSTRAIN it (stage 30 emerges @locked-image), and each lock header
+# records the portage_config_hash it was generated under. Hashing the locks here would make that
+# recorded value depend on the file recording it — a hash that can never be reproduced, and a
+# guard that fires on every relock forever. The one-way assertion in stage 20 (header hash vs
+# current hash) is what catches "the config changed and the lock did not", without the cycle.
+#
+# tests/test-pin-policy.sh asserts both exclusions are still here. A future edit that drops one
+# reintroduces the loop silently — the symptom is a build that cannot be made to pass.
+# PATHS ARE RELATIVE, and that is not cosmetic: sha256sum prints the filename alongside the
+# digest, so hashing absolute paths made this value depend on WHERE the repo is checked out.
+# The host computes /home/you/immos/config/... and the container computes /repo/config/...,
+# giving two different "config hashes" for one identical config. That was invisible while the
+# value was only ever written and read inside containers (stage 20 -> stage 30), and it stops
+# being invisible the moment the hash is recorded in a committed file, as the locks do.
+# LC_ALL=C for the sort for the same reason the locks use it: collation must not vary.
 portage_config_hash() {
+  (
+    cd "$REPO" || return 1
+    {
+      find config/portage -type f ! -name 'expected-packages.txt' \
+           ! -path 'config/portage/lock/*' -print0 \
+        | LC_ALL=C sort -z | xargs -0 -r sha256sum
+      sha256sum config/build.conf
+    } | sha256sum | cut -d' ' -f1
+  )
+}
+
+# ---- the ebuild tree pin (plan/15) -----------------------------------------------------
+# The tree lives in the ${DISTRO_ID}-tree named volume mounted at /var/db/repos, NOT in a
+# builder image layer. That distinction is the whole fix: before this, stage 10 reverted the
+# tree inside a `docker run --rm` and the revert died with the container, so stages 20 and 30
+# resolved against whatever the un-cache-busted `RUN emerge-webrsync` layer happened to hold.
+TREE_DIR="${TREE_DIR:-/var/db/repos}"
+TREE_MARKER_NAME=".tree-commit"
+
+tree_marker_path() { printf '%s/%s' "$TREE_DIR" "$TREE_MARKER_NAME"; }
+tree_marker_read() { cat -- "$(tree_marker_path)" 2>/dev/null || printf 'none'; }
+
+# tree_url COMMIT — the codeload tarball for a commit. Fetched with wget rather than cloned
+# with git because the builder has no git BEFORE the tree exists, and there is no tree to
+# emerge one from: the ordering is circular. The pin is still the commit — codeload resolves
+# it to exactly that commit's tree. `git fetch --depth=1 origin <sha>` is the equivalent
+# transport if git is ever present.
+tree_url() {
+  local c=${1:?tree_url: commit required} r=${TREE_REPO%/}
+  printf '%s/tar.gz/%s' "${r/github.com/codeload.github.com}" "$c"
+}
+
+# tree_date — the checked-out tree's snapshot date, as YYYYMMDD, or "" if unreadable.
+tree_date() {
+  local ts="$TREE_DIR/gentoo/metadata/timestamp.chk"
+  [[ -f $ts ]] || return 0
+  date -u -d "$(cat -- "$ts")" +%Y%m%d 2>/dev/null || true
+}
+
+# tree_assert — the guard every depgraph-resolving stage runs before it resolves anything.
+# Cheap and idempotent: each stage is its own container, so this cannot be done once.
+tree_assert() {
+  local have; have="$(tree_marker_read)"
+  [[ $have == "$TREE_COMMIT" ]] || die "the ebuild tree at $TREE_DIR is pinned to '$have',
+  but build.conf says TREE_COMMIT=$TREE_COMMIT. The tree volume outlived a pin bump.
+  Re-run stage 10 to reconcile it:  scripts/build.sh --only 10"
+  local d; d="$(tree_date)"
+  [[ $d == "$SNAPSHOT_DATE" ]] || die "the pinned tree's metadata/timestamp.chk is '$d',
+  but build.conf says SNAPSHOT_DATE=$SNAPSHOT_DATE. These two describe the same tree and one
+  of them is wrong. SNAPSHOT_DATE is not cosmetic — stage 60 derives SOURCE_DATE_EPOCH from
+  it, and a wrong erofs mtime silently breaks autologin (see the note in 60-image.sh)."
+}
+
+# tree_populate [TARBALL] — put the pinned tree at $TREE_DIR/gentoo, from a local tarball if
+# one is given (the vendored archive), otherwise from TREE_REPO.
+#
+# ORDER IS LOAD-BEARING, and it is the one failure that would survive every other assertion
+# here: unpack to a temp dir, validate, move into place, and write the marker LAST. Writing
+# the marker before the tree is known good turns a half-finished download into a tree that is
+# permanently marked correct, which tree_assert above would then agree with forever.
+tree_populate() {
+  local tarball=${1:-} tmp="$TREE_DIR/.tree-incoming"
+  ensure_dir "$TREE_DIR"
+  rm -rf -- "$tmp"; ensure_dir "$tmp"
+
+  if [[ -n $tarball ]]; then
+    [[ -f $tarball ]] || die "tree tarball not found: $tarball"
+    log "unpacking pinned tree from $tarball"
+    tar -xf "$tarball" -C "$tmp" --strip-components=1
+  else
+    local url; url="$(tree_url "$TREE_COMMIT")"
+    log "fetching pinned tree $TREE_COMMIT from $url"
+    wget -qO- "$url" | tar -xz -C "$tmp" --strip-components=1 \
+      || die "could not fetch the pinned tree from $url
+  If this host is offline, the build needs a vendored archive: build.sh --offline --vendor-dir DIR"
+  fi
+
+  # Validate BEFORE anything is moved or marked. md5-cache is what makes the mirror usable
+  # without an egencache pass, so its absence means the wrong tarball, not a slow build.
+  [[ -d $tmp/metadata/md5-cache ]] \
+    || die "fetched tree has no metadata/md5-cache — this is not an rsync-mirror tree"
+  [[ -f $tmp/metadata/timestamp.chk ]] \
+    || die "fetched tree has no metadata/timestamp.chk"
+
+  rm -rf -- "$TREE_DIR/gentoo"
+  mv -- "$tmp" "$TREE_DIR/gentoo"
+  printf '%s' "$TREE_COMMIT" > "$(tree_marker_path)"    # last, deliberately
+}
+
+# ---- version locks (plan/15) ---------------------------------------------------------
+# A lock file is a commented header plus one exact atom per line: "=cat/pkg-1.2.3".
+# Generated, never authored — the same rule config/portage/expected-packages.txt states.
+LOCK_DIR="${LOCK_DIR:-$REPO/config/portage/lock}"
+
+# lock_atoms FILE — the atoms alone, comments and blank lines stripped, sorted.
+#
+# LC_ALL=C, and every other sort that touches a lock does the same. Collation order is
+# locale-dependent — glibc's en_US.UTF-8 ignores punctuation that C does not — so the same
+# closure written on two machines would come out in two orders and diff against itself. A lock
+# whose byte content depends on the builder's locale is not a lock.
+lock_atoms() {
+  local f=${1:?lock_atoms: file required}
+  [[ -f $f ]] || return 1
+  sed -E 's/#.*//; s/[[:space:]]//g; /^$/d' -- "$f" | LC_ALL=C sort -u
+}
+
+# lock_header_value FILE KEY — read one "# KEY: value" line out of a lock header.
+lock_header_value() {
+  local f=${1:?} k=${2:?}
+  [[ -f $f ]] || return 1
+  sed -nE "s/^#[[:space:]]*${k}:[[:space:]]*(.*[^[:space:]])[[:space:]]*$/\\1/p" -- "$f" | head -n1
+}
+
+# lock_write FILE TITLE < atoms-on-stdin — write a lock with the provenance header every
+# consumer asserts against. The header is the whole reason a lock is reviewable: it says which
+# tree and which config produced these versions, so a diff can be judged rather than trusted.
+lock_write() {
+  local f=${1:?lock_write: file required} title=${2:?lock_write: title required}
+  local tmp; tmp="$(mktemp)"
   {
-    find "$REPO/config/portage" -type f ! -name 'expected-packages.txt' -print0 \
-      | sort -z | xargs -0 -r sha256sum
-    sha256_file "$REPO/config/build.conf"
-  } | sha256sum | cut -d' ' -f1
+    printf '# %s\n' "$title"
+    printf '# GENERATED by scripts/relock.sh — do not hand-edit. See plan/15.\n'
+    printf '#\n'
+    printf '# TREE_COMMIT: %s\n'        "$TREE_COMMIT"
+    printf '# SNAPSHOT_DATE: %s\n'      "$SNAPSHOT_DATE"
+    printf '# PROFILE: %s\n'            "$PROFILE"
+    printf '# PORTAGE_CONFIG_HASH: %s\n' "$(portage_config_hash)"
+    # These four change the closure through filter_set_file, so a lock generated under one
+    # setting is simply wrong for another. Recorded so that is visible rather than inferred.
+    printf '# INCLUDE_CJK_FONTS: %s\n'  "${INCLUDE_CJK_FONTS:-1}"
+    printf '# INCLUDE_PRINTING: %s\n'   "${INCLUDE_PRINTING:-1}"
+    printf '# INCLUDE_DISTROBOX: %s\n'  "${INCLUDE_DISTROBOX:-1}"
+    printf '# CONSOLE_ONLY: %s\n'       "${CONSOLE_ONLY:-0}"
+    printf '#\n'
+    LC_ALL=C sort -u
+  } > "$tmp"
+  mv -f -- "$tmp" "$f"
+}
+
+# lock_diff OLD NEW — three sections, because they are three different kinds of news and a
+# combined diff buries the first in the second. Returns 1 if anything differs.
+#
+# Versions are stripped with the SAME expression stage 50 uses on packages-cpv.txt
+# ("-[0-9][^/]*$"), deliberately. That is what makes "expected-packages.txt is a subset of the
+# version-stripped lock" a checkable invariant rather than an approximate one: two different
+# rules for finding where a version starts would disagree on some atom eventually, and the
+# disagreement would show up as a phantom add plus a phantom remove.
+lock_diff() {
+  local old=$1 new=$2
+  awk '
+    function name(a) { sub(/^=/, "", a); sub(/-[0-9][^\/]*$/, "", a); return a }
+    FNR == NR { if ($0 !~ /^#/ && $0 != "") { o[name($0)] = $0 }; next }
+    $0 !~ /^#/ && $0 != "" { n[name($0)] = $0 }
+    END {
+      for (k in n) if (!(k in o)) added[++na] = n[k]
+      for (k in o) if (!(k in n)) removed[++nr] = o[k]
+      for (k in o) if ((k in n) && o[k] != n[k]) {
+        a = o[k]; b = n[k]; sub(/^=/, "", a); sub(/^=/, "", b)
+        changed[++nc] = a " -> " b
+      }
+      drift = 0
+      if (na) { drift = 1; printf "ADDED PACKAGES (%d):\n", na;   for (i = 1; i <= na; i++) print "  " added[i]   | "sort"; close("sort") }
+      if (nr) { drift = 1; printf "REMOVED PACKAGES (%d):\n", nr; for (i = 1; i <= nr; i++) print "  " removed[i] | "sort"; close("sort") }
+      if (nc) { drift = 1; printf "VERSION CHANGES (%d):\n", nc;  for (i = 1; i <= nc; i++) print "  " changed[i] | "sort"; close("sort") }
+      if (!drift) { c = 0; for (k in n) c++; printf "no drift: %d atoms, all at their locked versions\n", c }
+      exit drift
+    }
+  ' "$old" "$new"
+}
+
+# atom_name "=cat/pkg-1.2.3-r4" -> "cat/pkg", by stage 50's rule (see lock_diff).
+atom_name() {
+  printf '%s' "${1#=}" | sed -E 's/-[0-9][^/]*$//'
+}
+
+# vdb_atoms ROOT — the installed closure of a root, as lock atoms.
+vdb_atoms() {
+  local r=${1:?vdb_atoms: root required}
+  [[ -d $r/var/db/pkg ]] || return 1
+  ( cd "$r/var/db/pkg" && printf '%s\n' */* ) | sed 's|^|=|' | LC_ALL=C sort -u
 }
 
 inputs_hash() {

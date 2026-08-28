@@ -246,10 +246,66 @@ FL_READBACK="$(chroot_target "$TARGET" "flatpak config --system --get languages"
   || die "flatpak xa.languages reads back as '${FL_READBACK:-<unset>}', expected '$FLATPAK_LANGS'"
 
 if [[ $FLATPAK_PREINSTALL_MODE == build && -n ${FLATPAK_PREINSTALL// /} ]]; then
+  # An offline build has no Flathub. The archive carries an OSTree repo holding exactly the
+  # locked commits (stage 90), and --sideload-repo is how flatpak is told to read objects from
+  # it instead of the network. The remote still has to be configured — it is, above — because
+  # that is where the signing key and the ref metadata come from; sideloading replaces the
+  # transport, not the trust.
+  FP_SIDELOAD=()
+  if [[ -d ${VENDOR_DIR:-}/flatpak ]]; then
+    FP_SIDELOAD=(--sideload-repo=/vendor/flatpak)
+    log "flatpak: sideloading from ${VENDOR_DIR}/flatpak"
+  elif [[ ${OFFLINE:-0} == 1 ]]; then
+    die "offline build, but the archive has no flatpak/ repo — stage 40 cannot install apps"
+  fi
+
   for app in $FLATPAK_PREINSTALL; do
     log "preinstalling flatpak: $app"
-    chroot_target "$TARGET" "flatpak install -y --system --noninteractive flathub '$app'"
+    chroot_target "$TARGET" "flatpak install -y --system --noninteractive ${FP_SIDELOAD[*]-} flathub '$app'"
   done
+
+  # ---- pin every ref to its locked commit (plan/15 layer 5) --------------------------
+  # The install above takes whatever Flathub serves today, which is what made two builds of
+  # the same release ship different Firefoxes. Deploying the locked commit afterwards is the
+  # supported way to land on an exact version — there is no "install this commit" verb.
+  #
+  # Runtimes are in the lock too, and they arrive as dependencies rather than being named in
+  # FLATPAK_PREINSTALL, so this loop is what pins most of the shipped bytes.
+  APPS_LOCK="$REPO/config/flatpak/apps.lock"
+  if [[ -f $APPS_LOCK ]]; then
+    while read -r ref commit; do
+      [[ -n $ref && $ref != \#* ]] || continue
+      chroot_target "$TARGET" \
+        "flatpak update -y --system --noninteractive ${FP_SIDELOAD[*]-} --commit='$commit' '$ref'" \
+        || die "could not deploy $ref at $commit.
+  Flathub garbage-collects old commits, so a pin that has aged out is the expected cause.
+  Re-resolve the flatpak lock:  scripts/relock.sh --flatpak
+  (or rebuild from the vendored archive, which still has the objects)"
+    done < <(grep -v '^[[:space:]]*#' "$APPS_LOCK" | sed '/^[[:space:]]*$/d')
+
+    # Read it back. `flatpak update --commit=` on an already-current ref exits 0 and says
+    # "Nothing to do", which is indistinguishable from success — so ask what is actually
+    # deployed rather than trusting that the loop above did anything.
+    FP_ACTIVE="$(chroot_target "$TARGET" \
+      "flatpak list --system --columns=ref,active" 2>/dev/null | tr -d '\r')"
+    fp_bad=0
+    while read -r ref commit; do
+      [[ -n $ref && $ref != \#* ]] || continue
+      got="$(printf '%s\n' "$FP_ACTIVE" | awk -v r="$ref" '$1 == r {print $2}')"
+      # `flatpak list` abbreviates the commit; compare on the prefix it prints.
+      [[ -n $got && $commit == "$got"* ]] || {
+        warn "flatpak $ref is at '${got:-<not installed>}', lock says ${commit:0:12}"
+        fp_bad=1
+      }
+    done < <(grep -v '^[[:space:]]*#' "$APPS_LOCK" | sed '/^[[:space:]]*$/d')
+    (( fp_bad == 0 )) || die "the deployed flatpak commits do not match config/flatpak/apps.lock
+  (see the warnings above). The image would ship different application versions than the lock
+  claims, which is the whole failure this lock exists to prevent."
+    log "flatpak: $(grep -vc '^[[:space:]]*#' "$APPS_LOCK") refs deployed at their locked commits"
+  else
+    warn "no config/flatpak/apps.lock — preinstalled Flatpaks are UNPINNED (plan/15 layer 5)"
+  fi
+
   # apps are baked in — the firstboot preinstall unit must never fire
   ensure_dir "$TARGET/var/lib/$DISTRO_ID"
   : > "$TARGET/var/lib/$DISTRO_ID/flatpak-preinstall.done"

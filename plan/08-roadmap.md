@@ -67,8 +67,13 @@ Secure Boot for a full trust chain.
 
 ### 6. Ecosystem/ops
 - CI runners with KVM for the full T1–T3 suite ([07](07-testing.md)).
-- Reproducible-build verification (two independent builds → identical erofs digest; `-T0`
-  and pinned inputs already aim at this).
+- Reproducible-build verification. Two halves, and only the second is still open.
+  **Same package versions** is done — the tree is pinned by commit, every version by
+  `config/portage/lock/*.lock`, and a release's inputs are vendored so it can be rebuilt with no
+  network at all (plan/15). **Identical erofs digest** is not: `-T0`, `SOURCE_DATE_EPOCH` and
+  the pinned inputs aim there, but nothing yet compares two independent builds byte for byte.
+  The cheap first step is the determinism check plan/15 leaves for the T2 flow — two builds
+  sharing `/cache` must produce byte-identical `out/reports/packages-cpv.txt`.
 - A real name, branding, wallpaper, and `HOME_URL` — everything is already behind
   `DISTRO_ID`/`DISTRO_NAME` in `build.conf`.
 

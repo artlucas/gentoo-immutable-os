@@ -4,7 +4,7 @@
 
 | Tier | When | Where |
 |---|---|---|
-| T0 script hygiene | every commit | shellcheck + `bash -n` on all scripts; config lint (`build.conf` schema check) |
+| T0 script hygiene | every commit | shellcheck + `bash -n` on all scripts; config lint (`build.conf` schema check); pin policy — lock shape, headers, cross-lock agreement, and that every stage consumes the pins it claims to (`test-pin-policy.sh`, plan/15) |
 | T1 boot smoke | every image build (stage 70) | QEMU/OVMF in the build container |
 | T2 update E2E | before any release | QEMU, two built versions, local HTTP server |
 | T3 rollback drill | before any release | QEMU, sabotaged update |

@@ -20,6 +20,34 @@ assert_contains "--privileged" "$out" "privileged container"
 assert_contains "/repo:ro" "$out" "repo mounted read-only"
 assert_contains "-work:/work" "$out" "work volume mounted"
 assert_contains "-cache:/cache" "$out" "cache volume mounted"
+# The tree volume is what makes the pin bind at all: before it, stage 10's sync happened in a
+# --rm container whose /var/db/repos was an image layer, so it died with the container and
+# stages 20/30 resolved against whatever the builder image happened to hold (plan/15).
+assert_contains "-tree:/var/db/repos" "$out" "ebuild tree volume mounted"
+# Context is the repo root now, because the Dockerfile COPYs config/portage/lock/builder.lock.
+assert_contains "builder/Dockerfile" "$out" "builder built with an explicit -f"
+assert_contains "TREE_COMMIT=" "$out" "tree pin passed to the image build"
+assert_contains "BASE=gentoo/stage3@sha256:" "$out" "stage3 base passed by digest, not by tag"
+
+out="$(run_build --vendor)"
+assert_contains "VENDOR=1" "$out" "--vendor exported to container"
+assert_contains "save" "$out" "--vendor saves the builder image on the host"
+assert_contains "stages/90-vendor.sh" "$out" "vendor stage dispatched"
+
+# --offline is an assertion, not a hint: it must isolate the network on every stage and must
+# not run `docker build`, which needs one.
+VDIR="$(make_tmpdir)"; : > "$VDIR/builder-image.tar.zst"
+out="$(run_build --offline --vendor-dir "$VDIR")"
+assert_contains "--network none" "$out" "--offline isolates the network"
+assert_contains "/vendor:ro" "$out" "--offline mounts the archive read-only"
+assert_contains "load" "$out" "--offline loads the archived builder image"
+if [[ $out == *"docker build"* ]]; then _fail "--offline must not run docker build"; else _pass; fi
+rm -rf -- "$VDIR"
+
+out="$(bash "$BUILD" --dry-run --runtime docker --offline 2>&1)"; rc=$?
+assert_eq 1 $rc "--offline without --vendor-dir is rejected"
+
+out="$(run_build)"
 
 out="$(run_build --from 60)"
 assert_contains "skip 10-fetch" "$out" "--from skips earlier stages"

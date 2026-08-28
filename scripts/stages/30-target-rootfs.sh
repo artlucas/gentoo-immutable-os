@@ -12,6 +12,10 @@ ensure_dir "$OUT/logs"; exec > >(tee -a "$OUT/logs/$STAGE_NAME.log") 2>&1
 is_linux || die "stages run inside the builder container only"
 [[ -d $CONFIG_ROOT/etc/portage ]] || die "config-root missing — run stage 20 first"
 
+# The target depgraph resolves against /var/db/repos/gentoo. Assert the pin here too: this
+# stage is its own container, and it is the one whose output the lock describes.
+tree_assert
+
 # ---- guards: two ways this stage silently built the wrong image ----------------------
 #
 # 1. STALE CONFIG ROOT. Only stage 20 copies config/portage/* into $CONFIG_ROOT, and
@@ -65,9 +69,21 @@ if [[ -s $BUILDHOST_SET ]]; then
   fi
 fi
 
-SETS=(@base @hardware)
-[[ ${CONSOLE_ONLY:-0} == 1 ]] || SETS+=(@desktop)
-log "emerging into $TARGET: ${SETS[*]} (console-only=${CONSOLE_ONLY:-0})"
+# The lock, when there is one, REPLACES the loose sets rather than joining them. It is the
+# full pre-prune closure at exact versions — every transitive dependency named — so the
+# resolver has no freedom left and two runs cannot pick different versions. The loose sets are
+# still what a relock re-resolves from; they are just not what a locked build emerges.
+IMAGE_LOCK="$LOCK_DIR/image.lock"
+LOCKED=0
+if [[ -f $CONFIG_ROOT/etc/portage/sets/locked-image ]]; then
+  LOCKED=1
+  SETS=(@locked-image)
+  log "emerging into $TARGET: @locked-image ($(wc -l < "$CONFIG_ROOT/etc/portage/sets/locked-image") pinned atoms)"
+else
+  SETS=(@base @hardware)
+  [[ ${CONSOLE_ONLY:-0} == 1 ]] || SETS+=(@desktop)
+  log "emerging into $TARGET: ${SETS[*]} (console-only=${CONSOLE_ONLY:-0}) — UNLOCKED"
+fi
 
 ensure_dir "$TARGET"
 seed_merged_usr "$TARGET"
@@ -112,6 +128,38 @@ printf '%s' "$CUR_CFG_HASH" > "$WORK/target-config-hash"
 
 ( cd "$TARGET/var/db/pkg" && printf '%s\n' */* | sort ) > "$REPORT_DIR/target-packages-cpv.txt"
 log "target has $(wc -l < "$REPORT_DIR/target-packages-cpv.txt") packages"
+
+# ---- the lock verify (plan/15) --------------------------------------------------------
+# Constrain, then verify anyway. The emerge above was fed exact atoms, so in principle it
+# cannot have produced anything else — but "in principle" is what every silent failure in this
+# repo was, and the check is a diff of two sorted lists.
+#
+# It is bidirectional, and the reverse direction is the load-bearing half. The locks are
+# deliberately NOT part of portage_config_hash (that would be a cycle), which means a lock-only
+# change no longer trips the stale-target guard above. That guard's job was to catch a config
+# change that should REMOVE a package, because --changed-use upgrades and never removes. So a
+# package sitting in the VDB that the lock does not name is exactly the case that used to be
+# caught there, and it is caught here instead.
+vdb_atoms "$TARGET" | lock_write "$REPORT_DIR/image.lock.generated" \
+  "image.lock — the pre-prune --root=\$TARGET closure, exactly as stage 30 resolves it"
+if [[ $LOCKED == 1 ]]; then
+  if lock_diff "$IMAGE_LOCK" "$REPORT_DIR/image.lock.generated" > "$REPORT_DIR/image-lock.diff"; then
+    cat "$REPORT_DIR/image-lock.diff"
+  else
+    cat "$REPORT_DIR/image-lock.diff"
+    die "the emerged target does not match config/portage/lock/image.lock.
+  REMOVED entries mean the target still carries a package the lock dropped: --changed-use
+  cannot remove packages from an existing root, so wipe it and re-run stage 30:
+      ${RUNTIME:-docker} volume rm -f ${DISTRO_ID}-work
+  ADDED or CHANGED entries mean the resolver picked something the lock did not name, which
+  should be impossible with exact atoms — read out/reports/image-lock.diff before doing
+  anything else. If the change is intended:  scripts/relock.sh --all"
+  fi
+else
+  die "no config/portage/lock/image.lock yet: review $REPORT_DIR/image.lock.generated,
+  commit it as config/portage/lock/image.lock, then re-run --from 20 to build against it
+  (same flow as expected-packages.txt — see plan/15)"
+fi
 
 # ---- verify -------------------------------------------------------------------
 # NB: sys-devel/gcc IS expected here. It is in the profile's @system set, so portage installs

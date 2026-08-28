@@ -7,6 +7,9 @@
 #   ./scripts/build.sh --only 60           # re-run just stage 60
 #   ./scripts/build.sh --console-only      # M1 image (no desktop)
 #   ./scripts/build.sh --version 0.2.0     # override VERSION for this run
+#   ./scripts/build.sh --vendor            # also build the offline release archive (stage 90)
+#   ./scripts/build.sh --offline --vendor-dir out/vendor/immos-0.3.0
+#                                          # rebuild from a vendored archive, no network at all
 #   ./scripts/build.sh --dry-run           # print what would run, execute nothing
 #
 # Runtimes: docker (default), podman, none (run stages directly — Linux host that
@@ -25,9 +28,12 @@ source "$SCRIPT_DIR/lib/common.sh"
 # Git Bash: stop MSYS from rewriting /repo-style container paths in docker args.
 case "$(uname -s)" in MINGW*|MSYS*) export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*';; esac
 
-usage() { grep '^#' "$0" | sed -n '2,20p' | sed 's/^# \{0,1\}//'; }
+# Print the contiguous comment block at the top of this file, minus the shebang. A hardcoded
+# line range gets silently wrong every time the header grows or shrinks — it had already begun
+# printing a shellcheck directive as if it were help text.
+usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; }
 
-RUNTIME=auto FROM='' ONLY='' DRY_RUN=0 CLEAN=0 FORCE=0 LIST=0
+RUNTIME=auto FROM='' ONLY='' DRY_RUN=0 CLEAN=0 FORCE=0 LIST=0 OFFLINE=0 VENDOR_DIR=''
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --from)         FROM="$2"; shift 2 ;;
@@ -38,6 +44,9 @@ while [[ $# -gt 0 ]]; do
     --update-url)   export UPDATE_URL_OVERRIDE="$2"; shift 2 ;;
     --no-verify)    export UPDATE_VERIFY_OVERRIDE=0; shift ;;
     --force)        FORCE=1; shift ;;
+    --vendor)       export VENDOR=1; shift ;;
+    --vendor-dir)   VENDOR_DIR="$2"; shift 2 ;;
+    --offline)      OFFLINE=1; shift ;;
     --dry-run)      DRY_RUN=1; shift ;;
     --runtime)      RUNTIME="$2"; shift 2 ;;
     --list)         LIST=1; shift ;;
@@ -78,6 +87,11 @@ run() {  # print in dry-run mode, execute otherwise
 BUILDER_TAG="${DISTRO_ID}-builder"
 WORK_VOL="${DISTRO_ID}-work"
 CACHE_VOL="${DISTRO_ID}-cache"
+# The ebuild tree, as a volume rather than an image layer (plan/15). Mounted at the PARENT
+# /var/db/repos, not at .../gentoo, so every existing path keeps working: stage 20 symlinks
+# make.profile into /var/db/repos/gentoo/profiles/$PROFILE and its generated repos.conf still
+# says location = /var/db/repos/gentoo.
+TREE_VOL="${DISTRO_ID}-tree"
 
 if [[ $CLEAN == 1 ]]; then
   log "cleaning work volume + state (cache volume kept)"
@@ -94,23 +108,113 @@ if [[ $CLEAN == 1 ]]; then
   fi
 fi
 
+# ---- offline archive ---------------------------------------------------------------
+# --offline is an assertion, not a hint: every stage runs with --network none, so a build that
+# claims to be reproducible from the archive cannot quietly reach out and prove nothing.
+if [[ $OFFLINE == 1 ]]; then
+  [[ -n $VENDOR_DIR ]] || die "--offline needs --vendor-dir DIR (the archive stage 90 produced)"
+  [[ -d $VENDOR_DIR ]] || die "--vendor-dir not found: $VENDOR_DIR"
+  VENDOR_DIR="$(cd -- "$VENDOR_DIR" && pwd)"
+  log "offline build from $VENDOR_DIR (every stage runs with --network none)"
+fi
+
 # ---- pass-through env ------------------------------------------------------------
 ENV_ARGS=()
-for v in VERSION_OVERRIDE UPDATE_URL_OVERRIDE UPDATE_VERIFY_OVERRIDE CONSOLE_ONLY FORCE_STAGE; do
+for v in VERSION_OVERRIDE UPDATE_URL_OVERRIDE UPDATE_VERIFY_OVERRIDE CONSOLE_ONLY FORCE_STAGE \
+         VENDOR VENDOR_PROFILE ALLOW_UNPINNED; do
   [[ -n ${!v:-} ]] && ENV_ARGS+=(-e "$v=${!v}")
 done
 [[ $FORCE == 1 ]] && ENV_ARGS+=(-e FORCE_STAGE=1)
+# The archive is mounted at a fixed path so stages never have to know the host layout.
+[[ -n $VENDOR_DIR ]] && ENV_ARGS+=(-e "VENDOR_DIR=/vendor")
+[[ $OFFLINE == 1 ]] && ENV_ARGS+=(-e "OFFLINE=1")
 
 # ---- builder image -----------------------------------------------------------------
 if [[ $RUNTIME != none ]]; then
-  base="$BUILDER_IMAGE"
-  [[ -n $BUILDER_DIGEST ]] && base="${BUILDER_IMAGE%%:*}@${BUILDER_DIGEST}"
-  [[ -z $BUILDER_DIGEST ]] && warn "BUILDER_DIGEST is empty — unpinned base image (dev builds only)"
-  # BINHOST is the builder's OWN binhost, and nothing else's: the builder emerges its tools
-  # from binpkgs rather than compiling them, while the image is compiled from source (or from
-  # binpkgs this pipeline built) — config/portage/make.conf.in has the reasoning.
-  run "$RUNTIME" build -t "$BUILDER_TAG" \
-      --build-arg "BASE=$base" --build-arg "BINHOST=$BINHOST_URI" "$REPO_ROOT/builder"
+  # A floating base tag means the libc, compiler and profile the image is built against move
+  # under you with no diff anywhere, so this is a hard failure rather than the warning it used
+  # to be — a warning printed on every single build is a warning nobody reads. ALLOW_UNPINNED
+  # is the deliberate escape, and stage 80 refuses to assemble a release from a build that
+  # took it (the marker below is how it finds out).
+  if [[ -z $BUILDER_DIGEST ]]; then
+    [[ ${ALLOW_UNPINNED:-0} == 1 ]] || die "BUILDER_DIGEST is empty — the stage3 base is unpinned.
+  Record the digest in config/build.conf:
+      docker image inspect $BUILDER_IMAGE --format '{{index .RepoDigests 0}}'
+  or, for a throwaway dev build only:  ALLOW_UNPINNED=1 scripts/build.sh ..."
+    warn "ALLOW_UNPINNED=1: building against the floating tag $BUILDER_IMAGE — not releasable"
+    run mkdir -p -- "$OUT/state"
+    run touch -- "$OUT/state/unpinned-build"
+  else
+    # Stale marker from an earlier unpinned run would keep failing releases forever.
+    run rm -f -- "$OUT/state/unpinned-build"
+  fi
+
+  if [[ $OFFLINE == 1 ]]; then
+    # No `docker build` at all. It needs a network, and reconstructing the builder offline
+    # would need the binhost's ~495 binary packages, which the builder image does not retain
+    # (its /var/cache/binpkgs is 4 KB — portage consumes and drops them). Loading the archived
+    # image is both the reliable path and the honest one: it is the exact builder that produced
+    # the release.
+    img="$VENDOR_DIR/builder-image.tar.zst"
+    [[ -f $img ]] || die "offline build needs $img (produced by stage 90)"
+    log "loading archived builder image from $img"
+    if [[ $DRY_RUN == 1 ]]; then
+      printf 'DRY-RUN: zstd -dc %s | %s load\n' "$img" "$RUNTIME"
+      printf 'DRY-RUN: %s tag <loaded> %s\n' "$RUNTIME" "$BUILDER_TAG"
+    else
+      zstd -dc -- "$img" | "$RUNTIME" load
+      "$RUNTIME" image inspect "$BUILDER_TAG" >/dev/null 2>&1 \
+        || die "the archived image did not load as $BUILDER_TAG — check stage 90's save step"
+    fi
+  else
+    base="$BUILDER_IMAGE"
+    [[ -n $BUILDER_DIGEST ]] && base="${BUILDER_IMAGE%%:*}@${BUILDER_DIGEST}"
+    # BINHOST is the builder's OWN binhost, and nothing else's: the builder emerges its tools
+    # from binpkgs rather than compiling them, while the image is compiled from source (or from
+    # binpkgs this pipeline built) — config/portage/make.conf.in has the reasoning.
+    #
+    # The build CONTEXT is the repo root, not builder/, because the Dockerfile COPYs
+    # config/portage/lock/builder.lock. .dockerignore keeps out/ and .claude/ out of it.
+    run "$RUNTIME" build -t "$BUILDER_TAG" -f "$REPO_ROOT/builder/Dockerfile" \
+        --build-arg "BASE=$base" --build-arg "BINHOST=$BINHOST_URI" \
+        --build-arg "TREE_REPO=$TREE_REPO" --build-arg "TREE_COMMIT=$TREE_COMMIT" \
+        "$REPO_ROOT"
+  fi
+fi
+
+# ---- vendor archive: the host-side half (plan/15 layer 7) ---------------------------
+# `docker save` cannot run from inside the builder, so the two image tarballs are written here
+# and stage 90 — which runs in the container and can see /cache, the tree and the target —
+# fills in the rest and writes the manifest over all of it.
+#
+# Done BEFORE the stage loop so stage 90 finds the tarballs already in place and the manifest
+# it writes covers them.
+if [[ ${VENDOR:-0} == 1 && $RUNTIME != none ]]; then
+  VOUT="$OUT/vendor/${DISTRO_ID}-${VERSION}"
+  log "vendoring: saving container images into $VOUT"
+  run mkdir -p -- "$VOUT"
+  if [[ $DRY_RUN == 1 ]]; then
+    printf 'DRY-RUN: %s save %s | zstd -T0 -q -o %s/builder-image.tar.zst\n' "$RUNTIME" "$BUILDER_TAG" "$VOUT"
+    printf 'DRY-RUN: %s save %s | zstd -T0 -q -o %s/stage3-base.tar.zst\n' "$RUNTIME" "$BUILDER_IMAGE" "$VOUT"
+  else
+    # The builder image is the fast path AND the honest one: it is the exact builder that
+    # produced the release, tree included. An offline rebuild loads this rather than running
+    # `docker build`, which would need a network and the binhost's ~495 binary packages that
+    # the image does not retain.
+    "$RUNTIME" save "$BUILDER_TAG" | zstd -T0 -q -o "$VOUT/builder-image.tar.zst.tmp"
+    mv -f -- "$VOUT/builder-image.tar.zst.tmp" "$VOUT/builder-image.tar.zst"
+    # The stage3 is redundant with the builder image above and is kept anyway, for ~600 MB,
+    # because it is what lets the builder be RECONSTRUCTED and audited rather than trusted as
+    # an opaque 3 GB blob.
+    base_ref="$BUILDER_IMAGE"
+    [[ -n $BUILDER_DIGEST ]] && base_ref="${BUILDER_IMAGE%%:*}@${BUILDER_DIGEST}"
+    if "$RUNTIME" image inspect "$base_ref" >/dev/null 2>&1; then
+      "$RUNTIME" save "$base_ref" | zstd -T0 -q -o "$VOUT/stage3-base.tar.zst.tmp"
+      mv -f -- "$VOUT/stage3-base.tar.zst.tmp" "$VOUT/stage3-base.tar.zst"
+    else
+      warn "stage3 base $base_ref not present locally — archive will lack stage3-base.tar.zst"
+    fi
+  fi
 fi
 
 # ---- dispatch ------------------------------------------------------------------------
@@ -126,12 +230,18 @@ for s in "${STAGES[@]}"; do
   if [[ $RUNTIME == none ]]; then
     run env FORCE_STAGE="${FORCE_STAGE:-$FORCE}" bash "$SCRIPT_DIR/stages/$s"
   else
+    MOUNT_ARGS=(-v "$REPO_ROOT":/repo:ro
+                -v "$WORK_VOL":/work
+                -v "$CACHE_VOL":/cache
+                -v "$TREE_VOL":/var/db/repos
+                -v "$OUT":/out)
+    [[ -n $VENDOR_DIR ]] && MOUNT_ARGS+=(-v "$VENDOR_DIR":/vendor:ro)
+    NET_ARGS=()
+    [[ $OFFLINE == 1 ]] && NET_ARGS=(--network none)
     run "$RUNTIME" run --rm --privileged \
       "${KVM_ARGS[@]}" \
-      -v "$REPO_ROOT":/repo:ro \
-      -v "$WORK_VOL":/work \
-      -v "$CACHE_VOL":/cache \
-      -v "$OUT":/out \
+      "${NET_ARGS[@]}" \
+      "${MOUNT_ARGS[@]}" \
       "${ENV_ARGS[@]}" \
       "$BUILDER_TAG" "/repo/scripts/stages/$s"
   fi || { rc=$?; die "stage $s failed (rc=$rc) — logs in out/logs/, resume with --from $n"; }

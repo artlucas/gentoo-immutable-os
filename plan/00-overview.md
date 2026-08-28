@@ -69,6 +69,7 @@ Note on terminology: Gentoo's "stage 3" is a **tarball** (`stage3-amd64-systemd-
 | [12-first-boot-reboot-loop.md](12-first-boot-reboot-loop.md) | The first-boot reboot loop: repart ordering and the erofs→netfs dracut omission |
 | [13-distrobox.md](13-distrobox.md) | The mutable userland: rootless podman + distrobox, subuid setup, why it does not weaken the toolchain-free guarantee |
 | [14-boot-splash-kms.md](14-boot-splash-kms.md) | Replacing Plymouth with a KMS splash: why no fbdev option exists on this kernel, the drop-master design, and taking the whole graphics payload out of the initrd |
+| [15-version-pinning.md](15-version-pinning.md) | Pinning the tree by commit and every package version by lock file, moving pins deliberately (GLSA-driven patch releases), and the vendored archive that rebuilds a release offline |
 
 ## Milestones
 

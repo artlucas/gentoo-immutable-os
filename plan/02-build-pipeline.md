@@ -10,9 +10,16 @@
   headers, python, portage itself) install into the builder; only runtime dependencies land in
   the target. The shipped OS is toolchain-free *by construction*, and the prune stage
   ([06-pruning.md](06-pruning.md)) enforces it with assertions.
-- **Pinned inputs:** stage3/container digest, Portage tree snapshot timestamp, and package set
-  are all pinned in `config/build.conf` — two runs from the same config produce functionally
-  identical images.
+- **Pinned inputs:** the stage3 base by digest, the Portage tree by commit, and every package
+  version by `config/portage/lock/*.lock` — two runs from the same config produce functionally
+  identical images. See [15-version-pinning.md](15-version-pinning.md) for how each pin binds
+  and what happens when one cannot be honoured.
+
+  *This bullet used to claim the same thing while none of the three pins actually bound: the
+  digest was empty and only warned, the tree sync happened in a container that threw the result
+  away, and the package gate compared names with the versions stripped off. Left in view rather
+  than quietly reworded, because "documented as pinned, not pinned" is the failure the whole of
+  plan/15 exists to close.*
 - **Stages are idempotent and resumable** — each writes a stamp; `build.sh` skips completed
   stages unless told otherwise.
 

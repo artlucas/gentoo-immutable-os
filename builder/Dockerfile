@@ -6,9 +6,32 @@
 ARG BASE=gentoo/stage3:amd64-systemd
 FROM ${BASE}
 
-# Snapshot the ebuild repo inside the image so the builder itself is cacheable.
-# Stage 10 re-verifies/moves the tree to the SNAPSHOT_DATE pin at run time.
-RUN emerge-webrsync
+# The ebuild repo, pinned by commit (plan/15). This replaced a bare `RUN emerge-webrsync`,
+# which was broken in two ways at once: it took whatever the mirror served that day, and it had
+# NO CACHE BUSTER, so the layer never invalidated. The tree this builder actually used was
+# "whenever someone last rebuilt the image" — and since stage 10's `--revert` ran inside a
+# `docker run --rm` whose /var/db/repos was this layer rather than a volume, the revert was
+# thrown away and nothing anywhere noticed.
+#
+# Naming TREE_COMMIT as an ARG immediately above the RUN is what fixes the second half: the
+# layer is now keyed on the pin, so bumping the pin rebuilds it.
+#
+# wget, not git: the stage3 has no git, and there is no ebuild tree to emerge one from until
+# this RUN completes — the ordering is circular. codeload resolves the commit to exactly that
+# commit's tree, so the pin is still the SHA.
+#
+# At run time /var/db/repos is a named volume; Docker seeds an empty one from this layer, so
+# this is the tree's first copy rather than a duplicate of it. Stage 10 reconciles the volume
+# against TREE_COMMIT on every run for the case where the volume is NOT empty and NOT current.
+ARG TREE_REPO=https://github.com/gentoo-mirror/gentoo
+ARG TREE_COMMIT
+RUN test -n "$TREE_COMMIT" || { echo "TREE_COMMIT build-arg is required" >&2; exit 1; } \
+ && mkdir -p /var/db/repos/gentoo \
+ && wget -qO- "$(echo "${TREE_REPO%/}" | sed 's|github\.com|codeload.github.com|')/tar.gz/${TREE_COMMIT}" \
+      | tar -xz -C /var/db/repos/gentoo --strip-components=1 \
+ && test -d /var/db/repos/gentoo/metadata/md5-cache \
+ && test -f /var/db/repos/gentoo/metadata/timestamp.chk \
+ && printf '%s' "$TREE_COMMIT" > /var/db/repos/.tree-commit
 
 # Binary packages for the BUILDER's own "/". This is the builder only, and it is the opposite
 # policy from the image: the target has no binhost at all and compiles what it ships (see the
@@ -102,7 +125,10 @@ RUN printf 'FEATURES="${FEATURES} getbinpkg"\n' >> /etc/portage/make.conf \
 #    Three of these lines had silently drifted from the target's under GNOME, which is worth
 #    not reproducing: a mirror that disagrees with what it mirrors is worse than no mirror.
 #    The Plasma lines below are copied flag-for-flag from package.use/image (plan/09 §4).
-RUN echo 'app-emulation/qemu qemu_softmmu_targets_x86_64 -qemu_softmmu_targets_i386 -qemu_user_targets_x86_64' \
+# mkdir first: a stage3 ships /etc/portage/package.use as a directory but has no
+# /etc/portage/sets at all, so the redirect that writes the request set below would fail.
+RUN mkdir -p /etc/portage/sets \
+ && echo 'app-emulation/qemu qemu_softmmu_targets_x86_64 -qemu_softmmu_targets_i386 -qemu_user_targets_x86_64' \
       >> /etc/portage/package.use/builder \
  && echo 'sys-apps/systemd boot ukify policykit pam' >> /etc/portage/package.use/builder \
  && echo 'media-libs/libcanberra -udev' >> /etc/portage/package.use/builder \
@@ -160,7 +186,7 @@ RUN echo 'app-emulation/qemu qemu_softmmu_targets_x86_64 -qemu_softmmu_targets_i
  && echo 'sys-libs/minizip-ng compat' >> /etc/portage/package.use/builder \
  && echo 'app-text/xmlto text' >> /etc/portage/package.use/builder \
  && echo 'gnome-base/librsvg tools' >> /etc/portage/package.use/builder \
- && emerge --quiet-build=y --noreplace --usepkg --getbinpkg \
+ && printf '%s\n' \
       sys-fs/erofs-utils \
       sys-fs/dosfstools \
       sys-fs/mtools \
@@ -178,8 +204,39 @@ RUN echo 'app-emulation/qemu qemu_softmmu_targets_x86_64 -qemu_softmmu_targets_i
       dev-python/pillow \
       dev-lang/go \
       dev-lang/rust-bin \
+      > /etc/portage/sets/builder-request
+
+# The atom list above is the REQUEST — what a human asked for, with all the reasoning attached.
+# builder.lock is the RESOLUTION — those atoms plus the ~480 the binhost pulled in behind them,
+# every one at an exact version (plan/15 layer 3). dracut, systemd/ukify and erofs-utils build
+# the shipped initrd, UKI and root filesystem, so leaving the builder's own toolchain floating
+# leaves a real hole in "two runs from the same config produce the same image".
+#
+# Both are kept, deliberately. The request is what scripts/relock.sh --builder re-resolves from
+# and is where the per-package justifications live; deleting it in favour of the lock would
+# throw away the only statement of intent. The lock is what actually gets emerged.
+#
+# The copy is of the DIRECTORY, not the file: a COPY of a missing path fails the build, and the
+# lock is legitimately absent when bootstrapping a new builder from scratch. The fallback below
+# handles that case by emerging the request, exactly as this file did before the lock existed.
+#
+# On a first build from the pinned BUILDER_DIGEST the stage3's own @system packages already
+# match the lock exactly — the lock was generated from a builder built on that base — so those
+# 480 atoms resolve to "nothing to do" and only the tools are installed. When the base digest
+# moves they will not match, and that is precisely when the builder wants relocking.
+COPY config/portage/lock/ /tmp/immos-lock/
+RUN if [ -s /tmp/immos-lock/builder.lock ]; then \
+      grep -v '^#' /tmp/immos-lock/builder.lock | sed '/^$/d' > /etc/portage/sets/locked-builder; \
+      SET=@locked-builder; \
+      echo "builder: emerging $SET ($(wc -l < /etc/portage/sets/locked-builder) pinned atoms)"; \
+    else \
+      SET=@builder-request; \
+      echo "builder: no builder.lock — emerging $SET unpinned (bootstrap; relock afterwards)"; \
+    fi \
+ && emerge --quiet-build=y --noreplace --usepkg --getbinpkg "$SET" \
  && emerge --quiet-build=y --oneshot --usepkg --getbinpkg sys-apps/systemd app-text/xmlto \
- && GETUTO_EXTERNAL_REFRESH=0 getuto
+ && GETUTO_EXTERNAL_REFRESH=0 getuto \
+ && rm -rf /tmp/immos-lock
 
 # Stages are bind-mounted at /repo and invoked explicitly with bash (the repo may be
 # checked out on NTFS with no exec bits — never rely on +x).

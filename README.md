@@ -24,6 +24,7 @@ been run yet. The full design lives in [`plan/`](plan/00-overview.md):
 | [07-testing](plan/07-testing.md) | QEMU smoke/update/rollback tests, hardware matrix |
 | [08-roadmap](plan/08-roadmap.md) | Installer ISO, Secure Boot, verity, tradeoffs |
 | [11-kernel-boot-audit](plan/11-kernel-boot-audit.md) | Kernel/UKI/initrd audit: microcode, driver omit list, NVIDIA early KMS |
+| [15-version-pinning](plan/15-version-pinning.md) | Version locks, the tree pin, selective security upgrades, the offline archive |
 | [13-distrobox](plan/13-distrobox.md) | Rootless podman + distrobox: the mutable userland, and why it keeps the toolchain-free guarantee |
 
 ## Building
@@ -39,8 +40,23 @@ bash scripts/enter.sh                 # debug shell in the builder container
 bash scripts/run-vm.sh out/immos-0.1.0.img   # boot the result in QEMU/OVMF
 ```
 
-First build notes: set `BUILDER_DIGEST` in `config/build.conf` to pin the stage3 base;
-signing needs a key (see `config/keys/README.md`) or use `--no-verify` for dev images.
+The build inputs are pinned: the stage3 base by digest, the Portage tree by commit, and every
+package version by `config/portage/lock/*.lock` ([plan/15](plan/15-version-pinning.md)). A
+rebuild of a release therefore selects the same versions, and a patch release moves only what
+needs moving:
+
+```sh
+bash scripts/relock.sh --security     # only packages with a GLSA against them
+bash scripts/relock.sh --all          # re-resolve everything against the current tree
+bash scripts/build.sh --vendor        # + the 13-14 GB offline archive (stage 90)
+bash scripts/build.sh --offline --vendor-dir out/vendor/immos-0.3.0
+```
+
+The last one rebuilds the image with `--network none` on every stage — the archive carries the
+tree, every distfile, the builder image and the Flatpak objects, so a release stays rebuildable
+after Gentoo has dropped the ebuilds and Flathub has dropped the commits.
+
+Signing needs a key (see `config/keys/README.md`) or use `--no-verify` for dev images.
 Target machines must have Secure Boot disabled (v1; see plan/08).
 
 Everything the image ships is **compiled** by the build — no binary packages are downloaded

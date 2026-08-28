@@ -56,7 +56,12 @@ while IFS= read -r -d '' f; do
     if od -An -c -- "$f" | grep -q '\\r'; then
         CRLF_HITS+="$f"$'\n'
     fi
-done < <(find "$REPO_ROOT" -path "$REPO_ROOT/out" -prune -o -path "$REPO_ROOT/.git" -prune -o -type f -print0)
+# .claude is pruned for the same reason out/ is: it is gitignored session state, not project
+# content (.gitignore says so explicitly), and .claude/worktrees holds live `git worktree`
+# checkouts whose own out/logs carry QEMU serial logs full of CR bytes. Without this the suite
+# is red on any machine that has ever used a worktree, for a file nobody is asked to fix.
+done < <(find "$REPO_ROOT" -path "$REPO_ROOT/out" -prune -o -path "$REPO_ROOT/.git" -prune \
+              -o -path "$REPO_ROOT/.claude" -prune -o -type f -print0)
 if [[ -n $CRLF_HITS ]]; then
     printf '  FAIL: CR bytes found in:\n%s' "$CRLF_HITS"
     FAILED=1

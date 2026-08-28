@@ -1,0 +1,190 @@
+#!/usr/bin/env bash
+# What "pinned" is allowed to mean (plan/15).
+#
+# Every pin in this build failed SILENTLY before it was made to bind: an empty BUILDER_DIGEST
+# only warned, the tree revert died with its container, and the package gate stripped versions
+# before diffing. None of those produced an error — they produced a different image. So the
+# properties are asserted here, offline, in the same shape as tests/test-binpkg-policy.sh.
+export TEST_FILE_NAME=test-pin-policy
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(dirname -- "$TESTS_DIR")"
+source "$TESTS_DIR/harness.sh"
+
+TMP="$(make_tmpdir)"; trap 'rm -rf -- "$TMP"' EXIT
+export REPO="$REPO_ROOT" WORK="$TMP/work" OUT="$TMP/out"
+export STAGE_NAME='test'
+source "$REPO_ROOT/scripts/lib/common.sh"
+set +e
+load_config
+
+IMAGE_LOCK="$REPO_ROOT/config/portage/lock/image.lock"
+BUILDER_LOCK="$REPO_ROOT/config/portage/lock/builder.lock"
+APPS_LOCK="$REPO_ROOT/config/flatpak/apps.lock"
+
+# ---- the pins are recorded, and well-formed ----------------------------------------------
+assert_match '^sha256:[0-9a-f]{64}$' "$BUILDER_DIGEST" "BUILDER_DIGEST is a full sha256 digest"
+assert_match '^[0-9a-f]{40}$' "$TREE_COMMIT" "TREE_COMMIT is a full 40-char commit SHA"
+assert_match '^https?://' "$TREE_REPO" "TREE_REPO is a URL"
+assert_match '^[0-9]{8}$' "$SNAPSHOT_DATE" "SNAPSHOT_DATE is YYYYMMDD"
+# An abbreviated SHA would resolve under git and 404 on the codeload endpoint stage 10 uses.
+assert_false "validate_config rejects an abbreviated TREE_COMMIT" \
+    bash -c 'source "'"$REPO_ROOT"'/scripts/lib/common.sh"; load_config; TREE_COMMIT=5b5d4f9; validate_config' 2>/dev/null
+assert_false "validate_config rejects an empty TREE_COMMIT" \
+    bash -c 'source "'"$REPO_ROOT"'/scripts/lib/common.sh"; load_config; TREE_COMMIT=; validate_config' 2>/dev/null
+
+# ---- lock file shape ----------------------------------------------------------------------
+for f in "$IMAGE_LOCK" "$BUILDER_LOCK"; do
+    n="$(basename "$f")"
+    assert_file "$f" "$n exists"
+    [[ -f $f ]] || continue
+    bad="$(lock_atoms "$f" | grep -vE '^=[a-z0-9-]+/[A-Za-z0-9._+-]+-[0-9]' || true)"
+    if [[ -n $bad ]]; then _fail "$n has malformed atoms: $(head -3 <<< "$bad" | tr '\n' ' ')"; else _pass; fi
+    # Sorted and unique, so a diff of two locks is a diff of their contents and not of their order.
+    if diff -q <(lock_atoms "$f") <(lock_atoms "$f" | LC_ALL=C sort -u) >/dev/null; then _pass
+    else _fail "$n is not sorted/unique"; fi
+    # The header is the whole reason a lock is reviewable rather than merely trusted.
+    assert_eq "$TREE_COMMIT" "$(lock_header_value "$f" TREE_COMMIT)" "$n header records the tree pin"
+    assert_eq "$(portage_config_hash)" "$(lock_header_value "$f" PORTAGE_CONFIG_HASH)" \
+        "$n header records the CURRENT portage config hash"
+done
+
+# ---- portage_config_hash must not hash what it constrains ---------------------------------
+# The locks record the hash they were generated under, so hashing the locks would make that
+# value depend on the file recording it: a hash nothing can reproduce and a guard that fires
+# on every relock forever. expected-packages.txt is excluded for the same reason, one step
+# weaker. Both exclusions are asserted because dropping either reintroduces the loop silently.
+CH_SRC="$(sed -n '/^portage_config_hash()/,/^}/p' "$REPO_ROOT/scripts/lib/common.sh")"
+assert_contains "expected-packages.txt" "$CH_SRC" "portage_config_hash excludes expected-packages.txt"
+assert_contains "config/portage/lock" "$CH_SRC" "portage_config_hash excludes the lock directory"
+# ...and it must not depend on WHERE the repo is checked out. sha256sum prints the filename
+# beside the digest, so hashing absolute paths made the host and the container compute two
+# different hashes for one identical config. Harmless while the value only ever travelled
+# container-to-container; a live bug the moment a lock file records it.
+CLONE="$TMP/elsewhere"
+mkdir -p "$CLONE"
+cp -r "$REPO_ROOT/config" "$CLONE/"
+here="$(portage_config_hash)"
+there="$(REPO="$CLONE" portage_config_hash)"
+assert_eq "$here" "$there" "portage_config_hash does not depend on the checkout path"
+
+# ...and prove the exclusion behaviourally, not just by grep.
+before="$(portage_config_hash)"
+echo "# scratch" >> "$IMAGE_LOCK"
+after="$(portage_config_hash)"
+sed -i '$ d' "$IMAGE_LOCK"
+assert_eq "$before" "$after" "editing a lock does not change portage_config_hash"
+
+# ---- the two locks must not disagree about a shared package -------------------------------
+# Portage's multi-root depgraph evaluates target packages against "/"'s config too (see the
+# long note in builder/Dockerfile), so a package at two different versions across the roots can
+# surface as a phantom slot conflict blamed on something unrelated.
+#
+# sys-apps/portage is the one accepted divergence and is listed rather than tolerated silently:
+# the builder's copy comes from the stage3 and is never re-emerged, while the target resolves
+# the tree's best. It never ships either way — stage 50 unmerges it from the image.
+ALLOWED_DIVERGENCE=(sys-apps/portage)
+keyed() { lock_atoms "$1" | awk '{n=$0; sub(/^=/,"",n); sub(/-[0-9][^\/]*$/,"",n); print n" "$0}' | LC_ALL=C sort; }
+div="$(LC_ALL=C join <(keyed "$IMAGE_LOCK") <(keyed "$BUILDER_LOCK") \
+        | awk '$2 != $3 {print $1}' \
+        | grep -vxF "$(printf '%s\n' "${ALLOWED_DIVERGENCE[@]}")" || true)"
+if [[ -n $div ]]; then
+    _fail "image.lock and builder.lock disagree on: $(tr '\n' ' ' <<< "$div")— relock both, or add to ALLOWED_DIVERGENCE with a reason"
+else _pass; fi
+
+# ---- expected-packages.txt is a subset of the version-stripped image.lock ------------------
+# The lock pins versions upstream of the prune; expected-packages.txt gates the set the prune
+# leaves behind. The second is therefore a subset of the first, and checking it here catches a
+# mismatch offline instead of at stage 50 after a full build. Both sides strip versions with
+# the same expression, so they cannot disagree about where a version starts.
+notlocked="$(LC_ALL=C comm -23 \
+    <(grep -v '^#' "$REPO_ROOT/config/portage/expected-packages.txt" | sed '/^$/d' | LC_ALL=C sort -u) \
+    <(lock_atoms "$IMAGE_LOCK" | sed -E 's/^=//; s/-[0-9][^\/]*$//' | LC_ALL=C sort -u) || true)"
+if [[ -n $notlocked ]]; then
+    _fail "expected-packages.txt names packages absent from image.lock: $(tr '\n' ' ' <<< "$notlocked")"
+else _pass; fi
+
+# ---- the flatpak lock ----------------------------------------------------------------------
+assert_file "$APPS_LOCK" "apps.lock exists"
+if [[ -f $APPS_LOCK ]]; then
+    bad="$(grep -v '^[[:space:]]*#' "$APPS_LOCK" | sed '/^[[:space:]]*$/d' \
+            | grep -vE '^(app|runtime)/[A-Za-z0-9._-]+/[a-z0-9_]+/[A-Za-z0-9._-]+ [0-9a-f]{64}$' || true)"
+    if [[ -n $bad ]]; then _fail "apps.lock malformed: $(head -2 <<< "$bad")"; else _pass; fi
+    # Runtimes are most of the shipped bytes. An apps-only lock would leave nearly all of
+    # /var/lib/flatpak unpinned while looking complete.
+    assert_true "apps.lock pins runtimes, not just apps" grep -q '^runtime/' "$APPS_LOCK"
+    # Every app named in build.conf must actually be pinned.
+    fp_ok=1
+    for a in $FLATPAK_PREINSTALL; do
+        grep -q "^app/$a/" "$APPS_LOCK" || { _fail "apps.lock does not pin $a"; fp_ok=0; }
+    done
+    [[ $fp_ok == 1 ]] && _pass
+fi
+
+# ---- the pipeline actually consumes all of this --------------------------------------------
+DF="$REPO_ROOT/builder/Dockerfile"
+assert_false "builder no longer syncs an unpinned tree" grep -qE '^RUN emerge-webrsync' "$DF"
+assert_true "builder fetches the tree by commit" grep -q 'TREE_COMMIT' "$DF"
+assert_true "builder asserts the fetched tree has md5-cache" grep -q 'metadata/md5-cache' "$DF"
+assert_true "builder records the tree marker" grep -q '\.tree-commit' "$DF"
+# The ARG must precede the RUN, or the layer has no cache buster and never invalidates —
+# which is the exact bug this replaced.
+arg_line="$(grep -n '^ARG TREE_COMMIT' "$DF" | head -n1 | cut -d: -f1)"
+# The RUN that fetches, not the comment that explains it: grep for the wget on a
+# non-comment line, or this passes on prose and proves nothing.
+run_line="$(grep -n 'wget' "$DF" | grep -v ':[[:space:]]*#' | head -n1 | cut -d: -f1)"
+assert_true "ARG TREE_COMMIT precedes the fetch (cache buster)" \
+    test -n "$arg_line" -a -n "$run_line" -a "$arg_line" -lt "$run_line"
+assert_true "builder emerges the locked set" grep -q 'locked-builder' "$DF"
+
+S10="$REPO_ROOT/scripts/stages/10-fetch.sh"
+assert_true "stage 10 reconciles the tree volume against the pin" grep -q 'tree_populate' "$S10"
+assert_true "stage 10 asserts the pin" grep -q 'tree_assert' "$S10"
+assert_true "stage 10 checks the builder closure against builder.lock" grep -q 'builder.lock' "$S10"
+
+S20="$REPO_ROOT/scripts/stages/20-builder-setup.sh"
+assert_true "stage 20 asserts the tree pin before resolving" grep -q 'tree_assert' "$S20"
+assert_true "stage 20 writes the locked-image set" grep -q 'sets/locked-image' "$S20"
+assert_true "stage 20 pre-flights the lock against the tree's md5-cache" grep -q 'md5-cache' "$S20"
+
+S30="$REPO_ROOT/scripts/stages/30-target-rootfs.sh"
+assert_true "stage 30 emerges the lock when one exists" grep -q '@locked-image' "$S30"
+assert_true "stage 30 diffs the result against the lock" grep -q 'lock_diff' "$S30"
+
+S40="$REPO_ROOT/scripts/stages/40-configure.sh"
+assert_true "stage 40 deploys the locked flatpak commits" grep -q -- '--commit=' "$S40"
+assert_true "stage 40 reads the deployed commits back" grep -q 'columns=ref,active' "$S40"
+
+S80="$REPO_ROOT/scripts/stages/80-release.sh"
+assert_true "stage 80 writes provenance" grep -q 'provenance.txt' "$S80"
+assert_true "stage 80 refuses to release an unpinned build" grep -q 'unpinned-build' "$S80"
+
+S90="$REPO_ROOT/scripts/stages/90-vendor.sh"
+assert_file "$S90" "stage 90 exists"
+assert_true "stage 90 no-ops unless VENDOR=1" grep -q 'VENDOR:-0' "$S90"
+# Two properties, both of which the archive's completeness depends on: the fetch must consider
+# the whole closure (a fresh empty root, not the populated target), and it must not let a binpkg
+# satisfy a package — that is exactly how /cache/distfiles came to be incomplete in the first
+# place, since a binary merge never looks at SRC_URI.
+assert_true "stage 90 fetches against a fresh empty root" grep -q 'FETCH_ROOT' "$S90"
+assert_true "stage 90 does not let binpkgs satisfy the fetch" \
+    grep -q -- '--fetchonly --usepkg=n' "$S90"
+assert_true "stage 90 archives the flatpak objects" grep -q 'create-usb' "$S90"
+
+BUILD="$REPO_ROOT/scripts/build.sh"
+assert_true "build.sh mounts the tree volume at /var/db/repos" grep -q '/var/db/repos' "$BUILD"
+assert_true "build.sh builds from the repo root with -f" grep -q -- '-f "\$REPO_ROOT/builder/Dockerfile"' "$BUILD"
+assert_true "build.sh passes the tree pin as a build-arg" grep -q 'TREE_COMMIT=\$TREE_COMMIT' "$BUILD"
+assert_true "build.sh isolates the network when --offline" grep -q -- '--network none' "$BUILD"
+assert_true "build.sh loads the archived builder rather than building it offline" \
+    grep -q 'builder-image.tar.zst' "$BUILD"
+assert_file "$REPO_ROOT/.dockerignore" ".dockerignore exists (context is now the repo root)"
+assert_true ".dockerignore keeps out/ out of the build context" grep -qx 'out/' "$REPO_ROOT/.dockerignore"
+
+# An unpinned base must be a hard failure, not the warning it used to be. Asserted by source
+# rather than by running build.sh: BUILDER_DIGEST comes from build.conf and has no env
+# override, so a behavioural test would have to rewrite the repo's own config.
+assert_true "build.sh dies on an empty BUILDER_DIGEST" \
+    grep -q 'BUILDER_DIGEST is empty' "$BUILD"
+assert_true "…with ALLOW_UNPINNED as the deliberate escape" grep -q 'ALLOW_UNPINNED' "$BUILD"
+
+finish
