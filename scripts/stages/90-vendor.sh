@@ -200,9 +200,32 @@ if [[ -f $APPS_LOCK && -d $TARGET/var/lib/flatpak/repo && $FLATPAK_PREINSTALL_MO
     #
     # Setting one with `flatpak remote-modify --collection-id` was rejected: it would rewrite
     # the remote config inside the shipped image to satisfy a build-host tool.
+    # The remote DESCRIPTOR, not just the objects. `flatpak remote-add <url>` fetches this
+    # little ini file (repo URL + GPG key) over the network before any install happens, so an
+    # offline stage 40 cannot even configure the remote without a local copy — it failed there,
+    # ahead of everything the objects are for.
+    if [[ ! -f $V/flathub.flatpakrepo ]]; then
+      if wget -qO "$V/flathub.flatpakrepo.tmp" https://dl.flathub.org/repo/flathub.flatpakrepo; then
+        mv -f -- "$V/flathub.flatpakrepo.tmp" "$V/flathub.flatpakrepo"
+        log "archived flathub.flatpakrepo (the remote descriptor)"
+      else
+        rm -f -- "$V/flathub.flatpakrepo.tmp"
+        warn "could not fetch flathub.flatpakrepo — an offline build cannot add the remote"
+      fi
+    fi
+
     log "archiving ${#FP_REFS[@]} flatpak refs at their locked commits"
     ensure_dir "$V/flatpak"
-    rsync -a --delete "$TARGET/var/lib/flatpak/repo/" "$V/flatpak/"
+    # The WHOLE /var/lib/flatpak, not just repo/. An offline stage 40 restores this rather than
+    # re-installing, because `flatpak install` cannot be made to work without the network even
+    # with --sideload-repo: it resolves a ref name to a commit through the REMOTE's summary
+    # index, and fails with "Unable to load summary from remote flathub" long before it would
+    # touch a sideloaded object. Restoring the tree needs no such lookup and is byte-identical
+    # to what the online build produced, which is what a reproducible rebuild wants anyway.
+    #
+    # -H preserves hardlinks: the app/ and runtime/ deploys are hardlinked checkouts of
+    # repo/objects, so without it the archive would be roughly twice the size.
+    rsync -aH --delete "$TARGET/var/lib/flatpak/" "$V/flatpak/"
 
     # Assert the copy is a usable repo that actually contains the pinned commits, rather than
     # trusting that rsync copied the right directory. Checked per ref against the lock, because
@@ -211,12 +234,12 @@ if [[ -f $APPS_LOCK && -d $TARGET/var/lib/flatpak/repo && $FLATPAK_PREINSTALL_MO
     fp_missing=0
     while read -r ref commit; do
       [[ -n $ref && $ref != \#* ]] || continue
-      have="$(cat "$V/flatpak/refs/heads/deploy/$ref" 2>/dev/null || true)"
+      have="$(cat "$V/flatpak/repo/refs/heads/deploy/$ref" 2>/dev/null || true)"
       if [[ $have != "$commit" ]]; then
         warn "archived flatpak repo has $ref at '${have:-<absent>}', lock says ${commit:0:12}"
         fp_missing=1
       fi
-      [[ -d $V/flatpak/objects ]] || { warn "archived flatpak repo has no objects/"; fp_missing=1; }
+      [[ -d $V/flatpak/repo/objects ]] || { warn "archived flatpak repo has no objects/"; fp_missing=1; }
     done < <(grep -v '^[[:space:]]*#' "$APPS_LOCK" | sed '/^[[:space:]]*$/d')
     (( fp_missing == 0 )) || die "the archived flatpak repo does not carry every locked ref at its
   locked commit — an offline build would install the wrong application versions, or fail."

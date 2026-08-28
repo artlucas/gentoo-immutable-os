@@ -215,8 +215,23 @@ chroot_target "$TARGET" "systemctl mask ldconfig.service" >/dev/null 2>&1 \
   || warn "could not mask ldconfig.service"
 
 # flatpak: remote always; apps per FLATPAK_PREINSTALL_MODE
+#
+# `flatpak remote-add <url>` FETCHES that .flatpakrepo descriptor — the repo URL and its GPG
+# key — so it needs the network before a single object is transferred. Offline that fails
+# ahead of everything the sideload repo exists for, so use the archived copy of the same file.
+# It is placed inside the target because the command runs in a chroot.
+FLATHUB_SRC="https://dl.flathub.org/repo/flathub.flatpakrepo"
+if [[ -f ${VENDOR_DIR:-}/flathub.flatpakrepo ]]; then
+  install -m 0644 "$VENDOR_DIR/flathub.flatpakrepo" "$TARGET/tmp/flathub.flatpakrepo"
+  FLATHUB_SRC="/tmp/flathub.flatpakrepo"
+  log "adding the flathub remote from the archived descriptor"
+elif [[ ${OFFLINE:-0} == 1 ]]; then
+  die "offline build, but the archive has no flathub.flatpakrepo — the remote cannot be added.
+  Re-run stage 90 to capture it."
+fi
 chroot_target "$TARGET" \
-  "flatpak remote-add --if-not-exists --system flathub https://dl.flathub.org/repo/flathub.flatpakrepo"
+  "flatpak remote-add --if-not-exists --system flathub '$FLATHUB_SRC'"
+rm -f "$TARGET/tmp/flathub.flatpakrepo"
 
 # Locale scoping, BEFORE any install. Without an explicit xa.languages, flatpak pulls the
 # .Locale extension subpath for every language the runtime ships:
@@ -251,18 +266,28 @@ if [[ $FLATPAK_PREINSTALL_MODE == build && -n ${FLATPAK_PREINSTALL// /} ]]; then
   # it instead of the network. The remote still has to be configured — it is, above — because
   # that is where the signing key and the ref metadata come from; sideloading replaces the
   # transport, not the trust.
-  FP_SIDELOAD=()
-  if [[ -d ${VENDOR_DIR:-}/flatpak ]]; then
-    FP_SIDELOAD=(--sideload-repo=/vendor/flatpak)
-    log "flatpak: sideloading from ${VENDOR_DIR}/flatpak"
-  elif [[ ${OFFLINE:-0} == 1 ]]; then
-    die "offline build, but the archive has no flatpak/ repo — stage 40 cannot install apps"
+  # Offline: RESTORE the archived /var/lib/flatpak rather than installing into it.
+  #
+  # `flatpak install` cannot be made to work without the network, even pointed at a sideload
+  # repo holding every object: it resolves a ref name to a commit through the remote's summary
+  # index and dies with "Unable to load summary from remote flathub" before reading a single
+  # sideloaded byte. Restoring the tree needs no lookup at all, and gives an offline rebuild
+  # byte-identical application state — which is the stronger property for a reproducible build.
+  #
+  # The readback below still runs and still has to pass, so this path is verified exactly as
+  # the online one is rather than being taken on trust.
+  if [[ ${OFFLINE:-0} == 1 || -d ${VENDOR_DIR:-}/flatpak/repo ]]; then
+    [[ -d ${VENDOR_DIR:-}/flatpak/repo ]] \
+      || die "offline build, but the archive has no flatpak/ tree — stage 40 cannot supply apps"
+    log "restoring the archived flatpak tree (offline: install would need the remote summary)"
+    ensure_dir "$TARGET/var/lib/flatpak"
+    rsync -aH --delete "$VENDOR_DIR/flatpak/" "$TARGET/var/lib/flatpak/"
+  else
+    for app in $FLATPAK_PREINSTALL; do
+      log "preinstalling flatpak: $app"
+      chroot_target "$TARGET" "flatpak install -y --system --noninteractive flathub '$app'"
+    done
   fi
-
-  for app in $FLATPAK_PREINSTALL; do
-    log "preinstalling flatpak: $app"
-    chroot_target "$TARGET" "flatpak install -y --system --noninteractive ${FP_SIDELOAD[*]-} flathub '$app'"
-  done
 
   # ---- pin every ref to its locked commit (plan/15 layer 5) --------------------------
   # The install above takes whatever Flathub serves today, which is what made two builds of
@@ -272,11 +297,11 @@ if [[ $FLATPAK_PREINSTALL_MODE == build && -n ${FLATPAK_PREINSTALL// /} ]]; then
   # Runtimes are in the lock too, and they arrive as dependencies rather than being named in
   # FLATPAK_PREINSTALL, so this loop is what pins most of the shipped bytes.
   APPS_LOCK="$REPO/config/flatpak/apps.lock"
-  if [[ -f $APPS_LOCK ]]; then
+  if [[ -f $APPS_LOCK && ${OFFLINE:-0} != 1 ]]; then
     while read -r ref commit; do
       [[ -n $ref && $ref != \#* ]] || continue
       chroot_target "$TARGET" \
-        "flatpak update -y --system --noninteractive ${FP_SIDELOAD[*]-} --commit='$commit' '$ref'" \
+        "flatpak update -y --system --noninteractive --commit='$commit' '$ref'" \
         || die "could not deploy $ref at $commit.
   Flathub garbage-collects old commits, so a pin that has aged out is the expected cause.
   Re-resolve the flatpak lock:  scripts/relock.sh --flatpak
@@ -310,6 +335,8 @@ if [[ $FLATPAK_PREINSTALL_MODE == build && -n ${FLATPAK_PREINSTALL// /} ]]; then
   (see the warnings above). The image would ship different application versions than the lock
   claims, which is the whole failure this lock exists to prevent."
     log "flatpak: $(grep -vc '^[[:space:]]*#' "$APPS_LOCK") refs deployed at their locked commits"
+  elif [[ -f $APPS_LOCK ]]; then
+    log "flatpak: restored from the archive; readback below is the check"
   else
     warn "no config/flatpak/apps.lock — preinstalled Flatpaks are UNPINNED (plan/15 layer 5)"
   fi
