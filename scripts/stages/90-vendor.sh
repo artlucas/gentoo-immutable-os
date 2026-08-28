@@ -14,12 +14,21 @@ STAGE_NAME=90-vendor
 # shellcheck source=../lib/common.sh
 source "$SCRIPT_DIR/../lib/common.sh"
 load_config
-ensure_dir "$OUT/logs"; exec > >(tee -a "$OUT/logs/$STAGE_NAME.log") 2>&1
 
+# The skip check runs BEFORE the tee redirect below, and that ordering is the whole point.
+# `exec > >(tee ...)` hands stdout to a process substitution that the shell does not wait for,
+# so a script that exits immediately afterwards can die before tee has flushed — or even
+# created — the log file. That is exactly what happened: on a run without --vendor this stage
+# produced no output and no out/logs/90-vendor.log at all, i.e. it skipped silently, which is
+# the one thing every other stage here is written to avoid. Printing before the redirect is
+# installed keeps the message on the pipeline's own stdout where it cannot be lost.
 if [[ ${VENDOR:-0} != 1 ]]; then
-  log "VENDOR is not 1 — skipping (build.sh --vendor to produce the offline archive)"
+  printf '[%s] %s\n' "$STAGE_NAME" \
+    "VENDOR is not 1 — skipping the offline archive (build.sh --vendor to produce it)"
   exit 0
 fi
+
+ensure_dir "$OUT/logs"; exec > >(tee -a "$OUT/logs/$STAGE_NAME.log") 2>&1
 is_linux || die "stages run inside the builder container only"
 tree_assert
 
