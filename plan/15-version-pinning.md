@@ -252,9 +252,9 @@ out/vendor/immos-<VERSION>/
   builder-image.tar.zst    7.8 GB -> ~3 GB   (carries the pinned tree)
   stage3-base.tar.zst      ~600 MB
   tree-<commit>.tar.zst    708 MB -> ~130 MB
-  distfiles/               7.3 GB, 760 files
-  binpkgs/                 3.0 GB, 664 packages   (VENDOR_PROFILE=full only)
-  flatpak/                 ~2.7 GB OSTree repo at the locked commits
+  distfiles/               7.4 GB, 761 files
+  binpkgs/                 3.0 GB, 676 packages   (VENDOR_PROFILE=full only)
+  flatpak/                 2.7 GB OSTree repo at the locked commits
 ```
 
 `stage3-base.tar.zst` and the tree tarball are redundant with the builder image, which contains
@@ -284,10 +284,25 @@ root asks the question a clean rebuild actually asks — "install all of this fr
 resolves cleanly, and yields exactly the distfiles a clean rebuild needs. Measured: `--emptytree`
 fails, the empty root resolves 1,103 packages with no USE-change or conflict errors.
 
-Flatpaks are exported with `flatpak create-usb` through a bind mount, so the 2.7 GB lands in the
-archive directly rather than being written inside the target and copied out. An offline stage 40
-reads them back with `--sideload-repo`; the remote stays configured, because sideloading replaces
-the transport, not the trust.
+Flatpaks are archived by copying the target's own `/var/lib/flatpak/repo`, which is already an
+OSTree repo holding exactly the locked commits — stage 40 deployed them there. An offline stage
+40 reads it back with `--sideload-repo`; the remote stays configured, because sideloading
+replaces the transport, not the trust. Every locked ref is then checked in the copy against
+`apps.lock`, because a repo missing one app is as broken as one missing all of them and only one
+of those is obvious by eye.
+
+**`flatpak create-usb` is the tool nominally built for this and cannot be used.** It implements
+the older P2P distribution scheme, which requires the remote to carry a collection ID, and
+Flathub does not set one:
+
+```
+error: Remote 'flathub' does not have a collection ID set, which is required for
+       P2P distribution of 'app/org.kde.ark/x86_64/stable'
+```
+
+Setting one with `flatpak remote-modify --collection-id` was rejected: it would rewrite the
+remote config inside the shipped image to satisfy a build-host tool. The plain repo copy needs
+no such change and carries the same objects.
 
 ### Consuming it
 
@@ -356,9 +371,15 @@ image overrides — Qt with custom `opengl/vulkan/wayland`, the KDE Frameworks l
 those subslots, `systemd[ukify]`, `polkit[kde]`, `cups[dbus]`, `xdg-utils[-perl -gnome]`. That
 cost is pre-existing and was previously hidden in a Docker layer that never invalidated.
 
-**Still not exercised:** `relock.sh` against a real GLSA hit, stage 90's archive, and the offline
-rebuild. An archive that has not had an offline rebuild run against it is not known to work; see
-[07-testing.md](07-testing.md).
+**Stage 90 has since run** and produced a 16 GB archive for 0.3.0: 40,276 files, the upstream
+snapshot re-fetched and hashed against `SNAPSHOT_SHA256`, 7.4 GB of distfiles, 676 binpkgs, and
+an OSTree repo carrying all 18 Flatpak refs at their locked commits (each checked against
+`apps.lock`). One gap, described above: the **builder**-closure distfile fetch fails on
+`qttools[-linguist]`, so that half of the `sources` story is incomplete.
+
+**Still not exercised:** `relock.sh` against a real GLSA hit, and the offline rebuild itself. An
+archive that has not had an offline rebuild run against it is not known to work — stage 90 says
+so on completion, and it is still true of this one; see [07-testing.md](07-testing.md).
 
 ### What the first real build cost, and why
 
@@ -387,9 +408,23 @@ which is how the first attempt at seeding `image.lock` went wrong. The committed
 resolved fresh against the pinned tree and differs from those reports by exactly that one
 package. Do not seed a lock from `out/reports/`; let stage 30 generate it.
 
-**`dev-qt/qttools[-linguist]`** is worth a second look, though nothing is blocked on it. The
-comment in `package.use/image` claims no package in the pinned tree asks for
-`qttools[linguist]`; full DEPEND re-resolution disagrees, and the cached binpkg was rejected
-during the real build for exactly that flag ("ignored due to non matching USE"). Every code path
-that matters resolves cleanly, so this is a stale comment rather than a broken build — recorded
-because the next person to reach for `--emptytree` will rediscover it the hard way.
+**`dev-qt/qttools[-linguist]` blocks every from-source resolution of the KDE stack**, and the
+comment in `package.use/image` claiming nothing in the tree asks for `qttools[linguist]` is
+simply wrong. Three independent paths now say so:
+
+- `emerge --pretend --emptytree` against the image closure
+- stage 90's **builder**-closure distfile fetch, via
+  `kglobalaccel ← kxmlgui ← kcmutils ← keditfiletype ← kio ← kparts`
+- the real stage-30 build, which rejected the cached iptables-era binpkg with
+  "ignored due to non matching USE: `=dev-qt/qttools-6.11.1 assistant linguist`"
+
+Nothing that *ships* is affected — the image resolves and builds because binpkgs satisfy the
+dependency, and it boots. What it does break is the archive's builder half: stage 90 cannot
+fetch the builder closure's distfiles, so `sources`-profile reconstruction of the **builder**
+from source is not possible offline. Rebuilding the **image** offline is unaffected, because the
+builder is archived whole as an image tarball.
+
+Setting `dev-qt/qttools linguist` is the obvious fix and is deliberately not taken here: it
+changes `portage_config_hash`, so it needs a relock, and it needs its own build to confirm it
+adds no packages to `expected-packages.txt`. That is a package-set change with its own
+verification, not a footnote to this one.

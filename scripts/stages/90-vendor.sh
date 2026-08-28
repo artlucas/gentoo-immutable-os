@@ -152,30 +152,45 @@ else
 fi
 
 # ---- 4. the flatpaks ------------------------------------------------------------------
-# `flatpak create-usb` is the supported way to take refs offline: it writes an OSTree repo
-# holding exactly the deployed commits, which `flatpak install --sideload-repo=` then reads
-# instead of the network. Run through a bind mount so the 2.7 GB lands in the archive directly
-# rather than being written inside the target and copied out.
+# An OSTree repo holding exactly the locked commits, which `flatpak install --sideload-repo=`
+# reads instead of the network during an offline stage 40.
 APPS_LOCK="$REPO/config/flatpak/apps.lock"
-if [[ -f $APPS_LOCK && -d $TARGET/var/lib/flatpak && $FLATPAK_PREINSTALL_MODE == build ]]; then
+if [[ -f $APPS_LOCK && -d $TARGET/var/lib/flatpak/repo && $FLATPAK_PREINSTALL_MODE == build ]]; then
   mapfile -t FP_REFS < <(grep -v '^[[:space:]]*#' "$APPS_LOCK" | sed '/^[[:space:]]*$/d' | awk '{print $1}')
   if (( ${#FP_REFS[@]} )); then
+    # The target's own /var/lib/flatpak/repo IS an OSTree repo, and it already holds exactly the
+    # commits apps.lock pins — stage 40 deployed them there. Copying it is the whole job.
+    #
+    # `flatpak create-usb` is the tool nominally built for this and cannot be used: it implements
+    # the older P2P distribution scheme, which requires the remote to carry a collection ID, and
+    # Flathub does not set one —
+    #
+    #   error: Remote 'flathub' does not have a collection ID set, which is required for
+    #          P2P distribution of 'app/org.kde.ark/x86_64/stable'
+    #
+    # Setting one with `flatpak remote-modify --collection-id` was rejected: it would rewrite
+    # the remote config inside the shipped image to satisfy a build-host tool.
     log "archiving ${#FP_REFS[@]} flatpak refs at their locked commits"
-    ensure_dir "$V/flatpak" "$TARGET/mnt/fp-usb"
-    # /proc, /sys and /dev, same as stage 40 brackets its own chroot work with: ostree reads
-    # /proc for fd handling and flatpak wants a real /dev. Without them create-usb fails in
-    # ways that look like a flatpak bug rather than a missing mount.
-    target_mount "$TARGET"
-    mount --bind "$V/flatpak" "$TARGET/mnt/fp-usb"
-    # shellcheck disable=SC2064  # $TARGET is intentionally expanded now, not at trap time
-    trap "umount '$TARGET/mnt/fp-usb' 2>/dev/null || true; target_umount '$TARGET'" EXIT
-    chroot_target "$TARGET" \
-      "flatpak create-usb --system --destination-repo=. /mnt/fp-usb ${FP_REFS[*]}" \
-      || die "flatpak create-usb failed — without it the archive cannot install Flatpaks offline"
-    umount "$TARGET/mnt/fp-usb"
-    target_umount "$TARGET"; trap - EXIT
-    rmdir "$TARGET/mnt/fp-usb" 2>/dev/null || true
-    log "flatpak repo: $(du -sh "$V/flatpak" | cut -f1)"
+    ensure_dir "$V/flatpak"
+    rsync -a --delete "$TARGET/var/lib/flatpak/repo/" "$V/flatpak/"
+
+    # Assert the copy is a usable repo that actually contains the pinned commits, rather than
+    # trusting that rsync copied the right directory. Checked per ref against the lock, because
+    # a repo missing one app is exactly as broken as a repo missing all of them, and only one
+    # of those two is obvious by eye.
+    fp_missing=0
+    while read -r ref commit; do
+      [[ -n $ref && $ref != \#* ]] || continue
+      have="$(cat "$V/flatpak/refs/heads/deploy/$ref" 2>/dev/null || true)"
+      if [[ $have != "$commit" ]]; then
+        warn "archived flatpak repo has $ref at '${have:-<absent>}', lock says ${commit:0:12}"
+        fp_missing=1
+      fi
+      [[ -d $V/flatpak/objects ]] || { warn "archived flatpak repo has no objects/"; fp_missing=1; }
+    done < <(grep -v '^[[:space:]]*#' "$APPS_LOCK" | sed '/^[[:space:]]*$/d')
+    (( fp_missing == 0 )) || die "the archived flatpak repo does not carry every locked ref at its
+  locked commit — an offline build would install the wrong application versions, or fail."
+    log "flatpak repo: $(du -sh "$V/flatpak" | cut -f1), all ${#FP_REFS[@]} refs at their locked commits"
   fi
 else
   log "flatpak: nothing to archive (mode=$FLATPAK_PREINSTALL_MODE)"
