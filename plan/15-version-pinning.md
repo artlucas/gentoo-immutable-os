@@ -1,6 +1,6 @@
 # 15 — Version Pinning and the Offline Archive
 
-**Status: implemented 2026-08-27.** Scope is *which packages, at which versions* a build
+**Status: implemented 2026-08-27; verified by a full locked build 2026-08-28.** Scope is *which packages, at which versions* a build
 produces, and keeping the inputs that produced them. Bit-identical output is a different goal
 and stays where it is, in [08-roadmap.md](08-roadmap.md) item 6.
 
@@ -331,33 +331,65 @@ it.
 
 ## What is verified, and what is not
 
-Verified live on 2026-08-27:
+**A complete locked build ran green end to end on 2026-08-28** — stages 10 through 90, from a
+wiped work volume, producing a bootable image. Measured at each pin:
 
-- the codeload fetch, its assertions, and `timestamp.chk` parsing to `SNAPSHOT_DATE` (6.7 s)
-- stage 10 populating a fresh tree volume, and skipping on a second run (1.6 s), with no leftover
-  temp directory
-- stage 10's builder-closure check against `builder.lock` (495 atoms, clean)
-- all 1,150 locked atoms present in the pinned tree
-- stage 20's three lock guards, including a real catch: the first `image.lock` seeded from
-  `out/reports/` was rejected because those reports predate the plymouth removal
-- `@base @hardware @desktop` resolving against the pinned tree to 655 target-bound packages
-- stage 90's distfile-fetch resolution: 1,103 packages, clean
-- the full offline suite (58 new assertions in `test-pin-policy.sh`)
+| | |
+|---|---|
+| tree pin | snapshot `20260820`, GPG GOOD against key `DCD05B71EAB94199527F44ACDB6B8C1F96D8BF6D`, sha256 matching `SNAPSHOT_SHA256` |
+| `builder.lock` | builder rebuilt from `@locked-builder` (495 atoms, 85 min) and stage 10 confirmed the resulting closure matches it exactly |
+| `image.lock` vs tree | 655 atoms, 0 missing (and 495/0 for the builder) |
+| **stage 30 verify** | **`no drift: 655 atoms, all at their locked versions`** |
+| plan resolution | 730 packages, of which exactly 655 target-bound — matching the lock before a single one was merged |
+| `apps.lock` | 18 refs deployed at their locked commits, readback asserted, idempotent across a re-run |
+| stage 50 | `package set matches expected-packages.txt`, all prune assertions passed |
+| stage 70 | QEMU smoke: two boots, repart growth, machine-id generation, persistence |
+| provenance | written before `SHA256SUMS` and covered by it |
 
-Not yet exercised: a complete locked build (stages 30-80), `relock.sh` against a real GLSA hit,
-the Flatpak `--commit` deploy and its readback, stage 90, and the offline rebuild. See
+Artifacts: root EROFS 2761 MiB of the 6144 MiB slot, image 3012 MiB compressed, UKI 62.7 MB
+(against 250 MB for 0.1.0 and 0.2.0 — plan/14's target was ~59.9 MiB, so the initrd is genuinely
+free of the graphics payload).
+
+Of the 655 target-bound packages, 643 merged from `/cache/binpkgs` and 12 compiled. The builder's
+own 495 split 155 binary / 24 source, and the source set is entirely packages whose USE this
+image overrides — Qt with custom `opengl/vulkan/wayland`, the KDE Frameworks linking against
+those subslots, `systemd[ukify]`, `polkit[kde]`, `cups[dbus]`, `xdg-utils[-perl -gnome]`. That
+cost is pre-existing and was previously hidden in a Docker layer that never invalidated.
+
+**Still not exercised:** `relock.sh` against a real GLSA hit, stage 90's archive, and the offline
+rebuild. An archive that has not had an offline rebuild run against it is not known to work; see
 [07-testing.md](07-testing.md).
 
-Two notes for whoever runs the first locked build.
+### What the first real build cost, and why
+
+Four defects, none of which the offline suite could have caught:
+
+1. **The tree transport was wrong.** Documented at the top of this file. Cost a 90-minute build
+   and is the reason `tree_validate` now checks a Manifest for an `EBUILD` line.
+2. **`timestamp.chk == SNAPSHOT_DATE` was a wrong assertion**, also above.
+3. **plan/14's initrd GPU guard false-positived** on `etc/modprobe.d/nvidia.conf`: its
+   `/nvidia[-_.]` pattern puts a literal `.` in the character class. Pre-existing and unchanged
+   since it was written — this was simply the first build to reach stage 40 since plan/14
+   landed. Now matched against the path field and restricted to modules and firmware, with both
+   directions pinned in `tests/test-splash-assets.sh`.
+4. **Stage 40's Flatpak readback could never have matched.** `flatpak list` prints refs without
+   their `app/`/`runtime/` prefix, and its default listing omits extensions — 12 refs against 17
+   with `--all`, and the `.Locale`/`GL.default` extensions are most of the pinned bytes.
+
+Plus two that cost nothing but would have: the Dockerfile `COPY`ing the whole lock directory
+(an hour on every image relock, for a file the builder never reads), and stage 90 skipping
+*silently* because `exec > >(tee …)` can lose output when the script exits immediately after.
+
+### One note for whoever moves the pin next
 
 **`out/reports/` is stale relative to `main`** — it describes a build that still had plymouth,
 which is how the first attempt at seeding `image.lock` went wrong. The committed lock was
-resolved fresh against the pinned tree instead, and differs from those reports by exactly that
-one package. Do not seed a lock from `out/reports/` again; let stage 30 generate it.
+resolved fresh against the pinned tree and differs from those reports by exactly that one
+package. Do not seed a lock from `out/reports/`; let stage 30 generate it.
 
-**`dev-qt/qttools[-linguist]` is worth a second look**, though nothing here is blocked on it.
-The comment in `package.use/image` says no package in the pinned tree asks for
-`qttools[linguist]`, and full DEPEND re-resolution disagrees (see the stage 90 note above). The
-three code paths that matter — stage 30's emerge, stage 90's fetch, and a from-scratch
-resolution — all resolve cleanly, so this is a stale comment rather than a broken build. It is
-recorded because the next person to reach for `--emptytree` will rediscover it the hard way.
+**`dev-qt/qttools[-linguist]`** is worth a second look, though nothing is blocked on it. The
+comment in `package.use/image` claims no package in the pinned tree asks for
+`qttools[linguist]`; full DEPEND re-resolution disagrees, and the cached binpkg was rejected
+during the real build for exactly that flag ("ignored due to non matching USE"). Every code path
+that matters resolves cleanly, so this is a stale comment rather than a broken build — recorded
+because the next person to reach for `--emptytree` will rediscover it the hard way.
