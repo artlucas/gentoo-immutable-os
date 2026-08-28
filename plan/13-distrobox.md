@@ -221,7 +221,10 @@ the problem never arises; it is specific to booting the image file directly in a
   bites in a VM booted from an unexpanded image.
 - **First build is longer.** Go and Rust on the builder, plus podman/netavark/aardvark-dns
   compiled into `/cache/binpkgs`. Cached thereafter.
-- **The installer will need the same subuid work.** Stage 40 handles `LIVE_USER`. A future
+- **The installer will need the same subuid work.** Stage 40 handles `LIVE_USER`. Specified as
+  of 2026-08-28 in [plan/16](16-installer.md) §5.4: Calamares' `users` module does not allocate
+  subordinate ranges, so a `shellprocess` step writes `/etc/subuid` and `/etc/subgid` into the
+  `/etc` overlay upper for the created user. A future
   installer (plan/08) creating a real user must allocate subordinate ranges too, or rootless
   podman breaks for that user and only that user. `/etc/login.defs` makes `useradd` do it by
   default, which is why this is a note rather than a blocker.

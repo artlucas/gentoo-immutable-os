@@ -163,15 +163,22 @@ lands in the upper — stable thereafter.
   match.
 - Updates never touch `/var`. A "factory reset" is: wipe `var` + relabel (roadmap: recovery
   UKI that does this).
-- swap: zram only (`sys-apps/zram-generator`), no swap partition, no hibernation.
+- swap: zram only (`sys-apps/zram-generator`), no swap partition, no hibernation — **in the
+  factory image, which is unchanged.** *Installed* systems get a swap partition and
+  hibernation as of 2026-08-28 ([plan/16](16-installer.md) §6): the installer knows the disk
+  and the RAM, so the sizing objection goes away, and a discoverable GPT swap type means no
+  `resume=` is needed in the UKI cmdline — which is what made this impossible before, since
+  that cmdline is baked at build time and identical on every machine.
 
 ## First boot & default user
 
 v1 images are "live-style": a `live` user (uid 1000, wheel, configurable name/password in
 `build.conf`) is baked into the image `/etc/passwd`/`shadow` at build time, with Plasma Login
 Manager autologin into the Plasma Wayland session (`/etc/plasmalogin.conf.d/10-autologin.conf`). Rationale: zero-interaction boot for both VM
-evaluation and USB live use. The future installer (roadmap) replaces this with real user
-creation via `systemd-firstboot` and the installer's own account step. User-created accounts at runtime land in the `/etc` overlay
+evaluation and USB live use. The installer ([plan/16](16-installer.md) §5.4) replaces this with real
+user creation. It cannot *delete* the `live` user — that user lives in the read-only EROFS the
+installed system also boots — so it shadows `passwd`/`shadow`/`group` from the `/etc` overlay
+upper, and adds a `20-no-autologin.conf` drop-in that sorts after the baked-in one. User-created accounts at runtime land in the `/etc` overlay
 upper and `/var/home` — they survive updates.
 
 ## What can go wrong (designed-for failure modes)

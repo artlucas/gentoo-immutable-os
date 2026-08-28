@@ -76,7 +76,9 @@ Same artifact everywhere:
   this is a *persistent* live system, not a squashfs-toram live CD: same OS, same update
   mechanism, just on removable media.
 - **Direct install:** dd the same image to an internal NVMe/SATA disk (from any live Linux).
-  The future installer ISO (roadmap) automates exactly this + user setup.
+  The installer ([plan/16](16-installer.md)) automates exactly this + user setup — and note it
+  is *not* bound by the loopless/mtools constraint above, which exists only because the build
+  runs in a container. On real hardware the installer just mounts things.
 
 First-boot sequence on any medium (details in 01): initrd `systemd-repart` extends the var
 partition to the disk's end and fixes the backup GPT header; `x-systemd.growfs` expands

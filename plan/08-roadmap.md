@@ -2,30 +2,38 @@
 
 ## Post-v1 roadmap (rough order)
 
-### 1. Installer ISO with graphical installer
-The stated next major goal. Design sketch, so v1 choices don't paint us into a corner:
+### 1. ~~Installer ISO with graphical installer~~ — DECIDED 2026-08-28
+**Moved out of the roadmap and into [16-installer.md](16-installer.md).**
 
-- **Media:** hybrid ISO (xorriso/grub-mkrescue or systemd-boot ISO layout) carrying (a) a
-  live boot of the *same* root EROFS with `systemd.volatile`-style tmpfs var — reusing the
-  exact production image, and (b) the compressed disk image payload.
-- **Installer:** Qt/Kirigami, so the ISO carries no second toolkit — the live session already
-  has the whole Qt6 + Frameworks stack, and pulling a GTK installer in would roughly double the
-  ISO's UI dependencies for one screen flow. (This reverses with the desktop: the same argument
-  said GTK4 + libadwaita when the session was GNOME.) The responsibilities are the same thin
-  set either way: picks target disk → writes the GPT layout ([04](04-image-and-boot.md)) sized
-  to the disk → dd's ESP+root slot → creates var → runs `systemd-firstboot`-style
-  user/locale/TZ pages → removes the baked live user.
-  The cost calculation also flips, in our favour: the turnkey options in this space (Calamares
-  above all) *are* the Qt ones, so "more code to write than an off-the-shelf installer" is no
-  longer a given — spike Calamares against a purpose-built Kirigami app before committing.
-- v1 groundwork already in place: identical image on any medium, var-grows-to-disk, no
-  NVRAM dependency, all identity in `build.conf`.
+This entry asked for one thing before committing — "spike Calamares against a purpose-built
+Kirigami app" — and that spike has been run as a measurement rather than as two prototypes.
+The result and the reason it went the way it did:
+
+- **Calamares wins, but only because of a decision this entry did not anticipate.** Measured
+  against the real image, adding `app-admin/calamares` costs 25 packages and 204 MiB of
+  downloads, and drags in `sys-boot/grub` (built with the *legacy BIOS* platform), Gentoo's
+  GRUB theme artwork, `os-prober` and `squashfs-tools` — all unconditional `RDEPEND`s, none of
+  them usable by a UKI/systemd-boot/EROFS distro. In the product image that is indefensible,
+  which is what made the purpose-built Kirigami app look inevitable.
+- **Build profiles dissolve the objection.** The installer is built into a live-only profile
+  that is booted from USB and thrown away; the installed system is a separate profile whose
+  `expected-packages` audit gate fails the build if any of that tail appears. The cost stops
+  being permanent and becomes transient, and the mature installer with ~80 languages wins on
+  the merits.
+- The prediction that the ISO would reuse "the *same* root EROFS" did **not** survive: the live
+  root and the payload root are now different profiles. They differ only by the Calamares tail,
+  so [16](16-installer.md) §7.5 keeps the shared-layer idea as a documented, deferred
+  optimisation.
+- The thin responsibility set sketched here was right, and [16](16-installer.md) §5 is that list
+  with the mechanisms filled in.
+- The v1 groundwork this entry banked on did hold: identical image on any medium,
+  var-grows-to-disk, no NVRAM dependency, all identity in `build.conf`.
 
 ### 2. Secure Boot
 Options, in increasing effort: (a) document `sbctl`-style self-enrollment for enthusiasts
 (sign our UKIs with a key the user enrolls); (b) ship a signing-friendly flow in the
 installer (generate machine-owner key, enroll via firmware setup mode, sign both sd-boot and
-UKI); (c) shim review process for a Microsoft-signed shim — only worth it with real adoption.
+UKI — now a concrete home, [16](16-installer.md) Phase C); (c) shim review process for a Microsoft-signed shim — only worth it with real adoption.
 UKI-everywhere makes any of these a signing step in stage 80, not an architecture change.
 
 ### 3. dm-verity + signed partitions
@@ -90,7 +98,7 @@ Secure Boot for a full trust chain.
 | UEFI-only, no BIOS | 5-year hardware window is UEFI-universal |
 | Full-image (non-delta) updates | Simplicity + sysupdate stock behavior; roadmap #4 |
 | No hibernation (zram-only swap) | Avoids swap-partition sizing and resume-offset fragility on an immutable, repartition-on-first-boot design |
-| Baked `live` autologin user in v1 images | The image doubles as live media; real user management arrives with the installer |
+| Baked `live` autologin user in v1 images | The image doubles as live media; real user management arrives with the installer. Note the live user cannot be *deleted* by the installer — it lives in the read-only EROFS the installed system also uses — so it is shadowed through the `/etc` overlay instead ([16](16-installer.md) §5.4) |
 | Native apps limited to Konsole/Dolphin | Everything else Flatpak — the point of the distro; portals make it seamless. Ark, Kate, Okular and Gwenview are deliberately absent for the same reason file-roller and gnome-text-editor were dropped after 0.1.0 ([03](03-package-set.md), "Dropped from the native set"). One genuine regression to note: Dolphin does **not** get archive handling for free the way nautilus did through gnome-autoar. A user who wants any of these installs it from Discover |
 | Generic x86-64 (no AVX2 floor) | Budget Atom-class CPUs sold within the window lack AVX2 |
 | No browser engine natively (`USE=-webengine` + hard masks on `net-libs/webkit-gtk` and `dev-qt/qtwebengine`) | Biggest single build/system-size win; browser ships as Flatpak Firefox. Under GNOME this was `-gnome-online-accounts` + `evolution-data-server[-oauth]` holding webkit-gtk out; under Plasma it is a global USE flag plus the mask, i.e. structural rather than flag-dependent |

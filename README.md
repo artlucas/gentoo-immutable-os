@@ -22,10 +22,11 @@ been run yet. The full design lives in [`plan/`](plan/00-overview.md):
 | [05-updates](plan/05-updates.md) | A/B updates via systemd-sysupdate, signing |
 | [06-pruning](plan/06-pruning.md) | Toolchain-free guarantee & size budget |
 | [07-testing](plan/07-testing.md) | QEMU smoke/update/rollback tests, hardware matrix |
-| [08-roadmap](plan/08-roadmap.md) | Installer ISO, Secure Boot, verity, tradeoffs |
+| [08-roadmap](plan/08-roadmap.md) | Secure Boot, verity, tradeoffs (installer: see 16) |
 | [11-kernel-boot-audit](plan/11-kernel-boot-audit.md) | Kernel/UKI/initrd audit: microcode, driver omit list, NVIDIA early KMS |
 | [15-version-pinning](plan/15-version-pinning.md) | Version locks, the tree pin, selective security upgrades, the offline archive |
 | [13-distrobox](plan/13-distrobox.md) | Rootless podman + distrobox: the mutable userland, and why it keeps the toolchain-free guarantee |
+| [16-installer](plan/16-installer.md) | Calamares installer, build profiles, swap/hibernation, the live ISO |
 
 ## Building
 
