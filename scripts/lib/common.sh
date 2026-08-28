@@ -326,6 +326,15 @@ tree_pin_id()      { printf '%s %s' "$SNAPSHOT_DATE" "$SNAPSHOT_SHA256"; }
 
 snapshot_tarball_name() { printf 'gentoo-%s.tar.xz' "$SNAPSHOT_DATE"; }
 
+# Where the snapshot is KEPT, as opposed to where webrsync happens to drop it.
+#
+# emerge-webrsync writes to portage's DISTDIR, which for the builder's own "/" is
+# /var/cache/distfiles — inside the container, so it dies with the stage that fetched it. The
+# tarball is the one artifact SNAPSHOT_SHA256 pins and upstream signed, and stage 90 archives
+# it, so it has to outlive its stage: /cache is a named volume and does.
+snapshot_cache_dir() { printf '%s' "${SNAPSHOT_CACHE_DIR:-/cache/distfiles}"; }
+snapshot_cached_path() { printf '%s/%s' "$(snapshot_cache_dir)" "$(snapshot_tarball_name)"; }
+
 # tree_date — the checked-out tree's snapshot date as YYYYMMDD, or "" if unreadable.
 tree_date() {
   local ts="$TREE_DIR/gentoo/metadata/timestamp.chk"
@@ -417,6 +426,7 @@ tree_populate() {
   what stage 90's archive exists to prevent. Move the pin to a live snapshot, or restore from a
   vendored archive:  build.sh --offline --vendor-dir DIR"
     rm -rf -- "$tmp"
+    snapshot_park_kept_tarball
     tree_verify_kept_tarball
     tree_validate "$TREE_DIR/gentoo"
     printf '%s' "$(tree_pin_id)" > "$(tree_marker_path)"
@@ -429,15 +439,34 @@ tree_populate() {
   printf '%s' "$(tree_pin_id)" > "$(tree_marker_path)"    # last, deliberately
 }
 
-# tree_verify_kept_tarball — check the snapshot --keep left in DISTDIR against SNAPSHOT_SHA256.
-# Upstream's signature says the file is Gentoo's; this says it is the same one this config was
-# pinned to and locked against.
+# snapshot_park_kept_tarball — move webrsync's --keep output into the persistent cache, with
+# its signature and digest alongside, so stage 90 can archive the authentic upstream artifact
+# rather than a re-tarred copy of the unpacked tree.
+snapshot_park_kept_tarball() {
+  local dd f dest; dest="$(snapshot_cache_dir)"
+  dd="$(portageq envvar DISTDIR 2>/dev/null || true)"
+  [[ -n $dd && -d $dd ]] || return 0
+  [[ $dd -ef $dest ]] && return 0          # already the same directory
+  ensure_dir "$dest"
+  for f in "$(snapshot_tarball_name)" "$(snapshot_tarball_name).gpgsig" "$(snapshot_tarball_name).md5sum"; do
+    [[ -f $dd/$f ]] && cp -f -- "$dd/$f" "$dest/$f"
+  done
+  [[ -f $dest/$(snapshot_tarball_name) ]] \
+    && log "parked $(snapshot_tarball_name) in $dest (survives the stage boundary)"
+  return 0
+}
+
+# tree_verify_kept_tarball — check the snapshot against SNAPSHOT_SHA256. Upstream's signature
+# says the file is Gentoo's; this says it is the same one this config was pinned to and locked
+# against.
 tree_verify_kept_tarball() {
-  local dd tb got
-  dd="$(portageq envvar DISTDIR 2>/dev/null || echo /cache/distfiles)"
-  tb="$dd/$(snapshot_tarball_name)"
+  local tb got
+  tb="$(snapshot_cached_path)"
   if [[ ! -f $tb ]]; then
-    warn "emerge-webrsync did not leave $(snapshot_tarball_name) in $dd — cannot check SNAPSHOT_SHA256"
+    tb="$(portageq envvar DISTDIR 2>/dev/null || echo /cache/distfiles)/$(snapshot_tarball_name)"
+  fi
+  if [[ ! -f $tb ]]; then
+    warn "no $(snapshot_tarball_name) on disk — cannot check SNAPSHOT_SHA256"
     return 0
   fi
   got="$(sha256_file "$tb")"

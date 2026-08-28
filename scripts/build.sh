@@ -192,7 +192,17 @@ fi
 if [[ ${VENDOR:-0} == 1 && $RUNTIME != none ]]; then
   VOUT="$OUT/vendor/${DISTRO_ID}-${VERSION}"
   log "vendoring: saving container images into $VOUT"
-  run mkdir -p -- "$VOUT"
+  # out/ is written by the containers as root, so a non-root host cannot mkdir inside it — the
+  # same wrinkle --clean already works around by deleting stamps from inside the builder. Create
+  # the directory as root in a container and hand it to the invoking user, because the two
+  # `docker save` pipelines below run on the HOST and write as that user.
+  if [[ $DRY_RUN == 1 ]]; then
+    printf 'DRY-RUN: %s run --rm -v %s:/out %s mkdir+chown /out/vendor\n' "$RUNTIME" "$OUT" "$BUILDER_TAG"
+  else
+    "$RUNTIME" run --rm -v "$OUT:/out" --entrypoint /bin/sh "$BUILDER_TAG" -c \
+      "mkdir -p '/out/vendor/${DISTRO_ID}-${VERSION}' && chown -R $(id -u):$(id -g) /out/vendor" \
+      || die "could not create $VOUT inside the container"
+  fi
   if [[ $DRY_RUN == 1 ]]; then
     printf 'DRY-RUN: %s save %s | zstd -T0 -q -o %s/builder-image.tar.zst\n' "$RUNTIME" "$BUILDER_TAG" "$VOUT"
     printf 'DRY-RUN: %s save %s | zstd -T0 -q -o %s/stage3-base.tar.zst\n' "$RUNTIME" "$BUILDER_IMAGE" "$VOUT"

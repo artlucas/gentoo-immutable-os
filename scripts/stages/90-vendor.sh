@@ -44,21 +44,33 @@ log "assembling the offline archive in ${V#"$OUT"/}"
 # exact artifact SNAPSHOT_SHA256 pins and that upstream signed, so a restore can be verified
 # against build.conf rather than trusted. Only fall back to re-tarring the unpacked tree.
 TREE_TAR="$V/$(snapshot_tarball_name)"
-DISTDIR_NOW="$(portageq envvar DISTDIR 2>/dev/null || echo /cache/distfiles)"
 if [[ -f $TREE_TAR ]]; then
   log "snapshot tarball already archived"
-elif [[ -f $DISTDIR_NOW/$(snapshot_tarball_name) ]]; then
-  cp -f "$DISTDIR_NOW/$(snapshot_tarball_name)" "$TREE_TAR"
+elif [[ -f $(snapshot_cached_path) ]]; then
+  cp -f "$(snapshot_cached_path)" "$TREE_TAR"
   got="$(sha256_file "$TREE_TAR")"
   [[ -z ${SNAPSHOT_SHA256:-} || $got == "$SNAPSHOT_SHA256" ]] \
     || die "archived snapshot hashes to $got, build.conf pins $SNAPSHOT_SHA256"
   log "archived the upstream snapshot $(snapshot_tarball_name) (sha256 verified)"
-else
-  warn "no upstream snapshot in $DISTDIR_NOW — archiving a re-tarred copy of the unpacked tree,
-  which cannot be checked against SNAPSHOT_SHA256. Re-run stage 10 to fetch it with --keep."
-  TREE_TAR="$V/tree-$SNAPSHOT_DATE.tar.zst"
-  tar -C /var/db/repos -cf - gentoo | zstd -T0 -q -o "$TREE_TAR.tmp"
+elif [[ ${OFFLINE:-0} != 1 ]]; then
+  # Re-fetch rather than re-tar. A tarball of the unpacked tree is a different artifact from the
+  # one upstream signed and SNAPSHOT_SHA256 pins, so archiving it would put an unverifiable copy
+  # in the one place that exists to be verifiable years later. The real file is 47 MB.
+  log "no cached snapshot — fetching $(snapshot_tarball_name) to archive the signed artifact"
+  wget -qO "$TREE_TAR.tmp" \
+    "https://distfiles.gentoo.org/snapshots/$(snapshot_tarball_name)" \
+    || die "could not fetch $(snapshot_tarball_name) to archive.
+  distfiles.gentoo.org keeps roughly nine days of snapshots, so this pin may have aged out —
+  which is the situation this archive exists to prevent, arriving one release too late."
+  got="$(sha256_file "$TREE_TAR.tmp")"
+  [[ $got == "$SNAPSHOT_SHA256" ]] \
+    || die "fetched snapshot hashes to $got, build.conf pins $SNAPSHOT_SHA256"
   mv -f -- "$TREE_TAR.tmp" "$TREE_TAR"
+  cp -f "$TREE_TAR" "$(snapshot_cached_path)" 2>/dev/null || true
+  log "archived $(snapshot_tarball_name) (sha256 verified against the pin)"
+else
+  die "offline build with no cached snapshot and nothing to fetch from — the archive cannot be
+  assembled without $(snapshot_tarball_name)"
 fi
 
 # ---- 2. distfiles: the guarantee ------------------------------------------------------
@@ -82,6 +94,17 @@ fi
 # have made the archive impossible to build for a reason that has nothing to do with archiving.
 #
 # --fetchonly does no building, so the empty root is never populated.
+# The same "/" mirror stages 20 and 30 install. This stage resolves a depgraph, and
+# lib/common.sh is explicit that the mirror "must run in EVERY container that resolves a
+# depgraph" — portage evaluates target packages against the builder's own /etc/portage too, so
+# without it a flag set only for the target reads as unset. Omitting it here failed the fetch on
+#
+#     >=net-firewall/iptables-1.8.13 nftables
+#     # required by app-containers/containers-common -> podman -> distrobox
+#
+# for a flag config/portage/package.use/image has declared all along.
+mirror_target_pkg_config
+
 FETCH_ROOT="$WORK/fetchroot"
 rm -rf -- "$FETCH_ROOT"
 ensure_dir "$FETCH_ROOT"
@@ -139,13 +162,18 @@ if [[ -f $APPS_LOCK && -d $TARGET/var/lib/flatpak && $FLATPAK_PREINSTALL_MODE ==
   if (( ${#FP_REFS[@]} )); then
     log "archiving ${#FP_REFS[@]} flatpak refs at their locked commits"
     ensure_dir "$V/flatpak" "$TARGET/mnt/fp-usb"
+    # /proc, /sys and /dev, same as stage 40 brackets its own chroot work with: ostree reads
+    # /proc for fd handling and flatpak wants a real /dev. Without them create-usb fails in
+    # ways that look like a flatpak bug rather than a missing mount.
+    target_mount "$TARGET"
     mount --bind "$V/flatpak" "$TARGET/mnt/fp-usb"
     # shellcheck disable=SC2064  # $TARGET is intentionally expanded now, not at trap time
-    trap "umount '$TARGET/mnt/fp-usb' 2>/dev/null || true" EXIT
+    trap "umount '$TARGET/mnt/fp-usb' 2>/dev/null || true; target_umount '$TARGET'" EXIT
     chroot_target "$TARGET" \
       "flatpak create-usb --system --destination-repo=. /mnt/fp-usb ${FP_REFS[*]}" \
       || die "flatpak create-usb failed — without it the archive cannot install Flatpaks offline"
-    umount "$TARGET/mnt/fp-usb"; trap - EXIT
+    umount "$TARGET/mnt/fp-usb"
+    target_umount "$TARGET"; trap - EXIT
     rmdir "$TARGET/mnt/fp-usb" 2>/dev/null || true
     log "flatpak repo: $(du -sh "$V/flatpak" | cut -f1)"
   fi
