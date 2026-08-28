@@ -7,7 +7,7 @@ STAGE_NAME=80-release
 # shellcheck source=../lib/common.sh
 source "$SCRIPT_DIR/../lib/common.sh"
 load_config
-ensure_dir "$OUT/logs"; exec > >(tee -a "$OUT/logs/$STAGE_NAME.log") 2>&1
+ensure_dir "$LOG_DIR"; exec > >(tee -a "$LOG_DIR/$STAGE_NAME.log") 2>&1
 
 ROOT_EROFS="$OUT/$ROOT_IMG_NAME"
 [[ -f $ROOT_EROFS ]] || die "root image missing — run stage 60"

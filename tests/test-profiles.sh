@@ -40,7 +40,7 @@ done
 # them. Pull each profile's derived paths OUT of a subshell instead, prefixed, and compare them
 # here where the counters live.
 eval "$( BUILD_PROFILE_OVERRIDE=desktop; load_config
-         declare -p TARGET CONFIG_ROOT STATE_DIR REPORT_DIR UKI_DIR IMG_NAME UKI_NAME \
+         declare -p TARGET CONFIG_ROOT STATE_DIR REPORT_DIR UKI_DIR LOG_DIR IMG_NAME UKI_NAME \
                     ROOT_PARTLABEL PROFILE_LOCK EXPECTED_PACKAGES \
            | sed 's/^declare -[-x]* /D_/; s/^D_/declare -g D_/' )"
 assert_eq "$WORK/target" "$D_TARGET"      "desktop TARGET is unsuffixed"
@@ -54,12 +54,12 @@ assert_eq "$REPO_ROOT/config/portage/expected-packages.desktop.txt" "$D_EXPECTED
     "desktop expected-packages path"
 
 eval "$( BUILD_PROFILE_OVERRIDE=console; load_config
-         declare -p TARGET CONFIG_ROOT STATE_DIR REPORT_DIR UKI_DIR IMG_NAME UKI_NAME \
+         declare -p TARGET CONFIG_ROOT STATE_DIR REPORT_DIR UKI_DIR LOG_DIR IMG_NAME UKI_NAME \
                     ROOT_PARTLABEL PROFILE_LOCK EXPECTED_PACKAGES \
            | sed 's/^declare -[-x]* /C_/; s/^C_/declare -g C_/' )"
 
 # ---- 1. no per-build path may be shared between two profiles -------------------------------
-for v in TARGET CONFIG_ROOT STATE_DIR REPORT_DIR UKI_DIR IMG_NAME PROFILE_LOCK EXPECTED_PACKAGES; do
+for v in TARGET CONFIG_ROOT STATE_DIR REPORT_DIR UKI_DIR LOG_DIR IMG_NAME PROFILE_LOCK EXPECTED_PACKAGES; do
     d="D_$v"; c="C_$v"
     if [[ ${!d} == "${!c}" ]]; then
         _fail "$v is shared between the desktop and console profiles (${!d}) — one build would clobber the other"

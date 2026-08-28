@@ -210,6 +210,7 @@ init_paths() {
   CONFIG_ROOT="$WORK/config$sfx"        # assembled portage --config-root (stage 20)
   UKI_DIR="$OUT/uki$sfx"
   STATE_DIR="$OUT/state$sfx"
+  LOG_DIR="$OUT/logs$sfx"
   REPORT_DIR="$OUT/reports$sfx"
   RELEASE_DIR="$OUT/release/$UPDATE_CHANNEL"
   IMG_NAME="${DISTRO_ID}-${VERSION}${sfx}.img"

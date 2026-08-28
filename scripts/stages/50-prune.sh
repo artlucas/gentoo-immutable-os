@@ -7,7 +7,7 @@ STAGE_NAME=50-prune
 # shellcheck source=../lib/common.sh
 source "$SCRIPT_DIR/../lib/common.sh"
 load_config
-ensure_dir "$OUT/logs"; exec > >(tee -a "$OUT/logs/$STAGE_NAME.log") 2>&1
+ensure_dir "$LOG_DIR"; exec > >(tee -a "$LOG_DIR/$STAGE_NAME.log") 2>&1
 
 is_linux || die "stages run inside the builder container only"
 T="$TARGET"

@@ -10,7 +10,7 @@ STAGE_NAME=70-test
 # shellcheck source=../lib/common.sh
 source "$SCRIPT_DIR/../lib/common.sh"
 load_config
-ensure_dir "$OUT/logs"; exec > >(tee -a "$OUT/logs/$STAGE_NAME.log") 2>&1
+ensure_dir "$LOG_DIR"; exec > >(tee -a "$LOG_DIR/$STAGE_NAME.log") 2>&1
 
 is_linux || die "stages run inside the builder container only"
 IMG="$OUT/$IMG_NAME"
@@ -114,12 +114,12 @@ if [[ -n ${UPDATE_TEST_BASE_IMG:-} ]]; then
   HTTP_PID=$!; trap 'kill $HTTP_PID 2>/dev/null || true' EXIT
   sleep 1
 
-  SLOG="$OUT/logs/update-test-boot1.serial.log"
+  SLOG="$LOG_DIR/update-test-boot1.serial.log"
   log "update test: booting base image, applying update from local server"
   boot_and_watch "$WORKIMG" "$SLOG" --test update --update-url "http://10.0.2.2:8000/$UPDATE_CHANNEL"
   # first marker comes from the OLD version confirming the update applied; the guest
   # then reboots into the new version and reports again on a second invocation:
-  SLOG2="$OUT/logs/update-test-boot2.serial.log"
+  SLOG2="$LOG_DIR/update-test-boot2.serial.log"
   boot_and_watch "$WORKIMG" "$SLOG2" --test update
   assert_report "$SLOG2" "$VERSION"
   log "update E2E passed: base image now runs $VERSION"
@@ -127,12 +127,12 @@ else
   # ---- T1: smoke, two boots ---------------------------------------------------------
   WORKIMG="$WORK/smoke-test.img"; cp --sparse=always -- "$IMG" "$WORKIMG"
 
-  SLOG1="$OUT/logs/smoke-boot1.serial.log"
+  SLOG1="$LOG_DIR/smoke-boot1.serial.log"
   log "smoke: first boot (repart growth, machine-id generation)"
   boot_and_watch "$WORKIMG" "$SLOG1" --test smoke
   assert_report "$SLOG1" "$VERSION"
 
-  SLOG2="$OUT/logs/smoke-boot2.serial.log"
+  SLOG2="$LOG_DIR/smoke-boot2.serial.log"
   log "smoke: second boot (persistence)"
   boot_and_watch "$WORKIMG" "$SLOG2" --test smoke
   assert_report "$SLOG2" "$VERSION"

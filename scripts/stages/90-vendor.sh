@@ -28,7 +28,7 @@ if [[ ${VENDOR:-0} != 1 ]]; then
   exit 0
 fi
 
-ensure_dir "$OUT/logs"; exec > >(tee -a "$OUT/logs/$STAGE_NAME.log") 2>&1
+ensure_dir "$LOG_DIR"; exec > >(tee -a "$LOG_DIR/$STAGE_NAME.log") 2>&1
 is_linux || die "stages run inside the builder container only"
 
 # One DISTDIR for both roots (see the function). Per stage, because each runs in its own

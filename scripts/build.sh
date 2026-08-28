@@ -285,7 +285,7 @@ for s in "${STAGES[@]}"; do
       "${MOUNT_ARGS[@]}" \
       "${ENV_ARGS[@]}" \
       "$BUILDER_TAG" "/repo/scripts/stages/$s"
-  fi || { rc=$?; die "stage $s failed (rc=$rc) — logs in out/logs/, resume with --from $n"; }
+  fi || { rc=$?; die "stage $s failed (rc=$rc) — logs in ${LOG_DIR#"$OUT"/}/, resume with --from $n"; }
 done
 
 log "pipeline complete — artifacts in out/"

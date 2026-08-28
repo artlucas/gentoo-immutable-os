@@ -95,7 +95,7 @@ STAGE_NAME=relock
 # shellcheck source=lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
 load_config
-ensure_dir "$OUT/logs"; exec > >(tee -a "$OUT/logs/relock.log") 2>&1
+ensure_dir "$LOG_DIR"; exec > >(tee -a "$LOG_DIR/relock.log") 2>&1
 tree_assert
 
 # Both come from the host half's -e flags. MODE is asserted rather than defaulted: defaulting it

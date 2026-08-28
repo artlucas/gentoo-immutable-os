@@ -150,7 +150,9 @@ Every stage script:
 - declares `STAGE_INPUTS` (files/vars it depends on); the stamp is
   `out/state/<stage>.done` containing a hash of those inputs — a config change invalidates
   exactly the stages it affects.
-- logs to `out/logs/<stage>.log` (tee'd), prefixes every line with the stage name.
+- logs to `out/logs/<stage>.log` (tee'd), prefixes every line with the stage name. The
+  directory is per build profile — `out/logs-console/` and so on — like every other
+  per-build path ([plan/16](16-installer.md) §3).
 - ends with an explicit **verify block** — cheap assertions that its outputs exist and are
   sane (listed per stage below). A stage that can't verify itself fails loudly.
 
