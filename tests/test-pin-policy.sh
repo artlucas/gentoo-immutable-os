@@ -17,7 +17,9 @@ source "$REPO_ROOT/scripts/lib/common.sh"
 set +e
 load_config
 
-IMAGE_LOCK="$REPO_ROOT/config/portage/lock/image.lock"
+# Per build profile (plan/16 §3.3). The default profile's lock is the one every other
+# assertion here is about; a second profile gets its own file by the same rules.
+IMAGE_LOCK="$REPO_ROOT/config/portage/lock/${BUILD_PROFILE}.lock"
 BUILDER_LOCK="$REPO_ROOT/config/portage/lock/builder.lock"
 APPS_LOCK="$REPO_ROOT/config/flatpak/apps.lock"
 
@@ -74,7 +76,7 @@ done
 # on every relock forever. expected-packages.txt is excluded for the same reason, one step
 # weaker. Both exclusions are asserted because dropping either reintroduces the loop silently.
 CH_SRC="$(sed -n '/^portage_config_hash()/,/^}/p' "$REPO_ROOT/scripts/lib/common.sh")"
-assert_contains "expected-packages.txt" "$CH_SRC" "portage_config_hash excludes expected-packages.txt"
+assert_contains "expected-packages*" "$CH_SRC" "portage_config_hash excludes every expected-packages file"
 assert_contains "config/portage/lock" "$CH_SRC" "portage_config_hash excludes the lock directory"
 # ...and it must not depend on WHERE the repo is checked out. sha256sum prints the filename
 # beside the digest, so hashing absolute paths made the host and the container compute two
@@ -117,7 +119,7 @@ else _pass; fi
 # mismatch offline instead of at stage 50 after a full build. Both sides strip versions with
 # the same expression, so they cannot disagree about where a version starts.
 notlocked="$(LC_ALL=C comm -23 \
-    <(grep -v '^#' "$REPO_ROOT/config/portage/expected-packages.txt" | sed '/^$/d' | LC_ALL=C sort -u) \
+    <(grep -v '^#' "$REPO_ROOT/config/portage/expected-packages.${BUILD_PROFILE}.txt" | sed '/^$/d' | LC_ALL=C sort -u) \
     <(lock_atoms "$IMAGE_LOCK" | sed -E 's/^=//; s/-[0-9][^\/]*$//' | LC_ALL=C sort -u) || true)"
 if [[ -n $notlocked ]]; then
     _fail "expected-packages.txt names packages absent from image.lock: $(tr '\n' ' ' <<< "$notlocked")"
@@ -203,7 +205,7 @@ assert_true "stage 90 archives the flatpak objects" grep -q 'create-usb' "$S90"
 # image.lock instead, which is both always present and the authoritative record of the release.
 RELOCK="$REPO_ROOT/scripts/relock.sh"
 SEC_BLOCK="$(sed -n '/MODE == security/,/^fi$/p' "$RELOCK")"
-assert_true "relock.sh detects GLSAs from the lock" grep -q 'glsa_vdb "\$IMAGE_LOCK"' "$RELOCK"
+assert_true "relock.sh detects GLSAs from the lock" grep -q 'glsa_vdb "\$PROFILE_LOCK"' "$RELOCK"
 assert_false "relock.sh never points glsa-check at the target root" \
     grep -q 'ROOT="\$TARGET"' <(printf '%s\n' "$SEC_BLOCK")
 assert_true "…and reads SLOT from the tree, which GLSA atoms match on" \

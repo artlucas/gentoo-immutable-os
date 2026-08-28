@@ -46,7 +46,7 @@ immos/
 ├── scripts/
 │   ├── build.sh                # HOST entrypoint: builds builder image, runs container,
 │   │                           #   dispatches stages. Flags: --from N, --only N, --clean,
-│   │                           #   --console-only (M1 image), --version X.Y.Z
+│   │                           #   --profile NAME, --list-profiles, --version X.Y.Z
 │   ├── enter.sh                # debug shell inside the builder container
 │   ├── lib/common.sh           # logging, die(), stamp helpers, chroot helper, conf loader
 │   └── stages/                 # run INSIDE the container, in order
@@ -193,7 +193,9 @@ emerge --root="$ROOT" --config-root=/repo/config/portage \
   earlier run built into `/cache/binpkgs`. A `portageq` guard ahead of it fails the stage if
   the target config ever grows `getbinpkg`/`PORTAGE_BINHOST` again. The builder-root
   `@buildhost` install runs first, as its own emerge, *with* `--getbinpkg`.
-- `--console-only` flag (M1) emerges only `@base @hardware`.
+- Which sets are emerged comes from the **build profile** ([plan/16](16-installer.md) §3):
+  `--profile console` emerges only `@base @hardware`, `--profile desktop` (the default) adds
+  `@desktop`. The old `--console-only` boolean forwards to `--profile console`.
 **Verify:** `$ROOT/usr/bin/gcc` absent; `$ROOT/lib/modules/*` exists; systemd, plasmalogin,
 plasmashell, kwin_wayland, flatpak
 binaries present (full build); VDB at `$ROOT/var/db/pkg` present (pruned later, needed by 40/50).

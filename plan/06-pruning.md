@@ -47,8 +47,11 @@ Order matters — audit artifacts are saved *before* deletion:
    `<target>/usr/share/${DISTRO_ID}/`):
    - `packages.txt` — every installed package + version + SIZE from the VDB.
    - `size-report.txt` — top-50 packages by installed size (drives future trimming).
-   - Diff `packages.txt` against committed `config/portage/expected-packages.txt`
-     (**fail build on unexplained additions** — the dependency-audit gate from 03).
+   - Diff `packages.txt` against committed `config/portage/expected-packages.<profile>.txt`
+     (**fail build on unexplained additions** — the dependency-audit gate from 03). The file is
+     per build profile ([plan/16](16-installer.md) §3.3), and that is what makes "the installer
+     and its GRUB/os-prober/squashfs tail never reach an installed system" an assertion that
+     breaks the build rather than a convention anyone has to remember.
 2. **Delete Portage artifacts:** `/var/db/pkg` (VDB), `/var/db/repos`, `/var/cache/{distfiles,binpkgs,edb}`,
    `/etc/portage`, `/usr/share/portage`, any `/usr/lib/python*/site-packages/portage*`.
 3. **Delete runtime-useless residue:** `*.la` files; static `*.a` that escaped

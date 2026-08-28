@@ -77,16 +77,14 @@ fi
 # full pre-prune closure at exact versions — every transitive dependency named — so the
 # resolver has no freedom left and two runs cannot pick different versions. The loose sets are
 # still what a relock re-resolves from; they are just not what a locked build emerges.
-IMAGE_LOCK="$LOCK_DIR/image.lock"
 LOCKED=0
 if [[ -f $CONFIG_ROOT/etc/portage/sets/locked-image ]]; then
   LOCKED=1
   SETS=(@locked-image)
   log "emerging into $TARGET: @locked-image ($(wc -l < "$CONFIG_ROOT/etc/portage/sets/locked-image") pinned atoms)"
 else
-  SETS=(@base @hardware)
-  [[ ${CONSOLE_ONLY:-0} == 1 ]] || SETS+=(@desktop)
-  log "emerging into $TARGET: ${SETS[*]} (console-only=${CONSOLE_ONLY:-0}) — UNLOCKED"
+  mapfile -t SETS < <(profile_emerge_sets)
+  log "emerging into $TARGET: ${SETS[*]} (profile $BUILD_PROFILE) — UNLOCKED"
 fi
 
 ensure_dir "$TARGET"
@@ -144,25 +142,26 @@ log "target has $(wc -l < "$REPORT_DIR/target-packages-cpv.txt") packages"
 # change that should REMOVE a package, because --changed-use upgrades and never removes. So a
 # package sitting in the VDB that the lock does not name is exactly the case that used to be
 # caught there, and it is caught here instead.
-vdb_atoms "$TARGET" | lock_write "$REPORT_DIR/image.lock.generated" \
-  "image.lock — the pre-prune --root=\$TARGET closure, exactly as stage 30 resolves it"
+GEN_LOCK="$REPORT_DIR/${BUILD_PROFILE}.lock.generated"
+vdb_atoms "$TARGET" | lock_write "$GEN_LOCK" \
+  "${BUILD_PROFILE}.lock — the pre-prune --root=\$TARGET closure, exactly as stage 30 resolves it"
 if [[ $LOCKED == 1 ]]; then
-  if lock_diff "$IMAGE_LOCK" "$REPORT_DIR/image.lock.generated" > "$REPORT_DIR/image-lock.diff"; then
+  if lock_diff "$PROFILE_LOCK" "$GEN_LOCK" > "$REPORT_DIR/image-lock.diff"; then
     cat "$REPORT_DIR/image-lock.diff"
   else
     cat "$REPORT_DIR/image-lock.diff"
-    die "the emerged target does not match config/portage/lock/image.lock.
+    die "the emerged target does not match config/portage/lock/${BUILD_PROFILE}.lock.
   REMOVED entries mean the target still carries a package the lock dropped: --changed-use
   cannot remove packages from an existing root, so wipe it and re-run stage 30:
       ${RUNTIME:-docker} volume rm -f ${DISTRO_ID}-work
   ADDED or CHANGED entries mean the resolver picked something the lock did not name, which
-  should be impossible with exact atoms — read out/reports/image-lock.diff before doing
-  anything else. If the change is intended:  scripts/relock.sh --all"
+  should be impossible with exact atoms — read ${REPORT_DIR#"$OUT"/}/image-lock.diff before
+  doing anything else. If the change is intended:  scripts/relock.sh --all --profile $BUILD_PROFILE"
   fi
 else
-  die "no config/portage/lock/image.lock yet: review $REPORT_DIR/image.lock.generated,
-  commit it as config/portage/lock/image.lock, then re-run --from 20 to build against it
-  (same flow as expected-packages.txt — see plan/15)"
+  die "no config/portage/lock/${BUILD_PROFILE}.lock yet: review ${GEN_LOCK#"$OUT"/},
+  commit it as config/portage/lock/${BUILD_PROFILE}.lock, then re-run --from 20 to build
+  against it (same flow as expected-packages — see plan/15 and plan/16 §3.3)"
 fi
 
 # ---- verify -------------------------------------------------------------------
@@ -186,7 +185,7 @@ done
 have_exe() { local n=$1; [[ -x $TARGET/usr/bin/$n || -x $TARGET/usr/sbin/$n ]]; }
 have_exe systemctl || die "verify: systemd missing from target"
 have_exe flatpak   || die "verify: flatpak missing from target"
-if [[ ${CONSOLE_ONLY:-0} != 1 ]]; then
+if profile_has_set desktop; then
   have_exe plasmalogin  || die "verify: plasmalogin missing from desktop target (kde-plasma/plasma-login-manager)"
   have_exe plasmashell  || die "verify: plasmashell missing from desktop target"
   # kwin is load-bearing twice over: it is the session compositor AND the compositor Plasma

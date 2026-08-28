@@ -15,6 +15,10 @@
 #   ./scripts/relock.sh --all               # re-resolve everything against the current tree
 #   ./scripts/relock.sh --builder           # the builder's own toolchain
 #   ./scripts/relock.sh --flatpak           # the preinstalled Flatpaks
+#   ./scripts/relock.sh --all --profile console   # a profile other than the default
+#
+# Locks are PER BUILD PROFILE (plan/16 §3.3): --profile picks which config/portage/lock/*.lock
+# this run re-resolves. --builder and --flatpak are profile-independent and ignore it.
 #
 # Nothing is committed for you: like expected-packages.txt, this writes a generated file and a
 # diff and stops. Review it, then copy it into config/portage/lock/.
@@ -48,6 +52,7 @@ if [[ ${RELOCK_IN_CONTAINER:-0} != 1 ]]; then
       --all)      MODE=all; shift ;;
       --builder)  MODE=builder; shift ;;
       --flatpak)  MODE=flatpak; shift ;;
+      --profile)  export BUILD_PROFILE_OVERRIDE="$2"; shift 2 ;;
       --runtime)  RUNTIME="$2"; shift 2 ;;
       -h|--help)  usage; exit 0 ;;
       -*)         echo "unknown argument: $1 (see --help)" >&2; exit 1 ;;
@@ -79,6 +84,7 @@ if [[ ${RELOCK_IN_CONTAINER:-0} != 1 ]]; then
     -v "$OUT":/out \
     -e RELOCK_IN_CONTAINER=1 -e RELOCK=1 \
     -e "MODE=$MODE" -e "ATOMS=${ATOMS[*]-}" \
+    -e "BUILD_PROFILE_OVERRIDE=$BUILD_PROFILE" \
     "${DISTRO_ID}-builder" /repo/scripts/relock.sh
 fi
 
@@ -99,8 +105,10 @@ MODE="${MODE:?relock.sh: MODE is unset — the host half passes it with -e MODE=
 read -r -a ATOMS <<< "${ATOMS:-}"
 log "mode: $MODE${ATOMS[0]+ (${ATOMS[*]})}"
 
-IMAGE_LOCK="$LOCK_DIR/image.lock"
+: "${PROFILE_LOCK:?init_paths did not set PROFILE_LOCK}"
+GEN_LOCK="$REPORT_DIR/${BUILD_PROFILE}.lock.generated"
 PC="$CONFIG_ROOT/etc/portage"
+log "profile: $BUILD_PROFILE (${PROFILE_LOCK#"$REPO"/})"
 
 # ---- --flatpak: read the deployed commits back out of the target ------------------------
 # No emerge involved. The refs are whatever stage 40 installed; this records where they landed.
@@ -184,7 +192,7 @@ glsa_vdb() {
 # question a patch release asks. The package names come from `-l`, whose one-line-per-GLSA
 # format ("<id> [U] <title> ( cat/pkg  cat/pkg )") is far steadier to parse than -p's prose.
 #
-# Detection runs against a VDB synthesized from image.lock, NOT against $TARGET. Two reasons,
+# Detection runs against a VDB synthesized from <profile>.lock, NOT against $TARGET. Two reasons,
 # the first of which is a bug this line used to have:
 #
 #   1. glsa-check answers "This system is not affected by any of the listed GLSAs", exit 0,
@@ -198,7 +206,7 @@ glsa_vdb() {
 #      past release against any tree, with no rebuild and no target root.
 if [[ $MODE == security ]]; then
   GLSA_ROOT="$WORK/.glsa-root"
-  glsa_vdb "$IMAGE_LOCK" "$GLSA_ROOT"
+  glsa_vdb "$PROFILE_LOCK" "$GLSA_ROOT"
   mapfile -t GLSA_IDS < <(ROOT="$GLSA_ROOT" PORTAGE_CONFIGROOT="$CONFIG_ROOT" \
     glsa-check -n -q -t all 2>/dev/null | grep -E '^[0-9]{6}-[0-9]+$' || true)
   if (( ${#GLSA_IDS[@]} == 0 )); then
@@ -225,7 +233,7 @@ fi
 ensure_dir "$REPORT_DIR"
 RELOCK_SET="$PC/sets/relock-target"
 if [[ $MODE == all ]]; then
-  SETS=(@base @hardware); [[ ${CONSOLE_ONLY:-0} == 1 ]] || SETS+=(@desktop)
+  mapfile -t SETS < <(profile_emerge_sets)
   log "re-resolving EVERYTHING against tree $SNAPSHOT_DATE — expect a large diff"
 else
   [[ -f $PC/sets/locked-image ]] || die "no locked-image set — run:  scripts/build.sh --only 20"
@@ -267,7 +275,7 @@ VDB_N=$( { vdb_atoms "$TARGET" || true; } | wc -l )
 (( VDB_N > 0 )) || die "$TARGET holds no installed packages — stage 50 deletes the VDB at the end
   of a build, so a relock needs the target root rebuilt first:
       scripts/build.sh --only 20 && scripts/build.sh --only 30
-  (detection above needs none of this; it reads config/portage/lock/image.lock.)"
+  (detection above needs none of this; it reads config/portage/lock/${BUILD_PROFILE}.lock.)"
 log "relocking against $VDB_N packages installed in $TARGET"
 
 # Clear the target root's set memberships first. Stage 30 records @locked-image in
@@ -294,13 +302,13 @@ log "emerging ${SETS[*]} into $TARGET"
 ROOT="$TARGET" PORTAGE_CONFIGROOT="$CONFIG_ROOT" \
   emerge --verbose --usepkg --with-bdeps=n --changed-use --update --oneshot --quiet-build=y "${SETS[@]}"
 
-vdb_atoms "$TARGET" | lock_write "$REPORT_DIR/image.lock.generated" \
-  "image.lock — the pre-prune --root=\$TARGET closure, exactly as stage 30 resolves it"
-lock_diff "$IMAGE_LOCK" "$REPORT_DIR/image.lock.generated" | tee "$REPORT_DIR/lock.diff" || true
+vdb_atoms "$TARGET" | lock_write "$GEN_LOCK" \
+  "${BUILD_PROFILE}.lock — the pre-prune --root=\$TARGET closure, exactly as stage 30 resolves it"
+lock_diff "$PROFILE_LOCK" "$GEN_LOCK" | tee "$REPORT_DIR/lock.diff" || true
 
 log ""
-log "review out/reports/lock.diff, then:"
-log "    cp out/reports/image.lock.generated config/portage/lock/image.lock"
+log "review ${REPORT_DIR#"$OUT"/}/lock.diff, then:"
+log "    cp ${GEN_LOCK#"$OUT"/} config/portage/lock/${BUILD_PROFILE}.lock"
 log ""
 log "and bump VERSION in config/build.conf before building. plan/05 requires it to increase:"
 log "the GPT slot partlabel is derived from it, so a relocked image reusing a version would"

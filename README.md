@@ -34,7 +34,8 @@ Any host with Docker/Podman and Bash — including Docker Desktop (WSL2) on Wind
 
 ```sh
 bash scripts/build.sh                 # full pipeline → out/immos-<ver>.img(.zst)
-bash scripts/build.sh --console-only  # M1 milestone image (no desktop)
+bash scripts/build.sh --profile console   # a different build profile (default: desktop)
+bash scripts/build.sh --list-profiles     # what profiles exist
 bash scripts/build.sh --dry-run       # show what would run
 bash scripts/build.sh --from 40       # resume after a failure
 bash scripts/enter.sh                 # debug shell in the builder container

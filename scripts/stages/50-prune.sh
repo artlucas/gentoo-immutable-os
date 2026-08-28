@@ -80,16 +80,21 @@ ensure_dir "$T/usr/share/$DISTRO_ID"
 cp "$REPORT_DIR/packages-cpv.txt" "$T/usr/share/$DISTRO_ID/manifest.txt"
 
 # dependency-audit gate: unexplained new runtime deps fail the build (plan/03)
-EXPECTED="$REPO/config/portage/expected-packages.txt"
+# Per-profile (plan/16 §3.3). This file is the hard guarantee that one profile's packages
+# cannot appear in another's image: stage 50 fails the build on any unexplained addition, so
+# "the installer never reaches an installed system" is an assertion, not a convention.
+EXPECTED="${EXPECTED_PACKAGES:?init_paths did not set EXPECTED_PACKAGES}"
 if [[ -f $EXPECTED ]]; then
   if ! diff -u <(grep -v '^#' "$EXPECTED" | sed '/^$/d' | sort -u) "$REPORT_DIR/packages.txt" > "$REPORT_DIR/packages.diff"; then
     cat "$REPORT_DIR/packages.diff"
-    die "package set drifted from config/portage/expected-packages.txt — review the diff; update the file deliberately if the change is intended"
+    die "package set drifted from config/portage/expected-packages.${BUILD_PROFILE}.txt — review the diff; update the file deliberately if the change is intended"
   fi
-  log "package set matches expected-packages.txt"
+  log "package set matches expected-packages.${BUILD_PROFILE}.txt"
 else
   cp "$REPORT_DIR/packages.txt" "$REPORT_DIR/expected-packages.txt.generated"
-  die "no expected-packages.txt yet (first build): review $REPORT_DIR/expected-packages.txt.generated, commit it as config/portage/expected-packages.txt, then re-run --from 50"
+  die "no expected-packages.${BUILD_PROFILE}.txt yet (first build of this profile): review
+  $REPORT_DIR/expected-packages.txt.generated, commit it as
+  config/portage/expected-packages.${BUILD_PROFILE}.txt, then re-run --from 50"
 fi
 
 # NB: no -x here. /var is a separate mount inside the builder, so "du -x" silently skipped it
@@ -500,7 +505,7 @@ done
 # The desktop the user actually gets. Every one of these is invisible to stage 70 — it reads a
 # serial port, so an image pruned down to a black screen still reports green — and every one
 # fails differently: no shell, no file manager, no session, no way to log in.
-if [[ ${CONSOLE_ONLY:-0} != 1 ]]; then
+if profile_has_set desktop; then
   [[ -x $T/usr/bin/konsole ]]             || violation "konsole missing after prune"
   [[ -x $T/usr/bin/dolphin ]]             || violation "dolphin missing after prune"
   [[ -x $T/usr/bin/plasmashell ]]         || violation "plasmashell missing after prune"

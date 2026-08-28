@@ -68,7 +68,7 @@ assert_report() {  # LOG expected_version
   [[ $(field "$slog" resolved) == yes ]] \
     || die "systemd-resolved is not active in the guest (resolved=$(field "$slog" resolved)) — /etc/nsswitch.conf routes host lookups through it"
   [[ $(field "$slog" dns) == yes ]] || warn "guest could not resolve a public name (dns=no) — network-dependent, not failing the test"
-  if [[ ${CONSOLE_ONLY:-0} != 1 ]]; then
+  if profile_has_set desktop; then
     [[ $(field "$slog" graphical) == yes ]] || die "graphical.target not reached in guest"
     # Sound. Asserted, not merely reported: unlike dns above, nothing in it depends on the
     # build host — the guest has no audio device either way, and this measures whether a client

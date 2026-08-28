@@ -30,17 +30,88 @@ require_cmds() {
 
 is_linux() { [[ $(uname -s) == Linux ]]; }
 
+# ---- build profiles (plan/16) -------------------------------------------------
+# A build profile selects which package SETS go into the image, plus any build.conf knobs this
+# variant overrides. It is a DIFFERENT THING from build.conf's PROFILE, which is the Gentoo
+# portage profile (default/linux/amd64/23.0/desktop/plasma/systemd); both apply to every build.
+# config/profiles/README.md has the table.
+DEFAULT_BUILD_PROFILE="desktop"
+
+# profile_list — the names of every profile definition on disk, one per line.
+profile_list() {
+  local p
+  for p in "$REPO"/config/profiles/*.conf; do
+    [[ -e $p ]] || continue
+    basename -- "$p" .conf
+  done
+}
+
+# load_profile — source config/profiles/$BUILD_PROFILE.conf. Dies listing the available names
+# rather than with a bare "not found": a typo in --profile is the most likely way to reach here.
+load_profile() {
+  [[ ${BUILD_PROFILE:-} =~ ^[a-z][a-z0-9-]*$ ]] \
+    || die "BUILD_PROFILE must match [a-z][a-z0-9-]* (got: '${BUILD_PROFILE:-}')"
+  local pf="$REPO/config/profiles/$BUILD_PROFILE.conf"
+  [[ -f $pf ]] || die "no such build profile: '$BUILD_PROFILE'
+  available: $(profile_list | tr '\n' ' ')"
+  # shellcheck source=/dev/null
+  source "$pf"
+}
+
+# profile_suffix — "" for the default profile, "-<name>" for any other.
+#
+# The default keeps every path it has today, deliberately: an existing work volume, out/ tree and
+# resume state stay valid across the introduction of profiles, so nobody pays a multi-hour
+# rebuild for this change. Every other profile is suffixed, so two profiles can never share a
+# target rootfs, a stage stamp or an output image — which would be a silent wrong-image bug
+# rather than an error.
+profile_suffix() {
+  if [[ ${BUILD_PROFILE:-$DEFAULT_BUILD_PROFILE} == "$DEFAULT_BUILD_PROFILE" ]]; then
+    printf ''
+  else
+    printf -- '-%s' "$BUILD_PROFILE"
+  fi
+}
+
+# profile_has_set NAME — is NAME among this profile's sets?
+# This replaces the CONSOLE_ONLY boolean, and reads better than it did: every guard that used it
+# actually meant "does this image have a desktop", which is a question about set membership.
+profile_has_set() {
+  local want=${1:?profile_has_set: set name required} s
+  # shellcheck disable=SC2086  # deliberate splitting: PROFILE_SETS is a space-separated list
+  for s in ${PROFILE_SETS:-}; do
+    [[ $s == "$want" ]] && return 0
+  done
+  return 1
+}
+
+# profile_emerge_sets — this profile's sets as @-prefixed emerge arguments, one per line.
+profile_emerge_sets() {
+  local s
+  # shellcheck disable=SC2086
+  for s in ${PROFILE_SETS:-}; do printf '@%s\n' "$s"; done
+}
+
 # ---- config ------------------------------------------------------------------
 load_config() {
   local f="${1:-$REPO/config/build.conf}"
   [[ -f $f ]] || die "config not found: $f"
   # shellcheck source=/dev/null
   source "$f"
+  # The build profile (plan/16). Sourced AFTER build.conf so a profile can override its knobs,
+  # and BEFORE the command-line overrides below so those still win over both.
+  #
+  # BUILD_PROFILE is deliberately NOT a build.conf key. Every byte of that file is hashed into
+  # portage_config_hash(), which each lock header records and stage 20 asserts against — so
+  # naming a per-run choice there would invalidate every committed lock the first time anyone
+  # used a second profile. config/profiles/README.md says the same thing from the other side.
+  if [[ -n ${BUILD_PROFILE_OVERRIDE:-} ]]; then BUILD_PROFILE="$BUILD_PROFILE_OVERRIDE"; fi
+  : "${BUILD_PROFILE:=$DEFAULT_BUILD_PROFILE}"
+  load_profile
   # host-provided overrides (build.sh flags travel as env vars into the container)
   [[ -n ${VERSION_OVERRIDE:-}       ]] && VERSION="$VERSION_OVERRIDE"
   [[ -n ${UPDATE_URL_OVERRIDE:-}    ]] && UPDATE_URL="$UPDATE_URL_OVERRIDE"
   [[ -n ${UPDATE_VERIFY_OVERRIDE:-} ]] && UPDATE_VERIFY="$UPDATE_VERIFY_OVERRIDE"
-  : "${CONSOLE_ONLY:=0}"
   validate_config
   init_paths
 }
@@ -103,19 +174,50 @@ validate_config() {
   # dropped it, so a truncated or absent value is a pin that cannot be checked.
   [[ $SNAPSHOT_SHA256 =~ ^[0-9a-f]{64}$ ]] \
     || die "build.conf: SNAPSHOT_SHA256 must be a full 64-character sha256 (got: $SNAPSHOT_SHA256)"
+
+  # ---- the build profile (plan/16) --------------------------------------------------------
+  # Validated here rather than in load_profile so a caller that hand-sets these (the tests do)
+  # is checked exactly the way a file on disk is.
+  local pv
+  for pv in BUILD_PROFILE PROFILE_DESC PROFILE_ROLE PROFILE_SETS; do
+    [[ -n ${!pv:-} ]] \
+      || die "profile ${BUILD_PROFILE:-<unset>}: $pv is required (config/profiles/${BUILD_PROFILE:-<unset>}.conf)"
+  done
+  [[ $PROFILE_ROLE =~ ^(target|live)$ ]] \
+    || die "profile $BUILD_PROFILE: PROFILE_ROLE must be target|live (got: $PROFILE_ROLE)"
+  local ps
+  # shellcheck disable=SC2086  # deliberate splitting: PROFILE_SETS is a space-separated list
+  for ps in $PROFILE_SETS; do
+    [[ $ps =~ ^[a-z][a-z0-9-]*$ ]] \
+      || die "profile $BUILD_PROFILE: malformed set name '$ps' in PROFILE_SETS"
+    [[ -f $REPO/config/portage/sets/$ps ]] \
+      || die "profile $BUILD_PROFILE: PROFILE_SETS names '$ps', but config/portage/sets/$ps does not exist"
+  done
+  # @base carries systemd, the shell and the update CLI. A profile without it does not boot, and
+  # the failure would surface as a mysteriously small image rather than as a config error.
+  profile_has_set base \
+    || die "profile $BUILD_PROFILE: PROFILE_SETS must include 'base' — nothing boots without it"
 }
 
 init_paths() {
-  TARGET="$WORK/target"
-  CONFIG_ROOT="$WORK/config"            # assembled portage --config-root (stage 20)
-  UKI_DIR="$OUT/uki"
-  STATE_DIR="$OUT/state"
-  REPORT_DIR="$OUT/reports"
+  # Everything that is per-BUILD is profile-scoped; everything the INSTALLED SYSTEM can see is
+  # not. That split is load-bearing (plan/16 §3.4): a system installed from one profile's
+  # payload must be indistinguishable from one dd'd from another profile's image, or
+  # systemd-sysupdate stops recognising it. So UKI_NAME and ROOT_PARTLABEL never carry the
+  # profile, and the paths around them always do.
+  local sfx; sfx="$(profile_suffix)"
+  TARGET="$WORK/target$sfx"
+  CONFIG_ROOT="$WORK/config$sfx"        # assembled portage --config-root (stage 20)
+  UKI_DIR="$OUT/uki$sfx"
+  STATE_DIR="$OUT/state$sfx"
+  REPORT_DIR="$OUT/reports$sfx"
   RELEASE_DIR="$OUT/release/$UPDATE_CHANNEL"
-  IMG_NAME="${DISTRO_ID}-${VERSION}.img"
-  UKI_NAME="${DISTRO_ID}_${VERSION}.efi"
-  ROOT_IMG_NAME="${DISTRO_ID}_${VERSION}.root.erofs"
-  ROOT_PARTLABEL="root_${VERSION}"
+  IMG_NAME="${DISTRO_ID}-${VERSION}${sfx}.img"
+  UKI_NAME="${DISTRO_ID}_${VERSION}.efi"              # identity — never profile-suffixed
+  ROOT_IMG_NAME="${DISTRO_ID}_${VERSION}${sfx}.root.erofs"
+  ROOT_PARTLABEL="root_${VERSION}"                    # identity — never profile-suffixed
+  PROFILE_LOCK="$LOCK_DIR/${BUILD_PROFILE}.lock"
+  EXPECTED_PACKAGES="$REPO/config/portage/expected-packages.${BUILD_PROFILE}.txt"
 }
 
 # ---- versions -----------------------------------------------------------------
@@ -304,7 +406,7 @@ portage_config_hash() {
   (
     cd "$REPO" || return 1
     {
-      find config/portage -type f ! -name 'expected-packages.txt' \
+      find config/portage -type f ! -name 'expected-packages*' \
            ! -path 'config/portage/lock/*' -print0 \
         | LC_ALL=C sort -z | xargs -0 -r sha256sum
       sha256sum config/build.conf
@@ -566,12 +668,15 @@ lock_write() {
     printf '# SNAPSHOT_DATE: %s\n'      "$SNAPSHOT_DATE"
     printf '# PROFILE: %s\n'            "$PROFILE"
     printf '# PORTAGE_CONFIG_HASH: %s\n' "$(portage_config_hash)"
-    # These four change the closure through filter_set_file, so a lock generated under one
-    # setting is simply wrong for another. Recorded so that is visible rather than inferred.
+    # These change the closure, so a lock generated under one setting is simply wrong for
+    # another. Recorded so that is visible rather than inferred. The first three act through
+    # filter_set_file; the last two ARE the closure's input — PROFILE_SETS names the sets that
+    # were emerged, and BUILD_PROFILE names the file they came from.
     printf '# INCLUDE_CJK_FONTS: %s\n'  "${INCLUDE_CJK_FONTS:-1}"
     printf '# INCLUDE_PRINTING: %s\n'   "${INCLUDE_PRINTING:-1}"
     printf '# INCLUDE_DISTROBOX: %s\n'  "${INCLUDE_DISTROBOX:-1}"
-    printf '# CONSOLE_ONLY: %s\n'       "${CONSOLE_ONLY:-0}"
+    printf '# BUILD_PROFILE: %s\n'      "${BUILD_PROFILE:-$DEFAULT_BUILD_PROFILE}"
+    printf '# PROFILE_SETS: %s\n'       "${PROFILE_SETS:-}"
     printf '#\n'
     LC_ALL=C sort -u
   } > "$tmp"

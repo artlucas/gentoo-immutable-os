@@ -113,8 +113,8 @@ LIVE_USER_GROUPS="wheel,video"
 if chroot_target "$TARGET" "getent group pipewire" >/dev/null 2>&1; then
   LIVE_USER_GROUPS="$LIVE_USER_GROUPS,pipewire"
 else
-  [[ ${CONSOLE_ONLY:-0} == 1 ]] \
-    || die "no 'pipewire' group in a desktop image — acct-group/pipewire is missing, so the
+  profile_has_set desktop \
+    && die "no 'pipewire' group in a desktop image — acct-group/pipewire is missing, so the
   RT limits in /etc/security/limits.d/25-pw-rlimits.conf could never apply to anyone"
 fi
 if ! chroot_target "$TARGET" "id -u '$LIVE_USER'" >/dev/null 2>&1; then
@@ -201,7 +201,7 @@ if [[ -f $TARGET/usr/lib/systemd/user/pipewire-pulse.socket ]]; then
   log "enabling sound server user units: ${PW_USER_UNITS[*]}"
   chroot_target "$TARGET" "systemctl --global enable ${PW_USER_UNITS[*]}" \
     || die "could not enable the PipeWire user units — the image would boot without sound"
-elif [[ ${CONSOLE_ONLY:-0} != 1 ]]; then
+elif profile_has_set desktop; then
   die "no pipewire-pulse.socket in a desktop image — is media-video/pipewire[sound-server] installed?"
 fi
 
@@ -431,8 +431,8 @@ log "boot splash: $(basename -- "$SPLASH_BIN") $(stat -c%s "$SPLASH_BIN") bytes,
 # and its udev rule come back out of that image entirely.
 SPLASH_UNIT="$TARGET/usr/lib/systemd/system/$DISTRO_ID-splash.service"
 SPLASH_RULE="$TARGET/usr/lib/udev/rules.d/70-$DISTRO_ID-splash.rules"
-if [[ ${CONSOLE_ONLY:-0} == 1 ]]; then
-  log "console-only image: removing the KMS splash unit and udev rule (agetty owns the screen)"
+if ! profile_has_set desktop; then
+  log "no-desktop profile ($BUILD_PROFILE): removing the KMS splash unit and udev rule (agetty owns the screen)"
   rm -f -- "$SPLASH_UNIT" "$SPLASH_RULE"
 else
   [[ -f $SPLASH_UNIT ]] \
@@ -893,7 +893,7 @@ fi
 # The desktop session hand-off. Each of these is a failure that would otherwise surface only as
 # a black screen or a console login on a machine that is supposed to autologin — stage 70 reads
 # a serial port and would report green for all three.
-if [[ ${CONSOLE_ONLY:-0} != 1 ]]; then
+if profile_has_set desktop; then
   # /etc/plasmalogin.conf.d/10-autologin.conf says Session=plasma. That names a file, and the
   # file comes from kde-plasma/plasma-login-sessions[wayland] — not from the display manager
   # and not from plasma-workspace. Without it the greeter has nothing to log in TO.

@@ -47,38 +47,46 @@ cp "$REPO"/config/portage/package.mask/*            "$PC/package.mask/"
 # wrong image before.
 portage_config_hash > "$CONFIG_ROOT/.inputs-hash"
 
-# sets, with cjk/printing filtering per build.conf
-for s in base hardware desktop; do
+# sets, with cjk/printing filtering per build.conf. WHICH sets comes from the build profile
+# (plan/16) — a console image has no @desktop, so copying one in would only invite a later
+# emerge to reference a set this image was never meant to have.
+# shellcheck disable=SC2086  # deliberate splitting: PROFILE_SETS is a space-separated list
+for s in $PROFILE_SETS; do
   filter_set_file "$REPO/config/portage/sets/$s" "$PC/sets/$s"
 done
 
 # ---- the version lock (plan/15) ------------------------------------------------------
-# image.lock is the full pre-prune closure at exact versions, so stage 30 can emerge it as a
-# set and the resolver has no freedom left. The loose sets above stay: they are the request
+# <profile>.lock is the full pre-prune closure at exact versions, so stage 30 can emerge it as
+# a set and the resolver has no freedom left. The loose sets above stay: they are the request
 # that a relock re-resolves from, and stage 30 falls back to them when no lock exists.
-IMAGE_LOCK="$LOCK_DIR/image.lock"
-if [[ -f $IMAGE_LOCK ]]; then
+#
+# One lock PER PROFILE (plan/16 §3.3). It used to be a single image.lock whose header recorded
+# CONSOLE_ONLY, and stage 20 died when that disagreed with the build — so a console build
+# demanded a relock, and relocking back demanded another. Two profiles could not both be locked
+# at once, which profiles make untenable.
+: "${PROFILE_LOCK:?init_paths did not set PROFILE_LOCK}"
+if [[ -f $PROFILE_LOCK ]]; then
   # 1. Does the lock still describe THIS config? The lock cannot be part of
   #    portage_config_hash (that is a cycle — see the note on the function), so the hash it was
   #    generated under is recorded in its header and asserted one-way here. This is what
   #    catches "package.use changed and the lock did not", which would otherwise build an image
   #    whose flags and whose versions were resolved against different configs.
   want_hash="$(portage_config_hash)"
-  have_hash="$(lock_header_value "$IMAGE_LOCK" PORTAGE_CONFIG_HASH)"
-  [[ $have_hash == "$want_hash" || ${RELOCK:-0} == 1 ]] || die "config/portage or build.conf changed since image.lock
+  have_hash="$(lock_header_value "$PROFILE_LOCK" PORTAGE_CONFIG_HASH)"
+  [[ $have_hash == "$want_hash" || ${RELOCK:-0} == 1 ]] || die "config/portage or build.conf changed since ${BUILD_PROFILE}.lock
   was generated (lock says ${have_hash:-<none>}, config hashes to $want_hash).
   The lock is resolved against the OLD config, so this build would emerge one set of versions
-  with a different set of flags. Re-resolve it:  scripts/relock.sh --all"
+  with a different set of flags. Re-resolve it:  scripts/relock.sh --all --profile $BUILD_PROFILE"
 
   # 2. Do the switches that reshape the closure still agree? filter_set_file resolves these
   #    before the set is ever emerged, so a lock generated with CJK fonts on is simply the
   #    wrong lock for a build with them off — and nothing downstream would say so.
-  for k in INCLUDE_CJK_FONTS INCLUDE_PRINTING INCLUDE_DISTROBOX CONSOLE_ONLY; do
-    lv="$(lock_header_value "$IMAGE_LOCK" "$k")"
+  for k in INCLUDE_CJK_FONTS INCLUDE_PRINTING INCLUDE_DISTROBOX BUILD_PROFILE PROFILE_SETS; do
+    lv="$(lock_header_value "$PROFILE_LOCK" "$k")"
     cv="${!k:-}"
-    [[ -z $lv || $lv == "$cv" || ${RELOCK:-0} == 1 ]] || die "image.lock was generated with $k=$lv, this build has $k=$cv.
+    [[ -z $lv || $lv == "$cv" || ${RELOCK:-0} == 1 ]] || die "${BUILD_PROFILE}.lock was generated with $k=$lv, this build has $k=$cv.
   That switch changes the package closure, so the lock does not describe this build.
-  Re-resolve it:  scripts/relock.sh --all"
+  Re-resolve it:  scripts/relock.sh --all --profile $BUILD_PROFILE"
   done
 
   # 3. Does the pinned tree still carry every locked version? An exact atom whose ebuild has
@@ -90,7 +98,7 @@ if [[ -f $IMAGE_LOCK ]]; then
   missing=(); MISSING_ATOMS=()
   while IFS= read -r atom; do
     [[ -f $MD5C/${atom#=} ]] || missing+=("$atom")
-  done < <(lock_atoms "$IMAGE_LOCK")
+  done < <(lock_atoms "$PROFILE_LOCK")
   if (( ${#missing[@]} )); then
     printf '  %s\n' "${missing[@]}"
     # A relock is exactly the operation run to fix this, so it must not be blocked by it.
@@ -107,11 +115,11 @@ if [[ -f $IMAGE_LOCK ]]; then
 
   # Written even during a relock: relock.sh composes its own set FROM this one, dropping the
   # atoms it is releasing, so it needs the full locked set on disk first.
-  lock_atoms "$IMAGE_LOCK" > "$PC/sets/locked-image"
+  lock_atoms "$PROFILE_LOCK" > "$PC/sets/locked-image"
   printf '%s\n' "${MISSING_ATOMS[@]:-}" | sed '/^$/d' > "$CONFIG_ROOT/.lock-missing"
   log "version lock: $(wc -l < "$PC/sets/locked-image") atoms, $(( $(wc -l < "$CONFIG_ROOT/.lock-missing") )) not in the pinned tree"
 else
-  warn "no config/portage/lock/image.lock — stage 30 will resolve the loose sets and generate one"
+  warn "no config/portage/lock/${BUILD_PROFILE}.lock — stage 30 will resolve the loose sets and generate one"
 fi
 
 # repos.conf → builder's synced tree

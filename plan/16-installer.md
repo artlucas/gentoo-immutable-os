@@ -148,9 +148,17 @@ hash assertion in `scripts/stages/20-builder-setup.sh:66` keeps working untouche
 installer's `package.accept_keywords` and `package.use` entries live in the shared config root
 and are simply inert for a profile that never emerges those atoms.
 
-One consequence, and it is a one-time cost: adding those entries changes
-`portage_config_hash()`, which invalidates **every** existing lock. A `relock.sh --all` for
-each profile is part of Phase 0.
+`BUILD_PROFILE` is deliberately **not** a `build.conf` key, and that is what keeps this cheap.
+Every byte of `build.conf` is hashed into `portage_config_hash()`, so naming a per-run choice
+there would have invalidated every committed lock the first time anyone used a second profile.
+It is a `--profile` flag with a default instead.
+
+> **Measured, 2026-08-28 (Phase 0):** `portage_config_hash()` is byte-identical before and after
+> the profile refactor — `436c9f7c…`, the value both committed lock headers already record. So
+> the predicted "one-time cost: `relock.sh --all` for each profile is part of Phase 0" was
+> **wrong, and Phase 0 needed no relock at all.** The renamed `desktop.lock` stays valid, and
+> its 655 atoms are unchanged. The relock cost is real but belongs to **Phase A**, where the
+> installer's `package.accept_keywords` and `package.use` entries do change the hash.
 
 ### 3.3 Locks and the audit gate become per-profile
 
@@ -233,7 +241,8 @@ wrong**, and the numbers reorder the rest completely:
 | `net-print/cups` | 8 MiB | **No.** Unconditional `RDEPEND` of `dev-qt/qtbase`, which is built `USE=cups` |
 | `kde-apps/kio-extras` | — | **No.** Unconditional `RDEPEND` of `kde-plasma/plasma-workspace` |
 | `kde-plasma/discover` | 1 MiB | Yes, and not worth a line of config |
-| `kde-apps/dolphin` | 1 MiB | Yes, and worth *keeping* — a failed install wants a file manager |
+| `kde-apps/dolphin` | 1 MiB | **No — kept in every profile by decision.** A failed install wants a file manager, and it costs 1 MiB |
+| `sys-block/partitionmanager` | — | **No — kept in every profile by decision.** Native, not Flatpak: Flathub has never published it (`config/portage/sets/desktop` says so), and a disk tool on the live medium is worth more than on any other |
 | `kde-plasma/print-manager` | <1 MiB | Yes, and irrelevant |
 
 Two findings worth keeping even if the installer never ships:
@@ -503,11 +512,29 @@ complex. Not in Phase B. Revisit once the ISO exists and its real size is measur
 
 ## 8. Phasing
 
-**Phase 0 — Profiles.** No installer code. Introduce `config/profiles/`, make locks and
-`expected-packages` per-profile, fold `--console-only` into `--profile console`, relock all
-profiles. Ship `desktop` and prove it is unchanged.
-*Exit:* a `desktop` build produces the same package set as today, and `console` builds without
-destroying the desktop lock.
+**Phase 0 — Profiles. IMPLEMENTED 2026-08-28.** No installer code. `config/profiles/` with
+`desktop` (default) and `console`; per-profile locks and `expected-packages`; `--profile` /
+`--list-profiles`; `--console-only` forwards to `--profile console`; the `CONSOLE_ONLY` boolean
+that threaded through eight files is gone, replaced by `profile_has_set desktop` — which is what
+every one of those guards actually meant.
+
+*Exit criteria, and how they were met without a build:*
+
+- **The desktop build is unchanged.** `portage_config_hash()` is byte-identical
+  (`436c9f7c…`); `desktop.lock` is `image.lock` renamed with 655 atoms untouched and only its
+  provenance header migrated; the sets stage 20 copies and stage 30 emerges resolve to the same
+  `base hardware desktop`; and every derived path for the default profile is asserted unsuffixed
+  by `tests/test-profiles.sh`, so an existing work volume and `out/` tree stay valid.
+- **`console` no longer destroys the desktop lock.** It reads `console.lock` — which does not
+  exist yet, so it falls back to the loose sets and generates one, exactly as a first build of
+  any profile does. The old single `image.lock` could not hold both.
+- `tests/test-profiles.sh` (42 assertions) asserts the two properties the mechanism exists for:
+  no per-build path is shared between profiles, and every identity string *is*. The full offline
+  suite passes, and shellcheck reports nothing new.
+
+Deferred out of Phase 0 as unnecessary until something needs it: `PROFILE_ROOT_SLOTS` (§3.1),
+which only the installer profile wants, and which would change the GPT layout code for no
+present gain.
 
 **Phase A — Installer on raw media.** Add `config/portage/sets/installer` and the `installer`
 profile; build it through stage 60 to a raw `.img`. Write the Calamares branding, the custom

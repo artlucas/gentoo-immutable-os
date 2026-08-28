@@ -120,7 +120,7 @@ if [[ -f $CONFIG_ROOT/etc/portage/sets/locked-image ]]; then
   FETCH_SETS=(@locked-image)
 else
   warn "no @locked-image set — falling back to the loose sets for the fetch"
-  FETCH_SETS=(@base @hardware); [[ ${CONSOLE_ONLY:-0} == 1 ]] || FETCH_SETS+=(@desktop)
+  mapfile -t FETCH_SETS < <(profile_emerge_sets)
 fi
 ROOT="$FETCH_ROOT" PORTAGE_CONFIGROOT="$CONFIG_ROOT" \
   emerge --fetchonly --usepkg=n --with-bdeps=n --quiet-build=y "${FETCH_SETS[@]}" \

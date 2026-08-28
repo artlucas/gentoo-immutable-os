@@ -60,7 +60,17 @@ assert_contains "stages/60-image.sh" "$out" "--only runs the stage"
 if [[ $out == *"stages/70-test.sh"* ]]; then _fail "--only must not run other stages"; else _pass; fi
 
 out="$(run_build --console-only --version 0.9.9)"
-assert_contains "CONSOLE_ONLY=1" "$out" "--console-only exported to container"
+assert_contains "BUILD_PROFILE_OVERRIDE=console" "$out" "--console-only forwards to --profile console"
+
+out="$(run_build --profile console)"
+assert_contains "BUILD_PROFILE_OVERRIDE=console" "$out" "--profile exported to container"
+
+out="$(bash "$BUILD" --dry-run --runtime docker --profile nosuchprofile 2>&1)"; rc=$?
+assert_eq 1 $rc "unknown --profile is rejected"
+assert_contains "no such build profile" "$out" "…with the available names"
+
+out="$(run_build --version 0.9.9)"
+assert_contains "BUILD_PROFILE_OVERRIDE" "$out" "the default profile is still passed explicitly"
 assert_contains "VERSION_OVERRIDE=0.9.9" "$out" "--version exported to container"
 
 out="$(bash "$BUILD" --dry-run --runtime docker --version bogus 2>&1)"; rc=$?

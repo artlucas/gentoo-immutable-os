@@ -5,7 +5,9 @@
 #   ./scripts/build.sh                     # full build, all stages
 #   ./scripts/build.sh --from 40           # resume from stage 40
 #   ./scripts/build.sh --only 60           # re-run just stage 60
-#   ./scripts/build.sh --console-only      # M1 image (no desktop)
+#   ./scripts/build.sh --profile console   # build a different profile (default: desktop)
+#   ./scripts/build.sh --list-profiles     # what profiles exist
+#   ./scripts/build.sh --console-only      # deprecated alias for --profile console
 #   ./scripts/build.sh --version 0.2.0     # override VERSION for this run
 #   ./scripts/build.sh --vendor            # also build the offline release archive (stage 90)
 #   ./scripts/build.sh --offline --vendor-dir out/vendor/immos-0.3.0
@@ -33,13 +35,20 @@ case "$(uname -s)" in MINGW*|MSYS*) export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXC
 # printing a shellcheck directive as if it were help text.
 usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; }
 
-RUNTIME=auto FROM='' ONLY='' DRY_RUN=0 CLEAN=0 FORCE=0 LIST=0 OFFLINE=0 VENDOR_DIR=''
+RUNTIME=auto FROM='' ONLY='' DRY_RUN=0 CLEAN=0 FORCE=0 LIST=0 OFFLINE=0 VENDOR_DIR='' LIST_PROFILES=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --from)         FROM="$2"; shift 2 ;;
     --only)         ONLY="$2"; FORCE=1; shift 2 ;;
     --clean)        CLEAN=1; shift ;;
-    --console-only) export CONSOLE_ONLY=1; shift ;;
+    --profile)      export BUILD_PROFILE_OVERRIDE="$2"; shift 2 ;;
+    --list-profiles) LIST_PROFILES=1; shift ;;
+    # Deprecated, kept working: --console-only was a bare boolean threaded through eight files
+    # before profiles existed (plan/16 §3.5). It is exactly "the profile whose sets omit
+    # @desktop", so it forwards to one rather than surviving as a second mechanism.
+    --console-only) export BUILD_PROFILE_OVERRIDE=console
+                    echo "note: --console-only is deprecated; use --profile console" >&2
+                    shift ;;
     --version)      export VERSION_OVERRIDE="$2"; shift 2 ;;
     --update-url)   export UPDATE_URL_OVERRIDE="$2"; shift 2 ;;
     --no-verify)    export UPDATE_VERIFY_OVERRIDE=0; shift ;;
@@ -56,6 +65,21 @@ while [[ $# -gt 0 ]]; do
 done
 
 load_config
+
+if [[ $LIST_PROFILES == 1 ]]; then
+  printf '%-12s %-8s %-24s %s\n' PROFILE ROLE SETS DESCRIPTION
+  while IFS= read -r _p; do
+    ( BUILD_PROFILE="$_p"; load_profile
+      printf '%-12s %-8s %-24s %s\n' "$_p" "$PROFILE_ROLE" "$PROFILE_SETS" "$PROFILE_DESC" )
+  done < <(profile_list)
+  exit 0
+fi
+
+log "build profile: $BUILD_PROFILE ($PROFILE_DESC) — sets: $PROFILE_SETS"
+# Hand the container the profile the HOST resolved, rather than letting it default
+# independently. Both sides share DEFAULT_BUILD_PROFILE so they would agree today, but two
+# sides defaulting separately is exactly how they stop agreeing later.
+export BUILD_PROFILE_OVERRIDE="$BUILD_PROFILE"
 
 # ---- stage discovery ---------------------------------------------------------
 STAGES=()
@@ -95,16 +119,20 @@ TREE_VOL="${DISTRO_ID}-tree"
 
 if [[ $CLEAN == 1 ]]; then
   log "cleaning work volume + state (cache volume kept)"
+  # Every profile's stamps, not just the active one's: the work volume below is removed
+  # wholesale and takes every profile's target rootfs with it, so leaving another profile's
+  # stamps behind would let its next build skip stages whose output no longer exists.
   if [[ $RUNTIME == none ]]; then
-    run rm -rf -- "$WORK" "$OUT/state"
+    run rm -rf -- "$WORK" "$OUT"/state "$OUT"/state-*
   else
     run "$RUNTIME" volume rm -f "$WORK_VOL"
     # out/ is written by the container as root, so a non-root host cannot rm the stamps —
     # and with set -e that failure aborted --clean before it did anything useful, while the
     # work volume above had ALREADY been removed. Fall back to deleting them as root inside
     # the builder. Host attempt stays first: on a first-ever run the image may not exist yet.
-    run rm -rf -- "$OUT/state" 2>/dev/null \
-      || run "$RUNTIME" run --rm --entrypoint /bin/rm -v "$OUT:/out" "$BUILDER_TAG" -rf /out/state
+    run rm -rf -- "$OUT"/state "$OUT"/state-* 2>/dev/null \
+      || run "$RUNTIME" run --rm --entrypoint /bin/sh -v "$OUT:/out" "$BUILDER_TAG" \
+             -c 'rm -rf /out/state /out/state-*'
   fi
 fi
 
@@ -120,8 +148,11 @@ fi
 
 # ---- pass-through env ------------------------------------------------------------
 ENV_ARGS=()
-for v in VERSION_OVERRIDE UPDATE_URL_OVERRIDE UPDATE_VERIFY_OVERRIDE CONSOLE_ONLY FORCE_STAGE \
-         VENDOR VENDOR_PROFILE ALLOW_UNPINNED; do
+# NB VENDOR_PROFILE is unrelated to BUILD_PROFILE — it is stage 90's vendoring depth (full or
+# not). Three different things in this tree are called "profile"; config/profiles/README.md has
+# the table.
+for v in VERSION_OVERRIDE UPDATE_URL_OVERRIDE UPDATE_VERIFY_OVERRIDE BUILD_PROFILE_OVERRIDE \
+         FORCE_STAGE VENDOR VENDOR_PROFILE ALLOW_UNPINNED; do
   [[ -n ${!v:-} ]] && ENV_ARGS+=(-e "$v=${!v}")
 done
 [[ $FORCE == 1 ]] && ENV_ARGS+=(-e FORCE_STAGE=1)
