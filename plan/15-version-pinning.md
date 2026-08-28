@@ -1,6 +1,6 @@
 # 15 — Version Pinning and the Offline Archive
 
-**Status: implemented 2026-08-27; verified by a full locked build 2026-08-28.** Scope is *which packages, at which versions* a build
+**Status: implemented 2026-08-27; verified by a full locked build and an offline rebuild 2026-08-28.** Scope is *which packages, at which versions* a build
 produces, and keeping the inputs that produced them. Bit-identical output is a different goal
 and stays where it is, in [08-roadmap.md](08-roadmap.md) item 6.
 
@@ -371,15 +371,35 @@ image overrides — Qt with custom `opengl/vulkan/wayland`, the KDE Frameworks l
 those subslots, `systemd[ukify]`, `polkit[kde]`, `cups[dbus]`, `xdg-utils[-perl -gnome]`. That
 cost is pre-existing and was previously hidden in a Docker layer that never invalidated.
 
-**Stage 90 has since run** and produced a 16 GB archive for 0.3.0: 40,276 files, the upstream
-snapshot re-fetched and hashed against `SNAPSHOT_SHA256`, 7.4 GB of distfiles, 676 binpkgs, and
-an OSTree repo carrying all 18 Flatpak refs at their locked commits (each checked against
-`apps.lock`). One gap, described above: the **builder**-closure distfile fetch fails on
-`qttools[-linguist]`, so that half of the `sources` story is incomplete.
+### The offline rebuild, run 2026-08-28
 
-**Still not exercised:** `relock.sh` against a real GLSA hit, and the offline rebuild itself. An
-archive that has not had an offline rebuild run against it is not known to work — stage 90 says
-so on completion, and it is still true of this one; see [07-testing.md](07-testing.md).
+**It works.** From `docker volume rm -f immos-{work,cache,tree}` and `docker image rm
+immos-builder gentoo/stage3` — nothing left on the machine but the archive — `build.sh --offline`
+completed all eight stages with `--network none` on every one:
+
+| | |
+|---|---|
+| builder | loaded from `builder-image.tar.zst`; closure matches `builder.lock` (495 atoms) |
+| tree | unpacked from the vendored snapshot, sha256 matching `SNAPSHOT_SHA256` |
+| lock pre-flight | 655 atoms, 0 missing |
+| **stage 30** | **`no drift: 655 atoms, all at their locked versions`** |
+| flatpaks | archived tree restored, 18 refs, 0 mismatches against `apps.lock` |
+| stage 50 | `package set matches expected-packages.txt` |
+| image | root EROFS 2761 MiB, image 3012 MiB — identical to the online build |
+| stage 70 | QEMU smoke tests passed; the offline-built image boots |
+
+And the proof that matters most: **`out/reports/packages-cpv.txt` from the offline build is
+byte-identical to the online one** (`6f9eb5c8…`). Same tree, same locks, no network, same
+packages at the same versions.
+
+The archive stage 90 produced for this run is 16 GB / 90,134 files — 921 distfiles (8.1 GB),
+676 binpkgs, the whole `/var/lib/flatpak` tree with deploys hardlinked, the signed upstream
+snapshot, both container images, the locks, `build.conf` and the provenance file.
+
+**Still not exercised:** `relock.sh` against a real GLSA hit. Also note the archive's builder
+half remains incomplete — the builder-closure distfile fetch still fails on
+`qttools[-linguist]`, so the builder can be *loaded* offline but not *rebuilt from source*
+offline. Rebuilding the image, which is what this layer is for, is unaffected.
 
 ### What the first real build cost, and why
 
