@@ -123,6 +123,10 @@ ROOT="$FETCH_ROOT" PORTAGE_CONFIGROOT="$CONFIG_ROOT" \
   || die "could not fetch every distfile for ${FETCH_SETS[*]}.
   The archive would be incomplete, which is the one failure this stage exists to prevent.
   A SRC_URI that 404s means a pin has outlived its upstream tarball: relock that atom."
+# Packages resolved for the builder's own "/" download into ITS DistDIR, not the config root's,
+# and that one is container-local. Without this the archive silently lacks them — see the
+# function's comment for the offline rebuild it broke.
+distfiles_sweep
 rm -rf -- "$FETCH_ROOT"
 
 # --usepkg=n above is deliberate too: with binpkg reuse on, portage is satisfied by a binary
@@ -133,6 +137,28 @@ if [[ -f /etc/portage/sets/locked-builder ]]; then
   emerge --fetchonly --usepkg=n --quiet-build=y @locked-builder \
     || warn "some builder distfiles could not be fetched — the builder image is archived
   whole, so this only affects rebuilding the builder from source rather than loading it"
+  distfiles_sweep
+fi
+
+# Whatever the two passes above did or did not manage, the archive must contain the sources for
+# every package a build actually installs — including the handful portage puts on "/" (DEPEND is
+# installed to the build host even under --with-bdeps=n). Ask the real stage-30 resolution what
+# those are and make sure each one's distfiles are present, rather than inferring it.
+log "checking the builder-root packages stage 30 installs are covered"
+mapfile -t HOST_PKGS < <(
+  ROOT="$TARGET" PORTAGE_CONFIGROOT="$CONFIG_ROOT" \
+    emerge --pretend --usepkg --with-bdeps=n --quiet "${FETCH_SETS[@]}" 2>/dev/null \
+    | grep -E '^\[ebuild' | grep -v "to $TARGET/" \
+    | sed -E 's/^\[[^]]*\][[:space:]]*//; s/[[:space:]].*$//' || true
+)
+if (( ${#HOST_PKGS[@]} )); then
+  log "  ${#HOST_PKGS[@]} builder-root package(s): ${HOST_PKGS[*]}"
+  emerge --fetchonly --usepkg=n --quiet-build=y "${HOST_PKGS[@]/#/=}" \
+    || die "could not fetch sources for the builder-root packages stage 30 needs.
+  An offline rebuild would stop partway through stage 30 exactly where these are merged."
+  distfiles_sweep
+else
+  log "  none"
 fi
 
 ensure_dir "$V/distfiles"

@@ -456,6 +456,33 @@ snapshot_park_kept_tarball() {
   return 0
 }
 
+# distfiles_sweep — move anything portage downloaded into the BUILDER's own DISTDIR across to
+# the persistent cache.
+#
+# The two-root emerge has two DISTDIRs. Target packages use the config root's
+# (/cache/distfiles, a named volume, which stage 90 archives); packages resolved for the
+# builder's own "/" use the builder's, which is /var/cache/distfiles — inside the container, so
+# it dies with the stage.
+#
+# That is not a corner case: stage 30 installs DEPENDs to "/" even under --with-bdeps=n, so a
+# real build needs those sources. It cost an offline rebuild, which reached package 226 of 657
+# and could not fetch sys-kernel/installkernel-68 — a file stage 90 HAD downloaded, into the
+# directory that does not survive the container.
+distfiles_sweep() {
+  local dd dest n=0; dest="$(snapshot_cache_dir)"
+  dd="$(portageq envvar DISTDIR 2>/dev/null || true)"
+  [[ -n $dd && -d $dd ]] || return 0
+  [[ $dd -ef $dest ]] && return 0
+  ensure_dir "$dest"
+  local f
+  while IFS= read -r -d '' f; do
+    [[ -f $dest/${f##*/} ]] && continue
+    cp -f -- "$f" "$dest/${f##*/}" && n=$((n + 1))
+  done < <(find "$dd" -maxdepth 1 -type f ! -name '*.__download__' -print0 2>/dev/null)
+  (( n > 0 )) && log "swept $n distfile(s) from the builder DISTDIR into $dest"
+  return 0
+}
+
 # tree_verify_kept_tarball — check the snapshot against SNAPSHOT_SHA256. Upstream's signature
 # says the file is Gentoo's; this says it is the same one this config was pinned to and locked
 # against.
