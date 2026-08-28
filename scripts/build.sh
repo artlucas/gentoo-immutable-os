@@ -177,7 +177,7 @@ if [[ $RUNTIME != none ]]; then
     # config/portage/lock/builder.lock. .dockerignore keeps out/ and .claude/ out of it.
     run "$RUNTIME" build -t "$BUILDER_TAG" -f "$REPO_ROOT/builder/Dockerfile" \
         --build-arg "BASE=$base" --build-arg "BINHOST=$BINHOST_URI" \
-        --build-arg "TREE_REPO=$TREE_REPO" --build-arg "TREE_COMMIT=$TREE_COMMIT" \
+        --build-arg "SNAPSHOT_DATE=$SNAPSHOT_DATE" \
         "$REPO_ROOT"
   fi
 fi

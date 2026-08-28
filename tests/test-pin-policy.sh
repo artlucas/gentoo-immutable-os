@@ -23,14 +23,29 @@ APPS_LOCK="$REPO_ROOT/config/flatpak/apps.lock"
 
 # ---- the pins are recorded, and well-formed ----------------------------------------------
 assert_match '^sha256:[0-9a-f]{64}$' "$BUILDER_DIGEST" "BUILDER_DIGEST is a full sha256 digest"
-assert_match '^[0-9a-f]{40}$' "$TREE_COMMIT" "TREE_COMMIT is a full 40-char commit SHA"
-assert_match '^https?://' "$TREE_REPO" "TREE_REPO is a URL"
 assert_match '^[0-9]{8}$' "$SNAPSHOT_DATE" "SNAPSHOT_DATE is YYYYMMDD"
-# An abbreviated SHA would resolve under git and 404 on the codeload endpoint stage 10 uses.
-assert_false "validate_config rejects an abbreviated TREE_COMMIT" \
-    bash -c 'source "'"$REPO_ROOT"'/scripts/lib/common.sh"; load_config; TREE_COMMIT=5b5d4f9; validate_config' 2>/dev/null
-assert_false "validate_config rejects an empty TREE_COMMIT" \
-    bash -c 'source "'"$REPO_ROOT"'/scripts/lib/common.sh"; load_config; TREE_COMMIT=; validate_config' 2>/dev/null
+assert_match '^[0-9a-f]{64}$' "$SNAPSHOT_SHA256" "SNAPSHOT_SHA256 is a full sha256"
+# A truncated or absent hash is a pin that cannot be checked, which is the whole point of
+# vendoring the snapshot.
+assert_false "validate_config rejects a truncated SNAPSHOT_SHA256" \
+    bash -c 'source "'"$REPO_ROOT"'/scripts/lib/common.sh"; load_config; SNAPSHOT_SHA256=c612940; validate_config' 2>/dev/null
+assert_false "validate_config rejects an empty SNAPSHOT_SHA256" \
+    bash -c 'source "'"$REPO_ROOT"'/scripts/lib/common.sh"; load_config; SNAPSHOT_SHA256=; validate_config' 2>/dev/null
+
+# The tree must be a full-Manifest rsync snapshot, not a git forge tarball of the development
+# repo. That distinction cost a 90-minute build: gentoo-mirror/gentoo has md5-cache and a
+# plausible timestamp.chk, passes every other check, and then fails in stage 30 with "A file is
+# not listed in the Manifest" because its Manifests hold only DIST lines. Both the fetch path
+# and the validator must check for an EBUILD entry.
+assert_true "tree_validate checks Manifests carry EBUILD entries" \
+    grep -q "grep -q '\^EBUILD ' \"\$probe\"" "$REPO_ROOT/scripts/lib/common.sh"
+assert_true "the builder's tree fetch asserts full Manifests too" \
+    grep -q "grep -q '\^EBUILD ' /var/db/repos/gentoo/sys-apps/systemd/Manifest" "$REPO_ROOT/builder/Dockerfile"
+assert_true "the tree comes from a verified rsync snapshot, not a forge tarball" \
+    grep -q 'emerge-webrsync --revert' "$REPO_ROOT/builder/Dockerfile"
+if grep -q 'codeload' "$REPO_ROOT/builder/Dockerfile" 2>/dev/null; then
+    _fail "builder fetches the tree from a git forge — those are thin-Manifest dev-repo trees"
+else _pass; fi
 
 # ---- lock file shape ----------------------------------------------------------------------
 for f in "$IMAGE_LOCK" "$BUILDER_LOCK"; do
@@ -43,7 +58,7 @@ for f in "$IMAGE_LOCK" "$BUILDER_LOCK"; do
     if diff -q <(lock_atoms "$f") <(lock_atoms "$f" | LC_ALL=C sort -u) >/dev/null; then _pass
     else _fail "$n is not sorted/unique"; fi
     # The header is the whole reason a lock is reviewable rather than merely trusted.
-    assert_eq "$TREE_COMMIT" "$(lock_header_value "$f" TREE_COMMIT)" "$n header records the tree pin"
+    assert_eq "$SNAPSHOT_DATE" "$(lock_header_value "$f" SNAPSHOT_DATE)" "$n header records the tree pin"
     assert_eq "$(portage_config_hash)" "$(lock_header_value "$f" PORTAGE_CONFIG_HASH)" \
         "$n header records the CURRENT portage config hash"
 done
@@ -123,18 +138,24 @@ fi
 # ---- the pipeline actually consumes all of this --------------------------------------------
 DF="$REPO_ROOT/builder/Dockerfile"
 assert_false "builder no longer syncs an unpinned tree" grep -qE '^RUN emerge-webrsync' "$DF"
-assert_true "builder fetches the tree by commit" grep -q 'TREE_COMMIT' "$DF"
 assert_true "builder asserts the fetched tree has md5-cache" grep -q 'metadata/md5-cache' "$DF"
-assert_true "builder records the tree marker" grep -q '\.tree-commit' "$DF"
 # The ARG must precede the RUN, or the layer has no cache buster and never invalidates —
 # which is the exact bug this replaced.
-arg_line="$(grep -n '^ARG TREE_COMMIT' "$DF" | head -n1 | cut -d: -f1)"
-# The RUN that fetches, not the comment that explains it: grep for the wget on a
-# non-comment line, or this passes on prose and proves nothing.
-run_line="$(grep -n 'wget' "$DF" | grep -v ':[[:space:]]*#' | head -n1 | cut -d: -f1)"
+arg_line="$(grep -n '^ARG SNAPSHOT_DATE' "$DF" | head -n1 | cut -d: -f1)"
+# The RUN that syncs, not the comment that explains it: match a non-comment line, or this
+# passes on prose and proves nothing.
+run_line="$(grep -n 'emerge-webrsync --revert' "$DF" | grep -v ':[[:space:]]*#' | head -n1 | cut -d: -f1)"
 assert_true "ARG TREE_COMMIT precedes the fetch (cache buster)" \
     test -n "$arg_line" -a -n "$run_line" -a "$arg_line" -lt "$run_line"
 assert_true "builder emerges the locked set" grep -q 'locked-builder' "$DF"
+# The builder must COPY only its own lock. Copying the directory keys the layer on image.lock
+# too, so relocking the IMAGE would invalidate the builder layer and the ~1 hour of source
+# builds behind it — for a file the builder never reads.
+assert_true "builder COPYs only builder.lock, not the lock directory" \
+    grep -q 'COPY config/portage/lock/builder.lock' "$DF"
+if grep -qE '^COPY config/portage/lock/ ' "$DF"; then
+    _fail "builder COPYs the whole lock dir — image.lock would bust the builder layer"
+else _pass; fi
 
 S10="$REPO_ROOT/scripts/stages/10-fetch.sh"
 assert_true "stage 10 reconciles the tree volume against the pin" grep -q 'tree_populate' "$S10"
@@ -173,7 +194,7 @@ assert_true "stage 90 archives the flatpak objects" grep -q 'create-usb' "$S90"
 BUILD="$REPO_ROOT/scripts/build.sh"
 assert_true "build.sh mounts the tree volume at /var/db/repos" grep -q '/var/db/repos' "$BUILD"
 assert_true "build.sh builds from the repo root with -f" grep -q -- '-f "\$REPO_ROOT/builder/Dockerfile"' "$BUILD"
-assert_true "build.sh passes the tree pin as a build-arg" grep -q 'TREE_COMMIT=\$TREE_COMMIT' "$BUILD"
+assert_true "build.sh passes the tree pin as a build-arg" grep -q 'SNAPSHOT_DATE=\$SNAPSHOT_DATE' "$BUILD"
 assert_true "build.sh isolates the network when --offline" grep -q -- '--network none' "$BUILD"
 assert_true "build.sh loads the archived builder rather than building it offline" \
     grep -q 'builder-image.tar.zst' "$BUILD"

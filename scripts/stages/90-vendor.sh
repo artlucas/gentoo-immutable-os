@@ -31,11 +31,23 @@ log "assembling the offline archive in ${V#"$OUT"/}"
 # Redundant with the builder image (which carries the same tree) and kept anyway: it is small
 # compressed, and it is what stage 10 restores from when the tree volume is stale on a machine
 # that has the archive but not the image loaded.
-TREE_TAR="$V/tree-$TREE_COMMIT.tar.zst"
+# Prefer the ORIGINAL upstream tarball that emerge-webrsync --keep left in DISTDIR: it is the
+# exact artifact SNAPSHOT_SHA256 pins and that upstream signed, so a restore can be verified
+# against build.conf rather than trusted. Only fall back to re-tarring the unpacked tree.
+TREE_TAR="$V/$(snapshot_tarball_name)"
+DISTDIR_NOW="$(portageq envvar DISTDIR 2>/dev/null || echo /cache/distfiles)"
 if [[ -f $TREE_TAR ]]; then
-  log "tree tarball already present"
+  log "snapshot tarball already archived"
+elif [[ -f $DISTDIR_NOW/$(snapshot_tarball_name) ]]; then
+  cp -f "$DISTDIR_NOW/$(snapshot_tarball_name)" "$TREE_TAR"
+  got="$(sha256_file "$TREE_TAR")"
+  [[ -z ${SNAPSHOT_SHA256:-} || $got == "$SNAPSHOT_SHA256" ]] \
+    || die "archived snapshot hashes to $got, build.conf pins $SNAPSHOT_SHA256"
+  log "archived the upstream snapshot $(snapshot_tarball_name) (sha256 verified)"
 else
-  log "archiving the ebuild tree ($TREE_COMMIT)"
+  warn "no upstream snapshot in $DISTDIR_NOW — archiving a re-tarred copy of the unpacked tree,
+  which cannot be checked against SNAPSHOT_SHA256. Re-run stage 10 to fetch it with --keep."
+  TREE_TAR="$V/tree-$SNAPSHOT_DATE.tar.zst"
   tar -C /var/db/repos -cf - gentoo | zstd -T0 -q -o "$TREE_TAR.tmp"
   mv -f -- "$TREE_TAR.tmp" "$TREE_TAR"
 fi
@@ -159,7 +171,7 @@ fi
 [[ -f $V/builder-image.tar.zst ]] \
   || die "verify: builder-image.tar.zst missing — an offline rebuild has no builder to load.
   build.sh writes it on the host before the stages run; check that --vendor reached it."
-[[ -s $V/tree-$TREE_COMMIT.tar.zst ]] || die "verify: tree tarball missing"
+[[ -s $TREE_TAR ]] || die "verify: no tree archived"
 [[ -d $V/distfiles ]] || die "verify: no distfiles in the archive"
 log "archive complete: $(du -sh "$V" | cut -f1) in ${V#"$OUT"/}"
 log "$(wc -l < "$V/MANIFEST.sha256") files, manifest$([[ -f $V/MANIFEST.sha256.gpg ]] && echo ' signed' || echo ' UNSIGNED')"

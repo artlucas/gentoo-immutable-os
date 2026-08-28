@@ -72,7 +72,7 @@ validate_config() {
   : "${DISTROBOX_DEFAULT_IMAGE=}"
   local v
   for v in DISTRO_ID DISTRO_NAME VERSION HOME_URL UPDATE_URL UPDATE_CHANNEL UPDATE_VERIFY \
-           BUILDER_IMAGE SNAPSHOT_DATE PROFILE BINHOST_URI TREE_REPO TREE_COMMIT \
+           BUILDER_IMAGE SNAPSHOT_DATE SNAPSHOT_SHA256 PROFILE BINHOST_URI \
            ESP_SIZE_MIB ROOT_SLOT_SIZE_MIB VAR_SIZE_MIB EROFS_COMPRESSION \
            LIVE_USER LOCALE_GEN LOCALES_KEEP FLATPAK_PREINSTALL_MODE; do
     [[ -n ${!v:-} ]] || die "build.conf: $v is required"
@@ -99,11 +99,10 @@ validate_config() {
   [[ $FLATPAK_PREINSTALL_MODE =~ ^(build|firstboot)$ ]] \
     || die "build.conf: FLATPAK_PREINSTALL_MODE must be build|firstboot"
   [[ $SNAPSHOT_DATE =~ ^[0-9]{8}$ ]] || die "build.conf: SNAPSHOT_DATE must be YYYYMMDD"
-  # Full 40-hex only. An abbreviated SHA is not accepted even though git would resolve it: the
-  # codeload tarball endpoint stage 10 fetches from requires the full form, and a short SHA
-  # there 404s with nothing to say which of the two pins was wrong.
-  [[ $TREE_COMMIT =~ ^[0-9a-f]{40}$ ]] \
-    || die "build.conf: TREE_COMMIT must be a full 40-character commit SHA (got: $TREE_COMMIT)"
+  # Full 64-hex. This is what makes a vendored snapshot verifiable years after upstream has
+  # dropped it, so a truncated or absent value is a pin that cannot be checked.
+  [[ $SNAPSHOT_SHA256 =~ ^[0-9a-f]{64}$ ]] \
+    || die "build.conf: SNAPSHOT_SHA256 must be a full 64-character sha256 (got: $SNAPSHOT_SHA256)"
 }
 
 init_paths() {
@@ -315,53 +314,86 @@ portage_config_hash() {
 
 # ---- the ebuild tree pin (plan/15) -----------------------------------------------------
 # The tree lives in the ${DISTRO_ID}-tree named volume mounted at /var/db/repos, NOT in a
-# builder image layer. That distinction is the whole fix: before this, stage 10 reverted the
-# tree inside a `docker run --rm` and the revert died with the container, so stages 20 and 30
+# builder image layer. That distinction is the whole fix: before this, stage 10 synced the tree
+# inside a `docker run --rm` and the result died with the container, so stages 20 and 30
 # resolved against whatever the un-cache-busted `RUN emerge-webrsync` layer happened to hold.
 TREE_DIR="${TREE_DIR:-/var/db/repos}"
-TREE_MARKER_NAME=".tree-commit"
+TREE_MARKER_NAME=".tree-pin"
 
 tree_marker_path() { printf '%s/%s' "$TREE_DIR" "$TREE_MARKER_NAME"; }
 tree_marker_read() { cat -- "$(tree_marker_path)" 2>/dev/null || printf 'none'; }
+tree_pin_id()      { printf '%s %s' "$SNAPSHOT_DATE" "$SNAPSHOT_SHA256"; }
 
-# tree_url COMMIT — the codeload tarball for a commit. Fetched with wget rather than cloned
-# with git because the builder has no git BEFORE the tree exists, and there is no tree to
-# emerge one from: the ordering is circular. The pin is still the commit — codeload resolves
-# it to exactly that commit's tree. `git fetch --depth=1 origin <sha>` is the equivalent
-# transport if git is ever present.
-tree_url() {
-  local c=${1:?tree_url: commit required} r=${TREE_REPO%/}
-  printf '%s/tar.gz/%s' "${r/github.com/codeload.github.com}" "$c"
-}
+snapshot_tarball_name() { printf 'gentoo-%s.tar.xz' "$SNAPSHOT_DATE"; }
 
-# tree_date — the checked-out tree's snapshot date, as YYYYMMDD, or "" if unreadable.
+# tree_date — the checked-out tree's snapshot date as YYYYMMDD, or "" if unreadable.
 tree_date() {
   local ts="$TREE_DIR/gentoo/metadata/timestamp.chk"
   [[ -f $ts ]] || return 0
   date -u -d "$(cat -- "$ts")" +%Y%m%d 2>/dev/null || true
 }
 
+# tree_validate DIR — everything portage needs a repo to be, asserted before it is trusted.
+#
+# The Manifest check is not paranoia; it is the bug it was written for. A tree fetched from
+# github.com/gentoo-mirror/gentoo has metadata/md5-cache and a plausible timestamp.chk, passes
+# every other check here, and then fails 90 minutes later in stage 30 with "A file is not
+# listed in the Manifest" — because that mirror is the development repo, whose Manifests hold
+# only DIST lines, while its layout.conf claims thin-manifests = false. Checking one known
+# package's Manifest for an EBUILD line costs nothing and catches the whole class.
+tree_validate() {
+  local d=${1:?tree_validate: dir required}
+  [[ -d $d/metadata/md5-cache ]] \
+    || die "tree at $d has no metadata/md5-cache — not a synced rsync tree"
+  [[ -f $d/metadata/timestamp.chk ]] \
+    || die "tree at $d has no metadata/timestamp.chk"
+  local thin probe
+  thin="$(sed -nE 's/^[[:space:]]*thin-manifests[[:space:]]*=[[:space:]]*([a-z]+).*/\1/p' \
+            "$d/metadata/layout.conf" 2>/dev/null | head -n1)"
+  probe="$d/sys-apps/systemd/Manifest"
+  if [[ ${thin:-false} != true && -f $probe ]]; then
+    grep -q '^EBUILD ' "$probe" || die "tree at $d declares thin-manifests=${thin:-false} but its
+  Manifests list no EBUILD entries (checked sys-apps/systemd). Portage will verify ebuilds it
+  cannot find listed and refuse to merge them. This is what a tree fetched from the DEVELOPMENT
+  repo looks like; the rsync snapshots on distfiles.gentoo.org are full-Manifest trees."
+  fi
+}
+
 # tree_assert — the guard every depgraph-resolving stage runs before it resolves anything.
 # Cheap and idempotent: each stage is its own container, so this cannot be done once.
 tree_assert() {
-  local have; have="$(tree_marker_read)"
-  [[ $have == "$TREE_COMMIT" ]] || die "the ebuild tree at $TREE_DIR is pinned to '$have',
-  but build.conf says TREE_COMMIT=$TREE_COMMIT. The tree volume outlived a pin bump.
+  local have want; have="$(tree_marker_read)"; want="$(tree_pin_id)"
+  [[ $have == "$want" ]] || die "the ebuild tree at $TREE_DIR is pinned to '$have',
+  but build.conf says '$want'. The tree volume outlived a pin bump.
   Re-run stage 10 to reconcile it:  scripts/build.sh --only 10"
+  # NOT compared against SNAPSHOT_DATE. Upstream's snapshot filename is offset from the tree it
+  # contains: gentoo-20260820.tar.xz unpacks to a tree whose metadata/timestamp.chk reads
+  # 2026-08-21 (the snapshot is cut just after midnight UTC the following day, and its GPG
+  # signature is timestamped 2026-08-21 00:50). An equality check here therefore fails on a
+  # perfectly good tree, which is exactly what it did the first time this ran.
+  #
+  # Nothing is lost by dropping it, because SNAPSHOT_SHA256 is the stronger claim and is
+  # already in the marker compared above: it pins the exact bytes, verified at populate time
+  # against a tarball whose upstream GPG signature was also checked. The date is a filename.
+  #
+  # SNAPSHOT_DATE still feeds SOURCE_DATE_EPOCH in stage 60, which only requires a stable
+  # non-zero value — being a day off the tree's own timestamp is immaterial there.
   local d; d="$(tree_date)"
-  [[ $d == "$SNAPSHOT_DATE" ]] || die "the pinned tree's metadata/timestamp.chk is '$d',
-  but build.conf says SNAPSHOT_DATE=$SNAPSHOT_DATE. These two describe the same tree and one
-  of them is wrong. SNAPSHOT_DATE is not cosmetic — stage 60 derives SOURCE_DATE_EPOCH from
-  it, and a wrong erofs mtime silently breaks autologin (see the note in 60-image.sh)."
+  [[ -n $d ]] || die "the pinned tree at $TREE_DIR has no readable metadata/timestamp.chk"
 }
 
-# tree_populate [TARBALL] — put the pinned tree at $TREE_DIR/gentoo, from a local tarball if
-# one is given (the vendored archive), otherwise from TREE_REPO.
+# tree_populate [TARBALL] — put the pinned tree at $TREE_DIR/gentoo, from a local tarball if one
+# is given (the vendored archive), otherwise via emerge-webrsync.
+#
+# emerge-webrsync rather than a plain download: it verifies upstream's published digest AND its
+# GPG signature (check_file_digest / check_file_signature) before unpacking, so the trust chain
+# is upstream's rather than ours. --keep retains the tarball in DISTDIR, which is how the sha256
+# below can be checked at all and how stage 90 archives it.
 #
 # ORDER IS LOAD-BEARING, and it is the one failure that would survive every other assertion
-# here: unpack to a temp dir, validate, move into place, and write the marker LAST. Writing
-# the marker before the tree is known good turns a half-finished download into a tree that is
-# permanently marked correct, which tree_assert above would then agree with forever.
+# here: validate, then move into place, then write the marker LAST. Writing the marker before
+# the tree is known good turns a half-finished sync into a tree permanently marked correct,
+# which tree_assert would then agree with forever.
 tree_populate() {
   local tarball=${1:-} tmp="$TREE_DIR/.tree-incoming"
   ensure_dir "$TREE_DIR"
@@ -369,26 +401,53 @@ tree_populate() {
 
   if [[ -n $tarball ]]; then
     [[ -f $tarball ]] || die "tree tarball not found: $tarball"
+    if [[ -n ${SNAPSHOT_SHA256:-} ]]; then
+      local got; got="$(sha256_file "$tarball")"
+      [[ $got == "$SNAPSHOT_SHA256" ]] || die "vendored tree tarball has sha256 $got,
+  build.conf says $SNAPSHOT_SHA256 — the archive does not match this config"
+    fi
     log "unpacking pinned tree from $tarball"
     tar -xf "$tarball" -C "$tmp" --strip-components=1
   else
-    local url; url="$(tree_url "$TREE_COMMIT")"
-    log "fetching pinned tree $TREE_COMMIT from $url"
-    wget -qO- "$url" | tar -xz -C "$tmp" --strip-components=1 \
-      || die "could not fetch the pinned tree from $url
-  If this host is offline, the build needs a vendored archive: build.sh --offline --vendor-dir DIR"
+    log "syncing pinned tree snapshot $SNAPSHOT_DATE via emerge-webrsync"
+    # webrsync unpacks into the repo location itself, so let it, then adopt the result.
+    emerge-webrsync --revert="$SNAPSHOT_DATE" --keep \
+      || die "could not sync the pinned snapshot gentoo-$SNAPSHOT_DATE.tar.xz.
+  distfiles.gentoo.org keeps roughly nine days of snapshots, so an older pin 404s here — that is
+  what stage 90's archive exists to prevent. Move the pin to a live snapshot, or restore from a
+  vendored archive:  build.sh --offline --vendor-dir DIR"
+    rm -rf -- "$tmp"
+    tree_verify_kept_tarball
+    tree_validate "$TREE_DIR/gentoo"
+    printf '%s' "$(tree_pin_id)" > "$(tree_marker_path)"
+    return 0
   fi
 
-  # Validate BEFORE anything is moved or marked. md5-cache is what makes the mirror usable
-  # without an egencache pass, so its absence means the wrong tarball, not a slow build.
-  [[ -d $tmp/metadata/md5-cache ]] \
-    || die "fetched tree has no metadata/md5-cache — this is not an rsync-mirror tree"
-  [[ -f $tmp/metadata/timestamp.chk ]] \
-    || die "fetched tree has no metadata/timestamp.chk"
-
+  tree_validate "$tmp"
   rm -rf -- "$TREE_DIR/gentoo"
   mv -- "$tmp" "$TREE_DIR/gentoo"
-  printf '%s' "$TREE_COMMIT" > "$(tree_marker_path)"    # last, deliberately
+  printf '%s' "$(tree_pin_id)" > "$(tree_marker_path)"    # last, deliberately
+}
+
+# tree_verify_kept_tarball — check the snapshot --keep left in DISTDIR against SNAPSHOT_SHA256.
+# Upstream's signature says the file is Gentoo's; this says it is the same one this config was
+# pinned to and locked against.
+tree_verify_kept_tarball() {
+  local dd tb got
+  dd="$(portageq envvar DISTDIR 2>/dev/null || echo /cache/distfiles)"
+  tb="$dd/$(snapshot_tarball_name)"
+  if [[ ! -f $tb ]]; then
+    warn "emerge-webrsync did not leave $(snapshot_tarball_name) in $dd — cannot check SNAPSHOT_SHA256"
+    return 0
+  fi
+  got="$(sha256_file "$tb")"
+  if [[ -z ${SNAPSHOT_SHA256:-} ]]; then
+    warn "SNAPSHOT_SHA256 is empty; the snapshot hashes to $got — record it in config/build.conf"
+    return 0
+  fi
+  [[ $got == "$SNAPSHOT_SHA256" ]] || die "the snapshot upstream served hashes to
+  $got, but config/build.conf pins $SNAPSHOT_SHA256. Same filename, different bytes."
+  log "snapshot sha256 matches the pin"
 }
 
 # ---- version locks (plan/15) ---------------------------------------------------------
@@ -425,7 +484,7 @@ lock_write() {
     printf '# %s\n' "$title"
     printf '# GENERATED by scripts/relock.sh — do not hand-edit. See plan/15.\n'
     printf '#\n'
-    printf '# TREE_COMMIT: %s\n'        "$TREE_COMMIT"
+    printf '# SNAPSHOT_SHA256: %s\n'    "$SNAPSHOT_SHA256"
     printf '# SNAPSHOT_DATE: %s\n'      "$SNAPSHOT_DATE"
     printf '# PROFILE: %s\n'            "$PROFILE"
     printf '# PORTAGE_CONFIG_HASH: %s\n' "$(portage_config_hash)"

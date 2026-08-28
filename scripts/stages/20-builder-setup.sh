@@ -94,7 +94,7 @@ if [[ -f $IMAGE_LOCK ]]; then
     # there rather than here.
     [[ ${RELOCK:-0} == 1 ]] && warn "${#missing[@]} locked atom(s) are gone from the pinned tree
   — continuing because this is a relock, which is what resolves them"
-    [[ ${RELOCK:-0} == 1 ]] || die "${#missing[@]} locked version(s) are not in the pinned tree ($TREE_COMMIT).
+    [[ ${RELOCK:-0} == 1 ]] || die "${#missing[@]} locked version(s) are not in the pinned tree ($SNAPSHOT_DATE).
   Upstream removes old versions routinely, so this is expected when the tree pin moves forward.
   Release exactly those atoms and re-resolve them:  scripts/relock.sh ${missing[0]#=}
   (a binpkg in /cache does not rescue this: --usepkg resolves against the ebuild tree)"

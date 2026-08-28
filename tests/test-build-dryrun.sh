@@ -26,7 +26,7 @@ assert_contains "-cache:/cache" "$out" "cache volume mounted"
 assert_contains "-tree:/var/db/repos" "$out" "ebuild tree volume mounted"
 # Context is the repo root now, because the Dockerfile COPYs config/portage/lock/builder.lock.
 assert_contains "builder/Dockerfile" "$out" "builder built with an explicit -f"
-assert_contains "TREE_COMMIT=" "$out" "tree pin passed to the image build"
+assert_contains "SNAPSHOT_DATE=" "$out" "tree pin passed to the image build"
 assert_contains "BASE=gentoo/stage3@sha256:" "$out" "stage3 base passed by digest, not by tag"
 
 out="$(run_build --vendor)"

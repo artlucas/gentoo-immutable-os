@@ -286,13 +286,21 @@ if [[ $FLATPAK_PREINSTALL_MODE == build && -n ${FLATPAK_PREINSTALL// /} ]]; then
     # Read it back. `flatpak update --commit=` on an already-current ref exits 0 and says
     # "Nothing to do", which is indistinguishable from success — so ask what is actually
     # deployed rather than trusting that the loop above did anything.
+    #
+    # --all, not the default listing: bare `flatpak list` omits extensions (.Locale,
+    # GL.default), and those are in the lock precisely because they are most of the bytes.
+    # Checked against flatpak on this host: 12 refs listed by default, 17 with --all.
     FP_ACTIVE="$(chroot_target "$TARGET" \
-      "flatpak list --system --columns=ref,active" 2>/dev/null | tr -d '\r')"
+      "flatpak list --system --all --columns=ref,active" 2>/dev/null | tr -d '\r')"
     fp_bad=0
     while read -r ref commit; do
       [[ -n $ref && $ref != \#* ]] || continue
-      got="$(printf '%s\n' "$FP_ACTIVE" | awk -v r="$ref" '$1 == r {print $2}')"
-      # `flatpak list` abbreviates the commit; compare on the prefix it prints.
+      # `flatpak list` prints the ref WITHOUT its app/ or runtime/ prefix
+      # ("org.kde.ark/x86_64/stable"), while the lock keeps the prefix because that is what
+      # distinguishes an app from a runtime of the same name. Compare on the stripped form.
+      short="${ref#*/}"
+      got="$(printf '%s\n' "$FP_ACTIVE" | awk -v r="$short" '$1 == r {print $2}')"
+      # `flatpak list` abbreviates the commit to 12 chars; compare on the prefix it prints.
       [[ -n $got && $commit == "$got"* ]] || {
         warn "flatpak $ref is at '${got:-<not installed>}', lock says ${commit:0:12}"
         fp_bad=1

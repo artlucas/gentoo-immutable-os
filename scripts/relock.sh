@@ -4,7 +4,7 @@
 # The locks exist so a rebuild picks the same versions. This is the other half: how a pin moves
 # when it should. A patch release is
 #
-#     edit TREE_COMMIT in config/build.conf   # a newer mirror commit
+#     edit SNAPSHOT_DATE + SNAPSHOT_SHA256 in config/build.conf   # a newer tree
 #     scripts/relock.sh --security            # move ONLY what has a security fix
 #     review out/reports/lock.diff, commit it, bump VERSION, build
 #
@@ -158,7 +158,7 @@ ensure_dir "$REPORT_DIR"
 RELOCK_SET="$PC/sets/relock-target"
 if [[ $MODE == all ]]; then
   SETS=(@base @hardware); [[ ${CONSOLE_ONLY:-0} == 1 ]] || SETS+=(@desktop)
-  log "re-resolving EVERYTHING against tree $TREE_COMMIT — expect a large diff"
+  log "re-resolving EVERYTHING against tree $SNAPSHOT_DATE — expect a large diff"
 else
   [[ -f $PC/sets/locked-image ]] || die "no locked-image set — run:  scripts/build.sh --only 20"
   STALE="$CONFIG_ROOT/.lock-missing"

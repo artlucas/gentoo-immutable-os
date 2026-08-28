@@ -6,32 +6,32 @@
 ARG BASE=gentoo/stage3:amd64-systemd
 FROM ${BASE}
 
-# The ebuild repo, pinned by commit (plan/15). This replaced a bare `RUN emerge-webrsync`,
-# which was broken in two ways at once: it took whatever the mirror served that day, and it had
-# NO CACHE BUSTER, so the layer never invalidated. The tree this builder actually used was
-# "whenever someone last rebuilt the image" — and since stage 10's `--revert` ran inside a
-# `docker run --rm` whose /var/db/repos was this layer rather than a volume, the revert was
-# thrown away and nothing anywhere noticed.
+# The ebuild repo, pinned to a dated rsync snapshot (plan/15).
 #
-# Naming TREE_COMMIT as an ARG immediately above the RUN is what fixes the second half: the
-# layer is now keyed on the pin, so bumping the pin rebuilds it.
+# This RUN used to be a bare `emerge-webrsync`, which was broken in two ways at once: it took
+# whatever the mirror served that day, and it had NO CACHE BUSTER, so the layer never
+# invalidated. The tree this builder actually used was "whenever someone last rebuilt the
+# image" — and since stage 10's revert ran inside a `docker run --rm` whose /var/db/repos was
+# this layer rather than a volume, the revert was thrown away and nothing anywhere noticed.
 #
-# wget, not git: the stage3 has no git, and there is no ebuild tree to emerge one from until
-# this RUN completes — the ordering is circular. codeload resolves the commit to exactly that
-# commit's tree, so the pin is still the SHA.
+# Naming SNAPSHOT_DATE as an ARG immediately above the RUN fixes the second half: the layer is
+# now keyed on the pin, so bumping the pin rebuilds it.
+#
+# It is deliberately NOT a plain download of a git forge tarball. That was tried:
+# github.com/gentoo-mirror/gentoo is the DEVELOPMENT repo with metadata/md5-cache added, so its
+# Manifests carry only DIST lines while layout.conf says thin-manifests = false, and portage
+# refuses to merge ebuilds it cannot find listed. webrsync fetches a full-Manifest rsync
+# snapshot and verifies upstream's digest and GPG signature before unpacking.
 #
 # At run time /var/db/repos is a named volume; Docker seeds an empty one from this layer, so
 # this is the tree's first copy rather than a duplicate of it. Stage 10 reconciles the volume
-# against TREE_COMMIT on every run for the case where the volume is NOT empty and NOT current.
-ARG TREE_REPO=https://github.com/gentoo-mirror/gentoo
-ARG TREE_COMMIT
-RUN test -n "$TREE_COMMIT" || { echo "TREE_COMMIT build-arg is required" >&2; exit 1; } \
- && mkdir -p /var/db/repos/gentoo \
- && wget -qO- "$(echo "${TREE_REPO%/}" | sed 's|github\.com|codeload.github.com|')/tar.gz/${TREE_COMMIT}" \
-      | tar -xz -C /var/db/repos/gentoo --strip-components=1 \
+# against the pin on every run, for the case where the volume is NOT empty and NOT current.
+ARG SNAPSHOT_DATE
+RUN test -n "$SNAPSHOT_DATE" || { echo "SNAPSHOT_DATE build-arg is required" >&2; exit 1; } \
+ && emerge-webrsync --revert="$SNAPSHOT_DATE" \
  && test -d /var/db/repos/gentoo/metadata/md5-cache \
  && test -f /var/db/repos/gentoo/metadata/timestamp.chk \
- && printf '%s' "$TREE_COMMIT" > /var/db/repos/.tree-commit
+ && grep -q '^EBUILD ' /var/db/repos/gentoo/sys-apps/systemd/Manifest
 
 # Binary packages for the BUILDER's own "/". This is the builder only, and it is the opposite
 # policy from the image: the target has no binhost at all and compiles what it ships (see the
@@ -216,15 +216,18 @@ RUN mkdir -p /etc/portage/sets \
 # and is where the per-package justifications live; deleting it in favour of the lock would
 # throw away the only statement of intent. The lock is what actually gets emerged.
 #
-# The copy is of the DIRECTORY, not the file: a COPY of a missing path fails the build, and the
-# lock is legitimately absent when bootstrapping a new builder from scratch. The fallback below
-# handles that case by emerging the request, exactly as this file did before the lock existed.
+# ONE FILE, not the directory. Docker keys a COPY layer on the content of everything copied, so
+# `COPY config/portage/lock/` would invalidate this layer — and the ~1 hour of source builds
+# behind it — whenever image.lock changed, despite the builder never reading image.lock. That
+# would put an hour on every `relock.sh --security`, which is the operation this whole design
+# wants to be cheap. builder.lock is committed (empty is fine when bootstrapping a new builder;
+# the -s test below falls back to @builder-request), so a single-file COPY is safe.
 #
 # On a first build from the pinned BUILDER_DIGEST the stage3's own @system packages already
 # match the lock exactly — the lock was generated from a builder built on that base — so those
 # 480 atoms resolve to "nothing to do" and only the tools are installed. When the base digest
 # moves they will not match, and that is precisely when the builder wants relocking.
-COPY config/portage/lock/ /tmp/immos-lock/
+COPY config/portage/lock/builder.lock /tmp/immos-lock/builder.lock
 RUN if [ -s /tmp/immos-lock/builder.lock ]; then \
       grep -v '^#' /tmp/immos-lock/builder.lock | sed '/^$/d' > /etc/portage/sets/locked-builder; \
       SET=@locked-builder; \

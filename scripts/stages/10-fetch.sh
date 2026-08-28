@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Stage 10 — builder preflight + input pinning.
 # Verifies the builder has every tool later stages need, reconciles the ebuild tree volume
-# against the TREE_COMMIT pin, and asserts the builder's own closure matches builder.lock.
+# against the SNAPSHOT_DATE pin, and asserts the builder's own closure matches builder.lock.
 # Fails fast here beats failing 2 hours into stage 30.
 set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -47,18 +47,19 @@ fi
 # ---- ebuild tree: reconcile the volume against the pin -------------------------------
 # /var/db/repos is a named volume, so unlike the old emerge-webrsync --revert this survives
 # the stage boundary and stages 20/30 resolve against the tree this pin names.
-have="$(tree_marker_read)"
-if [[ $have == "$TREE_COMMIT" ]]; then
-  log "tree is at the pin: $TREE_COMMIT ($SNAPSHOT_DATE)"
+have="$(tree_marker_read)"; want="$(tree_pin_id)"
+if [[ $have == "$want" ]]; then
+  log "tree is at the pin: $SNAPSHOT_DATE"
 else
-  log "tree is at '$have', pin is '$TREE_COMMIT' — repopulating"
+  log "tree is at '$have', pin is '$want' — repopulating"
   vendored=""
-  [[ -n ${VENDOR_DIR:-} && -f $VENDOR_DIR/tree-$TREE_COMMIT.tar.zst ]] \
-    && vendored="$VENDOR_DIR/tree-$TREE_COMMIT.tar.zst"
+  for cand in "${VENDOR_DIR:-}/$(snapshot_tarball_name)" "${VENDOR_DIR:-}/tree-$SNAPSHOT_DATE.tar.zst"; do
+    [[ -n ${VENDOR_DIR:-} && -f $cand ]] && { vendored="$cand"; break; }
+  done
   if [[ -n $vendored ]]; then
     tree_populate "$vendored"
   elif [[ ${OFFLINE:-0} == 1 ]]; then
-    die "offline build, but the archive has no tree-$TREE_COMMIT.tar.zst and the tree volume
+    die "offline build, but the archive has no snapshot for $SNAPSHOT_DATE and the tree volume
   is at '$have'. The archive does not match this build.conf."
   else
     tree_populate
@@ -93,5 +94,5 @@ fi
 
 # ---- verify -----------------------------------------------------------------------
 tree_assert
-log "preflight OK — tree $TREE_COMMIT ($SNAPSHOT_DATE)"
+log "preflight OK — snapshot $SNAPSHOT_DATE (tree timestamp $(tree_date)), sha256 pinned"
 stamp_write "$STAGE_NAME" "$(inputs_hash "$REPO/config/build.conf")"
