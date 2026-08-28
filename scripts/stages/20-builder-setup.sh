@@ -12,6 +12,10 @@ ensure_dir "$OUT/logs"; exec > >(tee -a "$OUT/logs/$STAGE_NAME.log") 2>&1
 
 is_linux || die "stages run inside the builder container only"
 
+# One DISTDIR for both roots (see the function). Per stage, because each runs in its own
+# container and nothing written to /etc/portage survives to the next.
+share_builder_distdir
+
 # The depgraph below resolves against /var/db/repos/gentoo, so assert it is the pinned tree
 # before resolving anything. Each stage is its own container — this cannot be done once.
 tree_assert

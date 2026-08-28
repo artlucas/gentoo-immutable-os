@@ -13,6 +13,10 @@ ensure_dir "$OUT/logs"; exec > >(tee -a "$OUT/logs/$STAGE_NAME.log") 2>&1
 
 is_linux || die "stages run inside the builder container only"
 
+# One DISTDIR for both roots (see the function). Per stage, because each runs in its own
+# container and nothing written to /etc/portage survives to the next.
+share_builder_distdir
+
 # ---- tool preflight (everything any later stage shells out to) ---------------
 # wget + tar replace emerge-webrsync here: the tree now arrives as a commit-pinned tarball
 # (plan/15), and requiring a tool this pipeline no longer uses would only mislead.

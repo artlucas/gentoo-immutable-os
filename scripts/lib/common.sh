@@ -456,8 +456,30 @@ snapshot_park_kept_tarball() {
   return 0
 }
 
+# share_builder_distdir — point the BUILDER's own "/" at the same DISTDIR the target uses.
+#
+# The two-root emerge otherwise has two of them, and only one persists. Target packages use the
+# config root's DISTDIR (/cache/distfiles, a named volume); anything portage resolves for "/"
+# uses the builder's, which is /var/cache/distfiles — inside the container.
+#
+# That asymmetry breaks an offline build in BOTH directions, and it took two failed attempts to
+# see the second one. Fetching: sources for builder-root packages are downloaded and then thrown
+# away with the container, so they never reach the archive. Restoring: seeding the archive into
+# /cache/distfiles does not help either, because the builder-root merge does not look there.
+# One DISTDIR removes the whole class rather than patching each direction separately.
+#
+# Written per stage, like mirror_target_pkg_config and for the same reason: every stage is its
+# own `docker run --rm`, so nothing written to /etc/portage survives to the next. Idempotent.
+share_builder_distdir() {
+  local dest; dest="$(snapshot_cache_dir)"
+  ensure_dir "$dest"
+  grep -qs "^DISTDIR=\"$dest\"" /etc/portage/make.conf \
+    || printf 'DISTDIR="%s"\n' "$dest" >> /etc/portage/make.conf
+}
+
 # distfiles_sweep — move anything portage downloaded into the BUILDER's own DISTDIR across to
-# the persistent cache.
+# the persistent cache. Belt-and-braces now that share_builder_distdir makes them one directory:
+# a no-op in that case, and still correct if some path bypasses it.
 #
 # The two-root emerge has two DISTDIRs. Target packages use the config root's
 # (/cache/distfiles, a named volume, which stage 90 archives); packages resolved for the

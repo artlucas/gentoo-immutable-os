@@ -10,6 +10,10 @@ load_config
 ensure_dir "$OUT/logs"; exec > >(tee -a "$OUT/logs/$STAGE_NAME.log") 2>&1
 
 is_linux || die "stages run inside the builder container only"
+
+# One DISTDIR for both roots (see the function). Per stage, because each runs in its own
+# container and nothing written to /etc/portage survives to the next.
+share_builder_distdir
 [[ -d $CONFIG_ROOT/etc/portage ]] || die "config-root missing — run stage 20 first"
 
 # The target depgraph resolves against /var/db/repos/gentoo. Assert the pin here too: this
