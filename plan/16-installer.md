@@ -536,6 +536,27 @@ Deferred out of Phase 0 as unnecessary until something needs it: `PROFILE_ROOT_S
 which only the installer profile wants, and which would change the GPT layout code for no
 present gain.
 
+**What the console build actually proved, 2026-08-30.** The profile was built end to end —
+stages 20 through 80, including the QEMU smoke test — and the desktop profile's config root,
+target rootfs, lock, UKI and image were untouched throughout.
+
+| | console | desktop |
+|---|---|---|
+| lock atoms | 428 | 655 (console is a strict subset; 0 atoms unique to it) |
+| stage 30 | **424 of 426 merged from `/cache/binpkgs`, 0 KiB downloaded** | — |
+| root EROFS | 1769 MiB | 2762 MiB |
+| image `.img.zst` | 2191 MiB | 3011 MiB |
+| stage 70 | both boots pass, `failed_units=0`, machine-id persists, `var` grew to 3.9 GB | — |
+
+The binpkg number is the §3.2 rule paying off exactly as designed: a second profile costs minutes
+because it shares one config root, one `make.conf` and one `package.use` with the first.
+
+**And it found a real bug, which is what a clean-room profile is for.** `@base` had no provider
+for `libstdc++.so.6`; see the correction in [plan/06](06-pruning.md). It only ever worked because
+`@desktop` happened to pull `sys-devel/gcc` in, so the very first image built without `@desktop`
+had 424 binaries that could not start. The fix — listing `sys-devel/gcc` in `@base` — moved the
+desktop resolution by zero packages and cost all three locks a header rewrite and nothing else.
+
 **Phase A — Installer on raw media.** Add `config/portage/sets/installer` and the `installer`
 profile; build it through stage 60 to a raw `.img`. Write the Calamares branding, the custom
 disk-select module, and the `shellprocess` steps for §5.1 and §5.4. No ISO, no swap.

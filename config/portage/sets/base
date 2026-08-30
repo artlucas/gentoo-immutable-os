@@ -2,6 +2,27 @@
 sys-apps/baselayout
 app-shells/bash
 sys-apps/coreutils
+# The C++ runtime, and it is listed here because it is NOT optional and was NOT arriving.
+#
+# sys-devel/gcc is Gentoo's only provider of libstdc++.so.6 and libgcc_s.so.1. plan/06 records
+# it as arriving in any new ROOT by itself, via the profile's @system set, and specifically that
+# "media-libs/mesa, x11-drivers/nvidia-drivers and @base each pull it identically". Measured
+# against the pinned tree on 2026-08-28, that is no longer true — resolving into an empty root:
+#
+#   @base                        -> no gcc
+#   @base @hardware              -> no gcc
+#   @base @hardware @desktop     -> gcc
+#
+# So only @desktop was pulling it, and the desktop image has had a working C++ runtime by
+# accident rather than by the mechanism plan/06 describes. The first build of a profile without
+# @desktop found it the hard way: 424 binaries in the console target — flatpak, podman, the icu
+# tools — could not start, with "libstdc++.so.6: cannot open shared object file", and stage 40
+# died on the first one it ran.
+#
+# Listing it explicitly costs the shipped image nothing: stage 50 already splits this package,
+# deleting the compiler (~270 MB) and keeping the runtime libraries (~12 MB), and asserts the
+# result. It only makes the dependency honest, so no future profile can lose it silently again.
+sys-devel/gcc
 # The text tools are NOT optional, despite what a "minimal" image suggests: the image's own
 # shipped scripts need them. usr/bin/<distro>-update (the A/B update CLI) uses grep -Fxv,
 # grep -F and awk to enumerate ESP entries and partitions, and the stage-70 self-test reporter

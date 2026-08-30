@@ -149,4 +149,19 @@ for prof in "${PROFILES[@]}"; do
     done
 done
 
+# ---- the C++ runtime must be requested explicitly, in @base --------------------------------
+# Regression test for the bug the first console build found (plan/16 §8, Phase 0). sys-devel/gcc
+# is Gentoo's only provider of libstdc++.so.6, plan/06 recorded it as arriving by itself through
+# @system, and it had silently stopped doing so for every set combination that omits @desktop.
+# The symptom was 424 unrunnable binaries in a fresh ROOT, and nothing said a word until a
+# program was actually executed. Asserted here because it is invisible until then.
+assert_true "@base names sys-devel/gcc (the only libstdc++.so.6 provider)" \
+    grep -qx 'sys-devel/gcc' "$REPO_ROOT/config/portage/sets/base"
+for prof in "${PROFILES[@]}"; do
+    ep="$REPO_ROOT/config/portage/expected-packages.$prof.txt"
+    [[ -f $ep ]] || continue
+    if grep -qx 'sys-devel/gcc' "$ep"; then _pass
+    else _fail "profile '$prof' ships no sys-devel/gcc — every C++ binary in it would fail to start"; fi
+done
+
 finish

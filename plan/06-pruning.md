@@ -94,7 +94,30 @@ proved it: `sys-devel/gcc` is a member of the profile's **@system** set
 (`profiles/base/packages`: `*sys-devel/gcc`), so Portage installs it into *any* new ROOT.
 `--with-bdeps=n` does not prevent it — verified by bisection, since `media-libs/mesa`,
 `x11-drivers/nvidia-drivers` and `@base` each pull it identically while a leaf package like
-`sys-apps/hwdata` pulls nothing. It is also the **only** provider of `libstdc++.so.6` and
+`sys-apps/hwdata` pulls nothing.
+
+> **CORRECTED 2026-08-30.** The paragraph above is no longer true of `@base`, and had not been
+> for some time. Resolved into an empty root against the pinned tree:
+>
+> | sets | gcc pulled |
+> |---|---|
+> | `@base` | **no** |
+> | `@base @hardware` | **no** |
+> | `@base @hardware @desktop` | yes |
+>
+> So only `@desktop` was pulling it in, and the desktop image has had a working C++ runtime by
+> accident rather than by the `@system` mechanism this section describes. Nothing revealed it
+> while `@desktop` was in every build. The first build of a profile without it
+> ([plan/16](16-installer.md) §8) found it the hard way: **424 binaries in the console target —
+> `flatpak`, `podman`, the icu tools — could not start**, with `libstdc++.so.6: cannot open
+> shared object file`, and stage 40 died on the first one it executed.
+>
+> `sys-devel/gcc` is now listed **explicitly in `config/portage/sets/base`**, so the dependency
+> is stated rather than inferred from a graph accident. Everything below still applies unchanged
+> — stage 50 splits the package the same way, and the shipped image is byte-for-byte what it
+> was: adding the atom moved the desktop resolution by exactly nothing (657 packages before,
+> 657 after, zero differences). `tests/test-profiles.sh` asserts the atom is in `@base` and in
+> every profile's `expected-packages`, because the failure is invisible until something runs. It is also the **only** provider of `libstdc++.so.6` and
 `libgcc_s.so.1`, which every C++ program in a GNOME image links against, so it cannot simply
 be masked away with `package.provided` either.
 
