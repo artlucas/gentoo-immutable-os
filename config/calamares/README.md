@@ -97,6 +97,11 @@ an installed system with no preinstalled apps until someone installs them.
   load, and warns otherwise — writing an uncompiled locale would silently give the user `C`.
   `LOCALES_KEEP` (translated UI) is a much longer list, which is why choosing German mostly works
   while the number and date formats stay American.
+- **The medium is excluded from the disk picker by Calamares, not by us.**
+  `PartUtils::getDevices(WritableOnly)` drops any device holding a partition mounted at `/`
+  (`core/DeviceList.cpp:178`). The live root is mounted at `/`, so the USB device disappears
+  before the page is drawn. Worth verifying on the first hardware run: it is the one failure in
+  this installer that destroys data.
 - **Remove the medium before rebooting.** The installed root and var carry the same PARTLABELs as
   the stick's, because those strings are the system's identity and are deliberately not
   profile-suffixed. With both attached, `/dev/disk/by-partlabel/` resolves each name to whichever

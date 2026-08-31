@@ -23,6 +23,15 @@
 # tests/test-installer.sh asserts the two agree, because they are 300 lines apart in two
 # languages and nothing else would notice them diverging.
 ---
+# WHAT KEEPS THE INSTALLER FROM ERASING THE STICK IT BOOTED FROM, because it is not anything in
+# this file and is worth knowing before someone changes one:
+# PartUtils::getDevices(WritableOnly) drops any device with a partition whose mountPoint is "/"
+# (core/DeviceList.cpp:178), and separately drops anything blkid calls iso9660. On this medium the
+# live root IS mounted at /, so the whole USB device disappears from the picker before the page is
+# drawn. Two things would break it: a live boot that does not mount the root at / (a future
+# initrd change), and Calamares built with DEBUG_PARTITION_UNSAFE, which downgrades that removal
+# to a no-op. Gentoo's ebuild does not set it. Verify on the first hardware run that the medium
+# is absent from the device list — it is the one failure in this installer that destroys data.
 efi:
     # /efi, not /boot/efi. That is where this image mounts the ESP (config/rootfs/etc/fstab) and
     # where imagebootloader writes systemd-boot and the UKI.
