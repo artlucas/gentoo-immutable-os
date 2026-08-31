@@ -17,12 +17,23 @@ ensure_dir "$LOG_DIR"; exec > >(tee -a "$LOG_DIR/$STAGE_NAME.log") 2>&1
 # exact leak the profile mechanism exists to prevent, and it is the one place nothing else was
 # checking: stage 50's audit gate is per-profile, so the installer's own expected-packages file
 # legitimately lists the whole tail.
-[[ $PROFILE_ROLE == target ]] || die "profile $BUILD_PROFILE has PROFILE_ROLE=$PROFILE_ROLE, and a
-  live profile is install media — it is booted from a stick and thrown away, never installed and
-  never updated. Publishing it into $UPDATE_CHANNEL would put an image containing the installer's
-  whole dependency tail into the update channel, where sysupdate's MatchPattern would offer it to
-  installed machines as the next version.
-  Build the medium (stages 20-60) and hand out the .img; do not release it."
+# SKIPPED, not failed. `build.sh --profile installer` with no stage arguments is the obvious way
+# to build a medium, and it runs the whole pipeline — so dying here would make a build that did
+# everything right end in a red error. Exiting 0 with a line saying what did not happen keeps the
+# guarantee (nothing reaches the channel) without lying about the outcome.
+#
+# This is not the silent no-op pattern this repo distrusts elsewhere: there is nothing to release
+# for a live profile, that is a structural fact rather than a failure to do work, and it is said
+# out loud every time.
+if [[ $PROFILE_ROLE != target ]]; then
+  log "profile $BUILD_PROFILE has PROFILE_ROLE=$PROFILE_ROLE — nothing to release."
+  log "A live profile is install media: booted from a stick, thrown away, never installed and"
+  log "never updated. Publishing it into '$UPDATE_CHANNEL' would put an image carrying the"
+  log "installer's whole dependency tail — Calamares, GRUB, os-prober — into the update channel,"
+  log "where sysupdate's MatchPattern would offer it to installed machines as the next version."
+  log "Hand out out/$IMG_NAME instead; that is the deliverable."
+  exit 0
+fi
 
 ROOT_EROFS="$OUT/$ROOT_IMG_NAME"
 [[ -f $ROOT_EROFS ]] || die "root image missing — run stage 60"

@@ -254,7 +254,18 @@ assert_true "app-admin/calamares carries a ~amd64 exception" \
 # next version — carrying Calamares, GRUB and os-prober with it. Nothing else catches this,
 # because stage 50's audit gate is per-profile and the installer's own file legitimately lists
 # the whole tail.
-assert_true "stage 80 refuses to release a non-target profile" \
-    grep -q 'PROFILE_ROLE == target' "$REPO_ROOT/scripts/stages/80-release.sh"
+assert_true "stage 80 gates the release on PROFILE_ROLE" \
+    grep -q 'PROFILE_ROLE != target' "$REPO_ROOT/scripts/stages/80-release.sh"
+# ...and it must SKIP rather than die: `build.sh --profile installer` runs the whole pipeline, and
+# a medium that built correctly should not end in a red error for declining to do something it was
+# never supposed to do.
+assert_true "stage 80 skips a live profile rather than failing the build" \
+    grep -q 'exit 0' "$REPO_ROOT/scripts/stages/80-release.sh"
+# The gate must come BEFORE anything is written into the release directory.
+assert_true "the role gate precedes the release directory being created" \
+    bash -c 'gate=$(grep -n "PROFILE_ROLE != target" "$1" | cut -d: -f1)
+             mkdir=$(grep -n "ensure_dir .*RELEASE_DIR" "$1" | head -1 | cut -d: -f1)
+             [ -n "$gate" ] && [ -n "$mkdir" ] && [ "$gate" -lt "$mkdir" ]' _ \
+    "$REPO_ROOT/scripts/stages/80-release.sh"
 
 finish
