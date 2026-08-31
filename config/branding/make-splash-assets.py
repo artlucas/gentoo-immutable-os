@@ -286,9 +286,10 @@ def main() -> None:
     ap.add_argument(
         "--logo-scale",
         type=float,
-        default=0.5,
+        default=1.0,
         help="--logo only: scale of the composed block, 1 = the 1080p design baseline. "
-        "0.5 keeps the mark inside Calamares' 190px sidebar without upscaling.",
+        "Sized for HiDPI: Calamares draws the logo into a fixed 80x80 box and asks for the "
+        "pixmap at size * devicePixelRatio, so a 2x panel wants ~160px of source height.",
     )
     ap.add_argument(
         "--scale",
