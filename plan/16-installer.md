@@ -755,6 +755,28 @@ under `pkexec`, and polkit authorizes a root subject implicitly. Measured in the
 `pkcheck` — root returns 0 with no interaction, the same action as the live user returns *Not
 authorized*. **No polkit rule was added**, because none was needed.
 
+**Verified on the rebuilt medium, in the guest, with a blank 32 GiB second disk.** The dbus line
+that used to say *failed … Permission denied* now says `Successfully activated service
+'org.kde.kpmcore.helperinterface'`, and Calamares' own log says what the picker is made of:
+
+```
+Removing unsuitable devices: 2 candidates.
+.. Removing device with root filesystem (/) on it "/dev/vda"
+.. there are 1 devices left.
+```
+
+The Partitions page draws `Select storage device: vdb - 32.00 GiB (/dev/vdb)` as its **only**
+entry, with *Erase disk* unselected and no manual-partitioning option — §5.3's design, on screen.
+
+That second log line is worth more than the first: **it is exit criterion 1 of §8 met, and it had
+never been tested.** The medium the installer booted from is dropped by
+`PartUtils::getDevices(WritableOnly)` before the page is drawn, so it cannot be offered as a
+target. The mechanism is `hasRootPartition()` — it keys on a partition mounted at `/`, not on the
+device being USB — so a guest observation of it carries to hardware. It remains worth re-checking
+on the first real stick, because that is where an initrd change that stopped mounting the root at
+`/` would show up. Calamares also started with **no password prompt**, which is the first evidence
+that §5.2's polkit rule is being read at all.
+
 *The relock cost §3.2 predicted for this phase was paid, and it was a header rewrite.* The new
 `package.accept_keywords` and `package.use` entries move `portage_config_hash()` from
 `6c96fd39…` to `63536e8d…`. Evidence gathered before any lock was touched, by resolving each
