@@ -32,7 +32,12 @@ import subprocess
 import tempfile
 
 import libcalamares
-from libcalamares.utils import debug, warning
+
+# `libcalamares.utils.x`, not `from libcalamares.utils import x`. The submodule is registered by
+# PyImport_AddModule from C++ rather than being a real package, and every stock module reaches it
+# this way — matching them is cheaper than finding out where the difference bites.
+debug = libcalamares.utils.debug
+warning = libcalamares.utils.warning
 
 import gettext
 
@@ -249,6 +254,25 @@ def run():
 
         # ---- 1. the root filesystem, byte for byte ------------------------------------------
         # This is the install. Everything after it is mounting and identity.
+        #
+        # settle first. The partition module has just rewritten the GPT and run mkfs, and the
+        # /dev nodes for the new partitions are created by udev in response — asynchronously. A
+        # classic installer race is to open a device node that does not exist yet, or worse, one
+        # that still refers to the PREVIOUS table's partition. Cheap insurance, and it is the
+        # kind of failure that only appears on someone else's disk.
+        try:
+            sh(["udevadm", "settle", "--timeout=30"])
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            warning("udevadm settle failed ({}); continuing".format(e))
+        for name, part in parts.items():
+            if not os.path.exists(part["device"]):
+                raise DeployError(
+                    _("Installation failed"),
+                    _("The {!s} partition {!s} did not appear after partitioning.").format(
+                        name, part["device"]
+                    ),
+                )
+
         write_image(
             root_image,
             parts["root"]["device"],
@@ -276,6 +300,10 @@ def run():
                 [
                     "tar",
                     "--extract",
+                    # Explicit rather than relying on tar's magic sniffing: the failure mode of a
+                    # missed detection is tar reading 2 GiB of compressed bytes as a tar stream
+                    # and reporting a corrupt archive, which reads as a corrupt PAYLOAD.
+                    "--zstd",
                     "--numeric-owner",
                     "--xattrs",
                     "--acls",

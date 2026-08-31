@@ -30,7 +30,10 @@ import os
 import subprocess
 
 import libcalamares
-from libcalamares.utils import debug, warning
+
+# See the note in imagedeploy/main.py: this is the idiom every stock module uses.
+debug = libcalamares.utils.debug
+warning = libcalamares.utils.warning
 
 import gettext
 
