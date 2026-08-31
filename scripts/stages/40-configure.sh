@@ -527,11 +527,15 @@ if profile_has_set installer; then
   # Three consumers, one compose_block(): the user sees this sidebar a minute after watching that
   # splash, so they must be the same pixels rather than two drawings of one logo.
   python3 "$REPO/config/branding/make-splash-assets.py" \
-    --asset-dir "$BRANDING_PNG" --logo "$TARGET/etc/calamares/branding/installer/logo.png" \
-    || die "installer: branding logo generation failed"
-  [[ -s $TARGET/etc/calamares/branding/installer/logo.png ]] \
-    || die "installer: branding logo is empty — Calamares refuses to start without its branding"
-  chmod 0644 -- "$TARGET/etc/calamares/branding/installer/logo.png"
+    --asset-dir "$BRANDING_PNG" \
+    --logo  "$TARGET/etc/calamares/branding/installer/logo.png" \
+    --slide "$TARGET/etc/calamares/branding/installer/slide.png" \
+    || die "installer: branding image generation failed"
+  for img in logo slide; do
+    [[ -s $TARGET/etc/calamares/branding/installer/$img.png ]] \
+      || die "installer: branding $img.png is empty — Calamares exits at startup without its branding"
+    chmod 0644 -- "$TARGET/etc/calamares/branding/installer/$img.png"
+  done
 
   # Live-medium ergonomics: start the installer on login, and let the live user authenticate for
   # that ONE polkit action without a password whose value is printed in the documentation.

@@ -50,9 +50,28 @@ style:
     SidebarTextCurrent:       "#0a0d11"
     SidebarBackgroundCurrent: "#0e9c8a"
 
-# No slideshow. A slideshow is a QML file plus its images inside the branding component, and this
-# install is minutes of dd rather than an hour of package transactions — there is nothing to fill
-# and nothing to advertise. Calamares shows its progress list instead, which is more informative.
+# MANDATORY, and it is the only key in this file that is. Branding.cpp reads it through get(),
+# which throws YAML::KeyNotFound for a missing key, and the constructor turns that into
+#
+#   ERROR: FATAL in "/etc/calamares/branding/installer/branding.desc" key not found: slideshow
+#
+# — an immediate exit, before any window is drawn. It was omitted here on the reasoning that this
+# install is minutes of dd rather than an hour of package transactions, so there is nothing to
+# advertise and Calamares would show its progress list. That reasoning was wrong twice: the key
+# is required, and an EMPTY list is not neutral either — SlideshowPictures falls back to
+# ":/data/images/squid.svg", i.e. Calamares' own mascot, on our installer's progress page
+# (Slideshow.cpp:236).
+#
+# So: one slide, ours. slide.png is written at build time by make-splash-assets.py --slide, from
+# the same compose_block() as the logo and the boot splash, painted on the same #0a0d11 and sized
+# 640x360 — because SlideshowPictures uses QLabel::setPixmap and does NOT scale the image
+# (Slideshow.cpp:280), so the file must arrive at the size it will occupy.
+#
+# A LIST, not a QML path: the list form needs no QML runtime, no slideshowAPI, and no second
+# language in the branding component. With one entry the timer still runs and re-displays the
+# same image, which is exactly the intended "static brand panel".
+slideshow:
+    - "slide.png"
 
 # No upload server: `uploadServer` offers to paste the installation log to a public pastebin, and
 # that log names the machine's disks and the account being created. Not something an installer

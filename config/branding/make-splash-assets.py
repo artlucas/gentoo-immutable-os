@@ -277,12 +277,39 @@ def build_logo(theme: Path, output: Path, scale: float) -> None:
     print(f"make-splash-assets: {output} ({canvas.width}x{canvas.height}, scale {scale})")
 
 
+def build_slide(theme: Path, output: Path, scale: float, size: tuple[int, int]) -> None:
+    """The installer's progress-page slide (plan/16).
+
+    A fourth consumer of compose_block(), and the only one that needs a CANVAS rather than a
+    tight block: Calamares' SlideshowPictures draws the image with QLabel::setPixmap and does not
+    scale it (Slideshow.cpp:280), so the file has to arrive at roughly the size it will occupy.
+    640x360 sits inside the content area of the 900x600 window the branding asks for, with the
+    sidebar's 190px taken off, and stays centred if the user maximises.
+
+    Painted on BG, the same --surface-sunken the sidebar and the boot splash use, so it reads as
+    a deliberate brand panel rather than as a stray dark rectangle on the page background.
+    """
+    block = compose_block(theme, scale, BG)
+    canvas = Image.new("RGB", size, BG)
+    canvas.paste(block, ((size[0] - block.width) // 2, (size[1] - block.height) // 2))
+    output.parent.mkdir(parents=True, exist_ok=True)
+    canvas.save(output, format="PNG")
+    print(f"make-splash-assets: {output} ({canvas.width}x{canvas.height}, block scale {scale})")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--asset-dir", required=True, type=Path, help="where the rasterised PNGs are")
     ap.add_argument("--bmp", type=Path, help="write the systemd-stub .splash bitmap here")
     ap.add_argument("--sprites", type=Path, help="write the KMS splash tile container here")
     ap.add_argument("--logo", type=Path, help="write the installer's branding logo PNG here")
+    ap.add_argument("--slide", type=Path, help="write the installer's progress-page slide here")
+    ap.add_argument(
+        "--slide-size",
+        default="640x360",
+        help="--slide only: canvas size WxH. Calamares does not scale the slide, so this is "
+        "the size it occupies on the progress page.",
+    )
     ap.add_argument(
         "--logo-scale",
         type=float,
@@ -299,8 +326,8 @@ def main() -> None:
     )
     args = ap.parse_args()
 
-    if not args.bmp and not args.sprites and not args.logo:
-        sys.exit("make-splash-assets: nothing to do — pass --bmp, --sprites and/or --logo")
+    if not args.bmp and not args.sprites and not args.logo and not args.slide:
+        sys.exit("make-splash-assets: nothing to do — pass --bmp, --sprites, --logo and/or --slide")
     if args.scale <= 0:
         sys.exit("make-splash-assets: --scale must be positive")
     if args.logo_scale <= 0:
@@ -312,6 +339,14 @@ def main() -> None:
         build_bmp(args.asset_dir, args.bmp, args.scale)
     if args.logo:
         build_logo(args.asset_dir, args.logo, args.logo_scale)
+    if args.slide:
+        try:
+            w, h = (int(v) for v in args.slide_size.lower().split("x", 1))
+        except ValueError:
+            sys.exit(f"make-splash-assets: --slide-size must be WxH, got {args.slide_size!r}")
+        if w < 1 or h < 1:
+            sys.exit("make-splash-assets: --slide-size must be positive")
+        build_slide(args.asset_dir, args.slide, args.logo_scale, (w, h))
 
 
 if __name__ == "__main__":
