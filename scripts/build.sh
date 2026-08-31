@@ -136,13 +136,28 @@ if [[ $CLEAN == 1 ]]; then
   fi
 fi
 
-# ---- offline archive ---------------------------------------------------------------
+# ---- the vendored archive ------------------------------------------------------------
+# Validated and made ABSOLUTE for every use, not just for --offline. The path becomes a
+# `docker run -v $VENDOR_DIR:/vendor` argument, and docker reads a relative path as a NAMED
+# VOLUME rather than a bind mount:
+#
+#   docker: Error response from daemon: create out/vendor/immos-0.3.0:
+#   "out/vendor/immos-0.3.0" includes invalid characters for a local volume name
+#
+# which is a confusing rc=125 for what is simply "you typed a relative path". It only ever
+# worked because the canonicalisation lived inside the --offline branch below, and --offline is
+# how the archive is usually used. It is not the only way: --vendor-dir on its own is what lets
+# stage 40 restore the Flatpak store from the archive (2.7 GiB of rsync instead of a Flathub
+# download) while the rest of the build still has a network.
+if [[ -n $VENDOR_DIR ]]; then
+  [[ -d $VENDOR_DIR ]] || die "--vendor-dir not found: $VENDOR_DIR"
+  VENDOR_DIR="$(cd -- "$VENDOR_DIR" && pwd)"
+fi
+
 # --offline is an assertion, not a hint: every stage runs with --network none, so a build that
 # claims to be reproducible from the archive cannot quietly reach out and prove nothing.
 if [[ $OFFLINE == 1 ]]; then
   [[ -n $VENDOR_DIR ]] || die "--offline needs --vendor-dir DIR (the archive stage 90 produced)"
-  [[ -d $VENDOR_DIR ]] || die "--vendor-dir not found: $VENDOR_DIR"
-  VENDOR_DIR="$(cd -- "$VENDOR_DIR" && pwd)"
   log "offline build from $VENDOR_DIR (every stage runs with --network none)"
 fi
 

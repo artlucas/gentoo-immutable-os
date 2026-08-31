@@ -47,6 +47,26 @@ rm -rf -- "$VDIR"
 out="$(bash "$BUILD" --dry-run --runtime docker --offline 2>&1)"; rc=$?
 assert_eq 1 $rc "--offline without --vendor-dir is rejected"
 
+# --vendor-dir WITHOUT --offline: the archive supplies the Flatpak store to stage 40 while the
+# rest of the build keeps a network. The path must still be made absolute, because it becomes a
+# `docker run -v` argument and docker reads a RELATIVE path as a named volume:
+#   docker: Error response from daemon: create out/vendor/immos-0.3.0:
+#   "out/vendor/immos-0.3.0" includes invalid characters for a local volume name
+# — an rc=125 before the stage runs, for what is only a relative path. The canonicalisation used
+# to live inside the --offline branch, so this combination was the one that hit it.
+VREL="$(make_tmpdir)"; mkdir -p "$VREL/archive"
+( cd "$VREL" && bash "$BUILD" --dry-run --runtime docker --vendor-dir archive 2>&1 ) > "$VREL/out.txt"
+assert_true "a relative --vendor-dir is mounted by absolute path" \
+    grep -qE -- "-v $VREL/archive:/vendor:ro" "$VREL/out.txt"
+assert_false "a relative --vendor-dir is never passed to docker verbatim" \
+    grep -qE -- "-v archive:/vendor" "$VREL/out.txt"
+# ...and it must NOT imply --offline: the network stays available for everything else.
+assert_false "--vendor-dir alone does not isolate the network" \
+    grep -q -- "--network none" "$VREL/out.txt"
+out="$(bash "$BUILD" --dry-run --runtime docker --vendor-dir /nonexistent-archive 2>&1)"; rc=$?
+assert_eq 1 $rc "a --vendor-dir that does not exist is rejected"
+rm -rf -- "$VREL"
+
 out="$(run_build)"
 
 out="$(run_build --from 60)"
