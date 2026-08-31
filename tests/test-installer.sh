@@ -248,4 +248,13 @@ assert_true "@installer names app-admin/calamares" \
 assert_true "app-admin/calamares carries a ~amd64 exception" \
     grep -qE '^app-admin/calamares[[:space:]]+~amd64' "$REPO_ROOT/config/portage/package.accept_keywords/image"
 
+# A live profile must never reach the release layout. The release directory IS the update
+# channel: sysupdate's 50-rootfs.transfer claims any <id>_@v.root.erofs.zst there, so an
+# installer root published beside the product one would be offered to installed machines as the
+# next version — carrying Calamares, GRUB and os-prober with it. Nothing else catches this,
+# because stage 50's audit gate is per-profile and the installer's own file legitimately lists
+# the whole tail.
+assert_true "stage 80 refuses to release a non-target profile" \
+    grep -q 'PROFILE_ROLE == target' "$REPO_ROOT/scripts/stages/80-release.sh"
+
 finish

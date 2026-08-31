@@ -9,6 +9,21 @@ source "$SCRIPT_DIR/../lib/common.sh"
 load_config
 ensure_dir "$LOG_DIR"; exec > >(tee -a "$LOG_DIR/$STAGE_NAME.log") 2>&1
 
+# A LIVE profile is install media, and install media are never released (plan/16 §3.1). This is
+# not tidiness: the release directory IS the update channel, and sysupdate's 50-rootfs.transfer
+# claims any file matching <id>_@v.root.erofs.zst there. A live root published beside the product
+# one is therefore a candidate UPDATE — an image carrying Calamares, GRUB with a legacy-BIOS
+# platform and os-prober, offered to every installed machine as the next version. That is the
+# exact leak the profile mechanism exists to prevent, and it is the one place nothing else was
+# checking: stage 50's audit gate is per-profile, so the installer's own expected-packages file
+# legitimately lists the whole tail.
+[[ $PROFILE_ROLE == target ]] || die "profile $BUILD_PROFILE has PROFILE_ROLE=$PROFILE_ROLE, and a
+  live profile is install media — it is booted from a stick and thrown away, never installed and
+  never updated. Publishing it into $UPDATE_CHANNEL would put an image containing the installer's
+  whole dependency tail into the update channel, where sysupdate's MatchPattern would offer it to
+  installed machines as the next version.
+  Build the medium (stages 20-60) and hand out the .img; do not release it."
+
 ROOT_EROFS="$OUT/$ROOT_IMG_NAME"
 [[ -f $ROOT_EROFS ]] || die "root image missing — run stage 60"
 [[ -s $UKI_DIR/$UKI_NAME ]] || die "UKI missing — run stage 40"
