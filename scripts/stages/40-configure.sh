@@ -757,6 +757,23 @@ log "omitting ${#OMIT_DRIVERS[@]} driver patterns from the initrd"
 # those are about the BOOTED system now — nvidia-modeset and nvidia-drm have no modalias, so
 # without the softdep nothing loads them, and then neither the splash nor kwin gets a DRM device.
 
+# --early-microcode has nothing to contribute if the trees are already gone, and the check that
+# notices is 200 lines below, AFTER dracut and ukify have run. That is ten minutes to be told
+# something knowable in a millisecond — and the condition is not exotic: `build.sh --only 40`
+# after a completed stage 50 is the ordinary edit-and-retry loop for anything in this stage, and
+# stage 50 deletes exactly these two trees. Same condition, same advice, before the work.
+#
+# The post-build assertion below STAYS. This one proves the input existed; that one proves the
+# output contains it, which is a different claim and the one that actually protects the image.
+if [[ ! -d $TARGET/usr/lib/firmware/intel-ucode && ! -d $TARGET/usr/lib/firmware/amd-ucode ]]; then
+  die "the target has no CPU microcode to pack into the initrd — both
+  usr/lib/firmware/{intel,amd}-ucode are gone. Stage 50 deletes them (the early cpio built here
+  is the only copy anything reads), so this is a stage 40 re-run against an already-pruned
+  target. dracut would succeed and --early-microcode would contribute NOTHING, leaving every
+  Intel and AMD machine on whatever microcode its firmware happened to load.
+  Rebuild from stage 30 instead:  scripts/build.sh --profile $BUILD_PROFILE --from 30"
+fi
+
 dracut --force --no-hostonly --reproducible \
   --sysroot "$TARGET" --kver "$KVER" \
   --add "systemd etc-overlay systemd-repart repart-sysroot" \
