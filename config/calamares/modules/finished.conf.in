@@ -1,0 +1,16 @@
+# The last page (plan/16 §5.3, "Keep").
+---
+# The reboot checkbox is offered, unchecked. Unchecked deliberately: the user has to REMOVE THE
+# INSTALL MEDIUM before rebooting, and a pre-ticked box invites them not to.
+#
+# That instruction is not politeness. The installed root partition carries PARTLABEL=root_@VERSION@
+# and the installed var carries PARTLABEL=var — identical to the labels on the stick this
+# installer is running from, because those strings are the system's identity and are deliberately
+# not profile-suffixed (plan/16 §3.4). With both disks attached, /dev/disk/by-partlabel/ resolves
+# each name to whichever udev saw first, so the initrd's root=PARTLABEL=root_@VERSION@ and
+# fstab's PARTLABEL=var can bind to either device. Booting with the stick still in is therefore
+# ambiguous, and the ambiguity is per-partition — the live root with the installed /var is a real
+# possible outcome, and it is the bad one.
+restartNowMode:     user-unchecked
+restartNowCommand:  "systemctl -i reboot"
+notifyOnFinished:   false

@@ -1,0 +1,6 @@
+---
+type:       "job"
+name:       "imageidentity"
+interface:  "python"
+script:     "main.py"
+weight:     1

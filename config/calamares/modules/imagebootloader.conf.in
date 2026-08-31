@@ -1,0 +1,23 @@
+# imagebootloader — systemd-boot and the UKI onto the target's ESP (plan/16 §5.1 step 2).
+#
+# Replaces the stock `bootloader`/`grubcfg`, which have nothing to do here: the kernel, the
+# initrd and the cmdline are all inside one Unified Kernel Image built by stage 40, so
+# "installing the bootloader" is four file copies. sys-boot/grub is on this medium only because
+# it is an unconditional RDEPEND of app-admin/calamares, and it is never run.
+---
+payloadDir:      "@PAYLOAD_DIR@"
+uki:             "uki.efi"
+# The name the UKI must have ON THE ESP, which is not the same thing as the file it is copied
+# from. systemd-boot sorts EFI/Linux/*.efi and loader.conf's `default @DISTRO_ID@_*` picks the
+# newest; sysupdate's 60-uki.transfer matches @DISTRO_ID@_@v.efi against exactly this pattern.
+# Rename it and the installed machine still boots — and stops being updatable.
+ukiName:         "@UKI_NAME@"
+distroId:        "@DISTRO_ID@"
+espMountPoint:   "/efi"
+
+# Write an NVRAM boot entry with efibootmgr. Best-effort by design: the ESP also gets the
+# removable-media fallback (EFI/BOOT/BOOTX64.EFI), so a machine whose firmware refuses the entry
+# — a VM with no persistent efivars, a full variable store — still boots. The module warns and
+# continues rather than failing an install that has already succeeded.
+efiBootEntry:      true
+efiBootEntryLabel: "@DISTRO_NAME@"

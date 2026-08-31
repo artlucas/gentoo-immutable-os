@@ -1,0 +1,23 @@
+/* Let the live user start the installer without a password prompt.
+ *
+ * LIVE MEDIUM ONLY. Stage 40 installs this file exclusively for the `installer` profile; the
+ * product image never carries it, and config/portage/expected-packages.desktop.txt would not be
+ * the thing that catches it, so tests/test-installer.sh asserts it too.
+ *
+ * Why it is needed: calamares.desktop runs `pkexec calamares`, whose polkit action
+ * io.calamares.calamares.pkexec.run defaults to auth_admin. The image's 49-wheel.rules makes
+ * wheel the administrator group, so the live user IS an admin — and is therefore prompted for
+ * the live account's password, which is printed on the medium's own documentation. A password
+ * prompt whose answer is public is theatre, and it stands between the user and the one thing
+ * this medium exists to do.
+ *
+ * Scoped as tightly as it can be: one action, one account, and only for a session that is
+ * active and local (subject.local && subject.active). It is not a blanket admin rule.
+ */
+polkit.addRule(function(action, subject) {
+    if (action.id == "io.calamares.calamares.pkexec.run" &&
+        subject.user == "@LIVE_USER@" &&
+        subject.local && subject.active) {
+        return polkit.Result.YES;
+    }
+});

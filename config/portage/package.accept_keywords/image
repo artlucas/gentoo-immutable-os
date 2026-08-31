@@ -24,3 +24,33 @@ x11-drivers/nvidia-drivers           ~amd64  # no stable amd64 ebuild in tree at
 #
 # If "emerge -p @desktop" reports any OTHER masked-by-keyword package, that is new information:
 # add it here with the same one-line justification, and reconsider whether the set has drifted.
+
+# ---- the installer (plan/16) ---------------------------------------------------------------
+# NOT a preference, and not a departure from the "stable amd64 only" rule so much as the only
+# way this package resolves at all. Measured against the pinned tree on 2026-08-28: the stable
+# revision is REFUSED outright, before any version choice is made —
+#
+#   !!! The ebuild selected to satisfy "app-admin/calamares" has unmet requirements.
+#   - app-admin/calamares-3.3.14-r4 … PYTHON_SINGLE_TARGET="-python3_12 -python3_13"
+#     The following REQUIRED_USE flag constraints are unsatisfied:
+#       exactly-one-of ( python_single_target_python3_12 python_single_target_python3_13 )
+#
+# because this image is on python 3.14 (=dev-lang/python-3.14.6_p1, admitted deliberately — see
+# plan/06's "Python — RESOLVED again at the first Plasma build") and BOTH stable calamares
+# revisions cap at PYTHON_COMPAT=python3_{11..13}. Only 3.3.14-r8 and 3.4.2-r1 carry
+# python3_{12..14}, and both are ~amd64. The alternative — adding python3_13 as a second
+# PYTHON_TARGET so the stable ebuild resolves — would put a SECOND interpreter in every image
+# this config root builds, including the product one, to avoid one keyword line. That is
+# strictly worse.
+#
+# Deliberately unpinned, unlike the plasma-login-manager entry above, because the two entries are
+# not the same shape. That one is pinned because a newer revision drags a ~amd64 Qt and the whole
+# ~amd64 Plasma set in behind it — the pin contains a blast radius. Here there is nothing to
+# contain: calamares is a leaf, no package in the tree depends on it, and it is emerged by ONE
+# profile that is never released. Which revision this resolves to is recorded, like everything
+# else, in config/portage/lock/installer.lock.
+#
+# It reaches only the live medium. config/portage/expected-packages.desktop.txt names none of
+# it, and stage 50 fails the build on unexplained additions, so this line cannot leak into the
+# product by being forgotten.
+app-admin/calamares                  ~amd64

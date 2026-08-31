@@ -1,0 +1,63 @@
+# Calamares branding for @DISTRO_NAME@ (plan/16).
+#
+# componentName MUST equal this directory's name, or Branding.cpp bails at startup.
+#
+# THE LOGO IS NOT A NEW ASSET. logo.png is written at build time by
+# config/branding/make-splash-assets.py --logo, from the same compose_block() that produces the
+# boot splash's stub bitmap and its KMS sprite tiles. Three consumers, one layout function: the
+# user sees this sidebar within a minute of watching that splash, so the two must be the same
+# block of pixels rather than two drawings of one logo that drift apart. The PNG is flattened
+# onto #0a0d11 and SidebarBackground below is the same value, so it has no visible edge.
+---
+componentName:  installer
+
+welcomeStyleCalamares:  false
+welcomeExpandingLogo:   true
+
+windowExpanding:    normal
+windowSize:         900px,600px
+windowPlacement:    center
+sidebar:            widget
+navigation:         widget
+
+strings:
+    productName:         "@DISTRO_NAME@"
+    shortProductName:    "@DISTRO_NAME@"
+    version:             "@VERSION@"
+    shortVersion:        "@VERSION@"
+    versionedName:       "@DISTRO_NAME@ @VERSION@"
+    shortVersionedName:  "@DISTRO_NAME@ @VERSION@"
+    # systemd-boot reads its entry title out of the UKI's own .osrel section, not from anything
+    # Calamares writes, so this string is display-only here. It is set to the same text anyway,
+    # because a branding string that disagrees with the boot menu is a bug waiting to be filed.
+    bootloaderEntryName: "@DISTRO_NAME@"
+    productUrl:          "@HOME_URL@"
+    supportUrl:          "@HOME_URL@"
+    knownIssuesUrl:      "@HOME_URL@"
+    releaseNotesUrl:     "@HOME_URL@"
+
+images:
+    productIcon:         "logo.png"
+    productLogo:         "logo.png"
+    productWelcome:      "logo.png"
+
+# The design system's dark surface, resolved from project/tokens: --surface-sunken #0a0d11,
+# --accent #0e9c8a, --text-strong #f6f7f9. See config/branding/README.md, which is where these
+# values are recorded rather than invented.
+style:
+    SidebarBackground:        "#0a0d11"
+    SidebarText:              "#f6f7f9"
+    SidebarTextCurrent:       "#0a0d11"
+    SidebarBackgroundCurrent: "#0e9c8a"
+
+# No slideshow. A slideshow is a QML file plus its images inside the branding component, and this
+# install is minutes of dd rather than an hour of package transactions — there is nothing to fill
+# and nothing to advertise. Calamares shows its progress list instead, which is more informative.
+
+# No upload server: `uploadServer` offers to paste the installation log to a public pastebin, and
+# that log names the machine's disks and the account being created. Not something an installer
+# should offer to send anywhere by default.
+uploadServer:
+    type:   "none"
+    url:    ""
+    sizeLimit: -1

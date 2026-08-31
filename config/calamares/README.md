@@ -1,0 +1,103 @@
+# config/calamares — the graphical installer
+
+Everything the `installer` build profile needs to turn a live Plasma session into an installer.
+None of it ships in the product: [stage 40](../../scripts/stages/40-configure.sh) installs this
+tree only when the profile's sets include `installer`, and asserts its absence from every other
+profile. Designed in [plan/16](../../plan/16-installer.md).
+
+## Where it goes
+
+| here | installed as | why there |
+|---|---|---|
+| `settings.conf.in` | `/etc/calamares/settings.conf` | the first path Calamares searches (`libcalamares/Settings.cpp`) |
+| `modules/*.conf[.in]` | `/etc/calamares/modules/` | searched before `/usr/share/calamares/modules` (`modulesystem/Module.cpp`) |
+| `branding/installer/*` | `/etc/calamares/branding/installer/` | takes precedence over `/usr/share` (`CalamaresApplication::initBranding`) |
+| `local-modules/<name>/*` | `/usr/share/calamares/local-modules/<name>/` | a second `modules-search` entry, so "which of these did we write?" is answered by the path |
+| `system/49-installer.rules.in` | `/etc/polkit-1/rules.d/49-<id>-installer.rules` | lets the live user start the installer without a password prompt |
+| `system/installer-autostart.desktop.in` | `/etc/xdg/autostart/<id>-installer.desktop` | opens the installer on login |
+
+`branding/installer/logo.png` is **not in this directory**. It is composed at build time by
+`config/branding/make-splash-assets.py --logo`, from the same `compose_block()` that produces the
+boot splash's stub bitmap and its KMS sprite tiles — three consumers, one layout function, because
+the user sees this sidebar within a minute of watching that splash.
+
+## What is different about installing this distro
+
+Installing is `dd`, not unpack-and-configure. There is no squashfs to rsync, no package manager
+to run, no bootloader to generate and no fstab to write: the root filesystem is an EROFS image
+the pipeline already built, and installing it is copying it onto a partition. So the stock
+modules that survive are the ones that **ask the user something**, and the ones that touch disks
+are ours.
+
+| stock module | disposition |
+|---|---|
+| `welcome`, `locale`, `keyboard`, `users`, `summary`, `finished`, `umount` | **kept**, unmodified |
+| `removeuser` | **kept** — and it works only because of the overlay; see below |
+| `partition` | **kept, reconfigured into a disk picker**: `allowManualPartitioning: false` plus a fixed `partitionLayout` leaves a device combo box and an Erase radio button |
+| `unpackfs`, `mount` | **replaced** by `imagedeploy` |
+| `bootloader`, `grubcfg` | **replaced** by `imagebootloader` — four file copies and a three-line `loader.conf` |
+| `localecfg` | **dropped** — it runs `locale-gen` in the target, and this image has none (stage 40 drives `localedef` at build time). `imageidentity` writes `/etc/locale.conf` instead |
+| `fstab`, `initcpio*`, `dracut`, `initramfs`, `machineid`, `packages`, `netinstall`, `displaymanager`, `luks*` | **dropped** — each writes something that ships inside the immutable image, or that this distro does not have |
+
+`tests/test-installer.sh` asserts that none of the dropped modules is in the sequence.
+
+## The one idea worth understanding
+
+`/etc` on the installed system is an overlayfs whose upper lives on `/var`
+([plan/01](../../plan/01-architecture.md)). `imagedeploy` mounts the target **the way the initrd
+does** — including mounting the overlay onto its own lowerdir, the same incantation as
+`config/rootfs/usr/lib/dracut/modules.d/90etc-overlay/etc-overlay.sh`.
+
+With that in place, Calamares' stock `locale`, `keyboard`, `users` and `removeuser` modules write
+to `/etc/...` exactly as they would on a mutable distro, and the writes land in the upper on
+`/var` because that is what the mount does. **No patched modules anywhere in this installer.**
+
+It is also what makes `removeuser` work at all. The live user is baked into `/etc/passwd` inside
+the read-only EROFS *that the installed system also uses*, so the account cannot be deleted — it
+has to be shadowed. `userdel` rewriting a lower file **is** a copy-up: the upper ends up holding
+the file minus that user, and the upper's copy wins. The design in plan/16 §5.4 called for a
+custom step to do this by hand; the overlay does it for free.
+
+## Our modules
+
+| module | replaces | what it does |
+|---|---|---|
+| `imagedeploy` | `unpackfs` + `mount` | verifies the payload against `manifest.json`, writes the root EROFS into the `root_<version>` partition, mounts root/var/**the /etc overlay**/ESP and the API filesystems, unpacks the `/var` template, sets `rootMountPoint` |
+| `imagebootloader` | `bootloader` | systemd-boot (taken from the **payload's** `/usr`, not the live system's) and the UKI onto the ESP, plus a best-effort `efibootmgr` entry |
+| `imageidentity` | — | autologin off, subuid/subgid, the first-boot hostname stamp, `/etc/locale.conf` |
+
+They are Python job modules — a directory, a `module.desc` and a `main.py`. `module.desc`'s
+`name` **must** equal the directory name: `ModuleManager` compares the two and silently skips the
+module when they differ, which produces an install that runs to "finished" having never written
+the bootloader. Both stage 40 and `tests/test-installer.sh` assert it.
+
+## The payload
+
+The medium carries what it installs, in `/var/lib/<id>-install/`:
+
+```
+root.erofs      the desktop profile's root filesystem, written to the target byte-for-byte
+uki.efi         the desktop profile's UKI, copied onto the target ESP
+var.tar.zst     its /var: overlay skeleton, homes, the preinstalled Flatpak store
+manifest.json   versions, sizes and sha256s — checked before anything is written
+```
+
+All four are staged by stage 40 from **another profile's** build output, unmodified. That is what
+makes an installed machine indistinguishable from one `dd`'d from the desktop `.img`, which is the
+property `systemd-sysupdate` depends on ([plan/16 §3.4](../../plan/16-installer.md)).
+
+`INSTALLER_PAYLOAD_FLATPAKS=0` in `config/build.conf` drops `var.tar.zst` — a smaller stick, and
+an installed system with no preinstalled apps until someone installs them.
+
+## Known limits (Phase A)
+
+- **Locales.** The image compiles only what `LOCALE_GEN` names (by default `en_US.UTF-8`) into a
+  locale archive on the **read-only** root, and nothing on the installed system can add to it.
+  `imageidentity` therefore writes `/etc/locale.conf` only for a locale the target can actually
+  load, and warns otherwise — writing an uncompiled locale would silently give the user `C`.
+  `LOCALES_KEEP` (translated UI) is a much longer list, which is why choosing German mostly works
+  while the number and date formats stay American.
+- **Remove the medium before rebooting.** The installed root and var carry the same PARTLABELs as
+  the stick's, because those strings are the system's identity and are deliberately not
+  profile-suffixed. With both attached, `/dev/disk/by-partlabel/` resolves each name to whichever
+  udev saw first. The `finished` page says so, and leaves the reboot box unticked.

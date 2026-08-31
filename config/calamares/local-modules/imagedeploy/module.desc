@@ -1,0 +1,11 @@
+# Module metadata. `name` MUST equal this directory's name or ModuleManager silently skips it
+# (ModuleManager::doInit compares the two and only warns when the descriptor is otherwise valid).
+---
+type:       "job"
+name:       "imagedeploy"
+interface:  "python"
+script:     "main.py"
+# The heaviest step by far: ~2.7 GiB written to the target disk, plus the var template unpacked
+# on top. The weight is what keeps the overall progress bar honest — every other module in the
+# sequence is seconds of writing text files into /etc.
+weight:     60

@@ -259,11 +259,37 @@ def build_bmp(theme: Path, output: Path, scale: float) -> None:
     print(f"make-splash-assets: {output} ({canvas.width}x{canvas.height}, scale {scale})")
 
 
+def build_logo(theme: Path, output: Path, scale: float) -> None:
+    """The installer's sidebar logo (plan/16).
+
+    A third consumer of compose_block(), and it is here rather than in a new script for the same
+    reason the other two share it: Calamares' sidebar sits next to a boot the user watched sixty
+    seconds ago, so the two have to be the same block of pixels, not two drawings of one logo
+    that drift apart the first time either is touched.
+
+    Flattened onto BG (--surface-sunken) rather than left transparent, and the Calamares branding
+    sets SidebarBackground to the same value — so the PNG has no visible edge against the sidebar
+    at any scale, and no alpha for a Qt style to composite differently than expected.
+    """
+    canvas = compose_block(theme, scale, BG)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    canvas.save(output, format="PNG")
+    print(f"make-splash-assets: {output} ({canvas.width}x{canvas.height}, scale {scale})")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--asset-dir", required=True, type=Path, help="where the rasterised PNGs are")
     ap.add_argument("--bmp", type=Path, help="write the systemd-stub .splash bitmap here")
     ap.add_argument("--sprites", type=Path, help="write the KMS splash tile container here")
+    ap.add_argument("--logo", type=Path, help="write the installer's branding logo PNG here")
+    ap.add_argument(
+        "--logo-scale",
+        type=float,
+        default=0.5,
+        help="--logo only: scale of the composed block, 1 = the 1080p design baseline. "
+        "0.5 keeps the mark inside Calamares' 190px sidebar without upscaling.",
+    )
     ap.add_argument(
         "--scale",
         type=float,
@@ -272,15 +298,19 @@ def main() -> None:
     )
     args = ap.parse_args()
 
-    if not args.bmp and not args.sprites:
-        sys.exit("make-splash-assets: nothing to do — pass --bmp and/or --sprites")
+    if not args.bmp and not args.sprites and not args.logo:
+        sys.exit("make-splash-assets: nothing to do — pass --bmp, --sprites and/or --logo")
     if args.scale <= 0:
         sys.exit("make-splash-assets: --scale must be positive")
+    if args.logo_scale <= 0:
+        sys.exit("make-splash-assets: --logo-scale must be positive")
 
     if args.sprites:
         build_sprites(args.asset_dir, args.sprites)
     if args.bmp:
         build_bmp(args.asset_dir, args.bmp, args.scale)
+    if args.logo:
+        build_logo(args.asset_dir, args.logo, args.logo_scale)
 
 
 if __name__ == "__main__":

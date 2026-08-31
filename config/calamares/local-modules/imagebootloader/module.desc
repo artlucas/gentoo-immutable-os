@@ -1,0 +1,6 @@
+---
+type:       "job"
+name:       "imagebootloader"
+interface:  "python"
+script:     "main.py"
+weight:     5

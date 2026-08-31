@@ -1,0 +1,29 @@
+[Desktop Entry]
+# Opens the installer automatically when the live session starts.
+#
+# LIVE MEDIUM ONLY — stage 40 installs this into /etc/xdg/autostart for the `installer` profile
+# and nowhere else. Someone who booted this stick wants to install; making them find a launcher
+# first is a step with no purpose.
+#
+# It is a SEPARATE FILE from app-admin/calamares's own /usr/share/applications/calamares.desktop
+# rather than a symlink to it, for two reasons: the launcher stays in the application menu for a
+# user who closes this window and wants it back, and OnlyShowIn/autostart keys here cannot
+# accidentally change how the menu entry behaves.
+Type=Application
+Version=1.0
+Name=Install @DISTRO_NAME@
+GenericName=System Installer
+Comment=Install @DISTRO_NAME@ @VERSION@ to a disk
+Icon=calamares
+# pkexec, matching upstream's own calamares.desktop: the installer needs root, and 49-installer.rules
+# above grants this one action to the live user without a prompt.
+Exec=sh -c "pkexec calamares"
+TryExec=calamares
+Terminal=false
+StartupNotify=true
+Categories=Qt;System;
+X-AppStream-Ignore=true
+# A second or two after the session is up, so the greeter's hand-off and the compositor's first
+# frame are done before a window appears on top of them.
+X-KDE-autostart-after=panel
+X-GNOME-Autostart-Delay=2

@@ -65,11 +65,17 @@ load_profile() {
 # rebuild for this change. Every other profile is suffixed, so two profiles can never share a
 # target rootfs, a stage stamp or an output image — which would be a silent wrong-image bug
 # rather than an error.
+#
+# Takes an optional profile NAME, defaulting to the build's own. The argument exists for one
+# caller: the installer profile has to name the DESKTOP profile's artifacts, because those are
+# the payload it installs (plan/16 §5.1). Without it, "the other profile's paths" would be
+# spelled out by hand somewhere and drift from this function.
 profile_suffix() {
-  if [[ ${BUILD_PROFILE:-$DEFAULT_BUILD_PROFILE} == "$DEFAULT_BUILD_PROFILE" ]]; then
+  local name=${1:-${BUILD_PROFILE:-$DEFAULT_BUILD_PROFILE}}
+  if [[ $name == "$DEFAULT_BUILD_PROFILE" ]]; then
     printf ''
   else
-    printf -- '-%s' "$BUILD_PROFILE"
+    printf -- '-%s' "$name"
   fi
 }
 
@@ -141,6 +147,12 @@ validate_config() {
   # where stage 40 deletes the rendered file again. The non-empty requirement is asserted below
   # and only when the switch is on.
   : "${DISTROBOX_DEFAULT_IMAGE=}"
+  # Same ${x=y} shape once more, for the installer payload switch (plan/16 §5.1). Only the
+  # `installer` profile stages a payload, so every other build validates this and ignores it.
+  : "${INSTALLER_PAYLOAD_FLATPAKS=1}"
+  # Root slots. NOT a build.conf key — it is a per-PROFILE geometry choice, so it is defaulted
+  # rather than required, and config/profiles/installer.conf is the only file that sets it.
+  : "${PROFILE_ROOT_SLOTS=2}"
   local v
   for v in DISTRO_ID DISTRO_NAME VERSION HOME_URL UPDATE_URL UPDATE_CHANNEL UPDATE_VERIFY \
            BUILDER_IMAGE SNAPSHOT_DATE SNAPSHOT_SHA256 PROFILE BINHOST_URI \
@@ -169,6 +181,8 @@ validate_config() {
     || die "build.conf: DISTROBOX_DEFAULT_IMAGE is required when INCLUDE_DISTROBOX=1"
   [[ $FLATPAK_PREINSTALL_MODE =~ ^(build|firstboot)$ ]] \
     || die "build.conf: FLATPAK_PREINSTALL_MODE must be build|firstboot"
+  [[ $INSTALLER_PAYLOAD_FLATPAKS =~ ^[01]$ ]] \
+    || die "build.conf: INSTALLER_PAYLOAD_FLATPAKS must be 0 or 1 (got: $INSTALLER_PAYLOAD_FLATPAKS)"
   [[ $SNAPSHOT_DATE =~ ^[0-9]{8}$ ]] || die "build.conf: SNAPSHOT_DATE must be YYYYMMDD"
   # Full 64-hex. This is what makes a vendored snapshot verifiable years after upstream has
   # dropped it, so a truncated or absent value is a pin that cannot be checked.
@@ -197,6 +211,44 @@ validate_config() {
   # the failure would surface as a mysteriously small image rather than as a config error.
   profile_has_set base \
     || die "profile $BUILD_PROFILE: PROFILE_SETS must include 'base' — nothing boots without it"
+
+  # Root slots, and the one rule that makes the number mean something. A/B is not decoration:
+  # systemd-sysupdate writes the new version into the INACTIVE slot and systemd-boot rolls back
+  # to the old one when the new one fails its three tries (plan/01, plan/05). A `target` profile
+  # is by definition installable and therefore updatable, so one slot would produce an image that
+  # boots perfectly and can never be updated — a failure that shows up months later, on a user's
+  # machine, as an update that has nowhere to go.
+  [[ $PROFILE_ROOT_SLOTS =~ ^[12]$ ]] \
+    || die "profile $BUILD_PROFILE: PROFILE_ROOT_SLOTS must be 1 or 2 (got: $PROFILE_ROOT_SLOTS)"
+  [[ $PROFILE_ROLE == live || $PROFILE_ROOT_SLOTS == 2 ]] \
+    || die "profile $BUILD_PROFILE: PROFILE_ROLE=target with PROFILE_ROOT_SLOTS=1.
+  An installable image needs both A/B slots or systemd-sysupdate has nowhere to write the next
+  version. One slot is for live media (PROFILE_ROLE=live), which is never updated."
+
+  # PAYLOAD_PROFILE — set only by an installer profile, naming the profile whose artifacts it
+  # installs. Checked here because the failure it prevents is silent: a typo would leave
+  # $PAYLOAD_ROOT_EROFS pointing at a file that never exists, and stage 40 would report a missing
+  # payload rather than a misspelled profile.
+  if [[ -n ${PAYLOAD_PROFILE:-} ]]; then
+    [[ -f $REPO/config/profiles/$PAYLOAD_PROFILE.conf ]] \
+      || die "profile $BUILD_PROFILE: PAYLOAD_PROFILE names '$PAYLOAD_PROFILE', which is not a profile.
+  available: $(profile_list | tr '\n' ' ')"
+    [[ $PAYLOAD_PROFILE != "$BUILD_PROFILE" ]] \
+      || die "profile $BUILD_PROFILE: PAYLOAD_PROFILE cannot be the profile itself — an installer
+  installs another profile's image, and installing its own would put Calamares on the target disk"
+    # The payload is what a user's machine ends up running, so it must come from a profile that
+    # is allowed to BE that: a live profile is never released and never updated.
+    # Read, not sourced. load_profile would set BUILD_PROFILE, PROFILE_ROLE and PROFILE_SETS —
+    # the very variables this build is using — so calling it here means either clobbering them or
+    # a subshell. A profile file is `key="value"` only by the discipline this whole directory is
+    # written to (config/profiles/README.md), so one line of sed reads it without executing it.
+    local prole
+    prole="$(sed -nE 's/^[[:space:]]*PROFILE_ROLE=\"?([a-z]+)\"?.*/\1/p' \
+               "$REPO/config/profiles/$PAYLOAD_PROFILE.conf" | tail -n1)"
+    [[ $prole == target ]] \
+      || die "profile $BUILD_PROFILE: PAYLOAD_PROFILE='$PAYLOAD_PROFILE' has PROFILE_ROLE=$prole.
+  Only a 'target' profile may be installed onto a disk."
+  fi
 }
 
 init_paths() {
@@ -219,6 +271,30 @@ init_paths() {
   ROOT_PARTLABEL="root_${VERSION}"                    # identity — never profile-suffixed
   PROFILE_LOCK="$LOCK_DIR/${BUILD_PROFILE}.lock"
   EXPECTED_PACKAGES="$REPO/config/portage/expected-packages.${BUILD_PROFILE}.txt"
+
+  # ---- the installer payload (plan/16 §5.1) -----------------------------------------------
+  # Installing this distro is `dd`, not unpack-and-configure, so what an installer image carries
+  # is not a squashfs of itself — it is three artifacts ANOTHER profile already produced:
+  #
+  #   <id>_<ver>.root.erofs     written byte-for-byte into the target's root slot
+  #   <id>_<ver>.efi            the UKI, copied onto the target's ESP
+  #   <id>_<ver>.var.tar.zst    the /var seed: overlay skeleton, homes, the Flatpak store
+  #
+  # They are the DESKTOP profile's own outputs, unmodified and unrepacked. That is what makes an
+  # installed machine indistinguishable from one dd'd from the desktop image, which is the
+  # property systemd-sysupdate depends on (§3.4) — and it is why the payload is named through
+  # profile_suffix rather than spelled out: these paths must be the same strings stage 60 writes.
+  VAR_TEMPLATE_NAME="${DISTRO_ID}_${VERSION}${sfx}.var.tar.zst"
+  # Where the payload lives INSIDE the live image. Under /var because stage 60 builds the root
+  # EROFS with --exclude '/var/*': anything staged here lands in the var partition, not in the
+  # read-only root, which is the only place ~5 GiB of payload can go.
+  PAYLOAD_DIR="/var/lib/${DISTRO_ID}-install"
+  if [[ -n ${PAYLOAD_PROFILE:-} ]]; then
+    local psfx; psfx="$(profile_suffix "$PAYLOAD_PROFILE")"
+    PAYLOAD_ROOT_EROFS="$OUT/${DISTRO_ID}_${VERSION}${psfx}.root.erofs"
+    PAYLOAD_UKI="$OUT/uki${psfx}/${UKI_NAME}"
+    PAYLOAD_VAR_TAR="$OUT/${DISTRO_ID}_${VERSION}${psfx}.var.tar.zst"
+  fi
 }
 
 # ---- versions -----------------------------------------------------------------
@@ -351,29 +427,78 @@ GPT_TYPE_ESP="C12A7328-F81F-11D2-BA4B-00A0C93EC93B"
 GPT_TYPE_ROOT_X64="4F68BC64-6ACB-4AA4-B891-DB7CD79ABF44"
 GPT_TYPE_VAR="4D21B016-B534-45C2-A9FB-5C16E091FD2D"
 
-# compute_layout ESP_MIB SLOT_MIB VAR_MIB — sets P{1..4}_START_MIB/_SIZE_MIB and
-# TOTAL_MIB. 1 MiB leading alignment gap + 1 MiB trailing slack for the backup GPT.
+# compute_layout ESP_MIB SLOT_MIB VAR_MIB [SLOTS] — sets the partition offsets for the image.
+# 1 MiB leading alignment gap + 1 MiB trailing slack for the backup GPT.
+#
+# Two APIs over the same numbers, deliberately:
+#   POSITIONAL  P<n>_START_MIB / P<n>_SIZE_MIB for n in 1..PART_COUNT, in on-disk order. This is
+#               what the sfdisk script and the byte-offset assertions in tests/ speak.
+#   BY ROLE     ESP_START_MIB, ROOT_A_START_MIB, ROOT_B_START_MIB, VAR_START_MIB. Callers that
+#               care WHICH partition they are writing should use these, because the positional
+#               index of `var` moves with SLOTS and a hardcoded P4 would silently write the
+#               payload past the end of a one-slot image.
+#
+# SLOTS is the number of root slots, 2 (default) or 1:
+#   2  the A/B layout every INSTALLABLE image has. Slot B ships as zeros under PARTLABEL=_empty;
+#      systemd-sysupdate writes the next version into it and relabels (plan/01, plan/05).
+#   1  live media only. A live medium is never updated — stage 40 masks systemd-sysupdate for
+#      live-role profiles — so a second 6 GiB slot would be 6 GiB of zeros on every stick.
+#      Requested by config/profiles/*.conf's PROFILE_ROOT_SLOTS (plan/16 §3.1).
 compute_layout() {
-  local esp=$1 slot=$2 var=$3
+  local esp=$1 slot=$2 var=$3 slots=${4:-2}
+  [[ $slots == 1 || $slots == 2 ]] || die "compute_layout: SLOTS must be 1 or 2 (got: $slots)"
+
+  # Stale offsets from an earlier call in the same shell are worse than absent ones: a 1-slot
+  # layout that inherits P4_* from a 2-slot one hands out an offset for a partition that does
+  # not exist. The tests call this repeatedly in one process, so clear before setting.
+  unset P1_START_MIB P1_SIZE_MIB P2_START_MIB P2_SIZE_MIB \
+        P3_START_MIB P3_SIZE_MIB P4_START_MIB P4_SIZE_MIB ROOT_B_START_MIB
+
   P1_START_MIB=1;                              P1_SIZE_MIB=$esp
   P2_START_MIB=$((P1_START_MIB + P1_SIZE_MIB)); P2_SIZE_MIB=$slot
-  P3_START_MIB=$((P2_START_MIB + P2_SIZE_MIB)); P3_SIZE_MIB=$slot
-  P4_START_MIB=$((P3_START_MIB + P3_SIZE_MIB)); P4_SIZE_MIB=$var
-  TOTAL_MIB=$((P4_START_MIB + P4_SIZE_MIB + 1))
+  ESP_START_MIB=$P1_START_MIB
+  ROOT_A_START_MIB=$P2_START_MIB
+
+  if [[ $slots == 2 ]]; then
+    P3_START_MIB=$((P2_START_MIB + P2_SIZE_MIB)); P3_SIZE_MIB=$slot
+    P4_START_MIB=$((P3_START_MIB + P3_SIZE_MIB)); P4_SIZE_MIB=$var
+    ROOT_B_START_MIB=$P3_START_MIB
+    VAR_START_MIB=$P4_START_MIB
+    PART_COUNT=4
+    TOTAL_MIB=$((P4_START_MIB + P4_SIZE_MIB + 1))
+  else
+    P3_START_MIB=$((P2_START_MIB + P2_SIZE_MIB)); P3_SIZE_MIB=$var
+    ROOT_B_START_MIB=""
+    VAR_START_MIB=$P3_START_MIB
+    PART_COUNT=3
+    TOTAL_MIB=$((P3_START_MIB + P3_SIZE_MIB + 1))
+  fi
 }
 
 # emit_sfdisk_script VERSION — prints the sfdisk input for the computed layout.
 # compute_layout must have been called first.
+#
+# The NAMES here are the installed system's identity and are never profile-suffixed: the initrd
+# finds root by PARTLABEL=root_<version> off the UKI cmdline, /etc/fstab finds var and esp by
+# PARTLABEL, sysupdate matches root_@v, and repart.d/50-var.conf grows the partition whose TYPE
+# is var. Change one of these strings and an installed machine stops updating (plan/16 §3.4).
 emit_sfdisk_script() {
   local version=$1
   [[ -n ${TOTAL_MIB:-} ]] || die "emit_sfdisk_script: call compute_layout first"
-  cat <<EOF
-label: gpt
-start=${P1_START_MIB}MiB, size=${P1_SIZE_MIB}MiB, type=${GPT_TYPE_ESP}, name="esp"
-start=${P2_START_MIB}MiB, size=${P2_SIZE_MIB}MiB, type=${GPT_TYPE_ROOT_X64}, name="root_${version}"
-start=${P3_START_MIB}MiB, size=${P3_SIZE_MIB}MiB, type=${GPT_TYPE_ROOT_X64}, name="_empty"
-start=${P4_START_MIB}MiB, size=${P4_SIZE_MIB}MiB, type=${GPT_TYPE_VAR}, name="var"
-EOF
+  printf 'label: gpt\n'
+  printf 'start=%sMiB, size=%sMiB, type=%s, name="esp"\n' \
+         "$P1_START_MIB" "$P1_SIZE_MIB" "$GPT_TYPE_ESP"
+  printf 'start=%sMiB, size=%sMiB, type=%s, name="root_%s"\n' \
+         "$P2_START_MIB" "$P2_SIZE_MIB" "$GPT_TYPE_ROOT_X64" "$version"
+  # Slot B, present only on installable images. "_empty" is systemd-sysupdate's own convention
+  # for an unused instance slot, not a name this project invented: sysupdate's partition target
+  # claims a partition whose label is empty or "_empty" when it needs a free instance.
+  if [[ ${PART_COUNT:-4} == 4 ]]; then
+    printf 'start=%sMiB, size=%sMiB, type=%s, name="_empty"\n' \
+           "$P3_START_MIB" "$P3_SIZE_MIB" "$GPT_TYPE_ROOT_X64"
+  fi
+  printf 'start=%sMiB, size=%sMiB, type=%s, name="var"\n' \
+         "$VAR_START_MIB" "$((PART_COUNT == 4 ? P4_SIZE_MIB : P3_SIZE_MIB))" "$GPT_TYPE_VAR"
 }
 
 # ---- stage stamps (resume support) -------------------------------------------------

@@ -1,0 +1,15 @@
+# imageidentity — the per-machine settings no stock module covers (plan/16 §5.4).
+---
+# Turns the live medium's autologin off. 20- sorts after the image's 10-autologin.conf, which
+# lives in the read-only root and cannot be deleted through the overlay.
+autologinDropIn: "/etc/plasmalogin.conf.d/20-no-autologin.conf"
+
+# Subordinate ID ranges for rootless podman (plan/13). The same window stage 40 gives the live
+# user, and for the same reason: without it every `distrobox` call fails at first use, months
+# after the install.
+subidStart: 100000
+subidCount: 65536
+
+# The image's first-boot hostname unit skips itself when this file exists. Without it, the
+# hostname typed on the users page is overwritten on the installed system's very first boot.
+hostnameStamp: "/var/lib/@DISTRO_ID@/hostname-init.done"

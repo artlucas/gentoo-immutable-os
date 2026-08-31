@@ -208,6 +208,7 @@ A live medium offering to update itself is confusing at best.
 | File | Change |
 |---|---|
 | `config/profiles/*.conf` | New |
+| `config/calamares/**` | New — settings, branding, the stock modules' configs, and three Python job modules. [Its README](../config/calamares/README.md) is the map |
 | `config/portage/sets/installer` | New — `app-admin/calamares` and nothing else (deps resolve) |
 | `config/portage/package.accept_keywords/image` | `app-admin/calamares ~amd64` |
 | `config/portage/package.use/image` | boost `python`, libpwquality `python`, grub `mount` |
@@ -314,6 +315,13 @@ and the writes land in the upper on `/var` because that is what the mount does. 
 patching required for the identity steps.**
 
 ### 5.3 Module map
+
+> **Implemented 2026-08-30, with three departures — see Phase A in §8.** `partition` is *kept and
+> reconfigured* rather than replaced (a fixed `partitionLayout` turns it into a disk picker);
+> the replacement steps are *Python job modules* rather than `shellprocess`, because replacing
+> `mount` means writing `rootMountPoint` into global storage and a shell command cannot; and
+> `removeuser` is *kept unmodified*, because the /etc overlay turns `userdel` into the copy-up
+> §5.4 asks for. `localecfg`, absent from this table, also had to be dropped.
 
 | Calamares module | Disposition |
 |---|---|
@@ -557,13 +565,87 @@ for `libstdc++.so.6`; see the correction in [plan/06](06-pruning.md). It only ev
 had 424 binaries that could not start. The fix — listing `sys-devel/gcc` in `@base` — moved the
 desktop resolution by zero packages and cost all three locks a header rewrite and nothing else.
 
-**Phase A — Installer on raw media.** Add `config/portage/sets/installer` and the `installer`
-profile; build it through stage 60 to a raw `.img`. Write the Calamares branding, the custom
-disk-select module, and the `shellprocess` steps for §5.1 and §5.4. No ISO, no swap.
+**Phase A — Installer on raw media. IMPLEMENTED 2026-08-30.** `config/portage/sets/installer`
+(one atom), the `installer` profile, the Calamares configuration tree in `config/calamares/`, and
+the payload staging that makes a live medium carry what it installs. No ISO, no swap.
 *Exit:* dd the installer image to a USB stick, boot it on hardware, install to an internal
 disk, and boot the installed system into a Plasma session as a real user with no live account
 present. Plus: **the measured installed size of the Calamares tail**, which §2 could only
-estimate from download sizes.
+estimate from download sizes. **Both remain open — they need a build and then hardware.**
+
+*Three things came out differently from the design above, each because the code was written
+against the real Calamares source rather than from memory of it:*
+
+- **The custom disk-select module is a configuration, not a module.** §5.3 called for "a small
+  disk-select module … whole-disk erase only, so the UI is a disk picker, not a partition
+  editor". Every clause of that is reachable from stock `partition`:
+  `allowManualPartitioning: false` removes the editor, and a fixed `partitionLayout` — which
+  takes `name` (the GPT partition name), `type` (the type GUID) and `filesystem: unformatted` —
+  fixes the layout completely. What is left on screen is a device combo box, an Erase radio
+  button and a before/after preview. Writing that in C++ would have cost the ~80 translations,
+  the device enumeration, the preview widget and the KPMcore job plumbing, to arrive at the same
+  screen. `filesystem: unformatted` is the load-bearing key: there is no mkfs for a slot that
+  receives an EROFS image.
+
+- **The custom steps are Python job modules, not `shellprocess`.** §5.3 nominated `shellprocess`
+  as "the workhorse for every step in 5.1", and it cannot be: replacing `mount` means setting
+  `rootMountPoint` in global storage, and a shell command has no way to write to global storage.
+  A Python job module does — `libcalamares.globalstorage.insert` — and it also gets structured
+  errors, real progress reporting over a 2.7 GiB write, and the ability to verify the payload's
+  sha256 before touching the disk. Three modules, in `config/calamares/local-modules/`:
+  `imagedeploy` (replaces `unpackfs` + `mount`), `imagebootloader` (replaces `bootloader`),
+  `imageidentity` (§5.4's leftovers). Calamares is built `WITH_PYTHON=ON` and the image already
+  carries python 3.14, so this costs nothing.
+
+- **§5.4's live-user removal needs no custom step at all.** The plan specified a `shellprocess`
+  to copy `passwd`, `shadow`, `group` and `gshadow` up into the overlay with the live user
+  stripped out. The overlay does that by itself: `userdel` rewrites those four files, each is a
+  lower file under the overlay, and rewriting a lower file **is** a copy-up. Stock `removeuser`,
+  unmodified, produces exactly the described outcome. The other two items in §5.4 — the autologin
+  drop-in and subuid/subgid — do need `imageidentity`, and it found a third: the image's
+  `<id>-hostname-init.service` would have overwritten the hostname the user typed, on the
+  installed system's very first boot, because its `ConditionPathExists` stamp lives on `/var` and
+  nothing was creating it.
+
+*And two things the design did not mention, found by writing it:*
+
+- **`localecfg` cannot run here, and locales are bounded by `LOCALE_GEN`.** The module rewrites
+  the target's `/etc/locale.gen` and then runs `locale-gen` inside it; this image has no
+  `locale-gen` (stage 40 drives `localedef` directly) and its compiled locale archive is on the
+  read-only root, so there is nothing to regenerate. `imageidentity` writes `/etc/locale.conf`
+  instead — but only for a locale the target can actually load. **The image compiles only what
+  `LOCALE_GEN` names, which is `en_US.UTF-8` and nothing else**, so choosing German in the
+  installer today gives a German UI (`LOCALES_KEEP` keeps the message catalogs) and American
+  number and date formats. Writing an uncompiled locale would silently give the user `C`, which
+  is worse, so the module warns and leaves the default. Widening `LOCALE_GEN` is the fix, and it
+  is a size trade to be measured, not a bug to fix blind.
+
+- **PROFILE_ROOT_SLOTS was needed after all**, exactly as §3.1 predicted and Phase 0 deferred.
+  A live medium with two 6 GiB root slots carries 6 GiB of zeros on every stick. `compute_layout`
+  now takes a slot count and exposes its offsets **by role** (`ESP_START_MIB`, `ROOT_A_START_MIB`,
+  `VAR_START_MIB`) as well as positionally, because with one slot the var partition is p3 and a
+  hardcoded `P4_START_MIB` writes the whole var filesystem past the end of the image — with `dd`
+  reporting success. `validate_config` refuses `PROFILE_ROLE=target` with one slot: that would
+  build a machine that boots and can never be updated.
+
+*The relock cost §3.2 predicted for this phase was paid, and it was a header rewrite.* The new
+`package.accept_keywords` and `package.use` entries move `portage_config_hash()` from
+`6c96fd39…` to `63536e8d…`. Evidence gathered before any lock was touched, by resolving each
+profile's sets into an empty root against the pinned tree under the old and new config roots:
+**desktop 830 packages before, 830 after, zero diff; console 589 and 589, zero diff.** None of
+`dev-libs/boost`, `dev-libs/libpwquality` or `sys-boot/grub` appears in any lock, so the three USE
+lines are inert for every profile that does not emerge `@installer`, and a keyword exception for
+an atom nothing requests cannot change a resolution. All three locks changed by exactly one line.
+
+*What is asserted rather than trusted:* `tests/test-installer.sh` (126 assertions) checks the two
+things that fail silently — that `modules/partition.conf` and `emit_sfdisk_script()` still agree
+on every partition label, GPT type GUID and slot size, and that each module's `module.desc`
+declares the name of its own directory (ModuleManager skips a mismatched module with no error, so
+the install would run to "finished" having never written the bootloader). It also asserts the
+dropped modules stay out of the sequence, that `@installer` is named by exactly one profile and
+that profile is `live`, and that every template renders with no `@TOKEN@` left behind. Stage 40
+asserts the same properties against the built target, from the other side, plus the converse on
+every non-installer profile: no `/etc/calamares`, no autostart entry, no payload.
 
 **Phase B — Swap, hibernation, ISO.** The 5-partition layout, the dracut `resume` change, the
 sleep hook from §6.4, then stage 65 and `90live-root`.
@@ -594,7 +676,19 @@ rather than replacing it:
 ## 10. Open questions
 
 1. **Installed size of the Calamares tail.** §2 has download sizes only. Boost's 166 MiB
-   tarball could be anywhere from 20 to 80 MiB installed. Answered by the first Phase A build.
+   tarball could be anywhere from 20 to 80 MiB installed. Answered by the first Phase A build,
+   which has not run yet — the code is in place and the build is the next step.
+1b. **Two disks, one set of PARTLABELs.** Recorded here because Phase A is what makes it routine
+   rather than a curiosity. The installed root and var carry `root_<version>` and `var`, the same
+   labels the live medium's own partitions carry, because §3.4 requires those strings not to be
+   profile-suffixed. With the stick still attached at the next boot,
+   `/dev/disk/by-partlabel/<name>` resolves to whichever device udev saw first — independently
+   per partition, so "the live root with the installed /var" is a reachable state, and it is the
+   bad one. Phase A handles it the way every other installer does: the `finished` page says to
+   remove the medium and leaves the reboot box unticked. The real fix is to give a `live` profile
+   its own labels (it is never a sysupdate target, so §3.4 does not actually bind it) at the cost
+   of a profile-conditional `fstab` and cmdline. Deliberately not taken in Phase A, because it
+   changes the live boot path in the phase whose exit criterion is "the live boot path works".
 2. **Does `app-admin/calamares-3.4.2-r1` build in the two-root emerge?** It is `~amd64` and this
    pipeline's split (BDEPEND → builder, RDEPEND → target) has surfaced RDEPEND-only-configure-dep
    failures before — `config/portage/sets/buildhost` exists solely for that class of bug, and its

@@ -450,6 +450,185 @@ else
     || die "verify: 70-$DISTRO_ID-splash.rules does not name $DISTRO_ID-splash.service"
 fi
 
+# ---- 2d. the graphical installer (plan/16) -------------------------------------------
+# Everything in this section is `installer`-profile only. It installs Calamares' configuration
+# and our four replacement modules, and it stages the PAYLOAD — the desktop profile's own root
+# EROFS, UKI and /var tarball — into this image's /var, which is where an installer medium keeps
+# the thing it installs (plan/16 §5.1).
+#
+# Nothing here runs for the desktop or console profiles, and that is asserted from the other end
+# too: config/portage/expected-packages.desktop.txt names no part of the Calamares tail, so stage
+# 50 fails the build if any of it ever reaches the product image.
+if profile_has_set installer; then
+  [[ $PROFILE_ROLE == live ]] \
+    || die "profile $BUILD_PROFILE emerges @installer but has PROFILE_ROLE=$PROFILE_ROLE.
+  The installer's dependency tail — GRUB with a legacy-BIOS platform, os-prober, squashfs-tools,
+  boost — is only acceptable because it is thrown away with the medium (plan/16). Shipping it on
+  an installable image is the one thing profiles exist to prevent."
+  have_exe_t() { local n=$1; [[ -x $TARGET/usr/bin/$n || -x $TARGET/usr/sbin/$n ]]; }
+  have_exe_t calamares || die "verify: app-admin/calamares is missing from the installer target"
+
+  CAL_SRC="$REPO/config/calamares"
+  [[ -d $CAL_SRC ]] || die "config/calamares is missing — it is the installer's whole configuration"
+
+  # Tokens the Calamares templates use, beyond the ones section 1 already exported. Each is a
+  # value that must agree with something else in the build, which is why they are rendered from
+  # the build's own variables rather than written out in the YAML:
+  #   GPT_TYPE_*         the partition types emit_sfdisk_script() writes
+  #   ROOT_PARTLABEL     the label the UKI cmdline's root=PARTLABEL= looks for
+  #   UKI_NAME           the filename sysupdate's 60-uki.transfer matches
+  #   PAYLOAD_DIR        where this section stages the payload, below
+  export GPT_TYPE_ROOT_X64 GPT_TYPE_VAR ROOT_SLOT_SIZE_MIB ROOT_PARTLABEL UKI_NAME PAYLOAD_DIR
+
+  # Renders *.in through render_template and copies everything else verbatim. Deliberately NOT
+  # install_rootfs_overlay: that walks config/rootfs and rebrands "distro" in basenames, and this
+  # tree needs neither — Calamares module directory names are internal identifiers that must
+  # match their module.desc exactly, so rebranding them would be a way to break them.
+  cal_install() {
+    local src=$1 dst=$2
+    ensure_dir "$(dirname -- "$dst")"
+    if [[ $src == *.in ]]; then render_template "$src" "$dst"; else cp -- "$src" "$dst"; fi
+    chmod 0644 -- "$dst"
+  }
+
+  # /etc/calamares is the FIRST path Calamares searches for all three of these
+  # (libcalamares/Settings.cpp, modulesystem/Module.cpp, CalamaresApplication.cpp), which is why
+  # the configuration lives there rather than in /usr/share/calamares.
+  log "installer: rendering the Calamares configuration into /etc/calamares"
+  cal_install "$CAL_SRC/settings.conf.in" "$TARGET/etc/calamares/settings.conf"
+  for f in "$CAL_SRC"/modules/*; do
+    [[ -f $f ]] || continue
+    b="$(basename -- "$f")"; cal_install "$f" "$TARGET/etc/calamares/modules/${b%.in}"
+  done
+  for f in "$CAL_SRC"/branding/installer/*; do
+    [[ -f $f ]] || continue
+    b="$(basename -- "$f")"; cal_install "$f" "$TARGET/etc/calamares/branding/installer/${b%.in}"
+  done
+
+  # Our modules go in a directory of their own rather than in among upstream's, so "which of
+  # these did we write?" is answered by the path. settings.conf's modules-search names it.
+  for d in "$CAL_SRC"/local-modules/*/; do
+    [[ -d $d ]] || continue
+    m="$(basename -- "$d")"
+    for f in "$d"*; do
+      [[ -f $f ]] || continue
+      b="$(basename -- "$f")"
+      cal_install "$f" "$TARGET/usr/share/calamares/local-modules/$m/${b%.in}"
+    done
+    # ModuleManager matches the descriptor's `name` against the DIRECTORY name and silently skips
+    # the module when they differ — no error, the module just never appears in the sequence and
+    # the install stops at a step that does not exist. Assert it here instead.
+    grep -qE "^name:[[:space:]]+\"$m\"" "$TARGET/usr/share/calamares/local-modules/$m/module.desc" \
+      || die "verify: module.desc in local-modules/$m does not declare name: \"$m\" — Calamares
+  would skip it silently and the install would stop at a missing step"
+  done
+
+  # The branding logo, composed by the same function that produces the boot splash's two halves.
+  # Three consumers, one compose_block(): the user sees this sidebar a minute after watching that
+  # splash, so they must be the same pixels rather than two drawings of one logo.
+  python3 "$REPO/config/branding/make-splash-assets.py" \
+    --asset-dir "$BRANDING_PNG" --logo "$TARGET/etc/calamares/branding/installer/logo.png" \
+    || die "installer: branding logo generation failed"
+  [[ -s $TARGET/etc/calamares/branding/installer/logo.png ]] \
+    || die "installer: branding logo is empty — Calamares refuses to start without its branding"
+  chmod 0644 -- "$TARGET/etc/calamares/branding/installer/logo.png"
+
+  # Live-medium ergonomics: start the installer on login, and let the live user authenticate for
+  # that ONE polkit action without a password whose value is printed in the documentation.
+  cal_install "$CAL_SRC/system/49-installer.rules.in" \
+              "$TARGET/etc/polkit-1/rules.d/49-$DISTRO_ID-installer.rules"
+  cal_install "$CAL_SRC/system/installer-autostart.desktop.in" \
+              "$TARGET/etc/xdg/autostart/$DISTRO_ID-installer.desktop"
+
+  # ---- the payload ---------------------------------------------------------------------
+  # Three files another profile's build produced, copied in unchanged. Under /var because stage
+  # 60 builds the root EROFS with --exclude '/var/*' — it is the only place ~5 GiB can go — and
+  # because the payload is data this medium carries, not part of the system it runs.
+  : "${PAYLOAD_ROOT_EROFS:?installer profile without PAYLOAD_PROFILE — init_paths set no payload paths}"
+  PAYLOAD_STAGE="$TARGET$PAYLOAD_DIR"
+  ensure_dir "$PAYLOAD_STAGE"
+
+  # Copy only what is not already there, byte-identically. `build.sh --from 40` is the documented
+  # iteration loop, and re-copying 5 GiB on every pass would make it unusable.
+  # Sets PAYLOAD_SUM/PAYLOAD_SIZE rather than echoing them, and that is not a style choice:
+  # log() writes to stdout, so a `$(stage_payload ...)` would swallow every progress line into
+  # the captured value — and a die() inside a command substitution exits only the SUBSHELL, so a
+  # missing payload would be reported and then ignored.
+  stage_payload() {   # stage_payload SRC DST_BASENAME LABEL
+    local src=$1 base=$2 label=$3 dst="$PAYLOAD_STAGE/$2" sum
+    [[ -f $src ]] || die "installer: the $label is missing from the payload profile's output:
+      $src
+  Build the payload profile first:  scripts/build.sh --profile $PAYLOAD_PROFILE"
+    sum="$(sha256_file "$src")"
+    if [[ -f $dst && $(stat -c%s "$dst") == $(stat -c%s "$src") && $(sha256_file "$dst") == "$sum" ]]; then
+      log "installer: $label already staged ($(du -m "$dst" | cut -f1) MiB)"
+    else
+      log "installer: staging the $label ($(du -m "$src" | cut -f1) MiB)"
+      cp --reflink=auto -f -- "$src" "$dst.tmp" && mv -f -- "$dst.tmp" "$dst"
+      chmod 0444 -- "$dst"
+    fi
+    PAYLOAD_SUM="$sum"; PAYLOAD_SIZE="$(stat -c%s "$src")"
+  }
+
+  stage_payload "$PAYLOAD_ROOT_EROFS" root.erofs "root filesystem image"
+  ROOT_SUM="$PAYLOAD_SUM"; ROOT_SIZE="$PAYLOAD_SIZE"
+  stage_payload "$PAYLOAD_UKI"        uki.efi    "kernel image (UKI)"
+  UKI_SUM="$PAYLOAD_SUM";  UKI_SIZE="$PAYLOAD_SIZE"
+  VAR_SUM=""; VAR_SIZE=0
+  if [[ ${INSTALLER_PAYLOAD_FLATPAKS:-1} == 1 ]]; then
+    stage_payload "$PAYLOAD_VAR_TAR" var.tar.zst "/var template"
+    VAR_SUM="$PAYLOAD_SUM"; VAR_SIZE="$PAYLOAD_SIZE"
+  else
+    # Not an error, and the difference matters at install time: imagedeploy warns about a MISSING
+    # template and seeds a bare /var, which is the correct behaviour for a medium deliberately
+    # built without one. Remove a stale copy so a rebuild with the switch flipped does not keep
+    # installing Flatpaks the build no longer claims to carry.
+    log "installer: INSTALLER_PAYLOAD_FLATPAKS=0 — no /var template (installed systems get no preinstalled Flatpaks)"
+    rm -f -- "$PAYLOAD_STAGE/var.tar.zst"
+  fi
+
+  # The manifest is what imagedeploy verifies the medium against before it writes 2.7 GiB to
+  # someone's disk. It is also the only human-readable record on the stick of what this medium
+  # installs, which is worth having when someone finds an unlabelled USB stick in a drawer.
+  {
+    printf '{\n'
+    printf '  "distro_id": "%s",\n'        "$DISTRO_ID"
+    printf '  "version": "%s",\n'          "$VERSION"
+    printf '  "payload_profile": "%s",\n'  "$PAYLOAD_PROFILE"
+    printf '  "built_by_profile": "%s",\n' "$BUILD_PROFILE"
+    printf '  "root_partlabel": "%s",\n'   "$ROOT_PARTLABEL"
+    printf '  "uki_name": "%s",\n'         "$UKI_NAME"
+    printf '  "root_erofs": { "file": "root.erofs", "sha256": "%s", "size": %s },\n' "$ROOT_SUM" "$ROOT_SIZE"
+    printf '  "uki":        { "file": "uki.efi",    "sha256": "%s", "size": %s }'    "$UKI_SUM"  "$UKI_SIZE"
+    if [[ -n $VAR_SUM ]]; then
+      printf ',\n  "var_template": { "file": "var.tar.zst", "sha256": "%s", "size": %s }\n' "$VAR_SUM" "$VAR_SIZE"
+    else
+      printf '\n'
+    fi
+    printf '}\n'
+  } > "$PAYLOAD_STAGE/manifest.json"
+  chmod 0444 -- "$PAYLOAD_STAGE/manifest.json"
+  python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$PAYLOAD_STAGE/manifest.json" \
+    || die "installer: the generated manifest.json is not valid JSON"
+  log "installer: payload staged in $PAYLOAD_DIR ($(du -sm "$PAYLOAD_STAGE" | cut -f1) MiB total)"
+fi
+
+# ---- 2e. live media never update themselves (plan/16 §3.4) ---------------------------
+# A medium that is booted, used once and thrown away has nothing to update, and an update path
+# that half-works is worse than none: `<id>-update` would report a version, offer to write a new
+# root into a slot the live layout does not have (PROFILE_ROOT_SLOTS=1), and fail somewhere the
+# user cannot act on.
+#
+# This touches the LIVE image only. The installed system's /usr comes from the payload EROFS,
+# which the desktop build produced with its transfers intact — so removing them here cannot make
+# an installed machine unupdatable, and stage 70's T-INST-3 is the assertion that it did not.
+if [[ $PROFILE_ROLE == live ]]; then
+  log "live profile ($BUILD_PROFILE): disabling systemd-sysupdate on the medium itself"
+  rm -f -- "$TARGET"/usr/lib/sysupdate.d/*.transfer
+  chroot_target "$TARGET" "systemctl mask systemd-sysupdate.service systemd-sysupdate.timer" \
+    >/dev/null 2>&1 || warn "could not mask the systemd-sysupdate units"
+fi
+
 # ---- 2c. firmware + microcode prune, BEFORE dracut -----------------------------------
 # This has to happen here rather than in stage 50, and the reason is the finding plan/10 closed
 # with rather than solved: stage 50 runs AFTER this stage, so config/prune-firmware.txt only ever
@@ -887,7 +1066,14 @@ else
     die "verify: SPLASH_BACKEND=$SPLASH_BACKEND but the UKI carries a .splash section"
   fi
 fi
-[[ -f $TARGET/usr/lib/sysupdate.d/50-rootfs.transfer ]]   || die "verify: sysupdate transfer missing"
+# Live media have had their transfers removed by section 2e, deliberately; an installable image
+# without them would be a machine that can never take an update.
+if [[ $PROFILE_ROLE == target ]]; then
+  [[ -f $TARGET/usr/lib/sysupdate.d/50-rootfs.transfer ]] || die "verify: sysupdate transfer missing"
+else
+  compgen -G "$TARGET/usr/lib/sysupdate.d/*.transfer" >/dev/null \
+    && die "verify: $BUILD_PROFILE is a live profile but still carries sysupdate transfers"
+fi
 [[ -L $TARGET/home ]]                                     || die "verify: /home symlink missing"
 
 # The desktop session hand-off. Each of these is a failure that would otherwise surface only as
@@ -938,6 +1124,71 @@ if profile_has_set desktop; then
   (there is no rtkit-daemon in this image to fall back to)"
 fi
 
+# The installer. Each of these is a failure whose only symptom is a Calamares that refuses to
+# start, or worse, one that starts and stops at a step that does not exist — on a user's machine,
+# with their disk already partitioned.
+if profile_has_set installer; then
+  # Branding is fatal to Calamares by its own design: "Cowardly refusing to continue startup
+  # without branding" (CalamaresApplication::initBranding), and the componentName inside the
+  # descriptor must equal its directory name or Branding::Branding bails.
+  CAL_BRAND="$TARGET/etc/calamares/branding/installer/branding.desc"
+  [[ -f $CAL_BRAND ]] || die "verify: $CAL_BRAND missing — Calamares exits at startup without it"
+  grep -qE '^componentName:[[:space:]]+installer$' "$CAL_BRAND" \
+    || die "verify: branding.desc does not declare componentName: installer (it must equal its directory name)"
+  [[ -s $TARGET/etc/calamares/branding/installer/logo.png ]] \
+    || die "verify: the branding logo is missing or empty"
+
+  # Every module named in settings.conf's sequence must actually exist, as either one of ours or
+  # one of upstream's. A typo here is not an error at startup — the module is simply absent from
+  # the sequence, and the install runs to "finished" having skipped, say, the step that writes
+  # the bootloader.
+  CAL_SETTINGS="$TARGET/etc/calamares/settings.conf"
+  [[ -f $CAL_SETTINGS ]] || die "verify: $CAL_SETTINGS missing"
+  while read -r mod; do
+    [[ -n $mod ]] || continue
+    mod="${mod%%@*}"                       # instance keys: module@id
+    [[ -f $TARGET/usr/share/calamares/local-modules/$mod/module.desc ]] && continue
+    compgen -G "$TARGET/usr/lib*/calamares/modules/$mod/module.desc" >/dev/null && continue
+    die "verify: settings.conf's sequence names the module '$mod', which is installed nowhere.
+  Calamares does not report this — it drops the step and the install silently skips it."
+  done < <(sed -nE '/^sequence:/,/^[a-z]/ s/^[[:space:]]*-[[:space:]]+([a-z][a-z0-9_@-]*)[[:space:]]*$/\1/p' \
+             "$CAL_SETTINGS" | grep -vxE 'show|exec')
+
+  # The payload, and the one string that ties it to the boot: partition.conf creates a partition
+  # with this label and the UKI cmdline looks for it. They are rendered from the same variable,
+  # so this catches an edit that hardcoded one of them.
+  [[ -s $TARGET$PAYLOAD_DIR/root.erofs && -s $TARGET$PAYLOAD_DIR/uki.efi ]] \
+    || die "verify: the payload is missing from $PAYLOAD_DIR"
+  grep -q "\"root_partlabel\": \"$ROOT_PARTLABEL\"" "$TARGET$PAYLOAD_DIR/manifest.json" \
+    || die "verify: manifest.json's root_partlabel is not $ROOT_PARTLABEL"
+  grep -q "\"$ROOT_PARTLABEL\"" "$TARGET/etc/calamares/modules/partition.conf" \
+    || die "verify: partition.conf does not create a partition labelled $ROOT_PARTLABEL —
+  the initrd's root=PARTLABEL=$ROOT_PARTLABEL would find nothing on the installed disk"
+  grep -q "$ROOT_PARTLABEL" "$TARGET/etc/calamares/modules/imagedeploy.conf" \
+    || die "verify: imagedeploy.conf does not look for $ROOT_PARTLABEL"
+
+  # The autostart entry and the polkit rule are what make this a live INSTALLER rather than a
+  # live desktop that happens to have Calamares on it.
+  [[ -f $TARGET/etc/xdg/autostart/$DISTRO_ID-installer.desktop ]] \
+    || die "verify: the installer autostart entry is missing — nothing would launch Calamares"
+  [[ -f $TARGET/etc/polkit-1/rules.d/49-$DISTRO_ID-installer.rules ]] \
+    || die "verify: the installer polkit rule is missing — pkexec would prompt for a password"
+fi
+
+# The converse, asserted on every OTHER profile: none of this may reach an installable image.
+# expected-packages.<profile>.txt catches the PACKAGES; these are the files this stage writes,
+# which no package audit would ever see.
+if ! profile_has_set installer; then
+  for leak in etc/calamares "usr/share/calamares/local-modules" \
+              "etc/xdg/autostart/$DISTRO_ID-installer.desktop" \
+              "etc/polkit-1/rules.d/49-$DISTRO_ID-installer.rules" \
+              "${PAYLOAD_DIR#/}"; do
+    [[ -e $TARGET/$leak ]] \
+      && die "verify: $BUILD_PROFILE does not include @installer, but /$leak exists in the target.
+  Wipe the work volume and rebuild — a stale target is carrying installer files into a product image."
+  done
+fi
+
 # DNS wiring: every piece of it, because each half is useless alone — nsswitch pointing at a
 # resolver that is not enabled fails closed, and an enabled resolver nothing consults is dead
 # weight that still holds port 53.
@@ -964,7 +1215,14 @@ log "configure complete; UKI at $UKI_DIR/$UKI_NAME"
 # `build.sh --from 40` is the documented iteration loop for the splash, and a stamp that ignored
 # splash.c would happily skip the stage that compiles it, leaving the previous binary in place
 # while the log says the build succeeded.
+#
+# config/calamares/** joins them for exactly the same reason, one step worse: editing a Calamares
+# module config is a stage-40-only change with no other trace, so a stamp that ignored the tree
+# would skip the stage that installs it and leave the previous configuration on the medium while
+# the log reported success. find|sort so the list is stable across filesystems.
+mapfile -t CAL_INPUTS < <(find "$REPO/config/calamares" -type f | LC_ALL=C sort)
 stamp_write "$STAGE_NAME" "$(inputs_hash "$REPO/config/build.conf" \
   "$REPO/config/prune-firmware.txt" "$REPO/config/prune-microcode.txt" \
   "$REPO/config/dracut-omit-drivers.txt" \
-  "$REPO/config/splash/splash.c" "$REPO/config/branding/make-splash-assets.py")"
+  "$REPO/config/splash/splash.c" "$REPO/config/branding/make-splash-assets.py" \
+  "${CAL_INPUTS[@]}")"

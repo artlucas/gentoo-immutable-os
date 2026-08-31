@@ -1,0 +1,17 @@
+# Delete the live user from the installed system (plan/16 §5.4, "Removing the live user").
+#
+# The problem this solves, and why the stock module is enough after all: @LIVE_USER@ is baked
+# into /etc/passwd and /etc/shadow inside the read-only EROFS — the SAME image the installed
+# system runs — so the account cannot be deleted from it. plan/16 called for a shellprocess step
+# to copy those four files up into the overlay with the user stripped out.
+#
+# The overlay does that by itself. `userdel` rewrites /etc/{passwd,shadow,group,gshadow}, each of
+# those is a lower file under the overlay imagedeploy mounted, and rewriting a lower file IS a
+# copy-up: the upper ends up holding the whole file minus this user, and the upper's copy wins
+# file-wise (plan/01). Which is exactly the described outcome, from the stock module, with no
+# custom step at all.
+#
+# Runs AFTER `users`, so the real account exists before the live one goes. The order is set in
+# settings.conf and matters: a machine with neither account and no root password is unreachable.
+---
+username: "@LIVE_USER@"

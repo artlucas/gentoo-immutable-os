@@ -1,0 +1,24 @@
+# imagedeploy — write the payload to disk and mount the result (plan/16 §5.1, §5.2).
+#
+# Replaces the stock `unpackfs` and `mount`. Every path here is a build-time fact rendered by
+# stage 40 from the same variables that produced the payload, so the module never has to guess
+# what it is installing.
+---
+# Where stage 40 staged the payload inside the LIVE image. Under /var because stage 60 builds
+# the root EROFS with --exclude '/var/*' — it is the only place ~5 GiB of payload can go.
+payloadDir:    "@PAYLOAD_DIR@"
+rootImage:     "root.erofs"
+varTemplate:   "var.tar.zst"
+manifest:      "manifest.json"
+
+# Which partition receives the root image, by PARTLABEL. This string is the installed system's
+# identity: the UKI cmdline says root=PARTLABEL=root_@VERSION@, baked in at build time and
+# identical on every machine, so the label the partitioner writes and the label the initrd looks
+# for have to be the same string. modules/partition.conf creates it; this finds it.
+rootPartLabel: "@ROOT_PARTLABEL@"
+
+# sha256 the root image against the manifest before writing it. ~10 seconds off a good USB stick
+# and several minutes off a bad one — which is the point: a stick that has started to rot writes
+# a system that boots once and then does not, and the failure appears to be the distro's.
+# Set false only for a QEMU test where the medium is a file.
+verifyPayload: true

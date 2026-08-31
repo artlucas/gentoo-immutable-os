@@ -1,0 +1,33 @@
+# @installer — the graphical installer, and nothing else (plan/16).
+#
+# ONE ATOM. Everything else in the ~25-package tail (boost, grub, os-prober, squashfs-tools,
+# fuse, yaml-cpp, cracklib, libpwquality, dmidecode, efivar, efibootmgr, mandoc, sudo, rsync)
+# arrives as a dependency and is resolved, not listed: naming transitive deps in a set is how a
+# set stops describing intent and starts duplicating the resolver.
+#
+# THE POINT OF THIS FILE IS THAT NOTHING ELSE INCLUDES IT. This set is named only by
+# config/profiles/installer.conf, whose PROFILE_ROLE is "live": the image it produces is booted
+# from removable media and thrown away. The desktop profile never emerges @installer, and
+# config/portage/expected-packages.desktop.txt does not list one package of the tail, so stage 50
+# fails the build if any of it ever reaches the installable product. That assertion — not this
+# comment — is what keeps the promise (plan/16 §3.3).
+#
+# What the tail costs, and why it is only acceptable here: a UKI-booting, systemd-boot, EROFS
+# distro has no use whatsoever for GRUB (built with the legacy-BIOS platform, plus Gentoo's GRUB
+# theme artwork), os-prober or squashfs-tools. They are unconditional RDEPENDs of
+# app-admin/calamares with no USE flag to turn them off. On the install medium that is a shrug;
+# in the product image it would be indefensible.
+#
+# ~amd64, and mandatory rather than a preference: both STABLE calamares revisions cap at
+# PYTHON_COMPAT=python3_{11..13} and this image is on python 3.14 (plan/06), so the stable
+# ebuild does not resolve at all — REQUIRED_USE "exactly-one-of ( python_single_target_python3_12
+# python_single_target_python3_13 )" is unsatisfiable. The alternative, adding python3_13 as a
+# second PYTHON_TARGET, would put a second interpreter in the image and is strictly worse. See
+# config/portage/package.accept_keywords/image.
+#
+# USE=-livecd deliberately, at the ebuild default: that flag applies a large downstream patch set
+# aimed at Gentoo's own stage3/portage live medium (the same audience as
+# app-admin/calamares-gentoo-livecd, which is NOT what this is). Every step it exists to help
+# with — unpack a stage3, configure portage, install GRUB — is something this distro does not
+# have. Installing here is `dd` (plan/16 §5.1), and the modules that do it are ours.
+app-admin/calamares

@@ -1,0 +1,89 @@
+# The disk (plan/16 §5.3, "partition — Replace").
+#
+# THIS IS THE REPLACEMENT, and it is a configuration rather than a module. plan/16 called for
+# "a small disk-select module … whole-disk erase only, so the UI is a disk picker, not a
+# partition editor". Everything in that sentence is reachable from stock `partition`:
+#
+#   allowManualPartitioning: false   removes the partition editor entirely
+#   initialPartitioningChoice: none  forces a deliberate choice; "erase" is the only one offered
+#                                    that can proceed, because there is nothing to replace or
+#                                    install alongside on a distro with no other install
+#   partitionLayout                  fixes the layout completely — names, GPT type GUIDs and
+#                                    sizes — so the user picks a DISK and nothing else
+#
+# What is left on screen is a device combo box, an "Erase disk" radio button and a before/after
+# preview. Writing that as a C++ module would have cost the ~80 translations, the device
+# enumeration, the preview widget and the KPMcore job plumbing, to arrive at the same screen.
+#
+# The layout below MUST agree with emit_sfdisk_script() in scripts/lib/common.sh. It is the same
+# four partitions the factory image carries, because an installed machine has to be
+# indistinguishable from one dd'd from the .img (plan/16 §3.4): the initrd finds root by
+# PARTLABEL off the UKI cmdline, fstab finds var and esp by PARTLABEL, sysupdate matches
+# root_@v against the root TYPE, and repart grows the partition whose type is var.
+# tests/test-installer.sh asserts the two agree, because they are 300 lines apart in two
+# languages and nothing else would notice them diverging.
+---
+efi:
+    # /efi, not /boot/efi. That is where this image mounts the ESP (config/rootfs/etc/fstab) and
+    # where imagebootloader writes systemd-boot and the UKI.
+    mountPoint:      "/efi"
+    # The ESP is created by the module itself, BEFORE the layout below is applied
+    # (PartitionActions::doAutopartition), so its size and label come from here rather than from
+    # a partitionLayout entry. 1 GiB matches ESP_SIZE_MIB: a UKI is ~60 MiB and sysupdate keeps
+    # two of them plus the systemd-boot binaries (plan/04's ESP budget).
+    recommendedSize: 1024MiB
+    minimumSize:     512MiB
+    label:           "esp"
+
+# No swap in Phase A. Swap and hibernation are Phase B (plan/16 §6), where the layout gains a
+# fifth partition and the dracut `resume` module comes back out of stage 40's omit list. Offering
+# a swap choice now would produce a layout no released image has.
+userSwapChoices:
+    - none
+initialSwapChoice:  none
+
+# "none": nothing is preselected, so erasing a disk is something the user actively chooses. The
+# alternative preselects the one irreversible option on the page.
+initialPartitioningChoice: none
+allowManualPartitioning:   false
+alwaysShowPartitionLabels: true
+drawNestedPartitions:      false
+defaultPartitionTableType: gpt
+# Only ever applied to an entry whose filesystem is "unknown". Every entry below names its own,
+# so this is the fallback that never fires — set to the one the image actually uses so that if it
+# ever does fire, it fires correctly.
+defaultFileSystemType: "ext4"
+lvm:
+    enable: false
+
+# GiB. Must agree with welcome.conf's requirements.requiredStorage.
+requiredStorage: 20.0
+
+# See the note above: these four are emit_sfdisk_script()'s four, in the same order.
+partitionLayout:
+    # Slot A — the running root. "unformatted" is load-bearing: there is no mkfs here, because
+    # imagedeploy writes an EROFS image into this partition byte-for-byte. Formatting it first
+    # would just be a filesystem that gets overwritten a page later.
+    #
+    # The name IS the version, and that is how the initrd finds it: the UKI cmdline says
+    # root=PARTLABEL=root_@VERSION@, baked in at build time and identical on every machine.
+    - name:       "root_@VERSION@"
+      type:       "@GPT_TYPE_ROOT_X64@"
+      filesystem: "unformatted"
+      size:       "@ROOT_SLOT_SIZE_MIB@M"
+    # Slot B — the empty half of the A/B pair. systemd-sysupdate claims it for the next version
+    # and relabels it root_<newversion>; "_empty" is sysupdate's own convention for a free
+    # instance slot, not a name this project invented.
+    - name:       "_empty"
+      type:       "@GPT_TYPE_ROOT_X64@"
+      filesystem: "unformatted"
+      size:       "@ROOT_SLOT_SIZE_MIB@M"
+    # Everything writable the system has: /var, and through it /home, /etc's overlay upper, the
+    # Flatpak store and the container store. Last, and 100%, because that is what lets
+    # repart.d/50-var.conf grow it to the end of the disk — and because sizing it here to the
+    # remainder makes that first-boot grow a no-op on an installed machine.
+    - name:       "var"
+      type:       "@GPT_TYPE_VAR@"
+      filesystem: "ext4"
+      mountPoint: "/var"
+      size:       "100%"

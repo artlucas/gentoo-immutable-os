@@ -1,0 +1,44 @@
+# The first page: language picker + system requirements (plan/16 §5.3, "Keep").
+---
+# All false: they would be four links to the same @HOME_URL@ until the project has separate
+# support, issue and release-notes pages. A row of buttons that all go to the front page is
+# worse than no row.
+showSupportUrl:         false
+showKnownIssuesUrl:     false
+showReleaseNotesUrl:    false
+showDonateUrl:          false
+
+requirements:
+    # GiB, and it is the layout in modules/partition.conf added up rather than a round number:
+    # 1 GiB ESP + two @ROOT_SLOT_SIZE_MIB@ MiB root slots + enough var to hold the seeded
+    # Flatpak store and a home directory. The second root slot is not optional — it is the
+    # inactive half of the A/B pair systemd-sysupdate writes into (plan/01), so a disk that
+    # cannot hold it produces a machine that installs and then can never update.
+    requiredStorage:    20.0
+    # Plasma 6 Wayland. Under this the session runs but swaps.
+    requiredRam:        2.0
+    internetCheckUrl:   "@HOME_URL@"
+    check:
+        - storage
+        - ram
+        - power
+        - internet
+        - root
+        - screen
+    # REQUIRED is the short list, and internet is deliberately not on it. This installer writes a
+    # payload that already travels on the stick — root image, UKI and the Flatpak store — so an
+    # install with no network at all is a supported, first-class path (build.conf's
+    # INSTALLER_PAYLOAD_FLATPAKS, and stage 90's whole reason for existing). The check still
+    # RUNS, so the page shows the state; it just does not block.
+    #
+    # `power` is likewise informational: a laptop on battery can install fine, and refusing is
+    # patronising. `storage` and `ram` block, because below them the result does not work.
+    required:
+        - storage
+        - ram
+        - root
+
+# No geoip. It is a network call, made before the user has agreed to anything, that guesses a
+# timezone from an IP address. The locale page asks instead.
+geoip:
+    style: "none"

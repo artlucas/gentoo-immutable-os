@@ -1,0 +1,90 @@
+# The real user (plan/16 §5.3, "Keep").
+#
+# Runs useradd/chpasswd under chroot in the mounted target. It works unmodified on an immutable
+# distro for one reason: imagedeploy mounted an overlay on the target's /etc before this runs, so
+# every write to /etc/{passwd,shadow,group,gshadow} copies the file up into the upper on /var and
+# the upper's copy shadows the read-only image's entirely (plan/16 §5.2). The home directory it
+# creates lands on /var too, via the /home -> var/home symlink the image ships.
+---
+# The three supplementary groups the live user gets in stage 40, for the same three reasons, and
+# `audio` deliberately absent for the same reason as there:
+#
+#   wheel     sudo (/etc/sudoers.d/wheel) and polkit administrator (49-wheel.rules)
+#   video     DRM/KMS access
+#   pipewire  the REALTIME path. media-video/pipewire ships
+#             /etc/security/limits.d/25-pw-rlimits.conf granting rtprio 95 / nice -19 to @pipewire
+#             and nothing else, and this image has no rtkit-daemon to fall back to — a user
+#             outside the group gets a sound server with no RT scheduling at all.
+#
+#   NOT audio: device access comes from logind/uaccess ACLs on the active session, and static
+#              audio-group membership is what breaks device hand-off on fast user switching.
+#              That is media-video/pipewire's own pkg_postinst advice.
+#
+# must_exist: true on all three — they are shipped by baselayout and acct-group/pipewire in the
+# payload image, so a missing one means the payload is not what this installer thinks it is, and
+# failing loudly beats creating a group with a fresh GID that nothing else references.
+defaultGroups:
+    - name: wheel
+      must_exist: true
+      system: true
+    - name: video
+      must_exist: true
+      system: true
+    - name: pipewire
+      must_exist: true
+      system: true
+
+# sudoersGroup is deliberately ABSENT, on upstream's own advice ("if your Distribution already
+# sets up a group of sudoers in its packaging, remove this setting"). This image ships
+# /etc/sudoers.d/wheel with `%wheel ALL=(ALL:ALL) ALL`, so setting it would write a second,
+# redundant rule into /etc/sudoers.d/10-installer for the same effect.
+
+# No root password: root stays locked and administration goes through sudo/polkit as the wheel
+# member created here. That is what the image already does — stage 40 never sets one — and
+# offering a root password field here would create a second, weaker way in.
+setRootPassword: false
+doReusePassword: false
+
+# The installed system must NOT autologin. The live medium does (that is how it reaches a Plasma
+# session to run this installer from), and that autologin is configured in
+# /etc/plasmalogin.conf.d/10-autologin.conf INSIDE THE READ-ONLY IMAGE — so turning it off is not
+# a matter of leaving it unset here. imageidentity writes a later-sorting drop-in that overrides
+# it; see plan/16 §5.4 and modules/imageidentity.conf.
+doAutologin:      false
+displayAutologin: false
+
+passwordRequirements:
+    minLength: 8
+    libpwquality:
+        - minlen=8
+        - minclass=2
+
+allowWeakPasswords:        false
+allowWeakPasswordsDefault: false
+
+user:
+    # /bin/bash: app-shells/bash is in @base, and it is the only interactive shell in the image.
+    shell: /bin/bash
+    forbidden_names: [ root, "@LIVE_USER@" ]
+    home_permissions: "o700"
+
+hostname:
+    location:       EtcFile
+    writeHostsFile: true
+    # The default offered in the field, not a fixed value — the user can type their own.
+    #
+    # NB the image ALSO has a first-boot hostname unit (@DISTRO_ID@-hostname-init.service) that
+    # sets @DISTRO_ID@-<machine-id prefix> unless /var/lib/@DISTRO_ID@/hostname-init.done exists.
+    # Left alone it would run on the installed system's first boot and overwrite whatever is
+    # typed here. imageidentity creates that stamp file, which is the whole reason it knows about
+    # this module at all.
+    template:        "@DISTRO_ID@"
+    forbidden_names: [ localhost ]
+
+allowActiveDirectory: false
+
+presets:
+    fullName:
+        editable: true
+    loginName:
+        editable: true

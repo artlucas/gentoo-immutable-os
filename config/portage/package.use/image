@@ -414,3 +414,26 @@ net-firewall/iptables        nftables
 # -json/-xtables/-doc have no consumer; gmp and readline stay at their ebuild defaults because
 #   dev-libs/gmp and sys-libs/readline are already in the image and cost nothing.
 net-firewall/nftables        -python -json -xtables -doc
+
+# ---- the installer tail (plan/16) ----------------------------------------------------------
+# Three flags portage DEMANDS before app-admin/calamares resolves — not preferences, and each one
+# was read off the failing resolution rather than guessed. They live in this shared file, not in
+# the profile, because §3.2's rule is that a profile selects package SETS and never USE flags:
+# every profile emerges from one config root, so a per-profile flag would fork the binpkgs and
+# turn the second profile's build from a minutes-long merge into another multi-hour compile.
+#
+# Being shared costs the other profiles NOTHING, and that is checked rather than assumed: none of
+# these three packages appears in desktop.lock, console.lock or builder.lock, so all three lines
+# are inert for every profile that does not emerge @installer. Verified against the locks before
+# they were written, which is why the Phase A relock is a header rewrite and not a re-resolution.
+#
+# boost[python]:        calamares's python_gen_cond_dep pulls >=dev-libs/boost-1.72.0:=[python,…].
+#                       The biggest single compile in the tail (166 MiB source tarball).
+# libpwquality[python]: same cond_dep block. Backs the password-strength meter on the users page.
+# grub[mount]:          required by sys-boot/os-prober, which is an unconditional RDEPEND of
+#                       calamares. Neither GRUB nor os-prober is ever RUN here — this distro
+#                       boots a UKI through systemd-boot — but there is no USE flag that removes
+#                       them, so the flag they need is the price of the package that needs them.
+>=dev-libs/boost-1.90.0-r2           python
+>=dev-libs/libpwquality-1.4.5-r3     python
+>=sys-boot/grub-2.14-r5              mount

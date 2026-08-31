@@ -1,0 +1,78 @@
+# Calamares top-level configuration for @DISTRO_NAME@ (plan/16).
+#
+# GENERATED from config/calamares/settings.conf.in by stage 40 into /etc/calamares/settings.conf,
+# which is the first path Calamares looks in (libcalamares/Settings.cpp: CMAKE_INSTALL_FULL_
+# SYSCONFDIR "/calamares/settings.conf"). It exists ONLY in the `installer` profile.
+#
+# WHAT IS DIFFERENT ABOUT THIS INSTALLER, in one paragraph, because it explains every choice
+# below: installing @DISTRO_NAME@ is not unpack-and-configure. There is no squashfs to rsync, no
+# package manager to run, no bootloader to generate and no fstab to write — the root filesystem
+# is an EROFS image that gets written to a partition byte-for-byte, and everything else was
+# decided at build time and is already inside it. So the stock modules that make sense here are
+# the ones that ASK THE USER SOMETHING (welcome, locale, keyboard, users) plus the ones that
+# write per-machine identity into /etc, and the ones that do disk work are ours.
+---
+
+# `local` is <libdir>/calamares/modules — upstream's own modules, exactly as the ebuild installed
+# them. The second entry is ours, kept in a separate directory rather than dropped in beside
+# upstream's so that "which of these did we write?" is answered by the path.
+modules-search: [ local, /usr/share/calamares/local-modules ]
+
+sequence:
+- show:
+  # The language picker is the first control on this page, across ~80 translations. It is also
+  # why config/profiles/installer.conf keeps INCLUDE_CJK_FONTS=1: without the CJK fonts,
+  # choosing Chinese, Japanese or Korean here renders the rest of the installer as tofu.
+  - welcome
+  - locale
+  - keyboard
+  # Whole-disk erase only, and the page is therefore a DISK PICKER rather than a partition
+  # editor — see modules/partition.conf for how a fixed partitionLayout does that.
+  - partition
+  - users
+  - summary
+- exec:
+  # 1. The disk. Writes the GPT and creates the filesystems, from the fixed layout in
+  #    partition.conf. The two root slots are created UNFORMATTED: there is nothing to mkfs,
+  #    because what goes in them is an image.
+  - partition
+  # 2. Our three. Between them they are the whole install (plan/16 §5.1): write the root EROFS
+  #    into slot A, mount the target the way the initrd does — /etc overlay included — seed
+  #    /var, and put systemd-boot and the UKI on the ESP.
+  - imagedeploy
+  - imagebootloader
+  # 3. Identity, into the mounted target's /etc. These are stock modules doing exactly what they
+  #    do on a mutable distro, and they work unmodified because imagedeploy mounted an overlay
+  #    on /etc: their writes land in the upper on /var (§5.2). No patching required.
+  - locale
+  - keyboard
+  - users
+  # 4. The live user goes away. `removeuser` runs userdel in the target, which rewrites
+  #    /etc/{passwd,shadow,group,gshadow} — and because those are lower files under an overlay,
+  #    the rewrite is a copy-up. The upper's copy then shadows the image's entirely, which is
+  #    exactly what §5.4 asks for, at no cost.
+  - removeuser
+  # 5. What no stock module covers: subordinate UID/GID ranges, the autologin drop-in that turns
+  #    the live medium's autologin OFF, and the locale/machine-id fixups this image needs.
+  - imageidentity
+  - umount
+- show:
+  - finished
+
+branding: installer
+
+# The point of no return gets an explicit prompt. Every install here is a whole-disk erase, so
+# there is exactly one screen between the user and losing their data, and it should say so.
+prompt-install: true
+
+# false: the target is a real root filesystem mounted at rootMountPoint, and target commands run
+# under chroot. `users` and `removeuser` need that — they run useradd/userdel.
+dont-chroot: false
+oem-setup: false
+
+disable-cancel: false
+# Past `partition` the disk has been rewritten; cancelling there would leave a machine with a
+# fresh GPT, no bootloader and no root. Better to finish and let the user retry.
+disable-cancel-during-exec: true
+hide-back-and-next-during-exec: true
+quit-at-end: false
