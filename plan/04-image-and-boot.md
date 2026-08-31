@@ -14,13 +14,30 @@ outputs: out/${ID}-${VER}.img  (+ .img.zst)   out/release parts (erofs + uki, re
 
 Steps:
 
-1. **Root image:** `mkfs.erofs -z lz4hc,12 -T$SOURCE_DATE_EPOCH --all-root out/root-${VER}.erofs /work/target`
+1. **Root image:** `mkfs.erofs -z lz4hc,12 -T$SOURCE_DATE_EPOCH out/root-${VER}.erofs /work/target`
    (zstd `-z zstd,15` is a build.conf option; lz4hc default favors runtime speed).
    `-T` clamps timestamps for reproducibility, and the value must be **non-zero** — it defaults
    to `SNAPSHOT_DATE` at midnight UTC. This was `-T0` up to and including 0.3.0, which silently
    disabled autologin: Plasma Login Manager reloads `/etc/plasmalogin.conf.d` only when its
    newest mtime beats a zero-initialised "already loaded" stamp, so an epoch mtime meant the
    config was never parsed and the greeter appeared with nothing logged. See stage 60.
+
+   **`--all-root` was here through 0.3.0 and is now removed** — it was a mistake from the initial
+   commit, not a requirement. It forces every inode to uid 0 *and gid 0*, and twenty paths in the
+   root tree are `root:<group>` on purpose, where the group is the whole permission:
+   `dbus-daemon-launch-helper` (4710 `root:messagebus`), `unix_chkpwd` (sgid `shadow`),
+   `/etc/polkit-1/rules.d` (0700 `polkitd:polkitd`), plus `chage`, `expiry`, `utempter`,
+   `nvidia-modprobe` and `/etc/cups`. Flattened to `root:root` they fail silently and far from
+   the cause: **dbus-daemon runs as `messagebus` and can no longer execute its own setuid launch
+   helper, so every DBus-activated system service dies with "Failed to execute program …:
+   Permission denied"** — which is what left Calamares' disk picker empty, since KPMcore
+   enumerates disks through exactly that activation. **polkitd runs as uid 102 with
+   `NoNewPrivileges` and no `CAP_DAC_OVERRIDE`, so a root-owned 0700 `rules.d` is unreadable and
+   every `.rules` file in the image is ignored** — `49-wheel.rules` included. And `unix_chkpwd`
+   without gid `shadow` cannot verify a password for a non-root caller.
+   Nothing needed the flag: the tree is built by portage as root inside the container and carries
+   no host ownership to scrub. Stage 60 now asserts, against the *built* image, that every path
+   which is not `root:root` in the staging tree is still not `root:root` in the EROFS.
 2. **var image:** stage a `/work/var-staging` tree (flatpak store moved out of target's
    `/var/lib/flatpak`, overlay skeleton `overlay/etc/{upper,work}`, `home/`), then
    `mkfs.ext4 -d /work/var-staging -L var out/var.img ${VAR_SIZE_INITIAL}` — `-d` populates

@@ -14,7 +14,7 @@ is_linux || die "stages run inside the builder container only"
 [[ -d $TARGET/usr ]] || die "target rootfs missing"
 [[ -s $UKI_DIR/$UKI_NAME ]] || die "UKI missing — run stage 40"
 
-require_cmds mkfs.erofs mkfs.ext4 mkfs.vfat mmd mcopy sfdisk dd truncate zstd rsync tar
+require_cmds mkfs.erofs dump.erofs mkfs.ext4 mkfs.vfat mmd mcopy sfdisk dd truncate zstd rsync tar
 
 STAGING="$WORK/staging"; rm -rf -- "$STAGING"; ensure_dir "$STAGING"
 IMG="$OUT/$IMG_NAME"
@@ -54,7 +54,59 @@ fi
   || die "SOURCE_DATE_EPOCH must be a positive integer, got '${SOURCE_DATE_EPOCH}' — a zero mtime
 on /etc is what stops Plasma Login Manager reading its config at all (see the note above)"
 log "erofs timestamp: $SOURCE_DATE_EPOCH ($(date -u -d "@$SOURCE_DATE_EPOCH" '+%Y-%m-%d %H:%M:%S UTC'))"
-mkfs.erofs -z "$EROFS_COMPRESSION" -T"$SOURCE_DATE_EPOCH" --all-root "$ROOT_EROFS" "$ROOT_STAGE"
+# Ownership comes from the staging tree. This used to pass --all-root, and it must not again.
+#
+# --all-root forces every inode to uid 0 AND gid 0. The gid half is the damage: twenty paths in
+# the root tree are owned root:<group> and MEAN it — there, the group IS the permission.
+#
+#   /usr/libexec/dbus-daemon-launch-helper  ---s--x---  root:messagebus
+#   /usr/bin/unix_chkpwd                    -rwxr-sr-x  root:shadow
+#   /etc/polkit-1/rules.d                   drwx------  polkitd:polkitd
+#   ...plus chage, expiry, utempter (utmp), nvidia-modprobe (video), /etc/cups (lp)
+#
+# Flattened to root:root, each silently loses the access it exists to grant:
+#
+#  - dbus-daemon runs as messagebus. Its setuid launch helper is mode 4710 — owner root, group
+#    messagebus, OTHER NOTHING — so as root:root it is unexecutable by the one process that ever
+#    execs it, and every DBus-ACTIVATED system service dies with "Failed to execute program
+#    <name>: Permission denied". Measured in the guest: this is what emptied Calamares' disk
+#    picker. KPMcore enumerates disks by having its activated helper run lsblk; activation
+#    failed, the scan returned zero devices, and the page drew an empty combo box with no error
+#    on screen and nothing in Calamares' own log.
+#  - polkitd runs as uid 102 under NoNewPrivileges with no CAP_DAC_OVERRIDE, so a 0700 rules.d
+#    owned by root is unreadable to it: EVERY .rules file in the image is silently ignored,
+#    including 49-wheel.rules and the installer's own no-password rule.
+#  - unix_chkpwd loses gid shadow, so PAM cannot verify a password for a non-root caller.
+#
+# Nothing ever needed the flag: the tree is built by portage as root inside the container, and
+# the only non-root ownership in it is portage's own (asserted below — there is no host uid to
+# scrub). Reproducibility comes from -T and the pinned tree, not from erasing ownership.
+mkfs.erofs -z "$EROFS_COMPRESSION" -T"$SOURCE_DATE_EPOCH" "$ROOT_EROFS" "$ROOT_STAGE"
+
+# Negative control for the note above: every path that is not root:root in the staging tree must
+# still not be root:root in the image. It reads the BUILT image rather than the tree it came
+# from, which is the point — it catches mkfs doing something other than what the tree says.
+# Restore --all-root and the first path checked here fails.
+own_checked=0
+while read -r want_uid want_gid path; do
+  info="$(dump.erofs --path="/$path" "$ROOT_EROFS" 2>/dev/null)" \
+    || die "ownership check: /$path is in the staging tree but absent from the EROFS"
+  got_uid="$(sed -n 's/^Uid: *\([0-9]\{1,\}\).*/\1/p' <<<"$info")"
+  got_gid="$(sed -n 's/^Uid:.*Gid: *\([0-9]\{1,\}\).*/\1/p' <<<"$info")"
+  [[ $got_uid == "$want_uid" && $got_gid == "$want_gid" ]] || die \
+"ownership lost in the image: /$path is ${want_uid}:${want_gid} in the staging tree but
+  ${got_uid}:${got_gid} in the EROFS. Something is flattening ownership — historically
+  mkfs.erofs --all-root. See the note above the mkfs.erofs call."
+  own_checked=$((own_checked + 1))
+done < <(cd "$ROOT_STAGE" && find . \( ! -uid 0 -o ! -gid 0 \) -printf '%U %G %P\n')
+# A tree with NO group-owned paths means the ownership was destroyed upstream of here (or the
+# find stopped working), not that there was nothing to protect. Either way the check above
+# proved nothing, so say so rather than passing silently.
+(( own_checked > 0 )) \
+  || die "ownership check found no non-root paths in $ROOT_STAGE — expected at least
+  /usr/libexec/dbus-daemon-launch-helper (root:messagebus). Ownership is being flattened
+  before stage 60, or the staging copy is not preserving it."
+log "ownership: $own_checked non-root path(s) preserved into the EROFS"
 
 root_bytes="$(stat -c%s "$ROOT_EROFS")"
 slot_bytes="$((ROOT_SLOT_SIZE_MIB * 1024 * 1024))"

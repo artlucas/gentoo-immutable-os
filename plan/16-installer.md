@@ -712,6 +712,49 @@ The desktop profile came through untouched, which was the thing to check: its ro
 to the same 2761 MiB, and stage 50 reported *"package set matches expected-packages.desktop.txt"*
 — so nothing in Phase A moved the product image.
 
+### What the first boot found: `mkfs.erofs --all-root`, and it was never an installer bug
+
+The medium booted, Calamares started, and **the disk picker was empty — with an empty second
+disk attached.** The cause was not in this plan's code at all. It was one flag in stage 60,
+present since the initial commit and written into plan/04 step 1 as if it were a requirement.
+
+`--all-root` forces every inode to uid 0 **and gid 0**. Twenty paths in the root tree are
+`root:<group>` deliberately, and there the group *is* the permission. Flattened, three things
+break at once, all silently and none near the flag:
+
+- `/usr/libexec/dbus-daemon-launch-helper` is mode 4710 — owner root, group `messagebus`, **other
+  nothing**. dbus-daemon runs as `messagebus`, so as `root:root` it can no longer execute its own
+  setuid helper, and **every DBus-activated system service fails**. The journal says it plainly:
+  `Activated service 'org.kde.kpmcore.helperinterface' failed: Failed to execute program …:
+  Permission denied`. KPMcore enumerates disks by having that activated helper run `lsblk`; the
+  activation failed, `scanDevices()` returned nothing, and the page drew an empty combo box with
+  no error on screen and **nothing in Calamares' own log** — the failure is one process removed
+  from anything Calamares can see.
+- `/etc/polkit-1/rules.d` is `0700 polkitd:polkitd`. polkitd runs as uid 102 under
+  `NoNewPrivileges` with no `CAP_DAC_OVERRIDE`, so root-owned it is unreadable: **every `.rules`
+  file in every image this project has built has been silently ignored**, `49-wheel.rules` and
+  this plan's own no-password rule included. Confirmed in the guest — `pkcheck` for
+  `io.calamares.calamares.pkexec.run` as the live user answers *Not authorized*, so §5.2's
+  promise of a promptless launch was never being kept.
+- `/usr/bin/unix_chkpwd` loses gid `shadow`, so PAM cannot verify a password for a non-root
+  caller — the screen-unlock path on the *installed* product.
+
+So this is a **product-wide defect that installer testing exposed**, not an installer defect:
+desktop, console and installer images are all affected, and the payload the installer writes to
+disk carried it too. Nothing needed the flag — the tree is built by portage as root inside the
+container and has no host ownership to scrub; the only non-root ownership in it is portage's own.
+
+Fixed by removing it, plus an assertion that reads the **built** image rather than the tree it
+came from: every path that is not `root:root` in the staging tree must still not be `root:root`
+in the EROFS, and the check refuses to pass vacuously if it finds nothing to check.
+
+*What did **not** need fixing, checked rather than assumed:* KPMcore's helper asks polkit to
+authorize `org.kde.kpmcore.externalcommand.init`, whose default is `auth_admin_keep` — which
+looked like a second obstacle and a second password prompt. It is not: Calamares runs as root
+under `pkexec`, and polkit authorizes a root subject implicitly. Measured in the guest with
+`pkcheck` — root returns 0 with no interaction, the same action as the live user returns *Not
+authorized*. **No polkit rule was added**, because none was needed.
+
 *The relock cost §3.2 predicted for this phase was paid, and it was a header rewrite.* The new
 `package.accept_keywords` and `package.use` entries move `portage_config_hash()` from
 `6c96fd39…` to `63536e8d…`. Evidence gathered before any lock was touched, by resolving each

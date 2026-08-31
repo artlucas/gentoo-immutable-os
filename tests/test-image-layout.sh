@@ -71,4 +71,46 @@ assert_contains "name=\"root_${VERSION}\"" "$script" "current version in root la
 assert_contains "start=${P2_START_MIB}MiB" "$script" "slot A offset consistent"
 assert_contains "start=${P4_START_MIB}MiB" "$script" "var offset consistent"
 
+# ---- EROFS must not flatten ownership -------------------------------------------
+# mkfs.erofs --all-root forces every inode to uid 0 AND gid 0. The gid half broke three things
+# at once, all silently and all far from the cause: dbus-daemon (user messagebus) could no
+# longer execute its own 4710 root:messagebus launch helper, so every DBus-ACTIVATED system
+# service failed — which is what left Calamares' disk picker empty, KPMcore enumerating disks
+# through exactly that activation; polkitd (uid 102, NoNewPrivileges, no CAP_DAC_OVERRIDE)
+# could not read a root-owned 0700 rules.d, so every .rules file in the image was ignored; and
+# unix_chkpwd lost gid shadow, so PAM could not verify a password for a non-root caller.
+# See plan/04 step 1 and the note above mkfs.erofs in stage 60.
+STAGE60="$REPO_ROOT/scripts/stages/60-image.sh"
+# Anchored at column 0: the real invocation is top-level, and an indented match would also pick
+# up the die message below it, which names --all-root on purpose. Reading your own error text as
+# if it were code is exactly the false positive this suite has been bitten by before.
+mkfs_line="$(grep -E '^mkfs\.erofs ' "$STAGE60")"
+assert_true  "stage 60 still invokes mkfs.erofs"  test -n "$mkfs_line"
+assert_false "mkfs.erofs invocation is free of --all-root" \
+  grep -q -- '--all-root' <<<"$mkfs_line"
+assert_match 'dump\.erofs' "$(grep -E '^require_cmds' "$STAGE60")" \
+  "stage 60 requires dump.erofs for the ownership check"
+assert_contains 'ownership lost in the image' "$(cat "$STAGE60")" \
+  "stage 60 verifies ownership survived into the EROFS"
+
+# The real round trip, when the tools are here (they are in the builder container; a bare host
+# skips). Negative control included: the same tree built WITH --all-root must fail the check,
+# otherwise this test would pass against a broken image.
+if command -v mkfs.erofs >/dev/null 2>&1 && command -v dump.erofs >/dev/null 2>&1; then
+  ETREE="$TMP/etree"; mkdir -p "$ETREE/usr/libexec"
+  echo helper > "$ETREE/usr/libexec/helper"
+  # gid 101 is messagebus in the target; any non-zero gid exercises the same path. chgrp needs
+  # privileges we may not have on a dev host — skip the round trip rather than fail on that.
+  if chgrp 101 "$ETREE/usr/libexec/helper" 2>/dev/null; then
+    erofs_gid() {   # image -> gid of /usr/libexec/helper
+      dump.erofs --path=/usr/libexec/helper "$1" 2>/dev/null \
+        | sed -n 's/^Uid:.*Gid: *\([0-9]\{1,\}\).*/\1/p'
+    }
+    mkfs.erofs -T1755648000 "$TMP/keep.erofs" "$ETREE" >/dev/null 2>&1
+    assert_eq 101 "$(erofs_gid "$TMP/keep.erofs")" "erofs preserves gid without --all-root"
+    mkfs.erofs -T1755648000 --all-root "$TMP/flat.erofs" "$ETREE" >/dev/null 2>&1
+    assert_eq 0 "$(erofs_gid "$TMP/flat.erofs")" "negative control: --all-root does flatten gid"
+  fi
+fi
+
 finish
