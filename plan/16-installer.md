@@ -161,7 +161,7 @@ PROFILE_SETS="base desktop hardware installer"
 PROFILE_ROOT_SLOTS="1"                # live media needs no B slot
 FLATPAK_PREINSTALL=""                 # the single biggest saving — see 4.1
 INCLUDE_DISTROBOX="0"
-VAR_SIZE_MIB="8192"                   # must hold the payload
+VAR_SIZE_MIB="5120"                   # must hold the payload — measured, see below
 ```
 
 Three profiles at the start:
