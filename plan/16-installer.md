@@ -610,7 +610,23 @@ the payload staging that makes a live medium carry what it installs. No ISO, no 
 *Exit:* dd the installer image to a USB stick, boot it on hardware, install to an internal
 disk, and boot the installed system into a Plasma session as a real user with no live account
 present. Plus: **the measured installed size of the Calamares tail**, which §2 could only
-estimate from download sizes. **Both remain open — they need a build and then hardware.**
+estimate from download sizes.
+
+**Status: the medium is built and verified; the hardware half is not done.** The tail is measured
+(§2.2) and `out/immos-0.3.0-installer.img` exists and contains what it should. What has NOT
+happened is anyone booting it: no page of this installer has been drawn on a screen, and no disk
+has been written by it. Everything below the UI — the payload, the partition layout, the audit
+gates — is asserted by the build; everything above it is still only argued from the source. The
+first hardware run should check, in this order:
+
+1. **The medium is absent from the disk picker.** The one failure here that destroys data. See
+   the note in `modules/partition.conf` for what makes it true and what would break it.
+2. Calamares starts at all — branding is fatal to it, and a bad `settings.conf` is a startup
+   failure rather than a warning.
+3. The install completes, and the machine boots into Plasma as the created user with no `live`
+   account and no autologin.
+4. `<id>-update status` on the installed machine sees a normal installation (T-INST-3): that is
+   the sharpest test that the profile did not leak.
 
 *Three things came out differently from the design above, each because the code was written
 against the real Calamares source rather than from memory of it:*
@@ -666,6 +682,35 @@ against the real Calamares source rather than from memory of it:*
   hardcoded `P4_START_MIB` writes the whole var filesystem past the end of the image — with `dd`
   reporting success. `validate_config` refuses `PROFILE_ROLE=target` with one slot: that would
   build a machine that boots and can never be updated.
+
+**What the installer build actually produced, 2026-08-31.** Stages 20-60 ran end to end for the
+`installer` profile, against a `desktop` build re-run through 40-60 to produce the payload.
+
+| | desktop | installer |
+|---|---|---|
+| lock atoms | 655 | 653 (+13 tail, −15 containers) |
+| audit list | 642 entries | 640 (+12, −14) |
+| stage 30 | — | **640 of 668 merged from `/cache/binpkgs`; 28 compiled** |
+| root EROFS | 2761 MiB | **2765 MiB** |
+| partitions | 4 (two root slots) | **3 (one root slot)** |
+| image | 17410 MiB / 3012 MiB zst | **12290 MiB / 5129 MiB zst** |
+| payload | — | 3726 MiB in `/var/lib/immos-install` |
+
+**The live root is 4 MiB bigger than the product's**, which is the number that best summarises
+the whole profile mechanism: 107.6 MiB of Calamares tail goes in, the 61 MiB container stack
+comes out, and under lz4hc the two very nearly cancel. The medium costs its payload, not its
+installer.
+
+Verified by mounting the finished image rather than by reading the log: the root carries
+`/etc/calamares/{settings.conf,modules/,branding/installer/}`, the three modules under
+`/usr/share/calamares/local-modules/`, the autostart entry and the polkit rule; it carries **no**
+`sysupdate.d` transfers and `systemd-sysupdate.service` is symlinked to `/dev/null`; and the var
+partition holds the three payload files whose sha256s in `manifest.json` match the desktop
+artifacts they were staged from, byte for byte.
+
+The desktop profile came through untouched, which was the thing to check: its root EROFS rebuilt
+to the same 2761 MiB, and stage 50 reported *"package set matches expected-packages.desktop.txt"*
+— so nothing in Phase A moved the product image.
 
 *The relock cost §3.2 predicted for this phase was paid, and it was a header rewrite.* The new
 `package.accept_keywords` and `package.use` entries move `portage_config_hash()` from
