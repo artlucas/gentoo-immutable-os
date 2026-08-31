@@ -88,8 +88,8 @@ Plus three USE changes portage demands:
 ```
 
 Download size is not installed size — boost's 166 MiB is a source tarball and the installed
-libraries are a fraction of it. **The installed footprint is unmeasured until the first
-`installer` profile build**, and measuring it is a Phase A exit criterion (§8).
+libraries are a fraction of it. The installed footprint was unmeasured until the first `installer`
+profile build; §2.2 is that measurement.
 
 What this table is really saying: a UKI-booting, systemd-boot, EROFS distro would ship **GRUB
 with a legacy-BIOS platform, Gentoo's GRUB theme artwork, `os-prober` and `squashfs-tools`** —
@@ -99,13 +99,52 @@ turn them off. In the product image that is indefensible. On an install medium i
 That is the whole argument for profiles, and it is why the profile mechanism is Phase 0 rather
 than a later tidy-up.
 
+### 2.2 What it actually costs — measured on the first installer build, 2026-08-31
+
+The table above is downloads. This is the disk, taken from each package's own file list in the
+target VDB after stage 30. **It answers open question 1, and it reorders §2 completely.**
+
+**13 packages, not 25.** The installer profile's lock holds 653 atoms against the desktop's 655:
+it *adds* 13 and *drops* 15, because `INCLUDE_DISTROBOX=0` takes the whole container stack with
+it. The tail is smaller than the download list suggested because much of it — sudo, rsync,
+fuse, timezone-data, icu, kpmcore — was already in the desktop closure.
+
+| package | installed | of which stage 50 prunes | **ships** |
+|---|---:|---:|---:|
+| `sys-boot/grub-2.14-r5` | 67.2 | 0.0 | **67.2** |
+| `sys-boot/grub-themes-gentoo` | 14.5 | 0.0 | **14.5** |
+| `dev-libs/boost-1.90.0-r2` | 155.9 | 144.1 | **11.8** |
+| `app-admin/calamares-3.4.2-r1` | 11.2 | 0.3 | **10.9** |
+| the other nine, together | 3.6 | 0.4 | **3.2** |
+| **total** | **252.4** | **144.8** | **107.6 MiB** |
+
+Two findings, and both invert an assumption in §2:
+
+- **Boost is not the cost.** §2 guessed "20 to 80 MiB installed" from its 166 MiB tarball. It
+  installs 155.9 MiB — and **144.1 MiB of that is `/usr/include`**, which stage 50 deletes along
+  with every other header in the image. Boost ships **11.8 MiB of libraries**. The biggest line
+  in the download table is nearly free on disk.
+- **GRUB is the cost, and it is the one thing here that can never run.** 67.2 MiB of GRUB plus
+  14.5 MiB of Gentoo-branded GRUB artwork is **81.7 MiB — 76% of the shipped tail** — on a distro
+  that boots a UKI through systemd-boot. Nothing prunes it, because none of it is documentation.
+
+So the §2 argument survives its own measurement, but the emphasis moves: the indefensible part
+of shipping this on a product image was never the compiler-shaped dependency, it was the second
+bootloader.
+
 ### 2.1 Trimming the tail (optional, later)
 
 Once the profile exists, the tail can be tuned without touching the desktop profile:
 `GRUB_PLATFORMS="-pc"` drops the BIOS platform, and `sys-boot/grub -branding -fonts -themes
--sdl -truetype -doc` drops the theme package. `mount` must stay (os-prober needs it). Worth
-perhaps 15–20 MiB on a live image, so it is a nicety, not a blocker. Do it after the first
-build has produced a real number to compare against.
+-sdl -truetype -doc` drops the theme package. `mount` must stay (os-prober needs it).
+
+**Measured 2026-08-31, now that there is a real number to compare against:** the estimate of
+"perhaps 15–20 MiB" was low by half. `/usr/lib/grub` splits into `i386-pc` at **17.5 MiB** and
+`x86_64-efi` at 25.7 MiB, so `GRUB_PLATFORMS="-pc"` alone removes 17.5 MiB of a platform this
+distro cannot boot; `-branding` removes the whole 14.5 MiB theme package; and most of
+`/usr/share/grub`'s 12.7 MiB is themes and `.pf2` fonts that go with them. Call it **35–40 MiB
+off a 107.6 MiB tail** — a third of it, for four USE flags. Still Phase C, still not a blocker,
+but no longer a nicety.
 
 ## 3. Build profiles
 
@@ -675,9 +714,10 @@ rather than replacing it:
 
 ## 10. Open questions
 
-1. **Installed size of the Calamares tail.** §2 has download sizes only. Boost's 166 MiB
-   tarball could be anywhere from 20 to 80 MiB installed. Answered by the first Phase A build,
-   which has not run yet — the code is in place and the build is the next step.
+1. ~~**Installed size of the Calamares tail.**~~ **ANSWERED 2026-08-31, §2.2.** 13 packages,
+   252.4 MiB installed, **107.6 MiB after stage 50**. The guess in this line was wrong in an
+   interesting direction: boost installs 155.9 MiB but ships 11.8, because 144.1 MiB of it is
+   headers this pipeline deletes. GRUB and its Gentoo artwork are 81.7 MiB of the 107.6.
 1b. **Two disks, one set of PARTLABELs.** Recorded here because Phase A is what makes it routine
    rather than a curiosity. The installed root and var carry `root_<version>` and `var`, the same
    labels the live medium's own partitions carry, because §3.4 requires those strings not to be
@@ -689,17 +729,26 @@ rather than replacing it:
    its own labels (it is never a sysupdate target, so §3.4 does not actually bind it) at the cost
    of a profile-conditional `fstab` and cmdline. Deliberately not taken in Phase A, because it
    changes the live boot path in the phase whose exit criterion is "the live boot path works".
-2. **Does `app-admin/calamares-3.4.2-r1` build in the two-root emerge?** It is `~amd64` and this
+2. ~~**Does `app-admin/calamares-3.4.2-r1` build in the two-root emerge?**~~ **ANSWERED
+   2026-08-31: yes, with no `buildhost` entry.** The worry was that a Qt6/KF6 cmake graph would
+   surface an RDEPEND-only configure dep, the class of bug `config/portage/sets/buildhost` exists
+   for. It did not, because calamares declares its cmake deps in DEPEND (`RDEPEND="${DEPEND} …"`),
+   so portage's own DEPEND→`/`, RDEPEND→`$TARGET` split satisfied both sides by itself — boost is
+   built twice, once into each root, which is the mechanism working rather than a fault. 668
+   packages resolved, 640 of them merged from `/cache/binpkgs`; only 28 compiled. The original
+   question text follows.
+
+   **Original:** Does `app-admin/calamares-3.4.2-r1` build in the two-root emerge? It is `~amd64` and this
    pipeline's split (BDEPEND → builder, RDEPEND → target) has surfaced RDEPEND-only-configure-dep
    failures before — `config/portage/sets/buildhost` exists solely for that class of bug, and its
    header warns the Qt6/KF6 cmake graph is where the next one will come from. Calamares is
    exactly that shape. If it bites, the fix is a `buildhost` entry, and the ebuild's
    `python_get_includedir` export in `src_prepare` is the first place to look.
 3. **Hibernation with zram active** — §6.5. Needs a hardware test.
-4. **Which Calamares release.** `3.4.2-r1` is newer and resolved cleanly here; `3.3.14-r8` is
-   the conservative choice and also supports python 3.14. Both are `~amd64`, so there is no
-   stability argument for the older one. Pin whichever survives Phase A, in
-   `config/portage/lock/installer.lock` like everything else.
+4. ~~**Which Calamares release.**~~ **ANSWERED 2026-08-31: `3.4.2-r1`.** It is what the
+   unpinned resolution picked and it built clean, so it is what
+   `config/portage/lock/installer.lock` now records. `3.3.14-r8` stays available if 3.4.2 turns
+   out to misbehave on hardware; releasing the atom and re-resolving is one `relock.sh` away.
 5. **Unattended-install config for T-INST-1.** Calamares can run non-interactively, but the
    exact shape that works headlessly in QEMU needs establishing before the test can exist.
 6. **Should `console` remain a profile at all?** It exists for M1, which is long past. Keeping
