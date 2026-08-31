@@ -48,6 +48,14 @@ initialPartitioningChoice: none
 allowManualPartitioning:   false
 alwaysShowPartitionLabels: true
 drawNestedPartitions:      false
+# gpt, stated rather than inferred. PartitionViewStep.cpp:914 reads this key and WARNS when it is
+# unset ("Partition-module setting *defaultPartitionTableType* is unset"), then falls back to gpt
+# on an EFI system — which is what we want, but arrived at by inference. This distro is UEFI-only
+# by construction, so say so.
+#
+# NB upstream's partition.schema.yaml does not list this key, so a strict schema check flags it.
+# The schema is stale: the key is documented in upstream's own partition.conf and read by the
+# code cited above. Do not delete it to satisfy a validator.
 defaultPartitionTableType: gpt
 # Only ever applied to an entry whose filesystem is "unknown". Every entry below names its own,
 # so this is the fallback that never fires — set to the one the image actually uses so that if it

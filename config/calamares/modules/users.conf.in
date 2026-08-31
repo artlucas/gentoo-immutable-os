@@ -34,10 +34,22 @@ defaultGroups:
       must_exist: true
       system: true
 
-# sudoersGroup is deliberately ABSENT, on upstream's own advice ("if your Distribution already
-# sets up a group of sudoers in its packaging, remove this setting"). This image ships
-# /etc/sudoers.d/wheel with `%wheel ALL=(ALL:ALL) ALL`, so setting it would write a second,
-# redundant rule into /etc/sudoers.d/10-installer for the same effect.
+# sudoersGroup and autologinGroup are deliberately ABSENT.
+#
+# sudoersGroup: on upstream's own advice in users.conf — "if your Distribution already sets up a
+# group of sudoers in its packaging, remove this setting". This image ships /etc/sudoers.d/wheel
+# with `%wheel ALL=(ALL:ALL) ALL`, so setting it would write a second, redundant rule into
+# /etc/sudoers.d/10-installer for the same effect.
+#
+# autologinGroup: there is no autologin on the installed system, so there is no group to put the
+# user in.
+#
+# CHECKED, because upstream's own users.schema.yaml lists both under `required:` and therefore
+# contradicts the comment above. Read against the code (3.4.2): Config::createJobs guards the
+# sudo job with `if (!m_sudoersGroup.isEmpty())`, and MiscJobs.cpp:202 guards the autologin group
+# with `if (m_config->doAutoLogin() && !m_config->autoLoginGroup().isEmpty())`. Both keys are
+# optional in fact; the schema's `required` is a CI convention that has drifted from the code.
+# Do not add them back to satisfy a validator.
 
 # No root password: root stays locked and administration goes through sudo/polkit as the wheel
 # member created here. That is what the image already does — stage 40 never sets one — and
