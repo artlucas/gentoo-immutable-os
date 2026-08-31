@@ -8,6 +8,7 @@
 #   run-vm.sh IMG --writable                # guest writes hit IMG (see snapshot note below)
 #   run-vm.sh IMG --disk-size 32G           # bigger virtual disk; repart grows /var into it
 #   run-vm.sh IMG --disk-size 32G --writable  # ...and the overlay persists across reboots
+#   run-vm.sh IMG --extra-disk 32G          # blank second disk, e.g. a Calamares install target
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -19,9 +20,9 @@ export STAGE_NAME=run-vm
 source "$SCRIPT_DIR/lib/common.sh"
 
 IMG="${1:-}"; shift || true
-[[ -n $IMG && -f $IMG ]] || die "usage: run-vm.sh IMG [--headless LOG] [--test smoke|update] [--update-url URL] [--disk-size SIZE]"
+[[ -n $IMG && -f $IMG ]] || die "usage: run-vm.sh IMG [--headless LOG] [--test smoke|update] [--update-url URL] [--disk-size SIZE] [--extra-disk SIZE]"
 
-HEADLESS_LOG='' TEST_MODE='' TEST_URL='' MEM=4096 SNAPSHOT=on DISK_SIZE=''
+HEADLESS_LOG='' TEST_MODE='' TEST_URL='' MEM=4096 SNAPSHOT=on DISK_SIZE='' EXTRA_DISK=''
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --headless)   HEADLESS_LOG="$2"; shift 2 ;;
@@ -30,6 +31,7 @@ while [[ $# -gt 0 ]]; do
     --memory)     MEM="$2"; shift 2 ;;
     --writable)   SNAPSHOT=off; shift ;;
     --disk-size)  DISK_SIZE="$2"; shift 2 ;;
+    --extra-disk) EXTRA_DISK="$2"; shift 2 ;;
     *) die "unknown argument: $1" ;;
   esac
 done
@@ -105,6 +107,24 @@ if [[ -n $DISK_SIZE ]]; then
   DISK_ARG="file=$OVERLAY,if=virtio,format=qcow2"
 fi
 
+# ---- --extra-disk: a second, wholly blank disk for the guest to partition -------------------
+#
+# The primary drive is IMG itself (or its overlay) — Calamares cannot install onto the medium
+# it booted from. Testing the installer needs a second, empty disk to be its target: unlike
+# --disk-size above, this one has no backing file at all, so what Calamares writes to it has no
+# relationship to IMG. It lives in $VMDIR, which the EXIT trap already removes, so it is
+# throwaway by construction — there is no --writable equivalent for it.
+EXTRA_DISK_ARG=''
+if [[ -n $EXTRA_DISK ]]; then
+  require_cmds qemu-img
+  numfmt --from=iec -- "${EXTRA_DISK^^}" >/dev/null 2>&1 \
+    || die "--extra-disk: not a size (try 32G): $EXTRA_DISK"
+  qemu-img create -q -f qcow2 "$VMDIR/extra-disk.qcow2" "$EXTRA_DISK" \
+    || die "could not create extra disk $VMDIR/extra-disk.qcow2"
+  log "extra disk: $EXTRA_DISK blank virtual disk (discarded on exit)"
+  EXTRA_DISK_ARG="file=$VMDIR/extra-disk.qcow2,if=virtio,format=qcow2"
+fi
+
 ACCEL=tcg; [[ -e /dev/kvm ]] && ACCEL=kvm
 # shellcheck disable=SC2054  # commas are QEMU option syntax, not element separators
 QEMU=(qemu-system-x86_64
@@ -146,6 +166,8 @@ QEMU=(qemu-system-x86_64
   #
   # The kernel console still goes to the serial port, not to this display.
   -vga none -device virtio-vga)
+
+[[ -n $EXTRA_DISK_ARG ]] && QEMU+=(-drive "$EXTRA_DISK_ARG")
 
 if [[ -n $TEST_MODE ]]; then
   QEMU+=(-smbios "type=11,value=io.systemd.credential:${DISTRO_ID}.test=${TEST_MODE}")
