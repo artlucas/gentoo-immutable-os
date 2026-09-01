@@ -20,9 +20,10 @@ profile. Designed in [plan/16](../../plan/16-installer.md).
 | `system/lookandfeel/**` | `/usr/share/plasma/look-and-feel/<id>-installer/` | carries the Plasma layout script that pins Calamares — and nothing else — to the task manager |
 
 `branding/installer/logo.png` is **not in this directory**. It is composed at build time by
-`config/branding/make-splash-assets.py --logo`, from the same `compose_block()` that produces the
-boot splash's stub bitmap and its KMS sprite tiles — three consumers, one layout function, because
-the user sees this sidebar within a minute of watching that splash.
+`config/branding/make-splash-assets.py --logo`, from the same `build_block()` that produces the
+boot splash's stub bitmap, its KMS sprite tiles and the Plasma splash's preview — one layout
+function for all of them, because the user sees this sidebar within a minute of watching that
+splash.
 
 ## The panel pins one application
 
@@ -47,8 +48,14 @@ So `system/lookandfeel/` is a Look-and-Feel package containing a `metadata.json`
 It is *not* a theme, and it does not restate Breeze: plasma-workspace's package structure
 (`shell/packageplugins/lookandfeel/lookandfeel.cpp`) installs `org.kde.breeze.desktop` as the
 fallback package for any id that is not Breeze's own, and `KPackage::Package::filePath()` consults
-that fallback for every file the package does not ship — so the splash, lock screen, logout
-dialog, colours and style all still resolve to Breeze, unchanged.
+that fallback for every file the package does not ship — so the lock screen, logout dialog,
+colours and style all still resolve to Breeze, unchanged.
+
+The one exception is the **splash**, and it does not come from the fallback either. `ksplashqml`
+reads `ksplashrc`'s `[KSplash] Theme` *before* it looks at `LookAndFeelPackage`, and
+[`config/plasma/ksplashrc`](../plasma/README.md) sets it on every profile with a desktop — so the
+live medium gets the distro's own splash ([plan/17](../../plan/17-animated-splash.md)) **and** the
+task-manager layout below, out of two small packages instead of one that would have to carry both.
 
 The script itself changes one line. It calls `loadTemplate("org.kde.plasma.desktop.defaultPanel")`
 so the panel stays upstream's by reference — kickoff, pager, tray, clock, and the input-method

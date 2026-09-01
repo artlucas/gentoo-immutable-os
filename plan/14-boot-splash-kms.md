@@ -1,5 +1,15 @@
 # 14 — Replacing Plymouth with a KMS boot splash (2026-08-27)
 
+> **Amended 2026-09-01 by [plan/17](17-animated-splash.md).** The mark is no longer a still
+> frame: it runs a layer pulse, drawn by storing into the mapped dumb buffer rather than by any
+> ioctl, because dropping master — the decision this whole document is built around — rules every
+> present path out. Nothing in the design below is reversed by that. Three details are now stale
+> and are corrected there: `compose_block()` is `build_block()`; the sprite container is
+> `IMSPLSH2` with 40-byte records and the centred block cut into one tile per slab; and the
+> argument for `DIM = 0.20` staying gone is no longer "there is no animation" but the stronger
+> "the animation starts at full brightness", so the stub bitmap, the KMS splash's first frame
+> and the Plasma splash's settled frame are still one picture.
+
 Plymouth is gone. In its place: the `systemd-stub` `.splash` bitmap covers the firmware-to-kernel
 window, and a purpose-built ~800-line static binary drawing straight on DRM covers everything
 after the first modeset. The initrd carries no graphics at all any more.

@@ -27,6 +27,7 @@ been run yet. The full design lives in [`plan/`](plan/00-overview.md):
 | [15-version-pinning](plan/15-version-pinning.md) | Version locks, the tree pin, selective security upgrades, the offline archive |
 | [13-distrobox](plan/13-distrobox.md) | Rootless podman + distrobox: the mutable userland, and why it keeps the toolchain-free guarantee |
 | [16-installer](plan/16-installer.md) | Calamares installer, build profiles, swap/hibernation, the live ISO |
+| [17-animated-splash](plan/17-animated-splash.md) | The layer-pulse animation, and carrying the same mark through the login into a Plasma splash |
 
 ## Building
 

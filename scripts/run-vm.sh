@@ -9,6 +9,7 @@
 #   run-vm.sh IMG --disk-size 32G           # bigger virtual disk; repart grows /var into it
 #   run-vm.sh IMG --disk-size 32G --writable  # ...and the overlay persists across reboots
 #   run-vm.sh IMG --extra-disk 32G          # blank second disk, e.g. a Calamares install target
+#   run-vm.sh IMG --gpu bochs               # -vga std, the one display that shows the splash animating
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -23,8 +24,10 @@ IMG="${1:-}"; shift || true
 [[ -n $IMG && -f $IMG ]] || die "usage: run-vm.sh IMG [--headless LOG] [--test smoke|update] [--update-url URL] [--disk-size SIZE] [--extra-disk SIZE]"
 
 HEADLESS_LOG='' TEST_MODE='' TEST_URL='' MEM=4096 SNAPSHOT=on DISK_SIZE='' EXTRA_DISK=''
+GPU=virtio
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --gpu)        GPU="$2"; shift 2 ;;
     --headless)   HEADLESS_LOG="$2"; shift 2 ;;
     --test)       TEST_MODE="$2"; shift 2 ;;
     --update-url) TEST_URL="$2"; shift 2 ;;
@@ -35,8 +38,15 @@ while [[ $# -gt 0 ]]; do
     *) die "unknown argument: $1" ;;
   esac
 done
+[[ $GPU == virtio || $GPU == bochs ]] || die "--gpu must be virtio or bochs (got: $GPU)"
 
 require_cmds qemu-system-x86_64
+
+if [[ $GPU == bochs ]]; then
+  VGA_ARGS=(-vga std)
+else
+  VGA_ARGS=(-vga none -device virtio-vga)
+fi
 
 # DISTRO_ID for the credential namespace (env override for tests)
 if [[ -z ${DISTRO_ID:-} ]]; then
@@ -165,7 +175,22 @@ QEMU=(qemu-system-x86_64
   # kernel with DRM_SIMPLEDRM and nothing else will do (plan/08 roadmap 5, plan/14).
   #
   # The kernel console still goes to the serial port, not to this display.
-  -vga none -device virtio-vga)
+  #
+  # --gpu bochs swaps this for -vga std, and it exists for ONE reason: it is the only display
+  # here that shows the splash's layer pulse (plan/17). The animation is written straight into
+  # the dumb buffer the CRTC scans out, because every ioctl that would flush or flip needs DRM
+  # master and the splash gives master away the moment it has drawn. On real hardware that is
+  # enough — a dumb buffer on amdgpu/i915/xe/nvidia IS the scanned-out memory — and on bochs it
+  # is enough too, because its dumb buffers are the VRAM BAR QEMU reads continuously. virtio_gpu
+  # is a shadow buffer: the host only re-reads it on a plane update, so the mark holds its first
+  # frame and never moves. Both are correct behaviour and the first frame is the full-brightness
+  # still image either way; only one of them can be watched.
+  #
+  # virtio-VGA stays the default because the property it was chosen for — the firmware
+  # framebuffer surviving ExitBootServices, i.e. the stub image lasting through the initrd — is
+  # the one stage 70 and every boot-flow measurement depend on. Use --gpu bochs to look at the
+  # animation, not to test the boot.
+  "${VGA_ARGS[@]}")
 
 [[ -n $EXTRA_DISK_ARG ]] && QEMU+=(-drive "$EXTRA_DISK_ARG")
 

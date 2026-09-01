@@ -1,5 +1,5 @@
-/* Boot splash for the immutable image — a static frame on every connected output, drawn
- * with DRM/KMS ioctls and nothing else.
+/* Boot splash for the immutable image — the brand mark on every connected output, drawn with
+ * DRM/KMS ioctls and nothing else.
  *
  * WHY THIS EXISTS AT ALL, i.e. why not plymouth or any fbdev-era splash.
  *
@@ -35,6 +35,28 @@
  *
  *   - greeter took over  -> close, change nothing, the compositor owns the screen
  *   - ESC / SIGTERM      -> close, we are the last client, fbcon comes back
+ *
+ * THE ANIMATION, and the one thing about it worth knowing before reading animate() (plan/17).
+ * The logomark runs the design system's "layer pulse": one slab at a time dims and recovers,
+ * the wave travelling up the stack. It is drawn by writing into the dumb buffer the CRTC is
+ * already scanning out — no page flip, no atomic commit, no DRM_IOCTL_MODE_DIRTYFB — because
+ * every one of those is DRM_MASTER-gated (drivers/gpu/drm/drm_ioctl.c) and we gave master away
+ * two paragraphs ago. Taking it back for even one ioctl per frame is not an option: logind
+ * calls drmSetMaster() when it hands the DRM fd to the compositor and returns the failure to
+ * the caller, so a splash holding master at the wrong microsecond is a session that does not
+ * start. The frame stays on screen either way; the only question is whether it moves.
+ *
+ * On the hardware this image targets it moves. A dumb buffer on amdgpu, i915, xe or nvidia-drm
+ * IS the scanned-out memory, mapped write-combining, so a store lands on the panel with nothing
+ * asked of the kernel. On a shadow-buffer driver — virtio_gpu, qxl, vmwgfx, udl — the host only
+ * re-reads the buffer on a plane update, so the screen keeps showing whatever the modeset
+ * flushed and the mark simply does not move. THAT DEGRADES TO EXACTLY THE OLD SPLASH, on
+ * purpose: the first frame is painted with every slab at full brightness, which is the same
+ * picture the stub bitmap has been showing since the firmware, so a VM sees the still frame it
+ * saw before this animation existed rather than a half-lit mark frozen mid-pulse. To watch the
+ * animation without hardware, use `scripts/run-vm.sh IMG --gpu bochs`: -vga std binds the bochs
+ * driver, whose dumb buffers are the VRAM BAR QEMU reads continuously. The default virtio-VGA
+ * stays the default because the stub image surviving the initrd depends on it (plan/14).
  *
  * Linked -static on purpose. Stage 30 emerges with ROOT=$TARGET and never chroots, so the
  * image's own toolchain cannot be invoked, and stage 50 deletes the compiler anyway; a static
@@ -79,9 +101,24 @@
 /* How often we check whether someone else has modeset, and rescan for input devices. */
 #define TICK_MS 500
 
+/* How often the logomark is redrawn. 25fps is far more than a slow dim-and-recover needs, and
+ * costs one lerp over ~17k pixels (scale 1) or ~68k (scale 2) per frame per output — and only
+ * for the one slab that is actually moving, because animate() skips a tile whose level has not
+ * changed since the last frame. */
+#define FRAME_MS 40
+
+/* Animation "B · Layer pulse", from the design system's Spinner. THESE THREE NUMBERS ARE ALSO
+ * WRITTEN IN config/branding/make-splash-assets.py, which hands them to the Plasma splash that
+ * takes over at login (plan/17); tests/test-splash-assets.sh asserts the two agree, because a
+ * drift here is two brand animations at two different speeds on either side of one login. */
+#define PULSE_CYCLE_MS 1600
+#define PULSE_DEPTH 0.55
+#define PULSE_SLOTS 3
+
 #define MAX_CARDS 8
 #define MAX_OUTPUTS 16
 #define MAX_INPUTS 32
+#define MAX_TILES 32
 
 /* ---- asset container ------------------------------------------------------------------
  * Written by config/branding/make-splash-assets.py; the format is documented there and the
@@ -89,27 +126,43 @@
  * this image is ever built for (amd64-only, see the README's hardware window).
  *
  * Tiles are stored as OPAQUE BGRX rows, already composited over the background colour in
- * Python. That is what keeps this file free of any alpha blending or image decoding: fill the
- * screen with the same background, memcpy the rows in, done. The antialiased edges land
- * pixel-exact because they were composited over the identical colour we fill with. */
+ * Python. That is what keeps this file free of any image decoding and of any per-pixel coverage:
+ * fill the screen with the same background, memcpy the rows in, done. The antialiased edges land
+ * pixel-exact because they were composited over the identical colour we fill with — and, as
+ * blit() explains, that same property is what lets a slab be *dimmed* with one lerp and still no
+ * alpha channel anywhere.
+ *
+ * A tile is placed by anchoring its BOX and then offsetting the tile inside it. A whole picture
+ * is its own box at offset zero; the four pieces the centred block is cut into share the block
+ * as their box and carry their position within it. The indirection earns its keep at the
+ * hand-off: centring a 130px slab band and centring the 144px block it belongs to round
+ * differently, and the difference would be a pixel of jitter between the stub bitmap and the
+ * frame that replaces it. */
 
-#define SPLASH_MAGIC "IMSPLSH1"
+#define SPLASH_MAGIC "IMSPLSH2"
 #define SPLASH_MAGIC_LEN 8
 
 #define ANCHOR_CENTRE 0
 #define ANCHOR_BOTTOM_LEFT 1
 #define ANCHOR_BOTTOM_RIGHT 2
 
+/* flags bit 0: this tile is one of the logomark's slabs and takes part in the layer pulse.
+ * bits 8..15 are its slot in the wave — 0 dips first, then 1, then 2. */
+#define TILE_PULSE 0x1u
+#define TILE_PULSE_SHIFT 8
+
 struct tile {
-    uint32_t scale;   /* 1 or 2; picked against the mode height at runtime */
-    uint32_t anchor;  /* ANCHOR_* */
-    uint32_t w, h;
-    uint32_t off_x;   /* inset from the anchored edge(s), in pixels, already scaled */
-    uint32_t off_y;
-    uint32_t data;    /* byte offset of w*h*4 pixels from the start of the file */
+    uint32_t scale;         /* 1 or 2; picked against the mode height at runtime */
+    uint32_t anchor;        /* ANCHOR_* — how the BOX is placed on the screen */
+    uint32_t flags;         /* TILE_PULSE and its slot */
+    uint32_t w, h;          /* the tile's own pixel size */
+    uint32_t box_w, box_h;  /* the box the tile sits in; equal to w,h for a whole picture */
+    int32_t off_x, off_y;   /* the tile's position inside that box, or the box's inset from an
+                             * anchored screen edge when the box IS the tile */
+    uint32_t data;          /* byte offset of w*h*4 pixels from the start of the file */
 };
 
-#define TILE_RECORD_WORDS 7
+#define TILE_RECORD_WORDS 10
 #define HEADER_WORDS 4 /* magic(2 words) + bg + count */
 
 struct assets {
@@ -117,7 +170,7 @@ struct assets {
     size_t size;
     uint32_t bg;      /* 0x00RRGGBB */
     uint32_t n_tiles;
-    struct tile tiles[16];
+    struct tile tiles[MAX_TILES];
 };
 
 /* ---- per-output state ------------------------------------------------------------------ */
@@ -127,6 +180,14 @@ struct output {
     uint32_t crtc_id;
     uint32_t fb_id;
     uint32_t handle; /* recorded for diagnostics; the buffer is freed by close(2), not by us */
+
+    /* The mapping is kept for the life of the program rather than dropped after the first
+     * frame: the animation is nothing but stores through this pointer (see the header). It is
+     * never unmapped, because the only ways out of the main loop end the process. */
+    uint8_t *pixels;
+    uint32_t pitch, width, height;
+    uint32_t scale;              /* which sprite set this panel got */
+    uint32_t level[MAX_TILES];   /* last level each tile was drawn at, 0..256 */
 };
 
 static struct output outputs[MAX_OUTPUTS];
@@ -222,16 +283,26 @@ static int load_assets(const char *path, struct assets *a)
         struct tile *t = &a->tiles[i];
         t->scale = rd32(p + 0);
         t->anchor = rd32(p + 4);
-        t->w = rd32(p + 8);
-        t->h = rd32(p + 12);
-        t->off_x = rd32(p + 16);
-        t->off_y = rd32(p + 20);
-        t->data = rd32(p + 24);
+        t->flags = rd32(p + 8);
+        t->w = rd32(p + 12);
+        t->h = rd32(p + 16);
+        t->box_w = rd32(p + 20);
+        t->box_h = rd32(p + 24);
+        t->off_x = (int32_t)rd32(p + 28);
+        t->off_y = (int32_t)rd32(p + 32);
+        t->data = rd32(p + 36);
 
         /* Bounds-check every tile against the real file length. The build asserts this too,
          * but a truncated asset on a failing disk must not become a wild memcpy in pid ~200
          * of the boot. */
         if (t->w == 0 || t->h == 0 || t->w > 16384 || t->h > 16384) {
+            free(a->blob);
+            a->blob = NULL;
+            return -1;
+        }
+        /* A box smaller than the tile it holds would place the tile off its own anchor, and a
+         * box the generator forgot to fill in (0) would centre it against nothing. */
+        if (t->box_w < t->w || t->box_h < t->h || t->box_w > 16384 || t->box_h > 16384) {
             free(a->blob);
             a->blob = NULL;
             return -1;
@@ -277,23 +348,47 @@ static uint32_t pick_scale(const struct assets *a, uint32_t mode_h)
 
 /* ---- painting -------------------------------------------------------------------------- */
 
+/* Dim one pre-composited pixel toward the background, `level` in 0..256.
+ *
+ * The tiles are opaque because Python already composited them: T = A*S + (1-A)*BG, for slab
+ * colour S and antialiased coverage A. Drawing that same slab at opacity k is
+ *
+ *     k*A*S + (1 - k*A)*BG  ==  BG + k*(T - BG)
+ *
+ * which is a plain lerp between the tile and the background — no alpha channel, no coverage
+ * term, and exact at both ends. That identity is the entire reason the container could stay
+ * opaque BGRX rows when the mark started moving, and it is why level == 256 below is a memcpy
+ * of the very bytes the old static splash blitted. */
+static uint32_t dim_px(uint32_t src, uint32_t bg, uint32_t level)
+{
+    uint32_t out = 0;
+    for (unsigned shift = 0; shift <= 16; shift += 8) {
+        int32_t sc = (int32_t)((src >> shift) & 0xffu);
+        int32_t bc = (int32_t)((bg >> shift) & 0xffu);
+        out |= (uint32_t)(bc + (sc - bc) * (int32_t)level / 256) << shift;
+    }
+    return out;
+}
+
 static void blit(uint8_t *dst, uint32_t pitch, uint32_t sw, uint32_t sh, const struct assets *a,
-                 const struct tile *t)
+                 const struct tile *t, uint32_t level)
 {
     long x, y;
 
+    /* The BOX is what gets anchored; the tile then sits at its own offset inside it. For a
+     * whole picture the two are the same thing and off_* is the inset from the screen edge. */
     switch (t->anchor) {
     case ANCHOR_BOTTOM_LEFT:
         x = (long)t->off_x;
-        y = (long)sh - (long)t->off_y - (long)t->h;
+        y = (long)sh - (long)t->off_y - (long)t->box_h;
         break;
     case ANCHOR_BOTTOM_RIGHT:
-        x = (long)sw - (long)t->off_x - (long)t->w;
-        y = (long)sh - (long)t->off_y - (long)t->h;
+        x = (long)sw - (long)t->off_x - (long)t->box_w;
+        y = (long)sh - (long)t->off_y - (long)t->box_h;
         break;
     default:
-        x = ((long)sw - (long)t->w) / 2;
-        y = ((long)sh - (long)t->h) / 2;
+        x = ((long)sw - (long)t->box_w) / 2 + (long)t->off_x;
+        y = ((long)sh - (long)t->box_h) / 2 + (long)t->off_y;
         break;
     }
 
@@ -313,9 +408,52 @@ static void blit(uint8_t *dst, uint32_t pitch, uint32_t sw, uint32_t sh, const s
         return;
 
     const uint8_t *src = a->blob + t->data;
-    for (long row = 0; row < ch; row++)
-        memcpy(dst + (size_t)(y + row) * pitch + (size_t)x * 4,
-               src + (size_t)(src_y + row) * t->w * 4 + (size_t)src_x * 4, (size_t)cw * 4);
+    for (long row = 0; row < ch; row++) {
+        uint8_t *drow = dst + (size_t)(y + row) * pitch + (size_t)x * 4;
+        const uint8_t *srow = src + (size_t)(src_y + row) * t->w * 4 + (size_t)src_x * 4;
+        if (level >= 256) {
+            memcpy(drow, srow, (size_t)cw * 4);
+            continue;
+        }
+        uint32_t *dp = (uint32_t *)drow;
+        const uint32_t *sp = (const uint32_t *)srow;
+        for (long col = 0; col < cw; col++)
+            dp[col] = dim_px(sp[col], a->bg, level);
+    }
+}
+
+/* Animation "B · Layer pulse": each slab dims and recovers inside its own third of the cycle,
+ * the wave travelling up the stack, and EVERY slab is at full brightness at ms == 0.
+ *
+ * That last property is not incidental. The first frame is painted at ms == 0, so it is the
+ * same picture as the stub bitmap the firmware has been showing — which is what makes the
+ * hand-off at the modeset invisible, and what makes a shadow-buffer driver that never sees a
+ * second frame show the old static splash rather than a mark stopped mid-dip.
+ *
+ * The curve is a triangle run through smoothstep rather than a sine, which keeps this file free
+ * of libm: smoothstep's derivative is zero at both ends, so the joins at the start, the middle
+ * and the end of a slab's window are all smooth despite the triangle's corner. */
+static uint32_t pulse_level(uint64_t ms, uint32_t slot)
+{
+    double phase = (double)(ms % PULSE_CYCLE_MS) / (double)PULSE_CYCLE_MS;
+    double u = phase - (double)slot / (double)PULSE_SLOTS;
+    if (u < 0.0)
+        u += 1.0;
+    u *= (double)PULSE_SLOTS;   /* this slab's own window is u in [0,1) */
+    if (u >= 1.0)
+        return 256;             /* between pulses: at rest, full brightness, drawn as a memcpy */
+
+    double v = 2.0 * u - 1.0;
+    if (v < 0.0)
+        v = -v;
+    v = 1.0 - v;                            /* triangle: 0 -> 1 -> 0 across the window */
+    double bump = v * v * (3.0 - 2.0 * v);  /* smoothstep */
+    double level = (1.0 - PULSE_DEPTH * bump) * 256.0;
+    if (level < 0.0)
+        level = 0.0;
+    if (level > 256.0)
+        level = 256.0;
+    return (uint32_t)(level + 0.5);
 }
 
 static void fill_bg(uint8_t *dst, uint32_t pitch, uint32_t w, uint32_t h, uint32_t bg)
@@ -361,14 +499,12 @@ static int show_on_crtc(int fd, uint32_t crtc_id, uint32_t connector_id,
 
     fill_bg(pixels, create.pitch, create.width, create.height, a->bg);
 
+    /* Frame zero, with every slab at full: byte-for-byte the frame this program drew before it
+     * could animate, and the same picture as the stub bitmap it is taking over from. */
     uint32_t scale = pick_scale(a, create.height);
     for (uint32_t i = 0; i < a->n_tiles; i++)
         if (a->tiles[i].scale == scale)
-            blit(pixels, create.pitch, create.width, create.height, a, &a->tiles[i]);
-
-    /* The mapping is only needed to paint the frame once. The buffer itself stays alive
-     * through its handle, which is what the CRTC scans out. */
-    munmap(pixels, create.size);
+            blit(pixels, create.pitch, create.width, create.height, a, &a->tiles[i], 256);
 
     struct drm_mode_crtc set = { 0 };
     set.crtc_id = crtc_id;
@@ -377,15 +513,28 @@ static int show_on_crtc(int fd, uint32_t crtc_id, uint32_t connector_id,
     set.count_connectors = 1;
     set.mode = *mode;
     set.mode_valid = 1;
-    if (xioctl(fd, DRM_IOCTL_MODE_SETCRTC, &set) != 0)
+    if (xioctl(fd, DRM_IOCTL_MODE_SETCRTC, &set) != 0) {
+        munmap(pixels, create.size);
         goto err_fb;
+    }
 
     if (n_outputs < MAX_OUTPUTS) {
-        outputs[n_outputs].card_fd = fd;
-        outputs[n_outputs].crtc_id = crtc_id;
-        outputs[n_outputs].fb_id = fb.fb_id;
-        outputs[n_outputs].handle = create.handle;
-        n_outputs++;
+        struct output *o = &outputs[n_outputs++];
+        o->card_fd = fd;
+        o->crtc_id = crtc_id;
+        o->fb_id = fb.fb_id;
+        o->handle = create.handle;
+        /* Kept mapped: animate() writes straight into the memory the CRTC is scanning out,
+         * which is the only way to move a pixel once master is gone. */
+        o->pixels = pixels;
+        o->pitch = create.pitch;
+        o->width = create.width;
+        o->height = create.height;
+        o->scale = scale;
+        for (uint32_t i = 0; i < MAX_TILES; i++)
+            o->level[i] = 256;
+    } else {
+        munmap(pixels, create.size);
     }
     return 0;
 
@@ -706,6 +855,36 @@ static void reveal_console(void)
     free(buf);
 }
 
+/* ---- animation ---------------------------------------------------------------------------- */
+
+/* Redraw whichever slabs have moved since the last frame, on every output.
+ *
+ * Only the slab tiles carry TILE_PULSE, so the wordmark and the status fields are painted once
+ * by show_on_crtc() and never touched again — and a slab that is between pulses compares equal
+ * to its last level and is skipped entirely, so most frames repaint exactly one band.
+ *
+ * There is nothing to tell the kernel afterwards. See the header: every ioctl that would flush
+ * or flip is DRM_MASTER-gated, and on the drivers this image targets a store into the mapped
+ * dumb buffer is already on the panel. */
+static void animate(const struct assets *a, uint64_t ms)
+{
+    for (int i = 0; i < n_outputs; i++) {
+        struct output *o = &outputs[i];
+        if (!o->pixels)
+            continue;
+        for (uint32_t ti = 0; ti < a->n_tiles; ti++) {
+            const struct tile *t = &a->tiles[ti];
+            if (t->scale != o->scale || !(t->flags & TILE_PULSE))
+                continue;
+            uint32_t level = pulse_level(ms, (t->flags >> TILE_PULSE_SHIFT) & 0xffu);
+            if (level == o->level[ti])
+                continue;
+            o->level[ti] = level;
+            blit(o->pixels, o->pitch, o->width, o->height, a, t, level);
+        }
+    }
+}
+
 /* ---- takeover detection ------------------------------------------------------------------ */
 
 /* The greeter's compositor becomes master and modesets; from that moment the CRTC scans out
@@ -728,6 +907,13 @@ static int someone_else_took_over(void)
 }
 
 /* ---- main -------------------------------------------------------------------------------- */
+
+static uint64_t now_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000u + (uint64_t)ts.tv_nsec / 1000000u;
+}
 
 int main(int argc, char **argv)
 {
@@ -766,9 +952,13 @@ int main(int argc, char **argv)
 
     scan_inputs();
 
-    struct timespec tick = { .tv_sec = 0, .tv_nsec = TICK_MS * 1000L * 1000L };
-    struct timespec started;
-    clock_gettime(CLOCK_MONOTONIC, &started);
+    /* Two clocks, deliberately separate. The poll wakes on the FRAME clock so the mark moves
+     * smoothly, while the takeover check and the input rescan stay on the 500ms TICK they were
+     * designed around — running a GETCRTC per output at 25fps to watch for the greeter would be
+     * twenty-five times the ioctls to learn the same thing. */
+    struct timespec tick = { .tv_sec = 0, .tv_nsec = FRAME_MS * 1000L * 1000L };
+    uint64_t started = now_ms();
+    uint64_t last_tick = started;
 
     for (;;) {
         struct pollfd pfds[MAX_INPUTS];
@@ -801,15 +991,21 @@ int main(int argc, char **argv)
              * elapsed clock and the takeover check stay on their own schedule. */
         }
 
+        /* Measured against the monotonic clock rather than counted in ticks: a keyboard held
+         * down returns from ppoll early every time, and a tick counter would then stretch both
+         * the animation and the backstop by however long someone leans on the spacebar. */
+        uint64_t now = now_ms();
+
+        animate(&a, now - started);
+
+        if (now - last_tick < TICK_MS)
+            continue;
+        last_tick = now;
+
         if (someone_else_took_over())
             break; /* the greeter is up: change nothing, just let the fds close */
 
-        /* Measured against the monotonic clock rather than counted in ticks: a keyboard held
-         * down returns from ppoll early every time, and a tick counter would then stretch the
-         * backstop from two minutes to however long someone leans on the spacebar. */
-        struct timespec now;
-        clock_gettime(CLOCK_MONOTONIC, &now);
-        if (now.tv_sec - started.tv_sec >= SPLASH_MAX_SECONDS) {
+        if (now - started >= (uint64_t)SPLASH_MAX_SECONDS * 1000u) {
             /* Two very different situations reach this line, and they want opposite things.
              *
              * The boot really is stalled — then showing the log is the whole point of having a

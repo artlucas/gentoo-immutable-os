@@ -78,6 +78,7 @@ Note on terminology: Gentoo's "stage 3" is a **tarball** (`stage3-amd64-systemd-
 | [16-installer.md](16-installer.md) | The Calamares installer and the build-profile mechanism that keeps it out of the installed system; swap + hibernation; the live ISO |
 | [14-boot-splash-kms.md](14-boot-splash-kms.md) | Replacing Plymouth with a KMS splash: why no fbdev option exists on this kernel, the drop-master design, and taking the whole graphics payload out of the initrd |
 | [15-version-pinning.md](15-version-pinning.md) | Pinning the tree by commit and every package version by lock file, moving pins deliberately (GLSA-driven patch releases), and the vendored archive that rebuilds a release offline |
+| [17-animated-splash.md](17-animated-splash.md) | Animating the KMS splash without DRM master, and a Plasma splash carrying the same mark from the login to a painted desktop |
 
 ## Milestones
 

@@ -6,8 +6,13 @@
         "",
         "It is deliberately almost empty, and adding files here would OVERRIDE Breeze rather than",
         "extend it: plasma-workspace makes org.kde.breeze.desktop the FALLBACK package for any id",
-        "but its own, so everything this package does not ship — splash, lock screen, logout,",
-        "colours, style — still resolves to Breeze, unchanged."
+        "but its own, so everything this package does not ship — lock screen, logout, colours,",
+        "style — still resolves to Breeze, unchanged.",
+        "",
+        "The splash is the exception, and it does not come from Breeze either: ksplashqml reads",
+        "ksplashrc's [KSplash] Theme before it looks at LookAndFeelPackage, and /etc/xdg/ksplashrc",
+        "points it at the @DISTRO_ID@ package (config/plasma, plan/17). So this medium shows the",
+        "distro's own splash and this package's panel layout at the same time."
     ],
     "KPackageStructure": "Plasma/LookAndFeel",
     "KPlugin": {

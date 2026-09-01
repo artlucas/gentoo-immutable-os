@@ -491,6 +491,105 @@ else
     || die "verify: 70-$DISTRO_ID-splash.rules does not name $DISTRO_ID-splash.service"
 fi
 
+# ---- 2c. the Plasma splash screen (plan/17) ------------------------------------------
+# The other half of the same picture. The KMS splash above holds the brand mark from the first
+# modeset to the greeter; this is what draws it from the login to a painted desktop, and it is
+# the same mark running the same layer pulse because both come out of the generator that just
+# built splash.bin.
+#
+# DESKTOP PROFILES ONLY. A console image has no Plasma to configure, so nothing here runs for it
+# — and the else branch asserts nothing is there anyway, which is a statement about stale work
+# volumes rather than about this stage.
+if profile_has_set desktop; then
+  # The Look-and-Feel package. Its id is what /etc/xdg/ksplashrc names, and ksplashqml resolves
+  # that id straight to this directory (SplashWindow::setGeometry -> KPackage::setPath).
+  SPLASH_LNF_ID="$DISTRO_ID"
+  SPLASH_LNF_DIR="$TARGET/usr/share/plasma/look-and-feel/$SPLASH_LNF_ID"
+  PLASMA_SRC="$REPO/config/plasma"
+  # Rebuilt from scratch, like the branding PNG directory above: `build.sh --from 40` reruns this
+  # against a work volume that already has the last run's package in it, and a slab renamed in
+  # config/branding would otherwise leave its old SVG behind for the QML to keep drawing.
+  rm -rf -- "$SPLASH_LNF_DIR"
+  while IFS= read -r -d '' f; do
+    rel="${f#"$PLASMA_SRC/lookandfeel/"}"
+    dst="$SPLASH_LNF_DIR/${rel%.in}"
+    ensure_dir "$(dirname -- "$dst")"
+    if [[ $f == *.in ]]; then render_template "$f" "$dst"; else cp -- "$f" "$dst"; fi
+    chmod 0644 -- "$dst"
+  done < <(find "$PLASMA_SRC/lookandfeel" -type f -print0)
+
+  # The generated half of the package: the re-shaded slab vectors the QML animates, and the
+  # Design.qml it takes its geometry and its pulse timings from. Generated rather than committed
+  # for the same reason splash.bin is — the shading and the layout have one source, and it is
+  # the script that composed the frame this splash takes over from.
+  python3 "$REPO/config/branding/make-splash-assets.py" \
+    --svg-dir "$REPO/config/branding" \
+    --theme "$SPLASH_LNF_DIR/contents/splash" \
+    || die "Plasma splash: theme asset generation failed"
+  # A preview for System Settings -> Appearance -> Splash Screen. Same canvas function as the
+  # installer's slide, at the 300x169 Breeze's own previews/splash.png uses.
+  python3 "$REPO/config/branding/make-splash-assets.py" \
+    --asset-dir "$BRANDING_PNG" --logo-scale 0.6 \
+    --slide "$SPLASH_LNF_DIR/contents/previews/splash.png" --slide-size 300x169 \
+    || die "Plasma splash: preview generation failed"
+  find "$SPLASH_LNF_DIR" -type f -exec chmod 0644 {} +
+  find "$SPLASH_LNF_DIR" -type d -exec chmod 0755 {} +
+
+  # /etc/xdg, not a skel copy: KConfig cascades it under ~/.config, so it is the default for
+  # the live account, for the installer medium's live account and for every account Calamares
+  # creates, with no per-user step anywhere. See config/plasma/ksplashrc.in.
+  render_template "$PLASMA_SRC/ksplashrc.in" "$TARGET/etc/xdg/ksplashrc"
+  chmod 0644 -- "$TARGET/etc/xdg/ksplashrc"
+
+  # The theme id is written in two independently rendered files and they have to be the same
+  # string. If they drift nothing fails: ksplashqml cannot find the package, falls back to
+  # Breeze, and the machine boots to somebody else's logo on a screen no test can see.
+  grep -q "\"Id\": \"$SPLASH_LNF_ID\"" "$SPLASH_LNF_DIR/metadata.json" \
+    || die "verify: the look-and-feel package in $SPLASH_LNF_ID does not declare Id \"$SPLASH_LNF_ID\""
+  grep -qx "Theme=$SPLASH_LNF_ID" "$TARGET/etc/xdg/ksplashrc" \
+    || die "verify: /etc/xdg/ksplashrc does not select Theme=$SPLASH_LNF_ID — the splash would
+  silently fall back to Breeze."
+  for f in Splash.qml Design.qml images/slab-top.svg images/slab-mid.svg images/slab-bot.svg \
+           images/wordmark.svg; do
+    [[ -s $SPLASH_LNF_DIR/contents/splash/$f ]] \
+      || die "verify: $SPLASH_LNF_DIR/contents/splash/$f is missing or empty"
+  done
+
+  # ksplashqml is what loads all of the above, and it is a plasma-workspace binary rather than
+  # anything this build produces — so it is exactly the kind of thing that can leave with a USE
+  # flag change and take the splash with it, silently.
+  [[ -x $TARGET/usr/bin/ksplashqml ]] \
+    || die "verify: /usr/bin/ksplashqml is missing from the target — nothing would draw the
+  Plasma splash. It ships in kde-plasma/plasma-workspace."
+
+  # THE FADE OUT IS KWIN'S, not the theme's: SplashApp::setStage() calls QGuiApplication::exit()
+  # on the "desktop" stage before the window could render another frame, so what actually fades
+  # the splash away is the `login` effect — 500ms of opacity on windowClosed for a window whose
+  # class is "ksplashqml ksplashqml". It is EnabledByDefault and this image ships no kwinrc, so
+  # the default is what applies. Asserted rather than configured, because if upstream ever flips
+  # that default the splash does not break, it just stops fading — and that is a change worth
+  # noticing at build time instead of on a user's screen.
+  KWIN_LOGIN="$TARGET/usr/share/kwin-wayland/effects/login/metadata.json"
+  [[ -f $KWIN_LOGIN ]] \
+    || die "verify: kwin's login effect is missing ($KWIN_LOGIN). Nothing would fade the Plasma
+  splash out when the desktop appears — see plan/17."
+  python3 -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1]))["KPlugin"]["EnabledByDefault"] else 1)' \
+      "$KWIN_LOGIN" \
+    || die "verify: kwin's login effect is no longer EnabledByDefault. The Plasma splash would
+  vanish instead of fading out; ship an /etc/xdg/kwinrc with [Plugins] loginEnabled=true, or
+  decide the snap is acceptable — see plan/17."
+
+  log "Plasma splash: /usr/share/plasma/look-and-feel/$SPLASH_LNF_ID, selected for all users by /etc/xdg/ksplashrc"
+else
+  # The converse, for the same reason the installer block has one: nothing above runs on a
+  # console image, so anything here came from a stale work volume rather than from this build.
+  for leak in "usr/share/plasma/look-and-feel/$DISTRO_ID" etc/xdg/ksplashrc; do
+    [[ -e $TARGET/$leak ]] \
+      && die "verify: $BUILD_PROFILE has no desktop, but /$leak exists in the target. Wipe the
+  work volume and rebuild — a stale target is carrying Plasma config into a console image."
+  done
+fi
+
 # ---- 2d. the graphical installer (plan/16) -------------------------------------------
 # Everything in this section is `installer`-profile only. It installs Calamares' configuration
 # and our four replacement modules, and it stages the PAYLOAD — the desktop profile's own root
@@ -565,8 +664,9 @@ if profile_has_set installer; then
   done
 
   # The branding logo, composed by the same function that produces the boot splash's two halves.
-  # Three consumers, one compose_block(): the user sees this sidebar a minute after watching that
-  # splash, so they must be the same pixels rather than two drawings of one logo.
+  # Every raster artefact in this build comes out of one build_block(): the user sees this
+  # sidebar a minute after watching that splash, so they must be the same pixels rather than two
+  # drawings of one logo.
   python3 "$REPO/config/branding/make-splash-assets.py" \
     --asset-dir "$BRANDING_PNG" \
     --logo  "$TARGET/etc/calamares/branding/installer/logo.png" \

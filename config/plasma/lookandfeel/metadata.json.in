@@ -1,0 +1,39 @@
+{
+    "//": [
+        "The Plasma splash screen — plan/17. A Look-and-Feel package carrying ONE thing, the",
+        "splash, because that is the unit Plasma's splash is packaged in: ksplashqml resolves",
+        "ksplashrc's [KSplash] Theme as a Plasma/LookAndFeel package id and loads",
+        "contents/splash/Splash.qml out of it (splashwindow.cpp, SplashWindow::setGeometry).",
+        "",
+        "It ships on every profile with a desktop, and /etc/xdg/ksplashrc names it for every",
+        "user — see ../ksplashrc.in for why that one file covers the live account and every",
+        "account Calamares creates.",
+        "",
+        "Everything this package does not ship still resolves to Breeze: plasma-workspace makes",
+        "org.kde.breeze.desktop the FALLBACK package for any id but its own, so colours, style,",
+        "lock screen, logout and the desktop layout are untouched. That is also why applying",
+        "this as a Global Theme in System Settings is harmless rather than a way to end up with",
+        "half a desktop.",
+        "",
+        "It is a SEPARATE package from @DISTRO_ID@-installer, which carries the live medium's",
+        "task-manager layout script. Two packages because they have different lifetimes: this",
+        "one ships in the product and the installed system, that one exists for twenty minutes",
+        "on a USB stick. ksplashrc's Theme wins over kdeglobals' LookAndFeelPackage in",
+        "ksplashqml's own resolution order, so the live session gets both."
+    ],
+    "KPackageStructure": "Plasma/LookAndFeel",
+    "KPlugin": {
+        "Id": "@DISTRO_ID@",
+        "Name": "@DISTRO_NAME@",
+        "Description": "The @DISTRO_NAME@ splash screen",
+        "Category": "",
+        "License": "GPL-2.0-or-later",
+        "Authors": [
+            {
+                "Name": "@DISTRO_NAME@"
+            }
+        ],
+        "Website": "@HOME_URL@"
+    },
+    "X-Plasma-APIVersion": "2"
+}
