@@ -786,7 +786,7 @@ profile's sets into an empty root against the pinned tree under the old and new 
 lines are inert for every profile that does not emerge `@installer`, and a keyword exception for
 an atom nothing requests cannot change a resolution. All three locks changed by exactly one line.
 
-*What is asserted rather than trusted:* `tests/test-installer.sh` (144 assertions) checks the two
+*What is asserted rather than trusted:* `tests/test-installer.sh` (153 assertions) checks the two
 things that fail silently — that `modules/partition.conf` and `emit_sfdisk_script()` still agree
 on every partition label, GPT type GUID and slot size, and that each module's `module.desc`
 declares the name of its own directory (ModuleManager skips a mismatched module with no error, so

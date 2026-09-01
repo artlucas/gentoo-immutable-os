@@ -341,4 +341,36 @@ assert_true "stage 40 reads all three dictionary files back before the medium is
 assert_true "stage 50 asserts the dictionary survived the prune" \
     grep -q 'cracklib_dict' "$REPO_ROOT/scripts/stages/50-prune.sh"
 
+# ---- 10. the live session's own ergonomics --------------------------------------------------
+# Three files in config/calamares/system/ that are not Calamares configuration at all: they are
+# what makes a medium whose account password is published usable without ever typing it. Each is
+# installed by stage 40 for this profile only, and each would be a security regression on a
+# product image, so both halves are asserted here — the file says what it should, and stage 40
+# both writes it on the medium and refuses to let it exist anywhere else.
+LOCKRC="$RENDER/system/kscreenlockerrc"
+assert_file "$LOCKRC" "the live session's kscreenlockerrc rendered"
+# One group, so "is the key in the right section?" needs no parser: [Greeter] keys share this
+# file and RequirePassword means nothing there.
+assert_eq "[Daemon]" "$(grep '^\[' "$LOCKRC")" "kscreenlockerrc declares exactly one group, [Daemon]"
+assert_true "...and turns RequirePassword off in it" \
+    grep -qx 'RequirePassword=false' "$LOCKRC"
+# Autolock is left alone on purpose (the shield still engages, it just does not prompt). Asserted
+# so that turning it off later is a deliberate edit here rather than a quiet one there.
+assert_false "kscreenlockerrc does not also disable Autolock" \
+    grep -q '^Autolock=' "$LOCKRC"
+
+STAGE40="$REPO_ROOT/scripts/stages/40-configure.sh"
+assert_true "stage 40 installs kscreenlockerrc into /etc/xdg on the medium" \
+    grep -qF 'cal_install "$CAL_SRC/system/kscreenlockerrc.in" "$TARGET/etc/xdg/kscreenlockerrc"' "$STAGE40"
+assert_true "...and reads the key back out of the target before building the medium" \
+    grep -qF "grep -qx 'RequirePassword=false'" "$STAGE40"
+# The leak list, which is the only thing standing between these three and a product image: an
+# entry there is quoted whole, so this matches the guard and not the install line above it.
+for leaked in 'etc/xdg/kscreenlockerrc' \
+              'etc/xdg/autostart/$DISTRO_ID-installer.desktop' \
+              'etc/polkit-1/rules.d/49-$DISTRO_ID-installer.rules'; do
+    assert_true "stage 40 refuses to let /$leaked reach a non-installer profile" \
+        grep -qF "\"$leaked\"" "$STAGE40"
+done
+
 finish

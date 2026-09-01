@@ -578,12 +578,16 @@ if profile_has_set installer; then
     chmod 0644 -- "$TARGET/etc/calamares/branding/installer/$img.png"
   done
 
-  # Live-medium ergonomics: start the installer on login, and let the live user authenticate for
-  # that ONE polkit action without a password whose value is printed in the documentation.
+  # Live-medium ergonomics, all three of them the same argument: the live account's password is
+  # printed in this medium's own documentation, so nothing on the medium should stop to ask for
+  # it. Start the installer on login; let the live user authenticate for that ONE polkit action
+  # without a prompt; and let the screen locker be dismissed without one (kscreenlockerrc's
+  # [Daemon] RequirePassword, which starts the greeter --nolock and unlocks on first input).
   cal_install "$CAL_SRC/system/49-installer.rules.in" \
               "$TARGET/etc/polkit-1/rules.d/49-$DISTRO_ID-installer.rules"
   cal_install "$CAL_SRC/system/installer-autostart.desktop.in" \
               "$TARGET/etc/xdg/autostart/$DISTRO_ID-installer.desktop"
+  cal_install "$CAL_SRC/system/kscreenlockerrc.in" "$TARGET/etc/xdg/kscreenlockerrc"
 
   # ---- the payload ---------------------------------------------------------------------
   # Three files another profile's build produced, copied in unchanged. Under /var because stage
@@ -1235,6 +1239,10 @@ if profile_has_set installer; then
     || die "verify: the installer autostart entry is missing — nothing would launch Calamares"
   [[ -f $TARGET/etc/polkit-1/rules.d/49-$DISTRO_ID-installer.rules ]] \
     || die "verify: the installer polkit rule is missing — pkexec would prompt for a password"
+  grep -qx 'RequirePassword=false' "$TARGET/etc/xdg/kscreenlockerrc" 2>/dev/null \
+    || die "verify: /etc/xdg/kscreenlockerrc does not set RequirePassword=false — the live
+  session would lock itself after five idle minutes and ask for a password nobody was told to
+  expect. Grepped rather than stat'd: the file existing is not the property that matters."
 
   # The password dictionary, built by section 2's finalizer because cracklib's own pkg_postinst
   # cannot (see there). Read back here rather than trusted, because this is the one installer
@@ -1262,6 +1270,7 @@ if ! profile_has_set installer; then
   for leak in etc/calamares "usr/share/calamares/local-modules" \
               "etc/xdg/autostart/$DISTRO_ID-installer.desktop" \
               "etc/polkit-1/rules.d/49-$DISTRO_ID-installer.rules" \
+              "etc/xdg/kscreenlockerrc" \
               "${PAYLOAD_DIR#/}"; do
     [[ -e $TARGET/$leak ]] \
       && die "verify: $BUILD_PROFILE does not include @installer, but /$leak exists in the target.

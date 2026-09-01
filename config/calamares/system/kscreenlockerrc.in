@@ -1,0 +1,43 @@
+# The live session's screen lock: it still engages, it just stops asking for a password.
+#
+# LIVE MEDIUM ONLY. Stage 40 installs this for the `installer` profile and nowhere else, next to
+# 49-installer.rules and installer-autostart.desktop, and for the same reason those two exist:
+# @LIVE_USER@'s password is printed in this medium's own documentation, so a prompt for it is
+# theatre. Here it is worse than theatre — the polkit prompt at least stands in front of
+# something the user asked for, while this one appears five minutes into an install they walked
+# away from and reads, to anyone who does not know the account, as a machine that locked itself.
+# The product image keeps a normal lock screen, and so does a machine installed from this medium:
+# removeuser deletes @LIVE_USER@ and the account Calamares creates is an ordinary one, on a root
+# that never carried this file.
+#
+# /etc/xdg, not a skel copy — same layer and same reasoning as /etc/xdg/baloofilerc. KConfig
+# cascades $XDG_CONFIG_DIRS underneath ~/.config, so this is the image's default and System
+# Settings -> Screen Locking still writes a user's own choice to ~/.config/kscreenlockerrc and
+# wins over it.
+#
+# ONE KEY, and it is upstream's own rather than a PAM edit, because kscreenlocker already has an
+# answer for exactly this. CONFIRMED against kscreenlocker 6.6.6, the version this image pins:
+#
+#   settings/kscreenlockersettings.kcfg names the file `kscreenlockerrc`, the group [Daemon] and
+#   the key RequirePassword — "Sets whether the password is required to unlock the screen".
+#
+#   ksldapp.cpp reads it into m_requirePassword and acts on it in three places. lock() starts the
+#   greeter with --nolock, which greeter/main.cpp documents as "Don't show any lock user
+#   interface" — for an idle lock no password field is drawn at all, that path locking Delayed so
+#   --immediateLock is absent. userActivity() calls unlock() on the first input event. And the
+#   Lock Session global shortcut locks Delayed rather than Immediate.
+#
+#   The Wayland half matters here, because this image has no X11 session and X11Locker is what
+#   emits userActivity() in kscreenlocker's own code. On Wayland the compositor does it instead:
+#   kwin 6.6.6's src/input.cpp LockScreenFilter calls KSldApp::userActivity() on pointer motion,
+#   buttons, axis and keys. So the unlock-on-activity path is live in the session we ship.
+#
+#   One caller still draws the UI: the D-Bus Lock() that Plasma's own Lock button and
+#   `loginctl lock-session` go through, which interface.cpp always issues as Immediate. Even
+#   there the first mouse move or keypress unlocks — the prompt is never answered, only seen.
+#
+# Autolock is deliberately left ON. Turning it off is a larger change with a different
+# justification (a stick on a desk mid-install would never blank), and it is not what stands
+# between the user and the installer. Add `Autolock=false` here if that changes.
+[Daemon]
+RequirePassword=false
