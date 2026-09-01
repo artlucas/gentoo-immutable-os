@@ -342,11 +342,12 @@ assert_true "stage 50 asserts the dictionary survived the prune" \
     grep -q 'cracklib_dict' "$REPO_ROOT/scripts/stages/50-prune.sh"
 
 # ---- 10. the live session's own ergonomics --------------------------------------------------
-# Three files in config/calamares/system/ that are not Calamares configuration at all: they are
-# what makes a medium whose account password is published usable without ever typing it. Each is
-# installed by stage 40 for this profile only, and each would be a security regression on a
-# product image, so both halves are asserted here — the file says what it should, and stage 40
-# both writes it on the medium and refuses to let it exist anywhere else.
+# config/calamares/system/ is not Calamares configuration at all: it is what makes a medium whose
+# account password is published usable without ever typing it. Each file is installed by stage 40
+# for this profile only, and each would be wrong on a product image — a security regression for
+# the three here, a Plasma panel pinning an installer nobody installed for the two in section 11
+# — so both halves are asserted: the file says what it should, and stage 40 both writes it on the
+# medium and refuses to let it exist anywhere else.
 LOCKRC="$RENDER/system/kscreenlockerrc"
 assert_file "$LOCKRC" "the live session's kscreenlockerrc rendered"
 # One group, so "is the key in the right section?" needs no parser: [Greeter] keys share this
@@ -364,9 +365,86 @@ assert_true "stage 40 installs kscreenlockerrc into /etc/xdg on the medium" \
     grep -qF 'cal_install "$CAL_SRC/system/kscreenlockerrc.in" "$TARGET/etc/xdg/kscreenlockerrc"' "$STAGE40"
 assert_true "...and reads the key back out of the target before building the medium" \
     grep -qF "grep -qx 'RequirePassword=false'" "$STAGE40"
-# The leak list, which is the only thing standing between these three and a product image: an
+# ---- 11. the panel pins the installer and nothing else --------------------------------------
+# The medium runs one program, so its task manager pins one program. Left alone it pins four and
+# none of them is that one: the Icons-Only Task Manager's launchers come from a KConfigXT default
+# (plasma-desktop applets/taskmanager/main.xml) of System Settings, Discover, a file manager and
+# preferred://browser — an app store on a stick that is discarded in twenty minutes, and a
+# browser that is not installed at all here, because this profile sets FLATPAK_PREINSTALL="" and
+# Firefox travels in the payload.
+#
+# The failure this section guards is not "the wrong icons": it is that a KConfigXT default cannot
+# be beaten by a config file, so the FIX is a layout script run once at first login — and a
+# layout script that does not run, does not parse, or is not the one plasmashell reaches for
+# leaves the live session with the stock four, or with no panel at all. There is no second login
+# to correct it on a medium that autologins once and is thrown away.
+LNF="$RENDER/system/lookandfeel"
+LAYOUT="$LNF/contents/layouts/org.kde.plasma.desktop-layout.js"
+assert_file "$LNF/metadata.json" "the installer look-and-feel package has a descriptor"
+assert_file "$LAYOUT"            "...and the Plasma layout script that is its entire point"
+
+# The two halves of the hook, either of which is useless alone: kdeglobals names the package, and
+# the package is where ShellCorona::loadDefaultLayout() looks for the script.
+KDEGLOBALS="$RENDER/system/kdeglobals"
+assert_file "$KDEGLOBALS" "the live session's kdeglobals rendered"
+assert_eq "[KDE]" "$(grep '^\[' "$KDEGLOBALS")" "kdeglobals declares exactly one group, [KDE]"
+assert_true "...and points LookAndFeelPackage at the installer package" \
+    grep -qx "LookAndFeelPackage=$I_DISTRO_ID-installer" "$KDEGLOBALS"
+# KPackage compares the descriptor's id against the directory it loaded from, and uses the
+# comparison to decide whether Breeze becomes the fallback package. Same silent-skip shape as a
+# module.desc whose name is not its directory's, asserted the same way.
+assert_true "the descriptor's plugin id is the directory kdeglobals names" \
+    grep -qF "\"Id\": \"$I_DISTRO_ID-installer\"" "$LNF/metadata.json"
+assert_true "the descriptor is valid JSON" \
+    python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$LNF/metadata.json"
+# A layout script that does not parse is a live session with NO PANEL — plasmashell logs the
+# parse error and moves on, and there is no second login on this medium to fix it. Checked with
+# node when the box has one; this suite stays dependency-free, so the alternative is not checking
+# it here at all. The engine that actually runs the file is QJSEngine, which is why the script is
+# written in plain ES5 that both accept.
+if command -v node >/dev/null 2>&1; then
+    assert_true "the layout script parses as JavaScript" node --check "$LAYOUT"
+else
+    echo "  (node absent — skipping the layout script's parse check)"
+fi
+
+# The pin itself, and the one string it turns on: app-admin/calamares's own menu entry, which is
+# in /usr/share/applications where KService can resolve it. Our /etc/xdg/autostart copy is not,
+# and would resolve to nothing.
+assert_true "the layout pins applications:calamares.desktop on the task manager" \
+    grep -qF 'writeConfig("launchers", ["applications:calamares.desktop"])' "$LAYOUT"
+# ONE pin. The whole request is that nothing else is pinned, and the cheapest way to catch a
+# second one creeping in is to count the launcher URLs the script contains. Counted over the code
+# with the comments stripped, because the comments quote the stock defaults this replaces.
+LAYOUT_CODE="$TMP/layout-code.js"
+grep -v '^[[:space:]]*//' "$LAYOUT" > "$LAYOUT_CODE"
+assert_eq "1" "$(grep -oF 'applications:' "$LAYOUT_CODE" | wc -l)" \
+    "exactly one launcher is written — no other application is pinned"
+assert_false "the layout pins none of Plasma's stock four" \
+    grep -qE 'systemsettings\.desktop|org\.kde\.discover|preferred://' "$LAYOUT_CODE"
+# The panel has to exist before anything can be pinned to it, and loadTemplate() is what builds
+# it. It also keeps the panel upstream's by reference rather than by copy.
+assert_true "the layout builds the panel from upstream's template" \
+    grep -qF 'loadTemplate("org.kde.plasma.desktop.defaultPanel")' "$LAYOUT"
+# Breeze's own layout sets this and ours replaces Breeze's, so dropping it would leave the
+# desktop containment with no wallpaper plugin.
+assert_true "...and still sets the wallpaper plugin Breeze's layout set" \
+    grep -qF "wallpaperPlugin = 'org.kde.image'" "$LAYOUT"
+
+assert_true "stage 40 installs kdeglobals into /etc/xdg on the medium" \
+    grep -qF 'cal_install "$CAL_SRC/system/kdeglobals.in" "$TARGET/etc/xdg/kdeglobals"' "$STAGE40"
+assert_true "...and mirrors the look-and-feel package into /usr/share/plasma" \
+    grep -qF 'find "$CAL_SRC/system/lookandfeel" -type f -print0' "$STAGE40"
+assert_true "...and reads the pin back out of the target before building the medium" \
+    grep -qF 'writeConfig("launchers", ["applications:calamares.desktop"])' "$STAGE40"
+assert_true "...and refuses a target whose calamares.desktop the pin could not resolve" \
+    grep -qF 'usr/share/applications/calamares.desktop' "$STAGE40"
+
+# The leak list, which is the only thing standing between these files and a product image: an
 # entry there is quoted whole, so this matches the guard and not the install line above it.
 for leaked in 'etc/xdg/kscreenlockerrc' \
+              'etc/xdg/kdeglobals' \
+              'usr/share/plasma/look-and-feel/$DISTRO_ID-installer' \
               'etc/xdg/autostart/$DISTRO_ID-installer.desktop' \
               'etc/polkit-1/rules.d/49-$DISTRO_ID-installer.rules'; do
     assert_true "stage 40 refuses to let /$leaked reach a non-installer profile" \

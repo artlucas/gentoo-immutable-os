@@ -589,6 +589,40 @@ if profile_has_set installer; then
               "$TARGET/etc/xdg/autostart/$DISTRO_ID-installer.desktop"
   cal_install "$CAL_SRC/system/kscreenlockerrc.in" "$TARGET/etc/xdg/kscreenlockerrc"
 
+  # The live session's panel. Same argument one step further out: the medium exists to run one
+  # application, so the task manager pins that application and nothing else. Left alone, the
+  # Icons-Only Task Manager pins its KConfigXT defaults — System Settings, Discover, Dolphin and
+  # a browser this profile does not install — and Calamares, the one thing here, is not among
+  # them.
+  #
+  # It takes a Look-and-Feel package to change that, and the indirection is not ours: an applet's
+  # KConfigXT default can only be beaten by a layout SCRIPT (Plasma::Corona::config() opens the
+  # appletsrc with KConfig::SimpleConfig, which does not cascade, so the /etc/xdg trick the two
+  # files above use is not available here), and ShellCorona::loadDefaultLayout() reads that
+  # script from the Look-and-Feel package /etc/xdg/kdeglobals names. The package ships nothing
+  # else; plasma-workspace makes Breeze its fallback, so the rest of the session is untouched.
+  LNF_ID="$DISTRO_ID-installer"
+  LNF_DIR="$TARGET/usr/share/plasma/look-and-feel/$LNF_ID"
+  cal_install "$CAL_SRC/system/kdeglobals.in" "$TARGET/etc/xdg/kdeglobals"
+  while IFS= read -r -d '' f; do
+    rel="${f#"$CAL_SRC/system/lookandfeel/"}"
+    cal_install "$f" "$LNF_DIR/${rel%.in}"
+  done < <(find "$CAL_SRC/system/lookandfeel" -type f -print0)
+
+  # The pin resolves through KService, which resolves through /usr/share/applications — so the
+  # launcher is only as real as the .desktop file app-admin/calamares installs. A rename upstream
+  # would leave a panel with one dead icon on it and no other way to start the installer once the
+  # autostarted window is closed, and nothing else in this build would notice.
+  [[ -f $TARGET/usr/share/applications/calamares.desktop ]] \
+    || die "verify: /usr/share/applications/calamares.desktop is missing from the target, but the
+  panel layout pins applications:calamares.desktop — the live session's only visible launcher
+  would resolve to nothing"
+  # KPackage compares the descriptor's plugin id against the DIRECTORY it loaded, and uses the
+  # comparison to decide whether to install Breeze as the fallback package. A mismatch here is
+  # the same class of silent failure as a module.desc whose name is not its directory's.
+  grep -q "\"Id\": \"$LNF_ID\"" "$LNF_DIR/metadata.json" \
+    || die "verify: the look-and-feel package in $LNF_ID does not declare Id \"$LNF_ID\""
+
   # ---- the payload ---------------------------------------------------------------------
   # Three files another profile's build produced, copied in unchanged. Under /var because stage
   # 60 builds the root EROFS with --exclude '/var/*' — it is the only place ~5 GiB can go — and
@@ -1244,6 +1278,27 @@ if profile_has_set installer; then
   session would lock itself after five idle minutes and ask for a password nobody was told to
   expect. Grepped rather than stat'd: the file existing is not the property that matters."
 
+  # The panel. Read back for the same reason: /etc/xdg/kdeglobals existing says nothing about
+  # whether it names the package, and the package existing says nothing about whether its one
+  # script is the one that pins the installer. Both halves have to hold or the live session comes
+  # up with Plasma's stock pins — System Settings, Discover, Dolphin, an absent browser — and the
+  # installer reachable only from the menu.
+  LNF_LAYOUT="$TARGET/usr/share/plasma/look-and-feel/$DISTRO_ID-installer/contents/layouts/org.kde.plasma.desktop-layout.js"
+  grep -qx "LookAndFeelPackage=$DISTRO_ID-installer" "$TARGET/etc/xdg/kdeglobals" 2>/dev/null \
+    || die "verify: /etc/xdg/kdeglobals does not select the $DISTRO_ID-installer look-and-feel
+  package — plasmashell would fall back to Breeze's layout and pin Plasma's stock four"
+  grep -qF 'writeConfig("launchers", ["applications:calamares.desktop"])' "$LNF_LAYOUT" 2>/dev/null \
+    || die "verify: $LNF_LAYOUT does not write applications:calamares.desktop into the task
+  manager's launchers — the medium's panel would carry every application except the one it
+  exists to run. Matched on the writeConfig call, not the string: this file explains the pin in
+  a comment, and a comment is not a pin."
+  # loadTemplate() is what builds the panel in the first place. A layout script that pins the
+  # installer onto a panel it forgot to create is a live session with no panel at all, and this
+  # script runs exactly once, at first login, where nothing is left to correct it.
+  grep -q 'loadTemplate("org.kde.plasma.desktop.defaultPanel")' "$LNF_LAYOUT" 2>/dev/null \
+    || die "verify: $LNF_LAYOUT never loads the default panel template — the live session would
+  start with no panel, no clock and no system tray"
+
   # The password dictionary, built by section 2's finalizer because cracklib's own pkg_postinst
   # cannot (see there). Read back here rather than trusted, because this is the one installer
   # failure that survives every other check in this file AND stage 70: the medium boots, the
@@ -1271,6 +1326,8 @@ if ! profile_has_set installer; then
               "etc/xdg/autostart/$DISTRO_ID-installer.desktop" \
               "etc/polkit-1/rules.d/49-$DISTRO_ID-installer.rules" \
               "etc/xdg/kscreenlockerrc" \
+              "etc/xdg/kdeglobals" \
+              "usr/share/plasma/look-and-feel/$DISTRO_ID-installer" \
               "${PAYLOAD_DIR#/}"; do
     [[ -e $TARGET/$leak ]] \
       && die "verify: $BUILD_PROFILE does not include @installer, but /$leak exists in the target.

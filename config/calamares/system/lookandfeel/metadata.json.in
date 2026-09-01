@@ -1,0 +1,27 @@
+{
+    "//": [
+        "LIVE MEDIUM ONLY. A Look-and-Feel package that exists for one file — the layout script",
+        "under contents/layouts/, which is the only supported way to change what the task manager",
+        "pins. See ../../README.md, 'The panel pins one application'.",
+        "",
+        "It is deliberately almost empty, and adding files here would OVERRIDE Breeze rather than",
+        "extend it: plasma-workspace makes org.kde.breeze.desktop the FALLBACK package for any id",
+        "but its own, so everything this package does not ship — splash, lock screen, logout,",
+        "colours, style — still resolves to Breeze, unchanged."
+    ],
+    "KPackageStructure": "Plasma/LookAndFeel",
+    "KPlugin": {
+        "Id": "@DISTRO_ID@-installer",
+        "Name": "@DISTRO_NAME@ installer medium",
+        "Description": "Breeze, with a task manager that pins only the installer",
+        "Category": "",
+        "License": "GPL-2.0-or-later",
+        "Authors": [
+            {
+                "Name": "@DISTRO_NAME@"
+            }
+        ],
+        "Website": "@HOME_URL@"
+    },
+    "X-Plasma-APIVersion": "2"
+}

@@ -16,11 +16,49 @@ profile. Designed in [plan/16](../../plan/16-installer.md).
 | `system/49-installer.rules.in` | `/etc/polkit-1/rules.d/49-<id>-installer.rules` | lets the live user start the installer without a password prompt |
 | `system/installer-autostart.desktop.in` | `/etc/xdg/autostart/<id>-installer.desktop` | opens the installer on login |
 | `system/kscreenlockerrc.in` | `/etc/xdg/kscreenlockerrc` | drops the lock screen's password prompt — the live account's password is public |
+| `system/kdeglobals.in` | `/etc/xdg/kdeglobals` | selects the Look-and-Feel package below; one key, and KConfig cascades it under `~/.config` |
+| `system/lookandfeel/**` | `/usr/share/plasma/look-and-feel/<id>-installer/` | carries the Plasma layout script that pins Calamares — and nothing else — to the task manager |
 
 `branding/installer/logo.png` is **not in this directory**. It is composed at build time by
 `config/branding/make-splash-assets.py --logo`, from the same `compose_block()` that produces the
 boot splash's stub bitmap and its KMS sprite tiles — three consumers, one layout function, because
 the user sees this sidebar within a minute of watching that splash.
+
+## The panel pins one application
+
+The medium exists to run one program, so its task manager pins one program. Left alone it pins
+four, none of them that one: the Icons-Only Task Manager's `launchers` default (plasma-desktop,
+`applets/taskmanager/main.xml`) is System Settings, **Discover** — an app store on a read-only
+stick that is discarded in twenty minutes — Dolphin, and `preferred://browser`, which on this
+profile resolves to nothing at all because `FLATPAK_PREINSTALL=""` and Firefox travels in the
+payload instead.
+
+Changing it costs a Look-and-Feel package, and the indirection is upstream's, not ours:
+
+1. That default is a **KConfigXT** default, so no config file overrides it. In particular
+   `/etc/xdg/plasma-org.kde.plasma.desktop-appletsrc` — the trick `baloofilerc` and
+   `kscreenlockerrc` use — is never read: `Plasma::Corona::config()` opens the appletsrc with
+   `KConfig::SimpleConfig` (libplasma `corona.cpp`), which does not cascade.
+2. What *can* set it is the **layout script** plasmashell runs the first time it starts for a
+   user, and `ShellCorona::loadDefaultLayout()` takes that script from the Look-and-Feel package
+   named by `kdeglobals`' `[KDE] LookAndFeelPackage`.
+
+So `system/lookandfeel/` is a Look-and-Feel package containing a `metadata.json` and one script.
+It is *not* a theme, and it does not restate Breeze: plasma-workspace's package structure
+(`shell/packageplugins/lookandfeel/lookandfeel.cpp`) installs `org.kde.breeze.desktop` as the
+fallback package for any id that is not Breeze's own, and `KPackage::Package::filePath()` consults
+that fallback for every file the package does not ship — so the splash, lock screen, logout
+dialog, colours and style all still resolve to Breeze, unchanged.
+
+The script itself changes one line. It calls `loadTemplate("org.kde.plasma.desktop.defaultPanel")`
+so the panel stays upstream's by reference — kickoff, pager, tray, clock, and the input-method
+widget it adds for the languages that need one — and then writes `launchers` on the icontasks
+widget it finds there. The pin is `applications:calamares.desktop`, `app-admin/calamares`'s own
+menu entry rather than our `/etc/xdg/autostart` copy: only the former is in an applications
+directory where `KService` can resolve it, and only the former is translated, which matters on a
+medium whose first control is a language picker.
+
+Kickoff's *favourites* are untouched, and the application menu still lists everything installed.
 
 ## What is different about installing this distro
 
