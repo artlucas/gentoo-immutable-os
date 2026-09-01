@@ -535,6 +535,25 @@ if profile_has_set desktop; then
   [[ -x $T/usr/bin/qdbus6 || -x $T/usr/bin/qdbus ]] \
     || violation "qdbus missing after prune — section 3g took the CLI tool plasma-workspace depends on, not just the viewer"
 fi
+# ---- the installer medium (plan/16) ------------------------------------------------------
+# Live-only, and nothing here is reachable by stage 70 either: it reads a serial port, so an
+# installer image whose GUI cannot install still reports green.
+if profile_has_set installer; then
+  [[ -x $T/usr/bin/calamares ]] \
+    || violation "calamares missing after prune — the installer medium has no installer"
+  # Stage 40's finalizer builds this; cracklib's pkg_postinst never does, because it is guarded
+  # on `[[ -z ${ROOT} ]]` and stage 30 merges with ROOT=$TARGET. It lands as three plain files
+  # at /usr/lib maxdepth 1 — the exact directory and depth section 3d sweeps. 3d deletes by FILE
+  # CONTENT (ELFCLASS32 or a GNU ld script), so they are safe today; rewriting that sweep to
+  # anything name- or depth-based would take the dictionary with it, and the only symptom would
+  # be an installer that rejects every password on its users page.
+  for cl_ext in pwd pwi hwm; do
+    [[ -s $T/usr/lib/cracklib_dict.$cl_ext ]] \
+      || violation "/usr/lib/cracklib_dict.$cl_ext missing after prune — libpwquality would reject
+  every password on Calamares' users page with 'The password fails the dictionary check -
+  error loading dictionary', and the install could never get past it"
+  done
+fi
 # ---- the container stack (plan/13) ------------------------------------------------------
 # Every one of these fails the same invisible way: stage 70 reads a serial port and an image
 # whose rootless stack is broken still reports green, so the failure would first appear when a

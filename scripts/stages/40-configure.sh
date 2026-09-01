@@ -376,6 +376,47 @@ chroot_target "$TARGET" "command -v fc-cache >/dev/null && fc-cache -f || true"
 chroot_target "$TARGET" "command -v update-desktop-database >/dev/null && update-desktop-database || true"
 chroot_target "$TARGET" "command -v update-mime-database >/dev/null && update-mime-database /usr/share/mime || true"
 
+# ...and one more finalizer that is not a cache rebuild but a pkg_postinst this build can never
+# have run. sys-libs/cracklib compiles its dictionary in pkg_postinst, guarded by
+# `if [[ -z ${ROOT} ]]` — true when portage merges into the live root, false for every merge
+# stage 30 does with ROOT=$TARGET. So the image ships the raw word list
+# (/usr/share/dict/cracklib-small, which multilib_src_install_all installs) and a libcrack.so
+# whose compiled-in default dictionary is /usr/lib/cracklib_dict, and nothing at that path.
+# It is /usr/lib rather than /usr/share because the ebuild passes
+# --with-default-dict=/usr/lib/cracklib_dict so the dictionary is shared between ABIs.
+#
+# The symptom is entirely the installer's, and it is fatal to an install: FascistCheck cannot
+# open the dictionary, dev-libs/libpwquality turns that into PWQ_ERROR_CRACKLIB_CHECK, and
+# Calamares' users page rejects EVERY password with "The password fails the dictionary check -
+# error loading dictionary". No password is strong enough to pass a dictionary that will not
+# load, so Next never enables and the medium cannot install anything. Reproduced against the
+# 0.3.0 installer target through libpwquality directly, and fixed by exactly this command.
+#
+# Guarded on the tool rather than on the profile: cracklib is @installer tail
+# (config/portage/sets/installer), so desktop and console images have no dictionary to build and
+# no libpwquality to read one. The word list is globbed rather than named, which is what the
+# ebuild's own postinst line does — adding sys-apps/cracklib-words later should widen the
+# dictionary here without an edit. Deterministic either way: cracklib-format sorts under LC_ALL=C.
+#
+# -o is passed explicitly so the path written here is the same string the readback below and
+# stage 50's prune assertion test, rather than three independent guesses at a compiled-in
+# default. The word count is read back because an empty word list is not an error to
+# cracklib-packer — it writes a valid, useless dictionary and exits 0.
+if [[ -x $TARGET/usr/bin/create-cracklib-dict ]]; then
+  log "building the cracklib dictionary (cracklib's pkg_postinst skips ROOT=\$TARGET merges)"
+  CRACKLIB_OUT="$(chroot_target "$TARGET" \
+    "create-cracklib-dict -o /usr/lib/cracklib_dict /usr/share/dict/*")" \
+    || die "create-cracklib-dict failed — Calamares' users page would reject every password with
+  'The password fails the dictionary check - error loading dictionary'"
+  # cracklib-packer prints "<words read> <words written>" and nothing else.
+  CRACKLIB_WORDS="${CRACKLIB_OUT##*[[:space:]]}"
+  [[ $CRACKLIB_WORDS =~ ^[1-9][0-9]*$ ]] \
+    || die "cracklib-packer wrote ${CRACKLIB_WORDS:-no} words — the dictionary at
+  /usr/lib/cracklib_dict is empty, and libpwquality would pass every password it should reject.
+  Is /usr/share/dict/ empty? sys-libs/cracklib installs cracklib-small there."
+  log "cracklib dictionary: $CRACKLIB_WORDS words at /usr/lib/cracklib_dict"
+fi
+
 target_umount "$TARGET"
 trap - EXIT
 
@@ -1194,6 +1235,24 @@ if profile_has_set installer; then
     || die "verify: the installer autostart entry is missing — nothing would launch Calamares"
   [[ -f $TARGET/etc/polkit-1/rules.d/49-$DISTRO_ID-installer.rules ]] \
     || die "verify: the installer polkit rule is missing — pkexec would prompt for a password"
+
+  # The password dictionary, built by section 2's finalizer because cracklib's own pkg_postinst
+  # cannot (see there). Read back here rather than trusted, because this is the one installer
+  # failure that survives every other check in this file AND stage 70: the medium boots, the
+  # greeter autologins, Calamares starts with its branding, the disk step completes — and then
+  # the users page rejects every password typed with "The password fails the dictionary check -
+  # error loading dictionary", with the install already half-committed.
+  #
+  # All three files, not just the dictionary: .pwd is the packed word data, .pwi its index and
+  # .hwm the hash-bucket high-water marks, and cracklib opens .pwi and .hwm alongside .pwd.
+  # /usr/lib/cracklib_dict is libcrack.so's --with-default-dict path; users.conf names no
+  # dictpath, so this is the only place libpwquality will look.
+  for cl_ext in pwd pwi hwm; do
+    [[ -s $TARGET/usr/lib/cracklib_dict.$cl_ext ]] \
+      || die "verify: /usr/lib/cracklib_dict.$cl_ext is missing or empty — libpwquality would
+  reject every password on Calamares' users page with 'error loading dictionary', and the
+  install could never get past it"
+  done
 fi
 
 # The converse, asserted on every OTHER profile: none of this may reach an installable image.

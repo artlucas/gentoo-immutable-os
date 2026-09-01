@@ -786,7 +786,7 @@ profile's sets into an empty root against the pinned tree under the old and new 
 lines are inert for every profile that does not emerge `@installer`, and a keyword exception for
 an atom nothing requests cannot change a resolution. All three locks changed by exactly one line.
 
-*What is asserted rather than trusted:* `tests/test-installer.sh` (126 assertions) checks the two
+*What is asserted rather than trusted:* `tests/test-installer.sh` (144 assertions) checks the two
 things that fail silently — that `modules/partition.conf` and `emit_sfdisk_script()` still agree
 on every partition label, GPT type GUID and slot size, and that each module's `module.desc`
 declares the name of its own directory (ModuleManager skips a mismatched module with no error, so
@@ -795,6 +795,65 @@ dropped modules stay out of the sequence, that `@installer` is named by exactly 
 that profile is `live`, and that every template renders with no `@TOKEN@` left behind. Stage 40
 asserts the same properties against the built target, from the other side, plus the converse on
 every non-installer profile: no `/etc/calamares`, no autostart entry, no payload.
+
+### What the users page found: a `pkg_postinst` that cannot run under `ROOT=$TARGET`
+
+With the disk picker working, the next page failed just as quietly. The users page rejected
+**every** password typed into it — including ones that satisfy `minlen=8 minclass=2` several
+times over — with:
+
+> The password fails the dictionary check - error loading dictionary
+
+That string is libpwquality's `PWQ_ERROR_CRACKLIB_CHECK` with cracklib's own reason appended, and
+the second half is the operative one: not *"this password is weak"* but *"there is no dictionary"*.
+No password can pass a dictionary that will not load, so Next never enables and the medium cannot
+install anything. Reproduced against the 0.3.0 installer target directly through the library —
+`pwquality.PWQSettings().check("Correct-Horse-42")` raises `(-22, …error loading dictionary)` in a
+chroot of the built tree — which is what identified it as an image defect rather than a Calamares
+configuration one.
+
+The cause is the same *shape* as `--all-root`: a build-time detail with no trace near the
+symptom. `sys-libs/cracklib` ships only the raw word list; the compiled dictionary is built by
+its `pkg_postinst`, guarded by:
+
+```bash
+pkg_postinst() {
+	if [[ -z ${ROOT} ]] ; then
+		ebegin "Regenerating cracklib dictionary"
+		create-cracklib-dict "${EPREFIX}"/usr/share/dict/* > /dev/null
+```
+
+`ROOT` is empty when portage merges into the live root and **never** for the `ROOT=$TARGET`
+merges stage 30 does — so that line has never run in this project's history. The installer target
+carried `/usr/share/dict/cracklib-small`, `libcrack.so.2` and all six `cracklib-*` tools, and
+nothing whatsoever at `/usr/lib/cracklib_dict.*`, which is the path the library is compiled to
+open (`--with-default-dict=/usr/lib/cracklib_dict`, chosen by the ebuild so the dictionary is
+shared between ABIs — this is why it is not under `/usr/share`).
+
+Nothing else could have caught it. The package audits are *satisfied*: `sys-libs/cracklib` and
+`dev-libs/libpwquality` are both installed and both in
+`expected-packages.installer.txt` — it is the postinst that did not run, and a VDB this pipeline
+deletes in stage 50 is not where that would show. Stage 70 reads a serial port. And the check is
+not optional from Calamares' side either: libpwquality RDEPENDs on cracklib unconditionally, with
+no USE flag and no `users.conf` key that turns the dictionary check off.
+
+Fixed by running the postinst's own line as a stage-40 chroot finalizer, alongside `ldconfig`,
+`systemd-hwdb` and `fc-cache` — which are there for exactly the same reason, and which is what
+makes this a category rather than a one-off. It is guarded on the tool, not on the profile:
+cracklib is `@installer` tail, so desktop and console images have no dictionary to build and no
+libpwquality to read one. Verified in a chroot of the built tree: 54,763 words packed,
+`Correct-Horse-42` scores 100, and `password12` and `aardvark1` are rejected with *"it is based on
+a dictionary word"* — the dictionary check doing its job rather than failing open.
+
+Asserted from three sides, because a silently-empty dictionary is worse than a missing one:
+stage 40 reads back the word count (`cracklib-packer` writes a valid, useless dictionary from an
+empty word list and exits 0) and then all three files — `.pwd`, `.pwi`, `.hwm` — before the medium
+is built; stage 50 asserts they survived the prune, since they land in `/usr/lib` at maxdepth 1,
+which is the exact directory and depth §3d's multilib sweep walks (it deletes by *file content*,
+so they are safe today — the assertion is what makes a future rewrite of that sweep fail loudly);
+and `tests/test-installer.sh` asserts the pipeline still contains all of it, plus that `users.conf`
+names no `dictpath` of its own, which is what leaves the compiled-in default the only path that
+matters.
 
 **Phase B — Swap, hibernation, ISO.** The 5-partition layout, the dracut `resume` change, the
 sleep hook from §6.4, then stage 65 and `90live-root`.

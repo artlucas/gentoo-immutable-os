@@ -306,4 +306,39 @@ assert_true "the role gate precedes the release directory being created" \
              [ -n "$gate" ] && [ -n "$mkdir" ] && [ "$gate" -lt "$mkdir" ]' _ \
     "$REPO_ROOT/scripts/stages/80-release.sh"
 
+# ---- 9. the password dictionary --------------------------------------------------------------
+# users.conf hands every password to libpwquality, and libpwquality's dictionary check is not
+# optional: dev-libs/libpwquality RDEPENDs on sys-libs/cracklib unconditionally, there is no USE
+# flag that drops it and no users.conf key that turns it off. cracklib compiles that dictionary
+# in pkg_postinst behind `if [[ -z ${ROOT} ]]` — so it runs for a merge into the live root and
+# never for the ROOT=$TARGET merges stage 30 does. Left alone the image carries the raw word list
+# at /usr/share/dict/cracklib-small and nothing at all at /usr/lib/cracklib_dict.
+#
+# What that ships is a medium that boots, autologins, starts Calamares with its branding and gets
+# through the disk step — and then rejects EVERY password on the users page with "The password
+# fails the dictionary check - error loading dictionary". No password is strong enough to pass a
+# dictionary that will not load, so Next never enables and the install stops with the disk
+# already partitioned. It is the fourth member of this file's family of failures and nothing else
+# sees it: stage 70 reads a serial port, and the package audits are all satisfied (cracklib IS
+# installed — it is its postinst that did not run).
+USERS_CONF="$RENDER/modules/users.conf"
+assert_file "$USERS_CONF" "users.conf rendered"
+assert_true "users.conf routes passwords through libpwquality" \
+    grep -qE '^[[:space:]]*libpwquality:' "$USERS_CONF"
+# ...and names no dictpath of its own, which is what leaves cracklib's compiled-in default
+# (/usr/lib/cracklib_dict, from the ebuild's --with-default-dict) as the only path it will open.
+assert_false "users.conf sets no dictpath, so the compiled-in default is the one that matters" \
+    grep -q 'dictpath' "$USERS_CONF"
+assert_true "stage 40 builds the dictionary cracklib's pkg_postinst never got to build" \
+    grep -q 'create-cracklib-dict -o /usr/lib/cracklib_dict' "$REPO_ROOT/scripts/stages/40-configure.sh"
+# All three files: cracklib opens .pwi (the index) and .hwm (the bucket high-water marks)
+# alongside .pwd, so a readback on the word data alone would pass a half-written dictionary.
+assert_true "stage 40 reads all three dictionary files back before the medium is built" \
+    grep -q 'for cl_ext in pwd pwi hwm' "$REPO_ROOT/scripts/stages/40-configure.sh"
+# The dictionary lands in /usr/lib at maxdepth 1, which is exactly what stage 50 section 3d
+# sweeps. 3d deletes by file content (ELFCLASS32 or a GNU ld script) so it is safe today; the
+# assertion is what makes a future rewrite of that sweep fail loudly instead of silently.
+assert_true "stage 50 asserts the dictionary survived the prune" \
+    grep -q 'cracklib_dict' "$REPO_ROOT/scripts/stages/50-prune.sh"
+
 finish
