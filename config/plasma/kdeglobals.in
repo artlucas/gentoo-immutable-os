@@ -1,0 +1,38 @@
+# The image's KDE-wide default: which Look-and-Feel package this is — plan/17.
+#
+# EVERY PROFILE WITH A DESKTOP. On the installer medium the same package also carries the task
+# manager's layout script (plan/16); on the product it carries only the splash. One key, one
+# package id, one spelling to keep right.
+#
+# THIS FILE, NOT /etc/xdg/ksplashrc, IS WHAT SELECTS THE SPLASH, and the reason is a directory
+# that did not exist when ksplashrc.in was written. startplasma's setupPlasmaEnvironment()
+# (plasma-workspace/startkde/startplasma.cpp) does two things before any of the session starts:
+#
+#   1. it PREPENDS ~/.config/kdedefaults to XDG_CONFIG_DIRS, so that directory outranks
+#      /etc/xdg for every KConfig read the session makes; and
+#
+#   2. if ~/.config/kdedefaults/package does not already name the package below, it runs
+#      KLookAndFeelManager in Defaults mode over it, which WRITES ~/.config/kdedefaults/ksplashrc
+#      — Theme taken from the package's contents/defaults [ksplashrc][KSplash] Theme if it has
+#      one, and otherwise from the PACKAGE ID itself (klookandfeelmanager.cpp, save()).
+#
+# So on a fresh account the session's effective [KSplash] Theme is the id named here, written
+# into a file that beats /etc/xdg. Naming a package with no splash in it is not an error either:
+# ksplashqml resolves the id, finds no contents/splash, and falls back to Breeze without one
+# word in the journal. That is exactly what this image did until 0.3.0 — @DISTRO_ID@-installer
+# on the medium, and org.kde.breeze.desktop (the built-in default) on the product — and it is
+# why the splash was Breeze on both while /etc/xdg/ksplashrc said otherwise all along.
+#
+# Everything else about the session stays Breeze, and that is not luck: plasma-workspace's
+# LookAndFeel package structure installs org.kde.breeze.desktop as the FALLBACK package for any
+# id but its own, so the colours, widget style, icons, cursors, window decoration and — where
+# this package ships no layout — the desktop layout all still resolve out of Breeze's
+# contents/defaults. Adding a contents/defaults to our package would REPLACE that file rather
+# than extend it; don't, unless you are prepared to carry all of it.
+#
+# The /etc/xdg layer, like ksplashrc and baloofilerc: KConfig cascades $XDG_CONFIG_DIRS
+# underneath ~/.config, so this is the image's default and anything the user changes in System
+# Settings is written to ~/.config/kdeglobals and wins.
+
+[KDE]
+LookAndFeelPackage=@DISTRO_ID@

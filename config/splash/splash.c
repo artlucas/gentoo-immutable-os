@@ -21,42 +21,57 @@
  * design: with `quiet` on the cmdline nothing paints the console, so the screen holds whatever
  * was last scanned out until we — or the greeter — modeset over it.
  *
- * THE ONE STRUCTURAL DECISION worth reading before the code: we DROP DRM MASTER immediately
- * after the modeset (see paint_card). A modeset survives the loss of master, and the buffer
- * survives as long as our fd is open, so the image stays on screen — but the compositor can
- * become master whenever it likes, with no ordering, no Conflicts=, and no handshake. The
- * previous plymouth integration spent two rounds of design (plan/08 open question 6, plan/11
- * finding 7) on races and deadlocks between the splash teardown and the greeter, and dropping
- * master deletes that entire problem class rather than solving it again.
+ * THE ONE STRUCTURAL DECISION worth reading before the code: we HOLD DRM MASTER from the
+ * modeset until the moment before the greeter starts, and something tells us when that is.
  *
- * Consequently the teardown is just close(2). DRM destroys a client's framebuffers and dumb
- * buffers when its fd closes, and calls the driver's lastclose — which restores the fbdev
- * console mode — if we were the last client. So:
+ * Holding it is what lets the mark move. Every ioctl that puts a NEW frame on the panel —
+ * PAGE_FLIP, ATOMIC, SETCRTC, DIRTYFB — is DRM_MASTER-gated in drivers/gpu/drm/drm_ioctl.c,
+ * and on a driver that keeps the scanout in the device's own memory a store into the mapped
+ * dumb buffer reaches nothing until one of them runs. That is not a niche case. Verified
+ * against the kernel this image ships: bochs.ko on 6.18.43 links drm_gem_shmem_dumb_create,
+ * drm_gem_fb_create_with_dirty, drm_fb_memcpy and drm_gem_begin_shadow_fb_access, so QEMU's
+ * -vga std allocates dumb buffers as ordinary shmem pages and copies the damaged rectangles
+ * into the VRAM BAR on commit — as do virtio_gpu, qxl, vmwgfx and udl. A splash that has given
+ * master away can paint exactly one frame anywhere but a real GPU.
+ *
+ * Giving it back in time is what keeps that safe, because logind calls drmSetMaster() when it
+ * hands the DRM fd to the compositor and returns the failure to its caller: a splash still
+ * holding master when the greeter starts is a session that does not start. Three mechanisms
+ * cover that between them, because the first is a unit ordering and orderings can be bypassed:
+ *
+ *   - the splash-release unit — distro-splash-release.service.in, under config/rootfs — is
+ *     ordered Before= the display manager and sends SIGUSR1, so systemd guarantees it has run
+ *     before the DM is started. Nothing here waits on the greeter and the greeter waits on
+ *     nothing here, which is what makes this an ordering rather than the hand-off handshake
+ *     plan/11 finding 7 measured races and deadlocks in.
+ *   - that unit writes SPLASH_RELEASE_FLAG before it signals, for the boot where this program
+ *     has not started yet. udev starts us when a card appears and nothing forbids that from
+ *     landing late; a signal cannot reach a process that does not exist, but a file can be
+ *     read by one that starts afterwards. Checked before the first card is opened.
+ *   - MASTER_HOLD_SECONDS releases master regardless if neither of those happens — a DM
+ *     started by hand, a profile that has none, a release unit that was not pulled in.
+ *
+ * Releasing master neither ends the program nor takes the picture away: the modeset survives
+ * and our fd keeps the buffer alive, so the mark stays on screen, settled at full brightness,
+ * until the compositor modesets over it. What the greeter sees is unchanged.
+ *
+ * The teardown is still just close(2). DRM destroys a client's framebuffers and dumb buffers
+ * when its fd closes, and calls the driver's lastclose — which restores the fbdev console
+ * mode — if we were the last client. So:
  *
  *   - greeter took over  -> close, change nothing, the compositor owns the screen
  *   - ESC / SIGTERM      -> close, we are the last client, fbcon comes back
  *
- * THE ANIMATION, and the one thing about it worth knowing before reading animate() (plan/17).
- * The logomark runs the design system's "layer pulse": one slab at a time dims and recovers,
- * the wave travelling up the stack. It is drawn by writing into the dumb buffer the CRTC is
- * already scanning out — no page flip, no atomic commit, no DRM_IOCTL_MODE_DIRTYFB — because
- * every one of those is DRM_MASTER-gated (drivers/gpu/drm/drm_ioctl.c) and we gave master away
- * two paragraphs ago. Taking it back for even one ioctl per frame is not an option: logind
- * calls drmSetMaster() when it hands the DRM fd to the compositor and returns the failure to
- * the caller, so a splash holding master at the wrong microsecond is a session that does not
- * start. The frame stays on screen either way; the only question is whether it moves.
+ * THE ANIMATION (plan/17). The logomark runs the design system's "layer pulse": one slab at a
+ * time dims and recovers, the wave travelling up the stack. Each frame writes the slabs that
+ * moved into the mapped dumb buffer and then presents them with DRM_IOCTL_MODE_DIRTYFB, one
+ * clip rect per changed slab: the memcpy into the scanout on a shadow-buffer driver, and on
+ * amdgpu, i915, xe or nvidia-drm a no-op the driver need not even implement, since there the
+ * dumb buffer IS the scanned-out memory and the store has already landed.
  *
- * On the hardware this image targets it moves. A dumb buffer on amdgpu, i915, xe or nvidia-drm
- * IS the scanned-out memory, mapped write-combining, so a store lands on the panel with nothing
- * asked of the kernel. On a shadow-buffer driver — virtio_gpu, qxl, vmwgfx, udl — the host only
- * re-reads the buffer on a plane update, so the screen keeps showing whatever the modeset
- * flushed and the mark simply does not move. THAT DEGRADES TO EXACTLY THE OLD SPLASH, on
- * purpose: the first frame is painted with every slab at full brightness, which is the same
- * picture the stub bitmap has been showing since the firmware, so a VM sees the still frame it
- * saw before this animation existed rather than a half-lit mark frozen mid-pulse. To watch the
- * animation without hardware, use `scripts/run-vm.sh IMG --gpu bochs`: -vga std binds the bochs
- * driver, whose dumb buffers are the VRAM BAR QEMU reads continuously. The default virtio-VGA
- * stays the default because the stub image surviving the initrd depends on it (plan/14).
+ * The first frame is drawn with every slab at full brightness — the same picture the stub
+ * bitmap has been showing since the firmware, which is what makes the modeset invisible — and
+ * the last frame before master goes back is that same picture again.
  *
  * Linked -static on purpose. Stage 30 emerges with ROOT=$TARGET and never chroots, so the
  * image's own toolchain cannot be invoked, and stage 50 deletes the compiler anyway; a static
@@ -92,11 +107,25 @@
 #define SPLASH_ASSET_PATH "/usr/share/splash/splash.bin"
 #endif
 
+/* Written by the release unit BEFORE it signals, so that a splash which starts late — after
+ * the display manager, which nothing in udev forbids — never takes master in the first place.
+ * The signal cannot cover that case: at that point there is no process to send it to. */
+#ifndef SPLASH_RELEASE_FLAG
+#define SPLASH_RELEASE_FLAG "/run/splash.release"
+#endif
+
 /* Backstop only. The normal exits are "the greeter modeset over us" and ESC; this exists so a
  * boot that stalls before the greeter still ends up showing a console eventually, instead of a
  * logo forever with no indication anything is wrong. Deliberately long: a slow first boot that
  * grows /var and installs flatpaks must not trip it. */
 #define SPLASH_MAX_SECONDS 120
+
+/* How long master is held when nobody tells us to let go. The release unit is ordered before
+ * the display manager and normally gets there first (see the header); this is for the boots
+ * where it cannot — a profile with no display manager, a compositor started by hand. Far past
+ * any greeter this image starts, and short enough that a machine which never starts one is not
+ * left holding the device for the two minutes SPLASH_MAX_SECONDS allows. */
+#define MASTER_HOLD_SECONDS 30
 
 /* How often we check whether someone else has modeset, and rescan for input devices. */
 #define TICK_MS 500
@@ -198,10 +227,21 @@ static int n_cards;
 
 static volatile sig_atomic_t caught_signal;
 
+/* SIGUSR1 is the release unit saying the display manager is next: hand master back, but stay
+ * here holding the picture. It is a different question from SIGTERM, which means go away. */
+static volatile sig_atomic_t release_requested;
+
+/* Whether master is still ours. One flag for all cards: they are taken together in the same
+ * pass and handed back together, and a splash holding master on one card but not another could
+ * not say what the screen was about to do. */
+static int holding_master;
+
 static void on_signal(int sig)
 {
-    (void)sig;
-    caught_signal = 1;
+    if (sig == SIGUSR1)
+        release_requested = 1;
+    else
+        caught_signal = 1;
 }
 
 static uint32_t rd32(const uint8_t *p)
@@ -370,8 +410,17 @@ static uint32_t dim_px(uint32_t src, uint32_t bg, uint32_t level)
     return out;
 }
 
-static void blit(uint8_t *dst, uint32_t pitch, uint32_t sw, uint32_t sh, const struct assets *a,
-                 const struct tile *t, uint32_t level)
+/* Where a tile lands on a panel of this size, and how much of it fits. Split out of blit()
+ * because the presenter needs the same answer: the rectangle handed to the kernel as damage is
+ * then by construction the rectangle that was drawn, rather than a second calculation that has
+ * to be kept in step with the first. */
+struct placement {
+    long x, y;         /* top-left on the panel */
+    long src_x, src_y; /* first pixel of the tile that is actually on screen */
+    long cw, ch;       /* how much of it fits */
+};
+
+static int place_tile(uint32_t sw, uint32_t sh, const struct tile *t, struct placement *p)
 {
     long x, y;
 
@@ -398,26 +447,42 @@ static void blit(uint8_t *dst, uint32_t pitch, uint32_t sw, uint32_t sh, const s
     if (x < 0) { src_x = -x; x = 0; }
     if (y < 0) { src_y = -y; y = 0; }
     if (src_x >= (long)t->w || src_y >= (long)t->h)
-        return;
+        return 0;
 
     long cw = (long)t->w - src_x;
     long ch = (long)t->h - src_y;
     if (x + cw > (long)sw) cw = (long)sw - x;
     if (y + ch > (long)sh) ch = (long)sh - y;
     if (cw <= 0 || ch <= 0)
+        return 0;
+
+    p->x = x;
+    p->y = y;
+    p->src_x = src_x;
+    p->src_y = src_y;
+    p->cw = cw;
+    p->ch = ch;
+    return 1;
+}
+
+static void blit(uint8_t *dst, uint32_t pitch, uint32_t sw, uint32_t sh, const struct assets *a,
+                 const struct tile *t, uint32_t level)
+{
+    struct placement p;
+    if (!place_tile(sw, sh, t, &p))
         return;
 
     const uint8_t *src = a->blob + t->data;
-    for (long row = 0; row < ch; row++) {
-        uint8_t *drow = dst + (size_t)(y + row) * pitch + (size_t)x * 4;
-        const uint8_t *srow = src + (size_t)(src_y + row) * t->w * 4 + (size_t)src_x * 4;
+    for (long row = 0; row < p.ch; row++) {
+        uint8_t *drow = dst + (size_t)(p.y + row) * pitch + (size_t)p.x * 4;
+        const uint8_t *srow = src + (size_t)(p.src_y + row) * t->w * 4 + (size_t)p.src_x * 4;
         if (level >= 256) {
-            memcpy(drow, srow, (size_t)cw * 4);
+            memcpy(drow, srow, (size_t)p.cw * 4);
             continue;
         }
         uint32_t *dp = (uint32_t *)drow;
         const uint32_t *sp = (const uint32_t *)srow;
-        for (long col = 0; col < cw; col++)
+        for (long col = 0; col < p.cw; col++)
             dp[col] = dim_px(sp[col], a->bg, level);
     }
 }
@@ -692,10 +757,17 @@ static int paint_card(const char *path, const struct assets *a)
     if (!painted)
         goto err;
 
-    /* The decision this whole program is shaped around — see the header comment. From here the
-     * frame stays on screen because a modeset persists and our fd keeps the buffer alive, but
-     * the compositor can take master the instant it wants to, with nothing to coordinate. */
-    xioctl(fd, DRM_IOCTL_DROP_MASTER, NULL);
+    /* Master stays OURS from here — the decision this whole program is shaped around, see the
+     * header comment. It is what makes every frame after this one possible, and it is handed
+     * back by release_master() before the greeter can want it.
+     *
+     * The exception is a splash that started after the release unit had already run. Nothing
+     * would ever signal it, so it takes the frame and gives master straight back, which is
+     * exactly the old behaviour: one still picture and no animation. */
+    if (release_requested)
+        xioctl(fd, DRM_IOCTL_DROP_MASTER, NULL);
+    else
+        holding_master = 1;
 
     if (n_cards < MAX_CARDS)
         card_fds[n_cards++] = fd;
@@ -857,21 +929,57 @@ static void reveal_console(void)
 
 /* ---- animation ---------------------------------------------------------------------------- */
 
-/* Redraw whichever slabs have moved since the last frame, on every output.
+/* Hand the kernel the rectangles that changed.
+ *
+ * DRM_IOCTL_MODE_DIRTYFB is DRM_MASTER-gated, which is the whole reason master is still ours;
+ * on a shadow-buffer driver it is the memcpy of those rectangles into the scanout. Two failures
+ * are expected and both are fine to ignore: a driver that scans the dumb buffer out directly
+ * has no ->dirty callback at all and the ioctl returns -ENOSYS with the pixels already on the
+ * panel, and after release_master() it returns -EACCES with nothing left to present. */
+static void present(const struct output *o, const struct drm_clip_rect *clips, uint32_t n)
+{
+    if (n == 0)
+        return;
+
+    struct drm_mode_fb_dirty_cmd dirty = { 0 };
+    dirty.fb_id = o->fb_id;
+    dirty.num_clips = n;
+    dirty.clips_ptr = (uint64_t)(uintptr_t)clips;
+    xioctl(o->card_fd, DRM_IOCTL_MODE_DIRTYFB, &dirty);
+}
+
+static void add_clip(const struct output *o, const struct tile *t,
+                     struct drm_clip_rect *clips, uint32_t *n)
+{
+    struct placement p;
+    if (*n >= MAX_TILES || !place_tile(o->width, o->height, t, &p))
+        return;
+
+    /* drm_clip_rect is unsigned short, and every panel this can be handed is far inside that:
+     * a tile is clipped to the mode, and no mode DRM reports is 65536 pixels wide. */
+    clips[*n].x1 = (unsigned short)p.x;
+    clips[*n].y1 = (unsigned short)p.y;
+    clips[*n].x2 = (unsigned short)(p.x + p.cw);
+    clips[*n].y2 = (unsigned short)(p.y + p.ch);
+    (*n)++;
+}
+
+/* Redraw whichever slabs have moved since the last frame, on every output, and present them.
  *
  * Only the slab tiles carry TILE_PULSE, so the wordmark and the status fields are painted once
  * by show_on_crtc() and never touched again — and a slab that is between pulses compares equal
- * to its last level and is skipped entirely, so most frames repaint exactly one band.
- *
- * There is nothing to tell the kernel afterwards. See the header: every ioctl that would flush
- * or flip is DRM_MASTER-gated, and on the drivers this image targets a store into the mapped
- * dumb buffer is already on the panel. */
+ * to its last level and is skipped entirely, so most frames repaint exactly one band and hand
+ * the kernel exactly one rectangle. */
 static void animate(const struct assets *a, uint64_t ms)
 {
     for (int i = 0; i < n_outputs; i++) {
         struct output *o = &outputs[i];
         if (!o->pixels)
             continue;
+
+        struct drm_clip_rect clips[MAX_TILES];
+        uint32_t n_clips = 0;
+
         for (uint32_t ti = 0; ti < a->n_tiles; ti++) {
             const struct tile *t = &a->tiles[ti];
             if (t->scale != o->scale || !(t->flags & TILE_PULSE))
@@ -881,8 +989,48 @@ static void animate(const struct assets *a, uint64_t ms)
                 continue;
             o->level[ti] = level;
             blit(o->pixels, o->pitch, o->width, o->height, a, t, level);
+            add_clip(o, t, clips, &n_clips);
         }
+
+        present(o, clips, n_clips);
     }
+}
+
+/* Settle the mark and hand the screen's controls back — see the header for who asks and when.
+ *
+ * The last frame is deliberately every slab at full brightness: the picture the stub bitmap
+ * showed, the picture the first frame drew, and now the picture the greeter takes over from,
+ * on every driver and whether or not anything moved in between. Nothing else changes. The
+ * modeset stands, the buffer stays mapped and scanned out, and this program stays alive
+ * watching for the takeover exactly as it did before. */
+static void release_master(const struct assets *a)
+{
+    if (!holding_master)
+        return;
+
+    for (int i = 0; i < n_outputs; i++) {
+        struct output *o = &outputs[i];
+        if (!o->pixels)
+            continue;
+
+        struct drm_clip_rect clips[MAX_TILES];
+        uint32_t n_clips = 0;
+
+        for (uint32_t ti = 0; ti < a->n_tiles; ti++) {
+            const struct tile *t = &a->tiles[ti];
+            if (t->scale != o->scale || !(t->flags & TILE_PULSE) || o->level[ti] == 256)
+                continue;
+            o->level[ti] = 256;
+            blit(o->pixels, o->pitch, o->width, o->height, a, t, 256);
+            add_clip(o, t, clips, &n_clips);
+        }
+
+        present(o, clips, n_clips);
+    }
+
+    for (int i = 0; i < n_cards; i++)
+        xioctl(card_fds[i], DRM_IOCTL_DROP_MASTER, NULL);
+    holding_master = 0;
 }
 
 /* ---- takeover detection ------------------------------------------------------------------ */
@@ -932,6 +1080,12 @@ int main(int argc, char **argv)
     sa.sa_handler = on_signal;
     sigaction(SIGTERM, &sa, NULL);
     sigaction(SIGINT, &sa, NULL);
+    sigaction(SIGUSR1, &sa, NULL);
+
+    /* Read before a single card is opened. If the release unit has already run, the display
+     * manager is next and taking master at all is the one thing that would break it. */
+    if (access(SPLASH_RELEASE_FLAG, F_OK) == 0)
+        release_requested = 1;
 
     DIR *d = opendir("/dev/dri");
     if (!d)
@@ -955,7 +1109,8 @@ int main(int argc, char **argv)
     /* Two clocks, deliberately separate. The poll wakes on the FRAME clock so the mark moves
      * smoothly, while the takeover check and the input rescan stay on the 500ms TICK they were
      * designed around — running a GETCRTC per output at 25fps to watch for the greeter would be
-     * twenty-five times the ioctls to learn the same thing. */
+     * twenty-five times the ioctls to learn the same thing. The frame clock is given up again
+     * the moment master goes back, because from then on there is nothing left to draw. */
     struct timespec tick = { .tv_sec = 0, .tv_nsec = FRAME_MS * 1000L * 1000L };
     uint64_t started = now_ms();
     uint64_t last_tick = started;
@@ -996,7 +1151,19 @@ int main(int argc, char **argv)
          * the animation and the backstop by however long someone leans on the spacebar. */
         uint64_t now = now_ms();
 
-        animate(&a, now - started);
+        /* The greeter is about to start, or we have held the device long enough that nothing
+         * is going to say so. Either way: settle the mark, give master back, stop moving. */
+        if (holding_master
+            && (release_requested || now - started >= (uint64_t)MASTER_HOLD_SECONDS * 1000u)) {
+            release_master(&a);
+            /* Nothing is drawn from here, so stop waking at frame rate. What is left to do is
+             * the takeover check and the input rescan, and those were always on TICK_MS —
+             * during the seconds the greeter is starting, which is when the CPU is worth most. */
+            tick.tv_nsec = TICK_MS * 1000L * 1000L;
+        }
+
+        if (holding_master)
+            animate(&a, now - started);
 
         if (now - last_tick < TICK_MS)
             continue;

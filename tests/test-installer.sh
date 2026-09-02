@@ -380,23 +380,37 @@ assert_true "...and reads the key back out of the target before building the med
 # to correct it on a medium that autologins once and is thrown away.
 LNF="$RENDER/system/lookandfeel"
 LAYOUT="$LNF/contents/layouts/org.kde.plasma.desktop-layout.js"
-assert_file "$LNF/metadata.json" "the installer look-and-feel package has a descriptor"
-assert_file "$LAYOUT"            "...and the Plasma layout script that is its entire point"
+assert_file "$LAYOUT" "the Plasma layout script that is this directory's entire point"
+# ONE Look-and-Feel package per image, and this directory is not it. The layout goes INTO the
+# splash package config/plasma builds (plan/17), because /etc/xdg/kdeglobals can name exactly one
+# package and startplasma turns that id into ~/.config/kdedefaults/ksplashrc before the session
+# starts — so a second package here, named by kdeglobals and carrying no contents/splash, is a
+# medium that boots to Breeze with every config file in it saying otherwise. That is not a
+# hypothetical: it shipped, and a descriptor reappearing here would bring it straight back by
+# overwriting the one config/plasma rendered.
+assert_false "this directory ships no descriptor of its own" \
+    test -e "$LNF/metadata.json"
+assert_eq "1" "$(find "$LNF" -type f | wc -l)" \
+    "...and nothing but the layout script, which is copied into the splash package"
 
 # The two halves of the hook, either of which is useless alone: kdeglobals names the package, and
-# the package is where ShellCorona::loadDefaultLayout() looks for the script.
-KDEGLOBALS="$RENDER/system/kdeglobals"
-assert_file "$KDEGLOBALS" "the live session's kdeglobals rendered"
+# the package is where ShellCorona::loadDefaultLayout() looks for the script. Both come from
+# config/plasma now, on every profile with a desktop rather than on this one.
+PLASMA_SRC="$REPO_ROOT/config/plasma"
+KDEGLOBALS="$TMP/kdeglobals"
+assert_true "the image's kdeglobals renders" \
+    bash -c "( set -e
+               export REPO='$REPO_ROOT' WORK='$TMP/w' OUT='$TMP/o' STAGE_NAME=t BUILD_PROFILE_OVERRIDE=installer
+               source '$REPO_ROOT/scripts/lib/common.sh'; load_config
+               render_template '$PLASMA_SRC/kdeglobals.in' '$KDEGLOBALS' )"
 assert_eq "[KDE]" "$(grep '^\[' "$KDEGLOBALS")" "kdeglobals declares exactly one group, [KDE]"
-assert_true "...and points LookAndFeelPackage at the installer package" \
-    grep -qx "LookAndFeelPackage=$I_DISTRO_ID-installer" "$KDEGLOBALS"
+assert_true "...and points LookAndFeelPackage at the image's own package, not an installer one" \
+    grep -qx "LookAndFeelPackage=$I_DISTRO_ID" "$KDEGLOBALS"
 # KPackage compares the descriptor's id against the directory it loaded from, and uses the
 # comparison to decide whether Breeze becomes the fallback package. Same silent-skip shape as a
 # module.desc whose name is not its directory's, asserted the same way.
 assert_true "the descriptor's plugin id is the directory kdeglobals names" \
-    grep -qF "\"Id\": \"$I_DISTRO_ID-installer\"" "$LNF/metadata.json"
-assert_true "the descriptor is valid JSON" \
-    python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$LNF/metadata.json"
+    grep -qF "\"Id\": \"@DISTRO_ID@\"" "$PLASMA_SRC/lookandfeel/metadata.json.in"
 # A layout script that does not parse is a live session with NO PANEL — plasmashell logs the
 # parse error and moves on, and there is no second login on this medium to fix it. Checked with
 # node when the box has one; this suite stays dependency-free, so the alternative is not checking
@@ -431,10 +445,14 @@ assert_true "the layout builds the panel from upstream's template" \
 assert_true "...and still sets the wallpaper plugin Breeze's layout set" \
     grep -qF "wallpaperPlugin = 'org.kde.image'" "$LAYOUT"
 
-assert_true "stage 40 installs kdeglobals into /etc/xdg on the medium" \
-    grep -qF 'cal_install "$CAL_SRC/system/kdeglobals.in" "$TARGET/etc/xdg/kdeglobals"' "$STAGE40"
-assert_true "...and mirrors the look-and-feel package into /usr/share/plasma" \
+assert_true "stage 40 installs kdeglobals into /etc/xdg on every desktop profile" \
+    grep -qF 'render_template "$PLASMA_SRC/kdeglobals.in" "$TARGET/etc/xdg/kdeglobals"' "$STAGE40"
+assert_true "...and copies this layout into the package that already carries the splash" \
     grep -qF 'find "$CAL_SRC/system/lookandfeel" -type f -print0' "$STAGE40"
+assert_true "...into LNF_DIR=the image's own package id, not a -installer one" \
+    grep -qF 'LNF_ID="$DISTRO_ID"' "$STAGE40"
+assert_true "...and refuses a package that lost either half" \
+    grep -qF 'contents/splash/Splash.qml contents/layouts/org.kde.plasma.desktop-layout.js' "$STAGE40"
 assert_true "...and reads the pin back out of the target before building the medium" \
     grep -qF 'writeConfig("launchers", ["applications:calamares.desktop"])' "$STAGE40"
 assert_true "...and refuses a target whose calamares.desktop the pin could not resolve" \
@@ -443,8 +461,7 @@ assert_true "...and refuses a target whose calamares.desktop the pin could not r
 # The leak list, which is the only thing standing between these files and a product image: an
 # entry there is quoted whole, so this matches the guard and not the install line above it.
 for leaked in 'etc/xdg/kscreenlockerrc' \
-              'etc/xdg/kdeglobals' \
-              'usr/share/plasma/look-and-feel/$DISTRO_ID-installer' \
+              'usr/share/plasma/look-and-feel/$DISTRO_ID/contents/layouts' \
               'etc/xdg/autostart/$DISTRO_ID-installer.desktop' \
               'etc/polkit-1/rules.d/49-$DISTRO_ID-installer.rules'; do
     assert_true "stage 40 refuses to let /$leaked reach a non-installer profile" \

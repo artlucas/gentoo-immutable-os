@@ -42,6 +42,14 @@ Assertions (a watcher tails `serial.log` with a deadline, default 180 s KVM):
    `flatpak remotes | grep -c flathub`, `systemctl --failed --quiet` etc.
 6. Clean `systemctl poweroff` via the same unit when in test mode → QEMU exits 0.
 
+The report line has grown fields since this list was written; `autologin=` is the one worth
+knowing about here. It asks logind for seat0's *active* session and stage 70 dies unless that is
+the live user's, which makes T1 the only automated check that the whole greeter path works — and
+since [plan/17](17-animated-splash.md) that includes the boot splash handing DRM master back
+before the display manager starts. If the release unit ever stops reaching the splash, logind's
+`drmSetMaster()` fails for the compositor and this assertion is what reports it, on an image
+where nothing else would.
+
 Console-only (M1) builds run the same harness with assertion 4 swapped for
 `Reached target Multi-User System`.
 

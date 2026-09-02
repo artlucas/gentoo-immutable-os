@@ -1,14 +1,21 @@
 # 14 — Replacing Plymouth with a KMS boot splash (2026-08-27)
 
 > **Amended 2026-09-01 by [plan/17](17-animated-splash.md).** The mark is no longer a still
-> frame: it runs a layer pulse, drawn by storing into the mapped dumb buffer rather than by any
-> ioctl, because dropping master — the decision this whole document is built around — rules every
-> present path out. Nothing in the design below is reversed by that. Three details are now stale
-> and are corrected there: `compose_block()` is `build_block()`; the sprite container is
-> `IMSPLSH2` with 40-byte records and the centred block cut into one tile per slab; and the
-> argument for `DIM = 0.20` staying gone is no longer "there is no animation" but the stronger
-> "the animation starts at full brightness", so the stub bitmap, the KMS splash's first frame
-> and the Plasma splash's settled frame are still one picture.
+> frame: it runs a layer pulse. **Section 1 below is reversed by that** — the splash now HOLDS
+> DRM master from its modeset until `<id>-splash-release.service`, ordered `Before=` the display
+> manager, tells it to let go, because every ioctl that presents a frame is master-gated and on
+> the kernel this image pins even `bochs` is a shadow-buffer driver that shows nothing without
+> one. What section 1 gets right and plan/17 keeps is the *shape* of the hand-off: releasing
+> master neither ends the program nor takes the picture away, so the greeter still modesets over
+> a live framebuffer with nothing waiting on it in either direction. Read section 1 for why that
+> matters and plan/17 §1 for what replaced the mechanism.
+>
+> Three smaller details are stale and are corrected there too: `compose_block()` is
+> `build_block()`; the sprite container is `IMSPLSH2` with 40-byte records and the centred block
+> cut into one tile per slab; and the argument for `DIM = 0.20` staying gone is no longer "there
+> is no animation" but the stronger "the animation starts at full brightness", so the stub
+> bitmap, the KMS splash's first frame and the Plasma splash's settled frame are still one
+> picture.
 
 Plymouth is gone. In its place: the `systemd-stub` `.splash` bitmap covers the firmware-to-kernel
 window, and a purpose-built ~800-line static binary drawing straight on DRM covers everything
@@ -96,6 +103,10 @@ and closing it needs `DRM_SIMPLEDRM` — see "Open / not verified".
 ## The design
 
 ### 1. Drop DRM master immediately after painting
+
+> Superseded by plan/17 — see the amendment at the top. Master is now held until the release
+> unit signals, and dropped there instead. Everything below about what dropping it *buys* still
+> holds; only when it happens changed.
 
 `config/splash/splash.c` enumerates `/dev/dri/card*`, and for every connected connector takes
 its preferred mode, allocates a dumb buffer, fills it with `#0a0d11`, `memcpy`s the sprite rows

@@ -1,11 +1,28 @@
 # The Plasma splash screen, for every account on this image — plan/17.
 #
-# ONE FILE, AND IT IS WHY THERE IS NO PER-USER SETUP ANYWHERE IN THIS TREE. KConfig cascades
+# THE SECOND OF TWO FILES, AND NOT THE DECISIVE ONE. What actually selects the splash on a
+# Plasma session is /etc/xdg/kdeglobals' [KDE] LookAndFeelPackage — see kdeglobals.in for the
+# whole mechanism, and for the bug that taught it to us. The short version: startplasma
+# prepends ~/.config/kdedefaults to XDG_CONFIG_DIRS and writes its own ksplashrc in there,
+# derived from the Look-and-Feel package id, so anything this file says about Theme is shadowed
+# on a real session before the splash is drawn.
+#
+# It is still shipped, for the reads that do NOT come out of a startplasma session:
+#
+#   - ksplashqml run by hand, or from an X11 session (startplasma-x11's setupKSplash() reads
+#     ksplashrc itself and passes the theme on the command line);
+#   - System Settings -> Appearance -> Splash Screen before the session has ever written
+#     kdedefaults, which is what the KCM reads to decide which entry is the current one;
+#   - Engine, which is checked in three places before anything is drawn (startKSplashViaSystemd(),
+#     plasma-session's startup.cpp, and ksplashqml itself) and where a value other than
+#     KSplashQML means no splash at all.
+#
+# ONE FILE PER LAYER, AND NO PER-USER SETUP ANYWHERE IN THIS TREE. KConfig cascades
 # $XDG_CONFIG_DIRS underneath ~/.config, so /etc/xdg/ksplashrc is the image's default for any
-# user who has not chosen otherwise — the same layer /etc/xdg/baloofilerc and the installer
-# medium's /etc/xdg/kscreenlockerrc use. There is no skel copy to keep in sync, nothing for
-# Calamares' users module to write, and System Settings -> Appearance -> Splash Screen still
-# writes a user's own choice to ~/.config/ksplashrc and wins over this.
+# user who has not chosen otherwise — the same layer /etc/xdg/kdeglobals, /etc/xdg/baloofilerc
+# and the installer medium's /etc/xdg/kscreenlockerrc use. There is no skel copy to keep in
+# sync, nothing for Calamares' users module to write, and System Settings still writes a user's
+# own choice to ~/.config/ksplashrc, which outranks both this and kdedefaults.
 #
 # That covers the three populations in one go:
 #
@@ -15,27 +32,11 @@
 #                                          EROFS, written to disk byte for byte, so this file is
 #                                          already there before the account exists
 #
-# THEME, NOT LookAndFeelPackage, and the difference matters on the installer medium. ksplashqml
-# resolves its theme in this order (SplashApp::SplashApp, then SplashWindow::setGeometry):
-#
-#   1. the command-line argument            - plasma-ksplash.service passes none
-#   2. ksplashrc [KSplash] Theme            - THIS, and it wins outright
-#   3. kdeglobals [KDE] LookAndFeelPackage  - which the installer profile sets to
-#                                             @DISTRO_ID@-installer for the task-manager layout
-#   4. the default Plasma/LookAndFeel package
-#
-# So the live session gets our splash AND its own panel layout, out of two small packages,
-# instead of one package that would have to carry both and then ship the installer's layout
-# script into the product.
-#
 # The value is a Plasma/LookAndFeel package id: /usr/share/plasma/look-and-feel/@DISTRO_ID@,
-# installed by stage 40 from config/plasma/lookandfeel. Stage 40 asserts the two spellings
-# agree, because a typo here is not an error anywhere — ksplashqml falls back to Breeze and the
-# machine boots to somebody else's logo.
-#
-# Engine is stated rather than left to its default because it is checked in three places before
-# anything is drawn (startplasma's startKSplashViaSystemd(), plasma-session's startup.cpp, and
-# ksplashqml itself), and in all three a value other than KSplashQML means no splash at all.
+# installed by stage 40 from config/plasma/lookandfeel. Stage 40 asserts that this id, the id in
+# that package's metadata.json and the one in /etc/xdg/kdeglobals are all the same string,
+# because a disagreement is not an error anywhere at runtime — ksplashqml falls back to Breeze
+# and the machine boots to somebody else's logo.
 [KSplash]
 Engine=KSplashQML
 Theme=@DISTRO_ID@

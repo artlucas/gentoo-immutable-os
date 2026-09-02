@@ -16,8 +16,7 @@ profile. Designed in [plan/16](../../plan/16-installer.md).
 | `system/49-installer.rules.in` | `/etc/polkit-1/rules.d/49-<id>-installer.rules` | lets the live user start the installer without a password prompt |
 | `system/installer-autostart.desktop.in` | `/etc/xdg/autostart/<id>-installer.desktop` | opens the installer on login |
 | `system/kscreenlockerrc.in` | `/etc/xdg/kscreenlockerrc` | drops the lock screen's password prompt — the live account's password is public |
-| `system/kdeglobals.in` | `/etc/xdg/kdeglobals` | selects the Look-and-Feel package below; one key, and KConfig cascades it under `~/.config` |
-| `system/lookandfeel/**` | `/usr/share/plasma/look-and-feel/<id>-installer/` | carries the Plasma layout script that pins Calamares — and nothing else — to the task manager |
+| `system/lookandfeel/contents/layouts/**` | `/usr/share/plasma/look-and-feel/<id>/contents/layouts/` | the Plasma layout script that pins Calamares — and nothing else — to the task manager, added to the image's own Look-and-Feel package |
 
 `branding/installer/logo.png` is **not in this directory**. It is composed at build time by
 `config/branding/make-splash-assets.py --logo`, from the same `build_block()` that produces the
@@ -44,18 +43,22 @@ Changing it costs a Look-and-Feel package, and the indirection is upstream's, no
    user, and `ShellCorona::loadDefaultLayout()` takes that script from the Look-and-Feel package
    named by `kdeglobals`' `[KDE] LookAndFeelPackage`.
 
-So `system/lookandfeel/` is a Look-and-Feel package containing a `metadata.json` and one script.
-It is *not* a theme, and it does not restate Breeze: plasma-workspace's package structure
+So `system/lookandfeel/` is one script, and stage 40 puts it **into the image's own Look-and-Feel
+package** — the one [`config/plasma/lookandfeel`](../plasma/README.md) builds for the splash — for
+this profile only. It is not a package of its own. It was, once, and that is what made the medium
+boot to Breeze: `kdeglobals` can name exactly one package, that package is what `startplasma`
+turns into `~/.config/kdedefaults/ksplashrc` before the session starts, and a package with a
+layout but no `contents/splash` therefore selected a splash that did not exist. `ksplashqml` fell
+back to Breeze without a word in the journal. The full mechanism is in
+[`config/plasma/README.md`](../plasma/README.md#lookandfeelpackage-not-theme).
+
+Merging them costs nothing anywhere else: the product's copy of the package has no
+`contents/layouts`, so an installed machine gets Breeze's layout, and the medium gets both halves
+out of the one id. Nor does either half restate Breeze — plasma-workspace's package structure
 (`shell/packageplugins/lookandfeel/lookandfeel.cpp`) installs `org.kde.breeze.desktop` as the
 fallback package for any id that is not Breeze's own, and `KPackage::Package::filePath()` consults
-that fallback for every file the package does not ship — so the lock screen, logout dialog,
-colours and style all still resolve to Breeze, unchanged.
-
-The one exception is the **splash**, and it does not come from the fallback either. `ksplashqml`
-reads `ksplashrc`'s `[KSplash] Theme` *before* it looks at `LookAndFeelPackage`, and
-[`config/plasma/ksplashrc`](../plasma/README.md) sets it on every profile with a desktop — so the
-live medium gets the distro's own splash ([plan/17](../../plan/17-animated-splash.md)) **and** the
-task-manager layout below, out of two small packages instead of one that would have to carry both.
+that fallback for every file the package does not ship, so the lock screen, logout dialog, colours
+and style all still resolve to Breeze, unchanged.
 
 The script itself changes one line. It calls `loadTemplate("org.kde.plasma.desktop.defaultPanel")`
 so the panel stays upstream's by reference — kickoff, pager, tray, clock, and the input-method

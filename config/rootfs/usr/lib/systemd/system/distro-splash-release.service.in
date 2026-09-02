@@ -1,0 +1,48 @@
+# Give the screen back before the greeter asks for it — the other half of the boot splash's DRM
+# master handling. config/splash/splash.c's header explains why master is held at all; this is
+# what makes holding it safe.
+#
+# The splash keeps DRM master from its modeset onward, because every ioctl that presents a new
+# frame is master-gated and without one nothing but a real GPU shows a second frame. logind
+# calls drmSetMaster() when it hands the DRM fd to the compositor and returns the failure to its
+# caller, so the splash must have let go before the display manager starts. Being ordered
+# Before= it is what guarantees that: systemd will not start the DM until this has run.
+#
+# This is an ORDERING, not a handshake. Nothing here waits for the greeter and the greeter waits
+# for nothing here — which is the difference between it and the plymouth teardown that plan/11
+# finding 7 measured races and deadlocks in. The splash is not stopped, either: it hands master
+# back, settles the mark at full brightness and stays exactly where it was, so the picture is
+# still on screen when the compositor modesets over it.
+#
+# The two ExecStart lines are in this order on purpose. The flag file covers a splash that has
+# not started YET — udev could in principle start it after this point, and a signal cannot reach
+# a process that does not exist — so it is written first; the signal then covers the normal case
+# of a splash that is already running. splash.c reads the flag before it opens a single card.
+[Unit]
+Description=Release the screen before @DISTRO_NAME@'s display manager starts
+# Only meaningful while a splash could be running. Not a Requires: the splash is started by udev
+# on a DRM card appearing and legitimately never runs at all (no card, @DISTRO_ID@.splash=0), and
+# the display manager must start regardless.
+After=@DISTRO_ID@-splash.service
+Before=display-manager.service
+
+[Service]
+Type=oneshot
+# Stays "active" so it is not run a second time if the display manager is restarted; the flag it
+# wrote in /run has the same lifetime.
+RemainAfterExit=yes
+# Both failures are ignored, and both are normal: /run is writable but the flag may already be
+# there, and `systemctl kill` fails when the splash is not running.
+ExecStart=-/usr/bin/touch /run/@DISTRO_ID@-splash.release
+ExecStart=-/usr/bin/systemctl kill --signal=SIGUSR1 @DISTRO_ID@-splash.service
+
+[Install]
+# graphical.target, not display-manager.service, even though the latter reads better: the DM is
+# reached here only through the display-manager.service ALIAS that plasmalogin.service's
+# [Install] creates, and a .wants directory named after an alias is a subtler thing to hang a
+# boot on than a dependency on one. Before= resolves aliases — graphical.target's own
+# "Wants=display-manager.service" is how plasmalogin gets started at all — and that is the half
+# that has to be exact. This half only has to put the unit in the same transaction, and it is
+# the same target that pulls in the DM: graphical.target Wants= it and is After= it, so the
+# order is release, then display manager, then the target.
+WantedBy=graphical.target

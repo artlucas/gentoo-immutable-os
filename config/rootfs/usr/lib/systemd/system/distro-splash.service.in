@@ -5,10 +5,12 @@
 # than once; the repeats are no-ops while this unit is active, and the program enumerates every
 # card itself.
 #
-# There is deliberately NO ordering against the greeter in either direction. The program drops
-# DRM master as soon as it has painted, so the compositor can take over whenever it likes and
-# the splash notices afterwards and exits. Every previous attempt to sequence a splash teardown
-# against the display manager was either a race or a deadlock — see plan/11 finding 7.
+# There is deliberately NO ordering against the greeter in EITHER direction here. What ordering
+# exists lives in @DISTRO_ID@-splash-release.service, which runs Before= the display manager and
+# tells this program to hand DRM master back; that is a one-way ordering that nothing waits on,
+# not the teardown handshake plan/11 finding 7 measured races and deadlocks in. After it, the
+# compositor takes over whenever it likes and the splash notices afterwards and exits, exactly
+# as it always did.
 [Unit]
 Description=@DISTRO_NAME@ boot splash
 # DefaultDependencies=no keeps it out of the basic.target ordering it would otherwise wait on;

@@ -11,8 +11,8 @@ Three things are true of the result and each of them decided a piece of the desi
 - **The animation departs from the still frame rather than resting below it.** Every slab is at
   full brightness at t = 0, so "everything at full" is a real frame of the loop and not merely
   the brightest one.
-- **Nothing coordinates with anything.** The KMS splash still drops DRM master immediately and
-  the Plasma splash still ends by being killed; neither gained a handshake.
+- **The KMS splash now holds DRM master, and one unit ordering gives it back.** That is the
+  reversal in this plan, and section 1 is about why it was forced and what makes it safe.
 - **One layout function still composes every artefact.** The stub bitmap, the sprite tiles, the
   installer's sidebar logo and the Plasma theme's vectors all come out of `build_block()`.
 
@@ -26,8 +26,12 @@ initrd ───┤
 switch-root
           │
           ├─ <id>-splash paints frame zero — THE SAME PICTURE, byte for byte — modesets,
-          │   drops master, and only then starts the pulse
-greeter ──┤  kwin modesets; the splash notices and exits, touching nothing
+          │   KEEPS DRM MASTER, and pulses, presenting each frame with DIRTYFB
+          │
+          ├─ <id>-splash-release, ordered Before= the display manager: the mark settles at
+          │   full brightness and master goes back. The picture does not move or go away.
+          │
+greeter ──┤  kwin takes the DRM device from logind and modesets; the splash notices and exits
           │
 login ────┤  ksplashqml paints #0a0d11 and fades the same mark in, running the same pulse
           │
@@ -39,9 +43,9 @@ desktop ──┴─ kwin's `login` effect fades the splash window out over 500m
 This is the whole engineering content of the change, and it is a constraint rather than a
 technique.
 
-`paint_card()` calls `DRM_IOCTL_DROP_MASTER` the moment it has drawn — plan/14's one structural
-decision, and the thing that deleted the entire class of "sequence the splash teardown against
-the greeter" problems. **Every ioctl that would present a new frame is `DRM_MASTER`-gated.**
+`paint_card()` used to call `DRM_IOCTL_DROP_MASTER` the moment it had drawn — plan/14's one
+structural decision, and the thing that deleted the entire class of "sequence the splash teardown
+against the greeter" problems. **Every ioctl that would present a new frame is `DRM_MASTER`-gated.**
 Verified in the shipped kernel's own source, `drivers/gpu/drm/drm_ioctl.c` at 6.18:
 
 ```c
@@ -51,34 +55,76 @@ DRM_IOCTL_DEF(DRM_IOCTL_MODE_DIRTYFB, drm_mode_dirtyfb_ioctl, DRM_MASTER),
 and the same for `SETCRTC`, `PAGE_FLIP` and `ATOMIC`. So a splash without master cannot flip,
 cannot commit, and cannot ask a driver to flush.
 
-**Taking master back for one ioctl per frame was considered and rejected outright.** kwin does
-not call `drmSetMaster()` itself; it receives the DRM fd from logind, and logind's
+### The attempt that did not survive contact with the kernel
+
+The first version of this plan kept plan/14's decision and animated by **storing into the dumb
+buffer the CRTC is already scanning out** — the one thing that needs no permission. It shipped,
+and on the intended demonstration path it did nothing at all.
+
+The claim it rested on was that `bochs` (`qemu -vga std`) scans out of the VRAM BAR, so a store
+lands in memory the host re-reads continuously. That was true of the driver that used the VRAM
+GEM helper. It is not true of the driver in the kernel this image pins. From `bochs.ko` on
+6.18.43, as shipped:
+
+```
+depends: drm_client_lib,drm_kms_helper,drm_shmem_helper
+U drm_gem_shmem_dumb_create      U drm_gem_begin_shadow_fb_access
+U drm_gem_fb_create_with_dirty   U drm_fb_memcpy
+U drm_atomic_helper_damage_iter_init
+```
+
+Dumb buffers are ordinary shmem pages and the driver memcpys the damaged rectangles into the BAR
+**on commit**. bochs is a shadow-buffer driver now, exactly like `virtio_gpu`, `qxl`, `vmwgfx`
+and `udl`, and every QEMU display is one. A masterless splash gets one frame everywhere except
+on a real GPU — where the claim does hold, and where nobody can watch it during development.
+
+### What the design is now
+
+The splash **holds master from its modeset until something tells it to let go**, presents each
+frame with `DRM_IOCTL_MODE_DIRTYFB` (one clip rect per slab that moved), and hands master back
+before the greeter can want it. Both `bochs` and `virtio_gpu` implement the dirty callback —
+`virtio-gpu.ko` links `drm_atomic_helper_dirtyfb` and `drm_plane_enable_fb_damage_clips` — so
+the default `run-vm.sh` VM animates, and `--gpu bochs` was removed again along with the claim
+that produced it.
+
+### What makes holding master safe
+
+kwin does not call `drmSetMaster()` itself; it receives the DRM fd from logind, and logind's
 `session_device_start()` calls `drmSetMaster()` on that fd and **returns the failure to its
-caller**. A splash holding master for even the microsecond a `DIRTYFB` takes, at the wrong
-moment, is a session that does not start. That is not a risk worth a moving logo.
+caller**. A splash still holding master when the greeter starts is a session that never starts.
+So the release is not best-effort, and it is not one mechanism:
 
-What is left is the one thing that needs no permission: **storing into the dumb buffer the CRTC
-is already scanning out.** `show_on_crtc()` therefore keeps its `mmap` instead of dropping it
-after the first frame, and `animate()` re-blits the slabs that have moved.
+- **`<id>-splash-release.service`** is `Before=display-manager.service` and `WantedBy=`
+  `graphical.target`. systemd will not start the DM until it has run. It writes
+  `/run/<id>-splash.release` and then sends `SIGUSR1`; the splash settles the mark at full
+  brightness, presents that, drops master, and **stays exactly where it is** — the modeset
+  stands and the fd keeps the buffer alive, so the hand-off the greeter sees is the same
+  seamless one plan/14 designed.
+- **The flag file, written before the signal**, covers a splash that has not started yet. udev
+  starts it on a card appearing and nothing forbids that from landing late; a signal cannot
+  reach a process that does not exist. `splash.c` reads the flag before it opens a card and
+  takes the old path — one still frame, master dropped immediately.
+- **`MASTER_HOLD_SECONDS` (30)** releases master anyway if neither of those happens: a profile
+  with no display manager, a compositor started by hand, a unit that was not pulled in. The
+  failure mode is a mark that stops moving, which is the splash this image had yesterday.
 
-### Where that works, and where it honestly does not
+**This is an ordering, not a handshake**, and that distinction is the whole reason it is
+acceptable where plan/11 finding 7's plymouth teardown was not. Nothing here waits on the
+greeter and the greeter waits on nothing here. The release unit's failures are all ignored (`-`
+prefixed `ExecStart=`), because a decoration must never fail a boot.
 
-| driver | dumb buffer is | the mark |
+### Where the animation is presented
+
+| driver | dumb buffer is | presenting |
 |---|---|---|
-| amdgpu, i915, xe, nvidia-drm | the scanned-out memory, mapped write-combining | **animates** |
-| bochs (`qemu -vga std`) | the VRAM BAR the host reads continuously | **animates** |
-| virtio_gpu, qxl, vmwgfx, udl | a shadow the host re-reads only on a plane update | holds frame zero |
-
-The second row is why `scripts/run-vm.sh` grew `--gpu bochs`. The default stays virtio-VGA,
-because the property it was chosen for — the firmware framebuffer surviving `ExitBootServices`,
-i.e. the stub image lasting through the initrd — is what stage 70 and every boot-flow measurement
-in plan/14 depend on. `--gpu bochs` exists to *look at* the animation, not to test the boot.
+| amdgpu, i915, xe, nvidia-drm | the scanned-out memory, mapped write-combining | the store already landed; `DIRTYFB` may return `-ENOSYS`, ignored |
+| bochs (`qemu -vga std`), virtio_gpu, qxl, vmwgfx, udl | shmem pages the driver copies into the scanout | `DIRTYFB` is the copy — this is why master is held |
 
 **The degraded case is the old splash exactly.** Frame zero is painted with every slab at full,
-before the modeset that flushes it, so a VM on a shadow-buffer driver shows the still image this
-program drew before it could animate at all — not a mark stopped mid-dip. The offline suite pins
-that: it compiles `splash.c`, blits the real container into memory and requires the result to
-equal `build_block()`'s composition byte for byte.
+and so is the last frame before master goes back, so a splash that never gets to animate shows
+the still image this program drew before it could animate at all — not a mark stopped mid-dip.
+The offline suite pins that: it compiles `splash.c`, blits the real container into memory and
+requires the result to equal `build_block()`'s composition byte for byte.
 
 ## 2. Dimming a slab without an alpha channel
 
@@ -178,11 +224,12 @@ face for face with no rasteriser and no tolerance.
 the timings. A theme that hardcoded `132` and `34` would go on rendering perfectly after the
 design changed — just not the same picture as the boot splash it takes over from.
 
-### Every user, from one file
+### Every user, from the /etc/xdg layer
 
-`/etc/xdg/ksplashrc`, and nothing else. KConfig cascades `$XDG_CONFIG_DIRS` underneath
-`~/.config`, so it is the image's default for anyone who has not chosen otherwise, and System
-Settings still writes a user's own choice to `~/.config/ksplashrc` and wins.
+`/etc/xdg/kdeglobals` and `/etc/xdg/ksplashrc`, and nothing else. KConfig cascades
+`$XDG_CONFIG_DIRS` underneath `~/.config`, so they are the image's defaults for anyone who has
+not chosen otherwise, and System Settings still writes a user's own choice to
+`~/.config/ksplashrc` and wins over both.
 
 | account | how it gets the splash |
 |---|---|
@@ -194,12 +241,58 @@ No skel copy, no first-login hook, no Calamares job. The overlay-backed `/etc` t
 [plan/16](16-installer.md) leans on is not even needed here — the file is on the read-only root
 and nothing has to write it.
 
-**`Theme`, not `LookAndFeelPackage`**, and that choice is what keeps the installer medium working.
-`ksplashqml`'s resolution order is: command line (the systemd unit passes none), then
-`ksplashrc`'s `Theme`, then `kdeglobals`' `LookAndFeelPackage`, then Breeze. The installer profile
-sets `LookAndFeelPackage=<id>-installer` for its task-manager layout script; `Theme` wins over it,
-so the live session gets our splash *and* its own panel, out of two small packages. Merging them
-would ship the installer's layout script to every installed machine.
+**`LookAndFeelPackage`, not `Theme`** — which is the opposite of what this plan said until
+0.3.0, and the correction cost a release. Both images shipped `/etc/xdg/ksplashrc` with
+`Theme=<id>`, both booted to Breeze, and nothing anywhere logged a word about it.
+
+`ksplashqml`'s resolution order really is command line (the systemd unit passes none), then
+`ksplashrc`'s `[KSplash] Theme`, then `kdeglobals`' `LookAndFeelPackage`, then Breeze. What the
+plan missed is **which `ksplashrc`**. Before any of the session starts, `startplasma`'s
+`setupPlasmaEnvironment()` (`plasma-workspace/startkde/startplasma.cpp`):
+
+1. **prepends `~/.config/kdedefaults` to `XDG_CONFIG_DIRS`** — so that directory outranks
+   `/etc/xdg` for every KConfig read the session makes; and
+2. if `~/.config/kdedefaults/package` does not already name the Look-and-Feel package, runs
+   `KLookAndFeelManager` in `Defaults` mode over it, which **writes
+   `~/.config/kdedefaults/ksplashrc`**: `Theme` from that package's `contents/defaults`
+   `[ksplashrc][KSplash] Theme` if it has one, and **otherwise from the package id itself**
+   (`libklookandfeel/klookandfeelmanager.cpp`, `save()`).
+
+So on a fresh account the effective `Theme` is the id in `kdeglobals`, written into a file that
+beats `/etc/xdg`, before `ksplashqml` is ever started. Measured on the medium as built:
+
+```
+$ cat ~/.config/kdedefaults/ksplashrc          $ XDG_CONFIG_DIRS=$HOME/.config/kdedefaults:/etc/xdg \
+[KSplash]                                        kreadconfig6 --file ksplashrc --group KSplash --key Theme
+Engine=KSplashQML                              immos-installer
+Theme=immos-installer
+```
+
+`<id>-installer` had no `contents/splash`, so `ksplashqml` resolved it, found nothing and fell
+back to Breeze — `splashwindow.cpp` does that on any load failure with a single `qCWarning` on a
+category that is off by default. On the product image, which shipped no `kdeglobals` at all, the
+built-in default `org.kde.breeze.desktop` produced the same result by the same route.
+
+**One package per image, therefore.** `kdeglobals` can name exactly one, so the installer
+medium's task-manager layout script ([plan/16](16-installer.md)) goes *into* the splash package,
+added by stage 40 for that profile only, rather than into a second package that `kdeglobals`
+would have to name instead. The product's copy has no `contents/layouts` and the layout resolves
+to Breeze's, so nothing of the installer's reaches an installed machine — which was the whole
+point of splitting them in the first place, achieved without the split.
+
+Two things follow that are worth stating because neither is obvious:
+
+- **Do not give the package a `contents/defaults`.** `KLookAndFeelManager` reads that file
+  through the same fallback chain, so shipping one *replaces* Breeze's wholesale instead of
+  overriding a key in it, and `ColorScheme`, `widgetStyle`, `Icons` and the cursor theme would
+  stop being written for every fresh account.
+- **`/etc/xdg/ksplashrc` stays**, and is still asserted, but it is no longer load-bearing: it
+  covers `ksplashqml` run by hand, the X11 path (`setupKSplash()` reads `ksplashrc` itself and
+  passes the theme on the command line), the Splash Screen KCM before a session has written
+  `kdedefaults`, and `Engine`, which three separate code paths check before anything is drawn.
+
+Stage 40 asserts all three spellings of the id — `kdeglobals`, `ksplashrc` and the package's own
+`metadata.json` — because a disagreement between any two of them is silent at runtime.
 
 ### The fade in is ours; the fade out cannot be
 
@@ -252,13 +345,18 @@ turns that into a failed build and a decision, which is the outcome worth having
 | `splash.bin` | 845 KiB | **710 KiB** |
 | `<id>-splash` binary | 676 KiB | 676 KiB (stripped; no libm, no new dependency) |
 | the Plasma theme on the root | — | ~20 KiB (four SVGs, `Design.qml`, a 300×169 preview) |
-| per animated frame | — | one lerp over ~17k px (scale 1) or ~68k (scale 2), for the **one** slab that moved |
+| per animated frame | — | one lerp over ~17k px (scale 1) or ~68k (scale 2) plus one `DIRTYFB`, for the **one** slab that moved |
 
 `animate()` skips a tile whose level equals what it was last drawn at, so a slab between pulses
-costs a comparison, and most frames repaint exactly one band. The poll loop wakes at 25 fps for
-the animation while the takeover check and the input rescan stay on their original 500 ms tick —
-running a `GETCRTC` per output at frame rate would be twenty-five times the ioctls to learn the
-same thing.
+costs a comparison, and most frames repaint exactly one band — and hands the kernel exactly one
+clip rectangle, which is what keeps the shadow-buffer copy to a band rather than a screen. The
+poll loop wakes at 25 fps for the animation while the takeover check and the input rescan stay on
+their original 500 ms tick — running a `GETCRTC` per output at frame rate would be twenty-five
+times the ioctls to learn the same thing.
+
+The frames stop when master goes back, which on a normal boot is a second or two before the
+greeter. Nothing is drawn or presented after that: the mark is settled at full brightness and
+the program is only watching for the takeover, exactly as it did before plan/17.
 
 ## Verification
 
@@ -278,7 +376,13 @@ Offline (`./tests/run-tests.sh`), all in `tests/test-splash-assets.sh`:
   generator and `splash.c`;
 - the package id, `ksplashrc`'s `Theme` and stage 40's assertion are one string;
 - the QML binds three different pulse slots and reveals on `stage >= 2`;
-- stage 40 guards the whole thing on the `desktop` set and asserts kwin's `login` effect.
+- stage 40 guards the whole thing on the `desktop` set and asserts kwin's `login` effect;
+- every link in the master release is checked separately, because the one that breaks silently
+  breaks the greeter and not the splash: the release unit is `Before=display-manager.service`,
+  it is `WantedBy=graphical.target` and stage 40 makes exactly that symlink, it signals the unit
+  the udev rule starts, the flag path in the unit is the `-DSPLASH_RELEASE_FLAG` stage 40
+  compiles in, `splash.c` reads that flag before it opens a card and acts on `SIGUSR1`, and
+  `MASTER_HOLD_SECONDS` is well short of `SPLASH_MAX_SECONDS`.
 
 **None of that can see a screen.** The Plasma half was developed against a real `qml6` render at
 1920×1080 with frames captured offscreen — the fade-in, the wave order (bottom → middle → top) and
@@ -287,11 +391,16 @@ bitmap's block — but that is a development check on a workstation, not a gate 
 
 ## Open / not verified
 
-- **The boot splash animating on real hardware.** The entire "a store into a mapped dumb buffer
-  reaches the panel" argument is from the drivers' design, not from a machine. It is the first
-  thing to confirm, and it fails safe: the mark holds its full-brightness first frame.
-- **The boot splash animating in QEMU.** `--gpu bochs` is the intended way to look at it and has
-  not been run against a built image.
+- **The greeter still starting.** This is the one that matters. The splash now holds DRM master
+  for the seconds before the display manager, and the argument that it always lets go in time is
+  a systemd ordering plus two backstops — read out of the unit files, not watched on a booting
+  machine. If the release never reaches the splash, logind's `drmSetMaster()` fails and the
+  session does not start; `MASTER_HOLD_SECONDS` bounds that to 30 seconds rather than the boot.
+  First thing to confirm, on the profile that has a display manager.
+- **The boot splash animating at all.** `DIRTYFB` presenting each frame is from the drivers'
+  symbol tables (`bochs.ko` and `virtio-gpu.ko` both link the dirty helper), not from a screen.
+  It fails safe: the mark holds its full-brightness first frame, which is the splash plan/14
+  shipped.
 - **The Plasma splash inside a real session.** Everything above is `qml6` on a workstation, not
   `ksplashqml` under kwin. The theme resolution path, the layer-shell window and kwin's `login`
   effect are all read out of the pinned 6.6.6 sources rather than observed.

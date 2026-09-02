@@ -21,7 +21,9 @@ SRC="$REPO_ROOT/config/branding"
 GEN="$SRC/make-splash-assets.py"
 UNIT="$REPO_ROOT/config/rootfs/usr/lib/systemd/system/distro-splash.service.in"
 RULE="$REPO_ROOT/config/rootfs/usr/lib/udev/rules.d/70-distro-splash.rules.in"
+RELEASE="$REPO_ROOT/config/rootfs/usr/lib/systemd/system/distro-splash-release.service.in"
 STAGE40="$REPO_ROOT/scripts/stages/40-configure.sh"
+SPLASH_C="$REPO_ROOT/config/splash/splash.c"
 
 # same render environment stage 40 exports for the branding templates
 SPLASH_STATUS_LEFT="$(printf '%s · V%s · AMD64' "$UPDATE_CHANNEL" "$VERSION" | tr '[:lower:]' '[:upper:]')"
@@ -83,6 +85,51 @@ assert_true "stage 40 emits the same token the unit tests for" \
 # deciding what it does here fails the suite.
 assert_true "stage 40 disables the splash for stub and none only" \
     grep -qE '^  stub\|none\) SPLASH_TOKENS\+=' "$STAGE40"
+
+# ---- handing DRM master back is wired end to end ------------------------------------------
+# plan/17, and the most consequential thing in this file. The splash holds DRM master from its
+# modeset onward, because every ioctl that presents a frame is master-gated and without one
+# nothing but a real GPU ever shows a second frame. logind calls drmSetMaster() when it hands
+# the DRM fd to the compositor and returns the failure to its caller, so if the release unit
+# stops reaching the splash the greeter is what breaks — after a boot in which everything the
+# build can see went perfectly. Each link is checked separately for that reason.
+render_template "$RELEASE" "$TMP/$DISTRO_ID-splash-release.service"
+assert_true "the release unit runs before the display manager" \
+    grep -qx "Before=display-manager.service" "$TMP/$DISTRO_ID-splash-release.service"
+assert_true "the release unit is pulled into the boot" \
+    grep -qx "WantedBy=graphical.target" "$TMP/$DISTRO_ID-splash-release.service"
+assert_true "it signals the same unit the udev rule starts" \
+    grep -qx "ExecStart=-/usr/bin/systemctl kill --signal=SIGUSR1 $DISTRO_ID-splash.service" \
+        "$TMP/$DISTRO_ID-splash-release.service"
+assert_true "stage 40 enables it, since nothing else would" \
+    grep -q 'graphical.target.wants' "$STAGE40"
+assert_true "stage 40 takes it back out of a profile with no desktop" \
+    grep -q 'rm -f -- "$SPLASH_UNIT" "$SPLASH_RULE" "$SPLASH_RELEASE_UNIT"' "$STAGE40"
+
+# The flag file is the half that covers a splash which has not started yet — udev could start it
+# after the display manager, and a signal cannot reach a process that does not exist. Its path is
+# written in the unit and compiled into the binary from stage 40, and the two are only the same
+# string because nothing has changed one of them.
+flag="/run/$DISTRO_ID-splash.release"
+assert_true "the release unit writes the flag" \
+    grep -qx "ExecStart=-/usr/bin/touch $flag" "$TMP/$DISTRO_ID-splash-release.service"
+assert_true "stage 40 compiles the same path into the splash" \
+    grep -qF -- '-DSPLASH_RELEASE_FLAG="\"/run/$DISTRO_ID-splash.release\""' "$STAGE40"
+assert_true "the splash reads that flag before it opens a card" \
+    grep -q 'access(SPLASH_RELEASE_FLAG, F_OK)' "$SPLASH_C"
+assert_true "the splash acts on SIGUSR1" grep -q 'SIGUSR1' "$SPLASH_C"
+assert_true "the splash keeps master rather than dropping it after painting" \
+    grep -q 'holding_master = 1;' "$SPLASH_C"
+assert_true "there is a backstop if the signal never comes" \
+    grep -q 'MASTER_HOLD_SECONDS' "$SPLASH_C"
+# The backstop must fire well before the one that gives up on the boot entirely, or the machine
+# spends the difference holding a device the greeter is asking for.
+hold="$(sed -nE 's/^#define MASTER_HOLD_SECONDS ([0-9]+).*/\1/p' "$SPLASH_C")"
+maxs="$(sed -nE 's/^#define SPLASH_MAX_SECONDS ([0-9]+).*/\1/p' "$SPLASH_C")"
+assert_true "master is released long before the console backstop" test "$hold" -lt "$maxs"
+# Presenting is what the whole arrangement buys, so it must actually happen.
+assert_true "each frame is presented, not just written" \
+    grep -q 'DRM_IOCTL_MODE_DIRTYFB' "$SPLASH_C"
 
 # ---- every SVG must be well-formed, or rsvg-convert emits an empty PNG at build time ------
 if command -v python3 >/dev/null 2>&1; then
@@ -323,7 +370,6 @@ fi
 # side of one login, so a divergence is two brand animations at two speeds — visible, and
 # invisible to every other check here. The generator is the source: it emits the QML's constants
 # into Design.qml, so only the C copy can drift.
-SPLASH_C="$REPO_ROOT/config/splash/splash.c"
 for k in PULSE_CYCLE_MS PULSE_DEPTH PULSE_SLOTS; do
     py="$(sed -nE "s/^$k *= *([0-9.]+).*/\\1/p" "$GEN")"
     c="$(sed -nE "s/^#define $k ([0-9.]+)$/\\1/p" "$SPLASH_C")"
@@ -340,6 +386,15 @@ assert_eq "$gen_rec" "$((c_words * 4))" "the tile record is the same size on bot
 gen_max="$(sed -nE 's/^MAX_TILES = ([0-9]+).*/\1/p' "$GEN")"
 c_max="$(sed -nE 's/^#define MAX_TILES ([0-9]+).*/\1/p' "$SPLASH_C")"
 assert_eq "$gen_max" "$c_max" "MAX_TILES matches between the generator and splash.c"
+# Stage 40 parses the container a THIRD time, to refuse a misgenerated one before it ships. That
+# reader drifted to v1 while the generator moved to v2 and nothing here noticed, because it runs
+# only inside a build: the format bump landed in a commit that was never built, and the next
+# build died on "bad magic" against a perfectly good file. Both of its literals are pinned now.
+gen_magic="$(sed -nE 's/^MAGIC = b"(.*)"$/\1/p' "$GEN")"
+assert_true "stage 40's container check reads the current magic" \
+    grep -q "b\"$gen_magic\"" "$STAGE40"
+assert_true "stage 40's container check uses the current record stride" \
+    grep -qF "i * $gen_rec" "$STAGE40"
 
 # ---- the Plasma splash theme (plan/17) ----------------------------------------------------
 PLASMA="$REPO_ROOT/config/plasma"
@@ -349,8 +404,10 @@ assert_file "$LNF/contents/splash/Splash.qml" "the look-and-feel package has a s
 
 render_template "$LNF/metadata.json.in" "$TMP/metadata.json"
 render_template "$PLASMA/ksplashrc.in" "$TMP/ksplashrc"
+render_template "$PLASMA/kdeglobals.in" "$TMP/kdeglobals"
 assert_false "no unresolved tokens in metadata.json" grep -qE '@[A-Z][A-Z0-9_]*@' "$TMP/metadata.json"
 assert_false "no unresolved tokens in ksplashrc" grep -qE '@[A-Z][A-Z0-9_]*@' "$TMP/ksplashrc"
+assert_false "no unresolved tokens in kdeglobals" grep -qE '@[A-Z][A-Z0-9_]*@' "$TMP/kdeglobals"
 assert_true "the descriptor is valid JSON" \
     python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$TMP/metadata.json"
 # KPackage compares the descriptor's id against the DIRECTORY it loaded and installs Breeze as
@@ -361,15 +418,28 @@ assert_true "the package declares Id \"$DISTRO_ID\"" \
     python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["KPlugin"]["Id"] == sys.argv[2]' \
     "$TMP/metadata.json" "$DISTRO_ID"
 assert_true "ksplashrc selects that package" grep -qx "Theme=$DISTRO_ID" "$TMP/ksplashrc"
+# AND kdeglobals, which is the one that actually decides. startplasma prepends
+# ~/.config/kdedefaults to XDG_CONFIG_DIRS and writes its own ksplashrc in there from the
+# LookAndFeelPackage id before the session starts, so /etc/xdg/ksplashrc is shadowed on every
+# real login and this key is what the splash is resolved from. It said something else once, on
+# both images, and both booted to Breeze in silence — see plan/17.
+assert_true "kdeglobals names that package as the Look-and-Feel package" \
+    grep -qx "LookAndFeelPackage=$DISTRO_ID" "$TMP/kdeglobals"
+assert_eq "[KDE]" "$(grep '^\[' "$TMP/kdeglobals")" "kdeglobals declares exactly one group, [KDE]"
+# A contents/defaults in our package would REPLACE Breeze's rather than override a key in it —
+# KLookAndFeelManager reads that file through the same fallback — and the colours, widget style,
+# icons and cursors it would stop writing are the ones every fresh account gets.
+assert_false "the package ships no contents/defaults" \
+    test -e "$LNF/contents/defaults"
 # Engine is checked in three places before anything is drawn, and any other value means no
 # splash at all rather than a different one.
 assert_true "ksplashrc keeps the QML engine" grep -qx "Engine=KSplashQML" "$TMP/ksplashrc"
 assert_true "it is a Plasma/LookAndFeel package" \
     grep -q '"KPackageStructure": "Plasma/LookAndFeel"' "$TMP/metadata.json"
-# Not the same package as the installer medium's, and the thing that must not cross over is the
-# layout script: it pins Calamares to the task manager, and it would reach every installed
-# machine if this package ever grew a contents/layouts/.
-assert_false "the splash package ships no desktop layout script" \
+# The installer medium's layout script is copied into this package by stage 40, for that profile
+# only. It must not be committed HERE, or it would reach every installed machine and pin
+# Calamares to the task manager of a system that has no Calamares.
+assert_false "the splash package ships no desktop layout script of its own" \
     test -e "$LNF/contents/layouts"
 
 QML="$LNF/contents/splash/Splash.qml"
@@ -395,6 +465,10 @@ assert_true "stage 40 generates the theme assets" \
     grep -q -- '--theme "\$SPLASH_LNF_DIR/contents/splash"' "$STAGE40"
 assert_true "stage 40 writes /etc/xdg/ksplashrc" \
     grep -q 'etc/xdg/ksplashrc' "$STAGE40"
+assert_true "stage 40 writes /etc/xdg/kdeglobals, which is what selects the splash" \
+    grep -qF 'render_template "$PLASMA_SRC/kdeglobals.in" "$TARGET/etc/xdg/kdeglobals"' "$STAGE40"
+assert_true "...and reads the package id back out of it before building the image" \
+    grep -qF 'grep -qx "LookAndFeelPackage=$SPLASH_LNF_ID"' "$STAGE40"
 # A console image has no Plasma; installing a look-and-feel package there would be dead weight
 # on a root filesystem this project audits by the megabyte.
 assert_true "the Plasma splash is guarded on the desktop set" \

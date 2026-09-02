@@ -459,6 +459,7 @@ SPLASH_BIN="$TARGET/usr/bin/$DISTRO_ID-splash"
 gcc -std=c11 -O2 -static -Wall -Wextra -Werror \
     -ffile-prefix-map="$REPO"=. \
     -DSPLASH_ASSET_PATH="\"/usr/share/$DISTRO_ID/splash.bin\"" \
+    -DSPLASH_RELEASE_FLAG="\"/run/$DISTRO_ID-splash.release\"" \
     -o "$SPLASH_BIN" "$REPO/config/splash/splash.c" \
   || die "boot splash did not compile"
 strip "$SPLASH_BIN" || true
@@ -472,9 +473,11 @@ log "boot splash: $(basename -- "$SPLASH_BIN") $(stat -c%s "$SPLASH_BIN") bytes,
 # and its udev rule come back out of that image entirely.
 SPLASH_UNIT="$TARGET/usr/lib/systemd/system/$DISTRO_ID-splash.service"
 SPLASH_RULE="$TARGET/usr/lib/udev/rules.d/70-$DISTRO_ID-splash.rules"
+SPLASH_RELEASE_UNIT="$TARGET/usr/lib/systemd/system/$DISTRO_ID-splash-release.service"
+SPLASH_RELEASE_WANTS="$TARGET/etc/systemd/system/graphical.target.wants"
 if ! profile_has_set desktop; then
-  log "no-desktop profile ($BUILD_PROFILE): removing the KMS splash unit and udev rule (agetty owns the screen)"
-  rm -f -- "$SPLASH_UNIT" "$SPLASH_RULE"
+  log "no-desktop profile ($BUILD_PROFILE): removing the KMS splash units and udev rule (agetty owns the screen)"
+  rm -f -- "$SPLASH_UNIT" "$SPLASH_RULE" "$SPLASH_RELEASE_UNIT"
 else
   [[ -f $SPLASH_UNIT ]] \
     || die "verify: $SPLASH_UNIT missing — the overlay in config/rootfs did not install it"
@@ -489,6 +492,46 @@ else
   — SPLASH_BACKEND=stub and =none would not actually disable the splash."
   grep -q "$DISTRO_ID-splash.service" "$SPLASH_RULE" \
     || die "verify: 70-$DISTRO_ID-splash.rules does not name $DISTRO_ID-splash.service"
+
+  # The release unit, and the ONE reason it has to exist (plan/17).
+  #
+  # The splash holds DRM master from its modeset until this unit signals it, because every ioctl
+  # that presents a new frame is master-gated and nothing but a real GPU shows a second frame
+  # without one. logind calls drmSetMaster() when it hands the DRM fd to the compositor and
+  # returns the failure to its caller, so a splash still holding master when the display manager
+  # starts is a session that never starts. Being ordered Before= the DM — and pulled into the
+  # same transaction by graphical.target, which is also what Wants= the DM — is what stops that
+  # from ever happening.
+  #
+  # Enabled by hand rather than by `systemctl enable`: there is no systemd running here to ask,
+  # and this is exactly the symlink the enable would make. graphical.target.wants, not
+  # display-manager.service.wants — the DM is only reachable here through an alias, and the
+  # unit's own [Install] comment says why that is a poor thing to hang a boot on.
+  [[ -f $SPLASH_RELEASE_UNIT ]] \
+    || die "verify: $SPLASH_RELEASE_UNIT missing — the overlay in config/rootfs did not install it
+  The splash would hold DRM master until its own MASTER_HOLD_SECONDS backstop, which is a
+  greeter that may fail to take the DRM device for as long as that lasts."
+  grep -qx "Before=display-manager.service" "$SPLASH_RELEASE_UNIT" \
+    || die "verify: $DISTRO_ID-splash-release.service is not ordered before the display manager"
+  grep -qx "ExecStart=-/usr/bin/systemctl kill --signal=SIGUSR1 $DISTRO_ID-splash.service" \
+       "$SPLASH_RELEASE_UNIT" \
+    || die "verify: $DISTRO_ID-splash-release.service does not signal $DISTRO_ID-splash.service"
+  grep -qx "ExecStart=-/usr/bin/touch /run/$DISTRO_ID-splash.release" "$SPLASH_RELEASE_UNIT" \
+    || die "verify: $DISTRO_ID-splash-release.service does not write the flag splash.c reads
+  (SPLASH_RELEASE_FLAG, compiled in above) — a splash that starts after the display manager
+  would take DRM master with nothing left to tell it to let go."
+  [[ -x $TARGET/usr/bin/touch && -x $TARGET/usr/bin/systemctl ]] \
+    || die "verify: the release unit's two ExecStart binaries are not both in the image"
+  ensure_dir "$SPLASH_RELEASE_WANTS"
+  ln -sfn "../../../../usr/lib/systemd/system/$DISTRO_ID-splash-release.service" \
+          "$SPLASH_RELEASE_WANTS/$DISTRO_ID-splash-release.service"
+  [[ -e $SPLASH_RELEASE_WANTS/$DISTRO_ID-splash-release.service ]] \
+    || die "verify: the release unit's wants symlink does not resolve — it would never run,
+  and the splash would keep DRM master into the greeter's start."
+  grep -qx "WantedBy=graphical.target" "$SPLASH_RELEASE_UNIT" \
+    || die "verify: $DISTRO_ID-splash-release.service is not WantedBy=graphical.target — the
+  symlink above and the unit's [Install] disagree about how it gets pulled in."
+  log "boot splash: master released by $DISTRO_ID-splash-release.service, ordered before display-manager.service"
 fi
 
 # ---- 2c. the Plasma splash screen (plan/17) ------------------------------------------
@@ -510,6 +553,12 @@ if profile_has_set desktop; then
   # against a work volume that already has the last run's package in it, and a slab renamed in
   # config/branding would otherwise leave its old SVG behind for the QML to keep drawing.
   rm -rf -- "$SPLASH_LNF_DIR"
+  # And the package this one absorbed. The installer medium's layout used to live in a second
+  # Look-and-Feel package, $DISTRO_ID-installer, until it turned out that kdeglobals can only
+  # name one of them and the one it named had no splash in it (plan/17). Nothing writes that
+  # directory any more, so on a work volume that predates the merge it would simply survive into
+  # the image — a dead package, listed nowhere, shipped anyway.
+  rm -rf -- "$TARGET/usr/share/plasma/look-and-feel/$DISTRO_ID-installer"
   while IFS= read -r -d '' f; do
     rel="${f#"$PLASMA_SRC/lookandfeel/"}"
     dst="$SPLASH_LNF_DIR/${rel%.in}"
@@ -535,13 +584,22 @@ if profile_has_set desktop; then
   find "$SPLASH_LNF_DIR" -type f -exec chmod 0644 {} +
   find "$SPLASH_LNF_DIR" -type d -exec chmod 0755 {} +
 
-  # /etc/xdg, not a skel copy: KConfig cascades it under ~/.config, so it is the default for
+  # /etc/xdg, not a skel copy: KConfig cascades it under ~/.config, so these are the defaults for
   # the live account, for the installer medium's live account and for every account Calamares
-  # creates, with no per-user step anywhere. See config/plasma/ksplashrc.in.
+  # creates, with no per-user step anywhere.
+  #
+  # BOTH FILES, AND kdeglobals IS THE ONE THAT DECIDES. startplasma prepends
+  # ~/.config/kdedefaults to XDG_CONFIG_DIRS and writes its own ksplashrc in there on first
+  # login, derived from the Look-and-Feel package id kdeglobals names — so /etc/xdg/ksplashrc is
+  # shadowed on every real session and naming a package with no splash in it silently yields
+  # Breeze. See config/plasma/kdeglobals.in; the installer profile adds its layout script to the
+  # SAME package below rather than pointing this key somewhere else.
   render_template "$PLASMA_SRC/ksplashrc.in" "$TARGET/etc/xdg/ksplashrc"
   chmod 0644 -- "$TARGET/etc/xdg/ksplashrc"
+  render_template "$PLASMA_SRC/kdeglobals.in" "$TARGET/etc/xdg/kdeglobals"
+  chmod 0644 -- "$TARGET/etc/xdg/kdeglobals"
 
-  # The theme id is written in two independently rendered files and they have to be the same
+  # The package id is written in three independently rendered files and they have to be the same
   # string. If they drift nothing fails: ksplashqml cannot find the package, falls back to
   # Breeze, and the machine boots to somebody else's logo on a screen no test can see.
   grep -q "\"Id\": \"$SPLASH_LNF_ID\"" "$SPLASH_LNF_DIR/metadata.json" \
@@ -549,6 +607,11 @@ if profile_has_set desktop; then
   grep -qx "Theme=$SPLASH_LNF_ID" "$TARGET/etc/xdg/ksplashrc" \
     || die "verify: /etc/xdg/ksplashrc does not select Theme=$SPLASH_LNF_ID — the splash would
   silently fall back to Breeze."
+  grep -qx "LookAndFeelPackage=$SPLASH_LNF_ID" "$TARGET/etc/xdg/kdeglobals" \
+    || die "verify: /etc/xdg/kdeglobals does not name $SPLASH_LNF_ID as the Look-and-Feel
+  package. That key, not ksplashrc, is what a Plasma session turns into a splash theme — every
+  account would get ~/.config/kdedefaults/ksplashrc written from some other package's id and
+  the splash would silently fall back to Breeze. See config/plasma/kdeglobals.in."
   for f in Splash.qml Design.qml images/slab-top.svg images/slab-mid.svg images/slab-bot.svg \
            images/wordmark.svg; do
     [[ -s $SPLASH_LNF_DIR/contents/splash/$f ]] \
@@ -583,7 +646,7 @@ if profile_has_set desktop; then
 else
   # The converse, for the same reason the installer block has one: nothing above runs on a
   # console image, so anything here came from a stale work volume rather than from this build.
-  for leak in "usr/share/plasma/look-and-feel/$DISTRO_ID" etc/xdg/ksplashrc; do
+  for leak in "usr/share/plasma/look-and-feel/$DISTRO_ID" etc/xdg/ksplashrc etc/xdg/kdeglobals; do
     [[ -e $TARGET/$leak ]] \
       && die "verify: $BUILD_PROFILE has no desktop, but /$leak exists in the target. Wipe the
   work volume and rebuild — a stale target is carrying Plasma config into a console image."
@@ -699,11 +762,22 @@ if profile_has_set installer; then
   # KConfigXT default can only be beaten by a layout SCRIPT (Plasma::Corona::config() opens the
   # appletsrc with KConfig::SimpleConfig, which does not cascade, so the /etc/xdg trick the two
   # files above use is not available here), and ShellCorona::loadDefaultLayout() reads that
-  # script from the Look-and-Feel package /etc/xdg/kdeglobals names. The package ships nothing
-  # else; plasma-workspace makes Breeze its fallback, so the rest of the session is untouched.
-  LNF_ID="$DISTRO_ID-installer"
+  # script from the Look-and-Feel package /etc/xdg/kdeglobals names.
+  #
+  # INTO THE PACKAGE SECTION 2c ALREADY BUILT, not a second one beside it. This medium used to
+  # ship its layout in a package of its own, @DISTRO_ID@-installer, and point kdeglobals at
+  # that; the splash stayed in @DISTRO_ID@ and /etc/xdg/ksplashrc was supposed to keep naming
+  # it. It does not work, and the failure is silent: startplasma writes
+  # ~/.config/kdedefaults/ksplashrc from the LookAndFeelPackage id before the session starts,
+  # that directory outranks /etc/xdg, and a package with no contents/splash in it makes
+  # ksplashqml fall back to Breeze without a word in the journal. One package carries both, the
+  # id in kdeglobals is the same one everywhere, and the layout is the only thing this profile
+  # adds to it. See config/plasma/kdeglobals.in.
+  LNF_ID="$DISTRO_ID"
   LNF_DIR="$TARGET/usr/share/plasma/look-and-feel/$LNF_ID"
-  cal_install "$CAL_SRC/system/kdeglobals.in" "$TARGET/etc/xdg/kdeglobals"
+  [[ -f $LNF_DIR/metadata.json ]] \
+    || die "installer: the look-and-feel package $LNF_ID has not been built — section 2c is
+  supposed to have created it before this runs. Check that this profile has the desktop set."
   while IFS= read -r -d '' f; do
     rel="${f#"$CAL_SRC/system/lookandfeel/"}"
     cal_install "$f" "$LNF_DIR/${rel%.in}"
@@ -717,11 +791,20 @@ if profile_has_set installer; then
     || die "verify: /usr/share/applications/calamares.desktop is missing from the target, but the
   panel layout pins applications:calamares.desktop — the live session's only visible launcher
   would resolve to nothing"
-  # KPackage compares the descriptor's plugin id against the DIRECTORY it loaded, and uses the
-  # comparison to decide whether to install Breeze as the fallback package. A mismatch here is
-  # the same class of silent failure as a module.desc whose name is not its directory's.
+  # Both halves in the one package. Section 2c built it for the splash and this section added the
+  # layout to it; a copy that overwrote contents/splash, or a metadata.json.in reappearing under
+  # config/calamares/system/lookandfeel and replacing 2c's, would leave the medium with a
+  # LookAndFeelPackage that has no splash in it — which is the exact shape of the bug this
+  # merge was made to fix, and it is silent at runtime.
+  for half in contents/splash/Splash.qml contents/layouts/org.kde.plasma.desktop-layout.js; do
+    [[ -s $LNF_DIR/$half ]] \
+      || die "verify: $LNF_DIR/$half is missing or empty — the medium's one look-and-feel package
+  has to carry the splash AND the panel layout, because /etc/xdg/kdeglobals can only name one"
+  done
   grep -q "\"Id\": \"$LNF_ID\"" "$LNF_DIR/metadata.json" \
-    || die "verify: the look-and-feel package in $LNF_ID does not declare Id \"$LNF_ID\""
+    || die "verify: the look-and-feel package in $LNF_ID does not declare Id \"$LNF_ID\" — check
+  that nothing under config/calamares/system/lookandfeel overwrote the metadata.json section 2c
+  rendered from config/plasma/lookandfeel"
 
   # ---- the payload ---------------------------------------------------------------------
   # Three files another profile's build produced, copied in unchanged. Under /var because stage
@@ -1087,18 +1170,31 @@ fi
 python3 - "$SPLASH_ASSETS" <<'PYEOF' || die "verify: splash asset container is malformed"
 import struct, sys
 blob = open(sys.argv[1], "rb").read()
-assert blob[:8] == b"IMSPLSH1", "bad magic"
+# v2 (plan/17): 40-byte records — scale, anchor, flags, w, h, box_w, box_h as unsigned, off_x
+# and off_y SIGNED, then the pixel offset. The signed pair is the reason this cannot be read as
+# "<10I": a tile above the block's centre has a negative off_y, and reading it unsigned puts the
+# mark four billion pixels off the top of the screen.
+assert blob[:8] == b"IMSPLSH2", "bad magic"
 bg, n = struct.unpack_from("<II", blob, 8)
-assert 0 < n <= 16, f"implausible tile count {n}"
+assert 0 < n <= 32, f"implausible tile count {n}"
 assert bg == 0x0A0D11, f"background {bg:#08x} is not the brand #0a0d11"
-scales = set()
+scales, pulses = set(), {}
 for i in range(n):
-    scale, anchor, w, h, ox, oy, off = struct.unpack_from("<7I", blob, 16 + i * 28)
+    scale, anchor, flags, w, h, bw, bh, ox, oy, off = struct.unpack_from("<7IiiI", blob, 16 + i * 40)
     assert 0 < w <= 16384 and 0 < h <= 16384, f"tile {i} has implausible extent {w}x{h}"
     assert anchor in (0, 1, 2), f"tile {i} has unknown anchor {anchor}"
+    assert bw >= w and bh >= h, f"tile {i} is bigger than the box it is placed in"
     assert off + w * h * 4 <= len(blob), f"tile {i} pixels run past the end of the file"
     scales.add(scale)
+    if flags & 0x1:  # TILE_PULSE
+        pulses.setdefault(scale, []).append(flags >> 8)
 assert scales == {1, 2}, f"expected sprite scales 1 and 2, got {sorted(scales)}"
+# Without these the splash still draws — it just never moves, which is a regression nothing
+# downstream would report. One slab per slot: a duplicated slot animates two together and
+# leaves the third permanently still.
+for scale in sorted(scales):
+    assert sorted(pulses.get(scale, [])) == [0, 1, 2], \
+        f"scale {scale} has pulse slots {sorted(pulses.get(scale, []))}, expected one slab in each of 0,1,2"
 PYEOF
 # ...and it has to be IN THE INITRD, not merely in the target. dracut --sysroot can report
 # success while silently installing nothing — that is the trap documented at the lend/borrow
@@ -1383,10 +1479,11 @@ if profile_has_set installer; then
   # script is the one that pins the installer. Both halves have to hold or the live session comes
   # up with Plasma's stock pins — System Settings, Discover, Dolphin, an absent browser — and the
   # installer reachable only from the menu.
-  LNF_LAYOUT="$TARGET/usr/share/plasma/look-and-feel/$DISTRO_ID-installer/contents/layouts/org.kde.plasma.desktop-layout.js"
-  grep -qx "LookAndFeelPackage=$DISTRO_ID-installer" "$TARGET/etc/xdg/kdeglobals" 2>/dev/null \
-    || die "verify: /etc/xdg/kdeglobals does not select the $DISTRO_ID-installer look-and-feel
-  package — plasmashell would fall back to Breeze's layout and pin Plasma's stock four"
+  LNF_LAYOUT="$TARGET/usr/share/plasma/look-and-feel/$DISTRO_ID/contents/layouts/org.kde.plasma.desktop-layout.js"
+  grep -qx "LookAndFeelPackage=$DISTRO_ID" "$TARGET/etc/xdg/kdeglobals" 2>/dev/null \
+    || die "verify: /etc/xdg/kdeglobals does not select the $DISTRO_ID look-and-feel package —
+  plasmashell would fall back to Breeze's layout and pin Plasma's stock four. The layout script
+  went into that package, so this key has to be the package that has it."
   grep -qF 'writeConfig("launchers", ["applications:calamares.desktop"])' "$LNF_LAYOUT" 2>/dev/null \
     || die "verify: $LNF_LAYOUT does not write applications:calamares.desktop into the task
   manager's launchers — the medium's panel would carry every application except the one it
@@ -1426,8 +1523,7 @@ if ! profile_has_set installer; then
               "etc/xdg/autostart/$DISTRO_ID-installer.desktop" \
               "etc/polkit-1/rules.d/49-$DISTRO_ID-installer.rules" \
               "etc/xdg/kscreenlockerrc" \
-              "etc/xdg/kdeglobals" \
-              "usr/share/plasma/look-and-feel/$DISTRO_ID-installer" \
+              "usr/share/plasma/look-and-feel/$DISTRO_ID/contents/layouts" \
               "${PAYLOAD_DIR#/}"; do
     [[ -e $TARGET/$leak ]] \
       && die "verify: $BUILD_PROFILE does not include @installer, but /$leak exists in the target.
