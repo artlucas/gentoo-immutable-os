@@ -63,7 +63,14 @@ for f in "$IMAGE_LOCK" "$BUILDER_LOCK"; do
     # explicit chmod is unreadable by anyone but its author while git records 100644.
     assert_true "$n is world-readable" test -r "$f"
     perm="$(stat -c '%a' "$f" 2>/dev/null || echo '')"
-    assert_match '^6?44$' "$perm" "$n has sane permissions (got ${perm:-unknown})"
+    # Only the WORLD digit is pinned, and it is pinned to exactly r--. The group bit cannot be
+    # asserted here: git stores one executable bit and nothing else, so a checkout recreates the
+    # file through the caller's umask — 0644 under the usual 022, 0664 under a group-writable
+    # 002. This assertion used to read ^6?44$ and would fail for anyone in the second group on a
+    # clean clone, which is a property of their shell rather than of anything this repo wrote.
+    # What matters is unchanged: 0600 and 0640 still fail (the bug in the comment above), and so
+    # does anything world-writable.
+    assert_match '^[0-7]?[0-7][0-7]4$' "$perm" "$n has sane permissions (got ${perm:-unknown})"
     # The header is the whole reason a lock is reviewable rather than merely trusted.
     assert_eq "$SNAPSHOT_DATE" "$(lock_header_value "$f" SNAPSHOT_DATE)" "$n header records the tree pin"
     assert_eq "$(portage_config_hash)" "$(lock_header_value "$f" PORTAGE_CONFIG_HASH)" \
