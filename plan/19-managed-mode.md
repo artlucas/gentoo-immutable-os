@@ -926,12 +926,24 @@ feature's entire authentication path is one NSS symbol in one shared object.
 
 ## 13. Open questions
 
-1. **Does the daemon path behave like the drop-in path?** §2.2's probes ran with no `userdbd`.
-   With the socket active, lookups go through `io.systemd.Multiplexer`, and two things need
-   re-checking on a booted guest: whether the privileged section is still gated (it should be
-   gated *twice* — peer uid and file mode), and whether the group-merge duplication in §2.3
-   persists. T-MAN-1 covers both; nothing in the design changes either way, but the assertions
-   should be written against what is true.
+1. **BLOCKER — can a managed user authenticate when PAM is *not* root?** §2.2's probes ran as
+   root, or as a uid *different* from the record's. The case that matters — a user proving their
+   own password, unprivileged — was never tested. `/etc/shadow` is `0640 root:shadow` and
+   `/usr/bin/unix_chkpwd` is setgid `shadow`, which stage 60's ownership note already calls
+   load-bearing: without that gid, "PAM cannot verify a password for a non-root caller"
+   (`scripts/stages/60-image.sh:79`). A `.user-privileged` at `0600 root:root` is unreadable to
+   that group, so the non-root path rests entirely on `systemd-userdbd` being up **and** on its
+   peer-uid policy handing the privileged section to the record's own uid. Neither is verified. If
+   it does not hold, a managed user logs in at the greeter — where PAM runs as root — and then
+   cannot unlock their own screen, which is worse than not shipping the feature.
+
+   **Settle before Phase A**, on a booted guest, in one run: the setuid/setgid inventory of
+   `unix_chkpwd`, `kcheckpass` and `polkit-agent-helper-1`; `unix_chkpwd` invoked as the user with
+   `systemd-userdbd.socket` up and again with it stopped; and a real Plasma lock/unlock. That run
+   also answers what this question used to ask — whether the daemon path still gates the
+   privileged section *twice* (peer uid and file mode), and whether §2.3's group-merge duplication
+   persists. T-MAN-1 is written against the result; if the answer is no, §2.1's mode and §8.3
+   change with it.
 2. **`$y$` (yescrypt) or `$6$`?** The image's libcrypt is `sys-libs/libxcrypt`, which supports
    yescrypt, but `unix_chkpwd` was measured against `$6$` only. Cheap to settle in Phase A, and
    the answer belongs in §5.4 before any password is ever hashed by the control plane.
