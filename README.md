@@ -29,6 +29,7 @@ been run yet. The full design lives in [`plan/`](plan/00-overview.md):
 | [16-installer](plan/16-installer.md) | Calamares installer, build profiles, swap/hibernation, the live ISO |
 | [17-animated-splash](plan/17-animated-splash.md) | The layer-pulse animation, and carrying the same mark through the login into a Plasma splash |
 | [18-active-directory](plan/18-active-directory.md) | Joining a Windows AD domain: sssd + adcli, what ships versus what a join writes, and the installer's domain page |
+| [19-managed-mode](plan/19-managed-mode.md) | Managed mode: centrally managed users for a household or small business, as systemd userdb records from a signed bundle a hosted API serves |
 
 ## Building
 

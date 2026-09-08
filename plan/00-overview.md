@@ -80,6 +80,7 @@ Note on terminology: Gentoo's "stage 3" is a **tarball** (`stage3-amd64-systemd-
 | [15-version-pinning.md](15-version-pinning.md) | Pinning the tree by commit and every package version by lock file, moving pins deliberately (GLSA-driven patch releases), and the vendored archive that rebuilds a release offline |
 | [17-animated-splash.md](17-animated-splash.md) | Animating the KMS splash without DRM master, and a Plasma splash carrying the same mark from the login to a painted desktop |
 | [18-active-directory.md](18-active-directory.md) | Windows AD domain join: sssd + adcli, why the image ships domain-ready rather than reconfiguring itself, the Calamares users page, and the disposable Samba DC the tests run against |
+| [19-managed-mode.md](19-managed-mode.md) | Managed mode: a hosted control plane for a household or small business, users as systemd userdb drop-ins authenticated offline by `pam_unix`, the signed policy bundle and the API that serves it |
 
 ## Milestones
 
