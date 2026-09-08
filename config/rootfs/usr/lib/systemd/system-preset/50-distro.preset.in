@@ -31,6 +31,41 @@ enable @DISTRO_ID@-test-report.service
 enable @DISTRO_ID@-flatpak-preinstall.service
 enable @DISTRO_ID@-hostname-init.service
 disable sshd.service
+# ---- Active Directory (plan/18 §5.1) -------------------------------------------------------
+# sssd ships in every profile (@domain) and must NOT start until the machine has actually been
+# joined. This is a boot-integrity rule, not tidiness: systemd-boot-check-no-failures.service
+# above gates boot-complete.target, so a unit that starts and fails is a FAILED BOOT — the try
+# counter is not cleared and three of them roll the machine back to the previous image. sssd
+# exits non-zero with no /etc/sssd/sssd.conf, which is exactly what an unjoined machine has.
+#
+# `<distro>-domain join` enables sssd.service; `leave` disables it again. The unit also carries
+# ConditionPathExists=/etc/sssd/sssd.conf as an independent second defence (a preset that quietly
+# did not take has broken an image here before), and stage 40 asserts that no sssd* enablement
+# symlink survives into the built image — which is the check that catches any responder unit not
+# named below.
+disable sssd.service
+disable sssd-kcm.service
+disable sssd-kcm.socket
+disable sssd-nss.socket
+disable sssd-pam.socket
+disable sssd-pam-priv.socket
+disable sssd-autofs.socket
+disable sssd-ssh.socket
+disable sssd-sudo.socket
+disable sssd-ifp.service
+# The PAC responder, which arrives with USE=samba (--enable-pac-responder). It is a Kerberos
+# ticket-authorisation-data service for an IPA/AD setup that evaluates group membership from the
+# PAC; nothing here does. Same rule as every unit above it.
+disable sssd-pac.service
+disable sssd-pac.socket
+# winbind, from net-fs/samba[winbind], which sssd[samba] demands. THIS IMAGE HAS TWO DOMAIN
+# CLIENTS INSTALLED AND RUNS EXACTLY ONE. sssd is it; winbindd is a build-time consequence of
+# the flag that carries sssd's AD provider, and it is not named `sssd*`, so the stage-40
+# "no sssd enablement symlink" assertion would not have caught it. Started unjoined, with no
+# usable smb.conf, it fails — and a failed unit here is a failed boot and a rollback, which is
+# the whole reason this block exists. Stage 40 asserts this one by name.
+disable winbind.service
+disable winbindd.service
 disable systemd-sysupdate.timer
 # Containers are ROOTLESS here (plan/13): podman runs inside the user's own session, under
 # their subuid range, with storage in ~/.local/share/containers. The system-wide units are

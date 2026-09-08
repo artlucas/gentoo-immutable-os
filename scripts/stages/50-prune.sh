@@ -651,6 +651,90 @@ fi
 compgen -G "$T/usr/lib64/libnss_resolve.so"* >/dev/null \
   || compgen -G "$T/usr/lib/libnss_resolve.so"* >/dev/null \
   || violation "libnss_resolve missing after prune (/etc/nsswitch.conf needs it)"
+
+# ---- the Active Directory client (plan/18) ------------------------------------------------
+# Every profile ships @domain, so every profile is checked. Each of these is invisible to stage
+# 70 — it reads a serial port on a machine that is not joined to anything — and unfixable on the
+# target, which has no package manager. So the prune is where they have to be caught.
+#
+# The NSS module first, for the same reason libnss_resolve is checked above: /etc/nsswitch.conf
+# names sss, glibc dlopen()s it, and a missing one is not an error anywhere — just a domain user
+# who does not exist.
+compgen -G "$T/usr/lib64/libnss_sss.so"* >/dev/null \
+  || compgen -G "$T/usr/lib/libnss_sss.so"* >/dev/null \
+  || violation "libnss_sss missing after prune (/etc/nsswitch.conf names the sss module)"
+# The PAM modules. pam_sss is what authenticates a domain user; pam_mkhomedir is what gives them
+# somewhere to log in TO, and stage 40 put it in the system-login session stack by hand.
+for pm in pam_sss pam_mkhomedir; do
+  [[ -e $T/lib64/security/$pm.so || -e $T/usr/lib64/security/$pm.so ]] \
+    || violation "$pm.so missing after prune — /etc/pam.d names it, and PAM treats a missing
+  module in a non-optional line as a failure of the whole stack"
+done
+# The daemon, the join tool, and the CLI that drives both.
+[[ -x $T/usr/sbin/sssd  || -x $T/usr/bin/sssd  ]] || violation "sssd missing after prune"
+# THE PROVIDER MODULE, which is a separate check from the daemon and is the one this file
+# learned the hard way. sssd's back end is a dlopen() plugin per id_provider; the daemon, the NSS
+# module, the PAM module, adcli and `sssctl config-check` are all perfectly happy without it. An
+# image built with sys-auth/sssd[-samba] passed every assertion above, validated its generated
+# sssd.conf clean, and JOINED THE DOMAIN — adcli wrote the keytab and the computer account was
+# created — and only then did sssd refuse to start:
+#
+#   dp_module_open_lib: Unable to load module [ad] with path [/usr/lib64/sssd/libsss_ad.so]:
+#   cannot open shared object file: No such file or directory
+#
+# So the check is not "is sssd installed" but "can sssd load the provider its own config names".
+# Derived from the CLI rather than hardcoded, so that changing id_provider without shipping the
+# module fails here instead of on a user's machine.
+# --computer-name is pinned rather than derived: with no --root the CLI would read the BUILDER's
+# hostname, and this container's is long enough to trip the 15-character sAMAccountName check.
+# Rendered once into a variable rather than piped into `head`: head exits at the first line,
+# the CLI dies of SIGPIPE, and `set -o pipefail` then reports the whole pipeline as failed.
+SSSD_SAMPLE="$(bash "$T/usr/bin/${DISTRO_ID}-domain" join --domain prune.invalid \
+  --user check --computer-name PRUNECHECK --print-config sssd 2>/dev/null || true)"
+SSSD_PROVIDER="$(sed -n 's/^[[:space:]]*id_provider[[:space:]]*=[[:space:]]*\([a-z0-9_]\{1,\}\).*/\1/p' \
+  <<<"$SSSD_SAMPLE" | tail -1)"
+[[ -n $SSSD_PROVIDER ]] \
+  || violation "could not read id_provider out of ${DISTRO_ID}-domain --print-config sssd"
+[[ -e $T/usr/lib64/sssd/libsss_$SSSD_PROVIDER.so || -e $T/usr/lib/sssd/libsss_$SSSD_PROVIDER.so ]] \
+  || violation "libsss_$SSSD_PROVIDER.so is missing — sssd.conf says id_provider = $SSSD_PROVIDER
+  and the back end dlopen()s that module by name. Everything else about the join succeeds and
+  sssd then fails to start. The AD provider is built ONLY under sys-auth/sssd[samba]; check that
+  flag in config/portage/package.use/image before looking at the prune list"
+[[ -x $T/usr/sbin/adcli || -x $T/usr/bin/adcli ]] || violation "adcli missing after prune — no
+  machine could be joined to a domain, and there is no way to install it later"
+[[ -x $T/usr/bin/${DISTRO_ID}-domain ]] \
+  || violation "/usr/bin/${DISTRO_ID}-domain missing after prune"
+# nsupdate is the ONLY reason net-dns/bind is in the image (sssd's DEPEND carries it with no USE
+# guard; plan/18 §6.3). If a future trim of that package removes it, sssd's dyndns_update stops
+# registering the machine in AD DNS — silently, because sssd logs the failure and carries on.
+[[ -x $T/usr/bin/nsupdate ]] \
+  || violation "nsupdate missing after prune — sssd's dyndns_update would silently stop
+  registering this machine's A record in Active Directory DNS"
+# kinit is how `${DISTRO_ID}-domain verify` proves an account will actually authenticate, which
+# is the check standing between an unreachable domain controller and a Calamares install that
+# stops after the disk is written (plan/18 §7.4). The CLI degrades to a reachability-only check
+# without it rather than failing, so its absence would cost nothing visible at build time and
+# the entire credential half of the preflight at install time.
+[[ -x $T/usr/bin/kinit ]] \
+  || violation "kinit missing after prune — ${DISTRO_ID}-domain verify would silently drop its
+  credential check and the installer would discover a bad password by failing the join"
+# The Kerberos profile pair. A missing includedir is not a warning to MIT Kerberos: it is
+# "Included profile directory could not be read", and every kinit on the machine fails.
+[[ -f $T/etc/krb5.conf ]] || violation "/etc/krb5.conf missing after prune"
+[[ -d $T/etc/krb5.conf.d ]] \
+  || violation "/etc/krb5.conf.d missing after prune — /etc/krb5.conf includes it, and MIT
+  Kerberos fails to read ANY profile when an includedir does not exist"
+# ...and sssd must still be disabled. A prune that resurrected an enablement symlink would turn
+# every unjoined boot into a failed one (plan/18 §5.1).
+# The glob covers winbind* as well as sssd*: net-fs/samba[winbind] rides in with sssd[samba],
+# and winbindd started on an unjoined machine fails exactly the same way — under a name this
+# check used to not look for.
+SSSD_ENABLED_AFTER="$(find "$T/etc/systemd/system" \( -name 'sssd*' -o -name 'winbind*' \) \
+  -printf '%P\n' 2>/dev/null | tr '\n' ' ')"
+if [[ -n ${SSSD_ENABLED_AFTER// /} ]]; then
+  violation "domain units enabled after prune: $SSSD_ENABLED_AFTER — an unjoined machine would
+  fail boot-complete.target and roll back to the previous image"
+fi
 # ...and the resolver's counterpart must be gone: exactly one network manager, structurally.
 for b in usr/lib/systemd/systemd-networkd usr/lib/systemd/systemd-networkd-wait-online \
          usr/lib/systemd/systemd-network-generator usr/bin/networkctl usr/sbin/networkctl; do

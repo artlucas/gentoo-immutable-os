@@ -351,6 +351,44 @@ says so on completion, deliberately: everything it writes is a plausible archive
 rebuild proves it is a complete one. A missing distfile hides in that gap until the year you need
 it.
 
+## The restored Flatpak tree must not be re-pinned — and it was, silently
+
+**Found 2026-09-07, rebuilding an image whose Flatpak pins had aged.** Flathub had republished
+`runtime/org.kde.Platform.Locale/x86_64/6.10`, garbage-collecting the commit `apps.lock` names, so
+an online rebuild could not reach it — the expected failure this layer exists to produce. The
+archive from stage 90 held the locked object, so the fix should have been to rebuild with
+`--vendor-dir`, which makes stage 40 **restore** `/var/lib/flatpak` wholesale instead of
+installing.
+
+It did not work, and the reason is an interaction worth recording:
+
+1. The restore put the tree at exactly the locked commits — verified in the archive: refs,
+   `refs/heads/deploy` and the active deployment directory all read `fd8f2b9352c2…`.
+2. The pinning loop then ran anyway, because its guard was `OFFLINE != 1` and this build was
+   online — `--vendor-dir` without `--offline` is a legitimate mode, and the guard did not know
+   about it.
+3. `flatpak update --commit=<locked>` re-contacts Flathub, and while updating a runtime it
+   **re-resolves that runtime's extensions against the remote's current summary**. `.Locale` and
+   `GL.default` are extensions, and they are most of the shipped bytes. So the loop moved the
+   locale ref from the restored `fd8f2b9352c2` to Flathub's current `3bd0cc910140` — pinning
+   undid the restore — and the readback then failed the build on a pin the archive had supplied
+   correctly.
+
+Two changes, and the second is the one that matters more:
+
+- Stage 40 sets `FLATPAK_RESTORED=1` on the restore path and skips the pinning loop when it is
+  set. A restored tree is already the locked state; re-pinning it can only move it.
+- **The readback is now unconditional.** It used to live inside the pinning branch, so the
+  offline and restore paths skipped it entirely — while a comment directly above claimed that
+  path "is verified exactly as the online one is rather than being taken on trust". It was not.
+  An archive packed wrong, or an `rsync` that dropped a ref, would have shipped unnoticed. The
+  check is cheap and it is now the check for both paths: the rebuilt image logs
+  *"flatpak: 18 refs deployed at their locked commits"* off the restored tree.
+
+The wider lesson for this document: a lock layer that can only *detect* drift, not *reproduce*
+the locked state, is half a mechanism. Layer 5's reproduce half is the vendored archive, and it
+only works if nothing downstream is allowed to "helpfully" re-resolve on top of it.
+
 ## What is verified, and what is not
 
 **A complete locked build ran green end to end on 2026-08-28** — stages 10 through 90, from a

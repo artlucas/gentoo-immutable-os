@@ -326,7 +326,19 @@ app-text/poppler            qt6 -cairo
 # INTERPRETER. That was already true under GNOME, at one more remove; this change keeps it
 # true and makes the reason a direct one. The escape hatch is kio-extras[-samba], which drops
 # samba, perl and Parse-Yapp together at the cost of smb:// (plan/06).
-net-fs/samba                client
+#
+# winbind is here for sys-auth/sssd[samba], which is not optional: sssd builds its AD provider
+# module ONLY inside that conditional (the long note in the Active Directory block below has
+# the Makefile.am fragment and the failure it produced). sssd's dependency is written
+# `samba? ( >=net-fs/samba-4.10.2[winbind] )`, so this is the flag it names.
+#
+# It adds no package. winbind builds from samba's own tree, and samba's REQUIRED_USE constrains
+# only the other direction (`addc? ( ... winbind )`, `ads? ( ... winbind )` — nothing requires
+# anything OF winbind). What it does add is winbindd, wbinfo, ntlm_auth, libnss_winbind and a
+# winbind.service — and that unit is the reason 50-distro.preset.in disables it. This image
+# never runs winbindd: sssd is the domain client, and a second one starting at boot with no
+# smb.conf worth the name would be a failed unit, which on this distro is a failed boot.
+net-fs/samba                client winbind
 # REQUIRED_USE tiebreak: ngtcp2 wants exactly one crypto backend, and this line appeared
 # alongside samba's net-libs/gnutls. Kept for the first Plasma depgraph rather than guessed
 # at; drop it if "emerge -p @desktop" resolves without it.
@@ -437,3 +449,82 @@ net-firewall/nftables        -python -json -xtables -doc
 >=dev-libs/boost-1.90.0-r2           python
 >=dev-libs/libpwquality-1.4.5-r3     python
 >=sys-boot/grub-2.14-r5              mount
+
+# ---- Active Directory (plan/18) -------------------------------------------------------------
+# Unlike the installer block above, these lines are NOT inert for anyone: @domain is named by
+# every profile (config/profiles/README.md says why), so every one of them applies everywhere.
+# That is the point — §3.2's rule is that profiles must not DIFFER in USE, not that USE never
+# changes. What matters is that all three profiles resolve these identically, and they do.
+#
+# sssd's closure is mostly already in the desktop image — samba, mit-krb5, cifs-utils, talloc,
+# tdb, tevent, keyutils, c-ares, popt, jansson, libunistring, libnl — because
+# kde-apps/kio-extras[samba] dragged the Samba half of it in for smb:// browsing years ago. What
+# is genuinely new is openldap, cyrus-sasl, ding-libs, p11-kit, net-dns/bind and virtual/ldb.
+#
+# systemd:   NOT a default (IUSE has no +systemd) and load-bearing. Without it configure takes
+#            --with-initscript=sysv and sssd ships an OpenRC script and no unit at all, on an
+#            image that has no OpenRC. It also selects journald over syslog for logging.
+# samba:     MANDATORY, and this line was WRONG until a running domain join proved it. It read
+#            "-samba: the flag gates ONLY the PAC responder and GPO support ... the `ad` provider
+#            itself is unconditional". It is not. Upstream's Makefile.am builds the AD provider
+#            inside the samba conditional and nowhere else:
+#
+#                sssdlib_LTLIBRARIES = libsss_ldap.la libsss_krb5.la libsss_proxy.la \
+#                                      libsss_simple.la $(NULL)
+#                if BUILD_SAMBA
+#                sssdlib_LTLIBRARIES += libsss_ipa.la libsss_ad.la
+#                endif
+#
+#            With -samba the daemon, the NSS module, the PAM module, adcli and every assertion
+#            that looked for them all pass, `sssctl config-check` reports zero issues, and the
+#            join itself SUCCEEDS — adcli writes the keytab and the computer account appears in
+#            the directory. sssd then refuses to start with "Unable to load module [ad] with
+#            path [/usr/lib64/sssd/libsss_ad.so]: cannot open shared object file", which is the
+#            id_provider named in a config that validated clean. Nothing before the first real
+#            join can catch that, which is why T-DOM-3 exists.
+#
+#            The cost is the one the old comment feared, and it is already paid: net-fs/samba is
+#            in all three locks, and its `winbind` flag (see the samba block above) adds no new
+#            package — winbind builds from samba's own tree. USE=samba also turns on
+#            --enable-pac-responder and builds libsss_ipa.so; the responder's units are
+#            preset-disabled with the rest, and the FreeIPA provider is dead weight measured in
+#            kilobytes. access_provider=permit still means no GPO is ever evaluated: the flag is
+#            here for the provider module, not for what the old comment thought it bought.
+# -python:   sssd's python bindings back sss_obfuscate and nothing else here, and with USE=systemd
+#            they would additionally pull dev-python/python-systemd. plan/06's interpreter policy
+#            is unsettled; an obfuscation helper for a password we do not store must not settle
+#            it.
+# -nls:      message catalogs for a daemon whose output goes to the journal.
+# -nfsv4:    the idmapd plugin needs net-fs/nfs-utils, and this image has no NFS client.
+# -openid -passkey: dev-libs/jose + net-misc/curl, and dev-libs/libfido2, for authentication
+#            methods an AD domain does not offer.
+sys-auth/sssd                systemd samba -python -nls -nfsv4 -openid -passkey
+# The PAM stack itself, generated by the ebuild rather than hand-written into config/rootfs —
+# which is what keeps this image's property of shipping no /etc/pam.d of its own, and what makes
+# a pambase upgrade carry its own correctness. The flag adds pam_sss.so to the generated
+# system-auth; RDEPEND sys-auth/sssd comes with it, so this line alone would pull the stack in.
+# @domain lists sssd anyway, because a set should state intent and not rely on a USE flag
+# somewhere else to deliver it.
+sys-auth/pambase             sssd
+# sasl:         libldap's GSSAPI/SASL bind, which is how both adcli and sssd authenticate to a
+#               domain controller. Not a default.
+# experimental: -DLDAP_CONNECTIONLESS in libldap. Demanded outright by sssd's DEPEND
+#               (net-nds/openldap-2.4.30:=[sasl,experimental]); it is a client-side flag despite
+#               living in the ebuild's IUSE_DAEMON.
+# minimal:      no slapd. Nothing here is an LDAP *server*, and REQUIRED_USE permits minimal
+#               alongside both flags above.
+net-nds/openldap             sasl experimental minimal
+# The GSSAPI mechanism plugin openldap's SASL bind actually calls. Not a default either.
+dev-libs/cyrus-sasl          kerberos
+# net-dns/bind is an UNCONDITIONAL DEPEND of sys-auth/sssd in every version in the pinned tree,
+# with no USE guard — sssd execs `nsupdate` to register the machine's own A record in AD DNS
+# (dyndns_update). Shipping a DNS *server* on a minimal desktop is a debt, not a decision; it is
+# recorded as one in plan/18 §6.3 and trimming it to nsupdate plus libraries is Phase E. gssapi
+# is the flag the dependency demands; the rest is turned off so the debt is as small as possible.
+# Nothing enables it: the ebuild installs an OpenRC init script only, so `systemctl preset-all`
+# has no unit to find.
+net-dns/bind                 gssapi -dnstap -doh -geoip -idn -jemalloc -lmdb -xml
+# -netapi is the one that matters: it would add net-fs/samba as a DIRECT dependency of the join
+# tool, for an offline-join mode (djoin blobs from a Windows admin) that this design does not
+# use. adcli's own path is LDAP + GSSAPI, which openldap and mit-krb5 already provide.
+app-crypt/adcli              -netapi

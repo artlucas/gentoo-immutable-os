@@ -181,6 +181,16 @@ installed system also boots — so it shadows `passwd`/`shadow`/`group` from the
 upper, and adds a `20-no-autologin.conf` drop-in that sorts after the baked-in one. User-created accounts at runtime land in the `/etc` overlay
 upper and `/var/home` — they survive updates.
 
+There is a third kind of identity as of [plan/18](18-active-directory.md): accounts that are not
+in `/etc/passwd` at all. Every profile ships `sys-auth/sssd`, `/etc/nsswitch.conf` names the `sss`
+module and the PAM stacks carry `pam_sss` — so an image can be joined to an Active Directory
+domain, after which any account in that domain can log in. The same overlay mechanism carries it:
+joining writes `/etc/sssd/sssd.conf`, a Kerberos keytab and one enablement symlink into the upper,
+and because none of those files exists in the lower, nothing shipped stops receiving vendor
+updates. Unjoined, the client is inert — `sssd.service` is disabled in the preset *and* carries
+`ConditionPathExists=/etc/sssd/sssd.conf`, because on this system a unit that starts and fails
+takes `boot-complete.target` with it and eventually triggers the rollback described above.
+
 ## What can go wrong (designed-for failure modes)
 
 | Failure | Behavior |

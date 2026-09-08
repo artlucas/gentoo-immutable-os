@@ -17,6 +17,7 @@ profile. Designed in [plan/16](../../plan/16-installer.md).
 | `system/installer-autostart.desktop.in` | `/etc/xdg/autostart/<id>-installer.desktop` | opens the installer on login |
 | `system/kscreenlockerrc.in` | `/etc/xdg/kscreenlockerrc` | drops the lock screen's password prompt — the live account's password is public |
 | `system/lookandfeel/contents/layouts/**` | `/usr/share/plasma/look-and-feel/<id>/contents/layouts/` | the Plasma layout script that pins Calamares — and nothing else — to the task manager, added to the image's own Look-and-Feel package |
+| `system/realm.in` | `/usr/bin/realm` (**mode 0755**) | the Active Directory front door — see below |
 
 `branding/installer/logo.png` is **not in this directory**. It is composed at build time by
 `config/branding/make-splash-assets.py --logo`, from the same `build_block()` that produces the
@@ -155,3 +156,46 @@ an installed system with no preinstalled apps until someone installs them.
   the stick's, because those strings are the system's identity and are deliberately not
   profile-suffixed. With both attached, `/dev/disk/by-partlabel/` resolves each name to whichever
   udev saw first. The `finished` page says so, and leaves the reboot box unticked.
+
+## `realm`, and why a file with that name is here
+
+The users page offers domain join because `modules/users.conf.in` sets `allowActiveDirectory:
+true`. Calamares' implementation of that checkbox is, in full, one command
+(`src/modules/users/ActiveDirectoryJob.cpp` in 3.4.2):
+
+```c++
+Calamares::System::instance()->runCommand(
+    RunLocation::RunInHost,
+    { "realm", "join", m_domain, "-U", m_adminLogin, "--install=" + installPath, "--verbose" },
+    QString(), m_adminPassword, std::chrono::seconds( 30 ) );
+```
+
+`realm` is realmd, which **is not in the Gentoo tree at all** — and realmd is itself only a d-bus
+wrapper around `adcli` plus sssd configuration generation, which is precisely what
+`/usr/bin/<id>-domain` already is ([plan/18](../../plan/18-active-directory.md) §4). So rather
+than patch Calamares or write a C++ view module, `system/realm.in` answers to the name it calls
+and forwards. One join implementation, two callers: this shim on the medium, and the CLI on the
+installed system.
+
+Four things about that snippet are constraints rather than trivia, and all four are in the
+shim's comments:
+
+- **`RunInHost`.** The command runs on the live medium, not in the chroot, with `--install=`
+  naming the mounted target. Every write therefore has to go through `--root`, and the medium
+  itself is never enrolled in anything.
+- **30 seconds, hard.** The shim does no work that is not the join, and every preflight check is
+  bounded with `timeout` rather than left to a DNS resolver's own patience.
+- **That argv is a contract.** `tests/test-domain.sh` drives the rendered shim with those exact
+  tokens, so a Calamares bump that changes them fails the offline suite instead of failing a
+  stranger's install.
+- **The exit code is a loaded gun.** A non-zero exit becomes `JobResult::error` and stops the
+  installation — and this job runs *before* `CreateUserJob`, `removeuser` and `imageidentity`, so
+  stopping there leaves a fully deployed disk with no chosen account, the live user still in
+  `/etc/passwd`, and autologin still on. The shim verifies the domain first, writes nothing if
+  that fails, records the attempt in the target for `<id>-domain status` to report, and **exits 0
+  either way**. See [plan/18](../../plan/18-active-directory.md) §7.4.
+
+`imagedeploy` has one job that belongs to this feature too: it writes `/etc/hostname` from global
+storage as soon as the /etc overlay is mounted. `ActiveDirectoryJob` is appended *before*
+`SetHostNameJob` (`Config.cpp:1088` vs `:1109`), so without that the computer account would be
+created in AD under the live medium's own hostname — silently, and permanently.

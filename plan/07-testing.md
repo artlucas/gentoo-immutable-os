@@ -57,6 +57,75 @@ Second-boot check: boot the same disk again and assert the var partition was gro
 (`IMAGE-TEST` line reports `var_size`) and machine-id persisted — catches
 first-boot-only bugs.
 
+### A timing budget that does not close, observed once on `console` 2026-09-07
+
+`console` timed out at stage 70 on the second smoke boot with **no marker and no DETAIL lines** —
+a 1467-byte serial log ending at a login prompt. It did not reproduce: the identical image passed
+the same two boots on a re-run, and had passed three times before. So it is a flake, and the
+product was never implicated. The *mechanism* is worth writing down anyway, because it is a gap in
+the harness rather than noise.
+
+The in-guest reporter bounds its settle with `timeout 180 systemctl is-system-running --wait`, and
+its comment states the reason plainly: *"a system that never settles must still produce a report,
+otherwise the harness just times out with no information at all."* But `boot_and_watch` caps the
+whole boot at `TIMEOUT=300` (KVM). Add it up for the case the bound exists to handle:
+
+| | |
+|---|---|
+| boot to the point the unit runs | ~30–60 s |
+| the settle bound, fully spent | 180 s |
+| collection, with its two 15 s polls | up to ~30 s |
+| **total** | **up to ~270 s against a 300 s cap** |
+
+Roughly thirty seconds of margin. On the failed boot the settle plainly ran its full 180 s — the
+agetty banner redrew 191 s after the first one — and whatever the remaining budget was, it was not
+enough. **So the mitigation does not achieve its stated purpose:** precisely when a unit hangs in
+`activating`, the report that would name it is the thing that gets killed, and the operator is left
+with the bare timeout the bound was written to avoid.
+
+Two cheap changes would close it, neither applied here — they would desync the three images just
+built from the tree, and this is harness work, not Active Directory:
+
+1. **Lower the in-guest bound** to ~90 s. Nothing healthy takes that long, and it buys back margin
+   for exactly the unhealthy case.
+2. **Report the settle outcome.** A `settled=yes|no` field, and on `no` the output of
+   `systemctl list-jobs` on `IMAGE-TEST-DETAIL` lines. `dump_failed` lists only *failed* units, so
+   a unit stuck in `activating` — the thing that causes this — is currently invisible to it.
+
+The general point is the one [plan/18](18-active-directory.md) §8 already draws from three
+separate incidents in one afternoon: a harness that reports the wrong cause costs more than one
+that fails outright, and a bound whose timeout does not fit the budget it lives inside is a
+report that was never going to arrive.
+
+## T-DOM — Active Directory (stage 70, `build.sh --with-test-dc`)
+
+Added by [plan/18](18-active-directory.md). Skipped, never failed, when no domain controller is
+present — an offline build and a plain `build.sh` both stay green.
+
+**The fixture.** `tests/ad-dc/` builds a container *from the pinned builder image*, emerges
+`net-fs/samba[addc]` in it and provisions a disposable `IMMOS.TEST` domain with one test user and
+one group. It is a separate image on purpose: `addc` requires samba to build its own Heimdal, and
+that USE must never be visible to the resolution that produces the product (`builder/Dockerfile`
+explains why a package's flags on the builder's `/` leak into the target's REQUIRED_USE).
+
+**How the guest reaches it, which was the part worth proving.** Three hops —
+`guest --(slirp)--> stage-70 container --(docker bridge)--> DC`. QEMU's user networking NATs
+outbound TCP/UDP, so LDAP, Kerberos and kpasswd need nothing. DNS is the hop that does, because AD
+is discovered through SRV records: QEMU answers the guest's DNS itself and relays to whatever the
+*container's* `/etc/resolv.conf` names. So the whole mechanism is one docker flag — `build.sh`
+runs stage 70 with `--dns <dc>` — and **the guest is the shipped image, unmodified**. No seeded
+network profile, no special build, nothing to keep in sync.
+
+| ID | Asserts |
+|---|---|
+| **T-DOM-1** | Install from the medium with the AD box ticked: the DC holds a computer account under the **typed** hostname (plan/18 §7.3), and the target's `/var` overlay carries `sssd.conf`, the keytab and the enablement symlink. Blocked on the same unattended-Calamares work as plan/16 §10 q5; manual until then |
+| **T-DOM-2** | The installed disk boots and a domain user logs in; `live` is gone and autologin is off |
+| **T-DOM-3** | Runtime join on a desktop image: `getent passwd` resolves the domain user with a mapped uid, `kinit` gets a TGT, `su -` authenticates through PAM, `pam_mkhomedir` creates the home. Then `leave`, and the machine is back to what it was |
+| **T-DOM-4** | **The unjoined regression, and the one that runs on every build.** A domain-ready image that has never been joined boots with `failed_units=0`, `sssd=inactive` (not `failed`, which would fail `boot-complete.target` and burn a boot try), and local accounts still resolving through an `nsswitch.conf` that names `sss` |
+
+T-DOM-4 needs no domain controller and is folded into the existing smoke report, so the property
+that matters to every user who will never join a domain is checked on every single build.
+
 ## T2 — Update E2E (stage 70 `--update-test`)
 
 ```

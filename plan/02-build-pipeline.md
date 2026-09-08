@@ -205,6 +205,16 @@ binaries present (full build); VDB at `$ROOT/var/db/pkg` present (pruned later, 
 ### 40-configure
 Turns the raw rootfs into *this* distro.
 **Does (from builder, against `$ROOT`):**
+- **apply every `._cfg????_*` portage deferred under `CONFIG_PROTECT`, before anything else.**
+  Portage never overwrites a protected file; it writes the new version alongside and leaves it
+  for a human with `etc-update`. There is no human here and no local edits — the "old" file is
+  only ever a previous build's vendor copy — so leaving them means the image ships whatever the
+  first build that created each file happened to write. Discovered when `sys-auth/pambase`
+  rebuilt with `USE=sssd`, recorded it in its VDB, installed `pam_sss.so`, and shipped a
+  nine-day-old `/etc/pam.d/system-auth` with no `pam_sss` line in it
+  ([plan/18](18-active-directory.md) §5.3). Ordered before the overlay below so vendor updates
+  replace vendor files and this repo's config then replaces both; stage 40 fails the build if
+  any survive.
 - rsync `config/rootfs/` overlay onto `$ROOT` (os-release rendered from template with
   `DISTRO_*`/`VERSION`; fstab; sysupdate.d + repart.d; systemd units incl. `immos-boot-ok.service`;
   tmpfiles.d for `/var` skeleton; Plasma Login Manager autologin drop-in; Baloo defaults;

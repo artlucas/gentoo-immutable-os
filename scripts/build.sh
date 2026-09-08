@@ -12,6 +12,8 @@
 #   ./scripts/build.sh --vendor            # also build the offline release archive (stage 90)
 #   ./scripts/build.sh --offline --vendor-dir out/vendor/immos-0.3.0
 #                                          # rebuild from a vendored archive, no network at all
+#   ./scripts/build.sh --with-test-dc      # stand up a throwaway Samba AD domain for
+#                                          # stage 70's domain tests (plan/18)
 #   ./scripts/build.sh --dry-run           # print what would run, execute nothing
 #
 # Runtimes: docker (default), podman, none (run stages directly — Linux host that
@@ -36,6 +38,7 @@ case "$(uname -s)" in MINGW*|MSYS*) export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXC
 usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; }
 
 RUNTIME=auto FROM='' ONLY='' DRY_RUN=0 CLEAN=0 FORCE=0 LIST=0 OFFLINE=0 VENDOR_DIR='' LIST_PROFILES=0
+WITH_TEST_DC=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --from)         FROM="$2"; shift 2 ;;
@@ -56,6 +59,11 @@ while [[ $# -gt 0 ]]; do
     --vendor)       export VENDOR=1; shift ;;
     --vendor-dir)   VENDOR_DIR="$2"; shift 2 ;;
     --offline)      OFFLINE=1; shift ;;
+    # Stands up a throwaway Samba Active Directory domain for stage 70's domain tests
+    # (plan/18 §8 Phase B). Off by default: it costs a container image and a few minutes, and
+    # every other test in the suite is unaffected by its absence — stage 70 skips the domain
+    # tests when it is not there, the way stage 80 skips a live profile.
+    --with-test-dc) WITH_TEST_DC=1; shift ;;
     --dry-run)      DRY_RUN=1; shift ;;
     --runtime)      RUNTIME="$2"; shift 2 ;;
     --list)         LIST=1; shift ;;
@@ -166,8 +174,15 @@ ENV_ARGS=()
 # NB VENDOR_PROFILE is unrelated to BUILD_PROFILE — it is stage 90's vendoring depth (full or
 # not). Three different things in this tree are called "profile"; config/profiles/README.md has
 # the table.
+# RELOCK=1 is here for one operation and it is not optional. Stage 20 asserts one-way that the
+# lock's header hash still matches portage_config_hash(), so ANY edit under config/portage stops
+# every build until the lock is re-resolved — and re-resolving needs stages 20 and 30 to have
+# run, which is the thing that just became impossible. Stage 20 already honours RELOCK=1 as the
+# documented escape (scripts/relock.sh sets it in its own container); it simply had no way to
+# reach a stage through this script. Without it the relock recipe in plan/15 and plan/18 dies on
+# its own first line.
 for v in VERSION_OVERRIDE UPDATE_URL_OVERRIDE UPDATE_VERIFY_OVERRIDE BUILD_PROFILE_OVERRIDE \
-         FORCE_STAGE VENDOR VENDOR_PROFILE ALLOW_UNPINNED; do
+         FORCE_STAGE VENDOR VENDOR_PROFILE ALLOW_UNPINNED RELOCK; do
   [[ -n ${!v:-} ]] && ENV_ARGS+=(-e "$v=${!v}")
 done
 [[ $FORCE == 1 ]] && ENV_ARGS+=(-e FORCE_STAGE=1)
@@ -273,6 +288,30 @@ if [[ ${VENDOR:-0} == 1 && $RUNTIME != none ]]; then
   fi
 fi
 
+# ---- the test domain controller (plan/18 §8 Phase B) ---------------------------------
+# Optional, off by default, and deliberately NOT a stage: it is a fixture stage 70 talks to, not
+# a step in the build. Its whole contribution to the container run is `--dns <dc>`, which is
+# what makes an unmodified guest discover the domain through SRV records — see scripts/lib/ad-dc.sh.
+AD_DC_ARGS=() AD_DC_ENV=()
+if [[ $WITH_TEST_DC == 1 ]]; then
+  [[ $OFFLINE == 1 ]] && die "--with-test-dc needs a network to build its image; it is
+  incompatible with --offline. Domain tests skip cleanly on offline builds by design."
+  [[ $RUNTIME == none ]] && die "--with-test-dc needs a container runtime (it runs the domain
+  controller in one); --runtime none cannot provide it."
+  # shellcheck source=lib/ad-dc.sh
+  source "$SCRIPT_DIR/lib/ad-dc.sh"
+  if [[ $DRY_RUN == 0 ]]; then
+    ad_dc_build "$RUNTIME" "$BUILDER_TAG"
+    ad_dc_up "$RUNTIME"
+    trap 'ad_dc_down "$RUNTIME"' EXIT
+  else
+    log "DRY-RUN: would build $AD_DC_TAG and start $AD_DC_NAME at $AD_DC_IP"
+  fi
+  # Populated either way, so --dry-run shows the docker arguments stage 70 would actually get.
+  mapfile -t AD_DC_ARGS < <(ad_dc_run_args)
+  mapfile -t AD_DC_ENV  < <(ad_dc_env_args)
+fi
+
 # ---- dispatch ------------------------------------------------------------------------
 KVM_ARGS=()
 [[ -e /dev/kvm ]] && KVM_ARGS=(--device /dev/kvm)
@@ -294,11 +333,21 @@ for s in "${STAGES[@]}"; do
     [[ -n $VENDOR_DIR ]] && MOUNT_ARGS+=(-v "$VENDOR_DIR":/vendor:ro)
     NET_ARGS=()
     [[ $OFFLINE == 1 ]] && NET_ARGS=(--network none)
+    # Stage 70 alone joins the test network. Every other stage keeps default networking: a
+    # --dns pointing at a domain controller would break the distfile and binhost fetches that
+    # stages 10, 20 and 30 depend on, and none of them has any business talking to it.
+    STAGE_DC_ARGS=() STAGE_DC_ENV=()
+    if [[ ${#AD_DC_ARGS[@]} -gt 0 && $n == 70 ]]; then
+      STAGE_DC_ARGS=("${AD_DC_ARGS[@]}"); STAGE_DC_ENV=("${AD_DC_ENV[@]}")
+      NET_ARGS=()   # --network none and --network <net> are mutually exclusive
+    fi
     run "$RUNTIME" run --rm --privileged \
       "${KVM_ARGS[@]}" \
       "${NET_ARGS[@]}" \
+      "${STAGE_DC_ARGS[@]}" \
       "${MOUNT_ARGS[@]}" \
       "${ENV_ARGS[@]}" \
+      "${STAGE_DC_ENV[@]}" \
       "$BUILDER_TAG" "/repo/scripts/stages/$s"
   fi || { rc=$?; die "stage $s failed (rc=$rc) — logs in ${LOG_DIR#"$OUT"/}/, resume with --from $n"; }
 done

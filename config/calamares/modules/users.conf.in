@@ -93,7 +93,46 @@ hostname:
     template:        "@DISTRO_ID@"
     forbidden_names: [ localhost ]
 
-allowActiveDirectory: false
+# ---- Active Directory (plan/18) -------------------------------------------------------------
+# Turns on a "Use Active Directory" checkbox on this page which, when ticked, reveals Domain,
+# Domain Administrator, password and IP fields (UsersPage.cpp:301-313). It is worth being precise
+# about what that does and does not do, because both halves are load-bearing here.
+#
+# IT IS ADDITIVE, NOT A CHOICE. Config::createJobs appends an ActiveDirectoryJob and then still
+# runs SetupGroupsJob, CreateUserJob and SetPasswordJob (Config.cpp:1088-1104). So a domain-joined
+# install ALSO gets the local account typed above, and that is the shape this system wants rather
+# than a limitation worked around: the local account owns wheel, sudo and polkit admin, it
+# receives the subuid range rootless podman needs (plan/13), and on a read-only root with no
+# package manager and no rescue shell it is the only way back in when the DC is unreachable. A
+# strict either/or would need a C++ view module — calamares 3.4's Descriptor.h enumerates exactly
+# three module interfaces, QtPlugin, Python (jobs only) and Process, so there is no QML or Python
+# way to draw a page — and it would buy a worse system.
+#
+# THE JOB IS ONE COMMAND, run on the HOST with the password on stdin and a 30-second timeout:
+#     realm join <domain> -U <admin> --install=<rootMountPoint>/ --verbose
+# realmd is not in the Gentoo tree, so the installer profile ships /usr/bin/realm as a shim onto
+# @DISTRO_ID@-domain (config/calamares/system/realm.in). Stage 40 asserts that file exists
+# whenever this key is true, because the failure without it is "Failed to join realm: " with no
+# output — the install stops on a command that is not there.
+#
+# THE JOB'S FAILURE IS NOT ALLOWED TO BE THE INSTALL'S FAILURE, and the shim is where that is
+# enforced. ActiveDirectoryJob turns a non-zero exit into JobResult::error, which stops the
+# installation — and this job runs BEFORE CreateUserJob in the list above, and before `removeuser`
+# and `imageidentity` in settings.conf. An unreachable domain controller would therefore stop the
+# install on a disk that already carries the whole OS and a bootloader, with no account the
+# operator chose, @LIVE_USER@ still in /etc/passwd and autologin still on. So the shim verifies
+# the domain first, writes nothing if that fails, records the attempt where
+# `@DISTRO_ID@-domain status` reports it, and exits 0 either way. The operator gets a working
+# machine with their local administrator and a one-command fix.
+#
+# What this page does NOT offer, and where it goes if it is ever wanted: an OU for the computer
+# account (it lands in CN=Computers), and a domain group to grant admin rights to. Both are
+# already options on @DISTRO_ID@-domain; only the page cannot express them.
+#
+# The IP field is optional and does something small and specific: Calamares appends
+# "<ip> <domain>" to the target's /etc/hosts before running the join. Useful when the DC is
+# reachable but DNS is not yet.
+allowActiveDirectory: true
 
 presets:
     fullName:

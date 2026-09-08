@@ -7,8 +7,33 @@ set -u
 ID="@DISTRO_ID@"
 MARKER="IMAGE-TEST:"
 CONSOLE=/dev/console
+# Deliberately does NOT contain $MARKER: boot_and_watch stops waiting at the first line matching
+# the marker, and these are printed BEFORE the summary.
+FIELDMARK="IMAGE-FIELD:"
 
-report() { echo "$MARKER $*" > "$CONSOLE"; }
+# One short line per field, then the one-line human summary.
+#
+# The summary used to be the only output and the only thing stage 70 parsed, and that was a bug
+# waiting for a long enough report. /dev/console here is shared with agetty, which redraws its
+# prompt, so a long line comes back from the guest FOLDED — with the token at the fold repeated
+# on both sides of it:
+#
+#     ... left=ok sssd_after=inactive
+#     inactive local_user=yes conf_gone=yes
+#
+# field() reads the line it matched, so every field past the fold silently reads as empty. One
+# extra field in the domain report was enough to trigger it, and the build then failed claiming
+# /etc/sssd/sssd.conf had survived a `leave` which had in fact removed it — a green-to-red flip
+# with no defect behind it. A test harness that reports the wrong cause is worse than one that
+# fails outright, so the fields go out on lines too short to fold, and the summary stays for
+# boot_and_watch and for whoever reads the log.
+report() {
+    local all="$*" kv
+    for kv in $all; do
+        [[ $kv == *=* ]] && printf '%s %s\n' "$FIELDMARK" "$kv" > "$CONSOLE"
+    done
+    printf '%s %s\n' "$MARKER" "$all" > "$CONSOLE"
+}
 
 mode="smoke"
 if [[ -n ${CREDENTIALS_DIRECTORY:-} && -f $CREDENTIALS_DIRECTORY/$ID.test ]]; then
@@ -24,6 +49,7 @@ collect_and_report() {
     . /etc/os-release
     local etc_fs graphical failed failed_list machine_id var_size flatpak_remotes
     local resolved dns podman_rootless runuser_bin sound live_uid autologin
+    local sssd nss_local domain
     local _as _an _ac
     etc_fs="$(findmnt -no FSTYPE /etc 2>/dev/null || echo none)"
     graphical="$(systemctl is-active graphical.target >/dev/null 2>&1 && echo yes || echo no)"
@@ -162,10 +188,38 @@ collect_and_report() {
             sleep 1
         done
     fi
+    # ---- Active Directory readiness (plan/18) ------------------------------------------
+    # The image ships the AD client on EVERY profile and is almost never joined, so the field
+    # that matters most here is the boring one: sssd must be INACTIVE, and everything else must
+    # be unaffected by its presence.
+    #
+    # "inactive" and "failed" are very different answers on this system. sssd exits non-zero
+    # with no /etc/sssd/sssd.conf, and systemd-boot-check-no-failures gates boot-complete.target
+    # — so a started-and-failed sssd is a failed boot, three of which roll the machine back to
+    # the previous image. failed_units above would catch it, but as an anonymous count; this
+    # names it. "conditional" is the healthy unjoined state: ConditionPathExists said no.
+    if ! systemctl list-unit-files sssd.service >/dev/null 2>&1; then
+        sssd=absent
+    elif systemctl is-failed sssd.service >/dev/null 2>&1; then
+        sssd=failed
+    elif systemctl is-active sssd.service >/dev/null 2>&1; then
+        sssd=active
+    else
+        sssd=inactive
+    fi
+    domain="$( [[ -f /var/lib/$ID/domain.json ]] && echo joined || echo none )"
+    # The regression this exists to catch, and it is the one a joined-machine test would never
+    # see: /etc/nsswitch.conf names the sss module on the passwd and group lines, and PAM's
+    # system-auth carries pam_sss. If either misbehaves when sssd is NOT running — nss_sss
+    # blocking on a socket nobody is listening to, pam_sss returning something other than
+    # "unavailable" — then adding domain support broke local login on every machine that never
+    # wanted it. Resolving the local live user through nss is the cheapest true test of that.
+    nss_local="$(getent passwd '@LIVE_USER@' >/dev/null 2>&1 && echo yes || echo no)"
     report "ok version=${IMAGE_VERSION:-unknown} etc_overlay=$etc_fs graphical=$graphical" \
            "failed_units=$failed machine_id=$machine_id var_size=$var_size" \
            "flatpak_remotes=$flatpak_remotes resolved=$resolved dns=$dns" \
            "podman_rootless=$podman_rootless sound=$sound autologin=$autologin" \
+           "sssd=$sssd domain=$domain nss_local=$nss_local" \
            "failed_list=$failed_list phase=$1"
     # Same split as podman below: the marker line stays one parseable line, the reason goes on
     # DETAIL lines while the guest still exists to say it. "sound=no" alone cannot distinguish
@@ -241,6 +295,162 @@ update)
         collect_and_report post-update
         systemctl poweroff
     fi
+    ;;
+domain)
+    # T-DOM-3 (plan/18 §9): join the throwaway domain stage 70 stood up, then prove the three
+    # things a domain member has to be able to do. Runs against the SHIPPED image, unmodified —
+    # the only thing the harness injects is this credential and a --dns on the container, so
+    # nothing here is testing a specially-prepared guest.
+    spec=""
+    if [[ -n ${CREDENTIALS_DIRECTORY:-} && -f $CREDENTIALS_DIRECTORY/$ID.domain ]]; then
+        spec="$(cat "$CREDENTIALS_DIRECTORY/$ID.domain")"
+    fi
+    ad_domain=""; ad_user=""; ad_password=""
+    IFS=, read -ra _kv <<< "$spec"
+    for _p in "${_kv[@]}"; do
+        case "$_p" in
+            domain=*)   ad_domain="${_p#domain=}" ;;
+            user=*)     ad_user="${_p#user=}" ;;
+            password=*) ad_password="${_p#password=}" ;;
+            testuser=*) ad_testuser="${_p#testuser=}" ;;
+            testpassword=*) ad_testpassword="${_p#testpassword=}" ;;
+        esac
+    done
+    if [[ -z $ad_domain || -z $ad_user ]]; then
+        report "fail reason=no-domain-credential spec=${spec:-empty}"
+        systemctl poweroff
+        exit 0
+    fi
+
+    # The join itself. --password-stdin rather than an argument, so the password never appears
+    # in the process table of a machine the harness is about to read the console of.
+    if printf '%s\n' "$ad_password" | "$ID-domain" join \
+            --domain "$ad_domain" --user "$ad_user" --password-stdin \
+            > /tmp/join.log 2>&1; then
+        join=ok
+    else
+        join=fail
+        sed "s/^/$MARKER-DETAIL join: /" /tmp/join.log > "$CONSOLE"
+        # The join log stops at "Job for sssd.service failed ... see systemctl status", and by
+        # the time anyone reads the serial log this guest no longer exists. So say WHY here,
+        # while it does. sssctl config-check first: a rejected sssd.conf is the likeliest cause
+        # and it names the offending line, which the unit's own status never does.
+        { echo "--- sssctl config-check"; sssctl config-check 2>&1
+          echo "--- systemctl status sssd"; systemctl status --no-pager --lines=20 sssd.service 2>&1
+          echo "--- journalctl -u sssd"; journalctl --no-pager -n 40 -u sssd.service 2>&1
+          echo "--- sssd.conf"; cat /etc/sssd/sssd.conf 2>&1
+        } | sed "s/^/$MARKER-DETAIL sssd: /" > "$CONSOLE"
+    fi
+
+    # Give sssd a moment to build its cache and open the NSS socket. `sssctl domain-status`
+    # returning "Online" is the honest readiness signal; the sleep is only a floor.
+    for _i in 1 2 3 4 5 6 7 8 9 10; do
+        [[ -S /var/lib/sss/pipes/nss ]] && break
+        sleep 2
+    done
+
+    # 1. The domain user resolves through nss. This is nss_sss plus sssd's id mapping plus the
+    #    LDAP bind, in one question.
+    ad_testuser="${ad_testuser:-testuser}"
+    id_ok="$(getent passwd "$ad_testuser" >/dev/null 2>&1 && echo yes || echo no)"
+    ad_uid="$(id -u "$ad_testuser" 2>/dev/null || echo none)"
+    ad_home="$(getent passwd "$ad_testuser" 2>/dev/null | cut -d: -f6)"
+
+    # 2. Kerberos works: a TGT for the test account against the real KDC.
+    if [[ -n ${ad_testpassword:-} ]]; then
+        kinit_ok="$(printf '%s\n' "$ad_testpassword" \
+            | kinit "$ad_testuser@${ad_domain^^}" >/tmp/kinit.log 2>&1 \
+            && echo yes || echo no)"
+        [[ $kinit_ok == no ]] && sed "s/^/$MARKER-DETAIL kinit: /" /tmp/kinit.log > "$CONSOLE"
+        kdestroy >/dev/null 2>&1 || true
+    else
+        kinit_ok=na
+    fi
+
+    # 3. PAM authenticates the domain user. This proves pam_sss on the auth stack, and NOTHING
+    #    about the home directory — see step 4, which is a correction to what this comment used
+    #    to claim. `su -` gives a login SHELL, but the PAM SERVICE is still su/su-l, and on this
+    #    image su-l includes su includes system-auth. It never reaches system-login.
+    #
+    #    Run under `script`, and that is not decoration. This script is a systemd unit, so it
+    #    has no controlling terminal, and PAM's conversation function opens /dev/tty to read a
+    #    password — su fails with "must be run from a terminal" before it ever consults pam_sss,
+    #    which would look exactly like an authentication failure. `script` allocates a pty and
+    #    passes our stdin through to it. util-linux ships it and @base has util-linux in every
+    #    profile, so the fallback below is a diagnosis, not a supported path.
+    if [[ -z ${ad_testpassword:-} ]]; then
+        pam_ok=na
+    elif command -v script >/dev/null 2>&1; then
+        printf '%s\n' "$ad_testpassword" \
+            | script -qec "su - $ad_testuser -c true" /dev/null >/tmp/su.log 2>&1 \
+            && pam_ok=yes || pam_ok=no
+        # `script` allocates a pty and echoes what it is fed, so /tmp/su.log contains the
+        # password verbatim. Redact it before it reaches a console log that gets pasted around.
+        [[ $pam_ok == no ]] && sed -e "s/${ad_testpassword}/<redacted>/g" \
+            -e "s/^/$MARKER-DETAIL su: /" /tmp/su.log > "$CONSOLE"
+    else
+        pam_ok=no-script
+        # Written to the console directly, NOT through report(): report() prefixes $MARKER, and
+        # a second marker line would end boot_and_watch's wait before the real one is printed.
+        echo "$MARKER-DETAIL su: script(1) is missing, so PAM could not be exercised" > "$CONSOLE"
+    fi
+    # 4. A REAL console login, which is the only way to exercise the stack that carries
+    #    pam_mkhomedir. The greeter (plasmalogin), the console (login -> system-local-login) and
+    #    sshd (system-remote-login) all substack system-login; su does not, so step 3 cannot
+    #    stand in for this. Stage 40 appends pam_mkhomedir to system-login precisely because that
+    #    is the set of paths a human logs in through, and this step is what proves the placement
+    #    reaches them.
+    #
+    #    Fed with delays around EVERY line, deliberately, including before the first: util-linux's
+    #    login calls tcsetattr(TCSAFLUSH) both at startup and before reading the password, and
+    #    that DISCARDS anything already buffered on the pty. Without the leading sleep the
+    #    username is flushed before login prints its prompt, the password is then read as the
+    #    username, and the transcript reads
+    #
+    #        login: <password>
+    #        Password: exit
+    #        Login incorrect
+    #
+    #    which looks exactly like a rejected credential and is not one.
+    login_ok=na
+    rm -f /tmp/loginproof
+    if [[ -n ${ad_testpassword:-} ]] && command -v script >/dev/null 2>&1 \
+       && command -v login >/dev/null 2>&1; then
+        {   sleep 3
+            printf '%s\n' "$ad_testuser";     sleep 3
+            printf '%s\n' "$ad_testpassword"; sleep 3
+            printf 'id -u > /tmp/loginproof 2>/dev/null\n'; sleep 2
+            printf 'exit\n'
+        } | script -qec "login" /dev/null >/tmp/login.log 2>&1 || true
+        if [[ -s /tmp/loginproof ]] && [[ $(cat /tmp/loginproof) == "$ad_uid" ]]; then
+            login_ok=yes
+        else
+            login_ok=no
+            sed -e "s/${ad_testpassword}/<redacted>/g" \
+                -e "s/^/$MARKER-DETAIL login: /" /tmp/login.log > "$CONSOLE"
+        fi
+    fi
+    home_ok="$( [[ -n $ad_home && -d $ad_home ]] && echo yes || echo no )"
+
+    sssd_state="$(systemctl is-active sssd.service 2>/dev/null || echo inactive)"
+    failed_now="$(systemctl --failed --no-legend --plain 2>/dev/null | grep -c . || true)"
+
+    # ...and then leave, and prove the machine goes back to what it was. A join that cannot be
+    # undone is a machine that has to be reinstalled, on an OS whose whole story is that it
+    # cannot be reinstalled selectively. Everything is measured BEFORE the single report below,
+    # because the harness stops watching the serial log at the first marker line — two reports
+    # would mean the first one is never read.
+    "$ID-domain" leave >/tmp/leave.log 2>&1 && left=ok || left=fail
+    [[ $left == fail ]] && sed "s/^/$MARKER-DETAIL leave: /" /tmp/leave.log > "$CONSOLE"
+
+    report "ok phase=domain join=$join domain_user=$id_ok domain_uid=$ad_uid" \
+           "kinit=$kinit_ok pam=$pam_ok login=$login_ok home=$home_ok" \
+           "sssd=$sssd_state failed_units=$failed_now" \
+           "left=$left sssd_after=$(systemctl is-active sssd.service 2>/dev/null || echo inactive)" \
+           "local_user=$(getent passwd '@LIVE_USER@' >/dev/null 2>&1 && echo yes || echo no)" \
+           "conf_gone=$( [[ -e /etc/sssd/sssd.conf ]] && echo no || echo yes )"
+    dump_failed
+    systemctl poweroff
     ;;
 *)
     report "fail reason=unknown-mode mode=$mode"

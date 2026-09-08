@@ -21,6 +21,41 @@ VERIFY="$([[ $UPDATE_VERIFY == 1 ]] && echo yes || echo no)"
 SPLASH_STATUS_LEFT="$(printf '%s · V%s · AMD64' "$UPDATE_CHANNEL" "$VERSION" | tr '[:lower:]' '[:upper:]')"
 export DISTRO_ID DISTRO_NAME VERSION HOME_URL UPDATE_URL LIVE_USER VERIFY FLATPAK_PREINSTALL
 export UPDATE_CHANNEL SPLASH_STATUS_LEFT DISTROBOX_DEFAULT_IMAGE
+# ---- CONFIG_PROTECT: apply what the merge deferred, BEFORE our overlay -----------------------
+# Portage does not overwrite a file under CONFIG_PROTECT (/etc, among others) when a package
+# updates it. It writes the new version alongside as ._cfg0000_<name> and leaves it for
+# etc-update/dispatch-conf — a human, on a running machine, deciding whether to keep local edits.
+#
+# THERE IS NO HUMAN HERE AND THERE ARE NO LOCAL EDITS. Every merge in this pipeline goes into a
+# freshly emerged root with ROOT=$TARGET, so the "old" file is only ever a previous build's
+# vendor copy. Left alone, those updates are silently discarded and the image ships whatever the
+# first build that ever created the file happened to write.
+#
+# That is not hypothetical, and it is how this block came to exist. sys-auth/pambase was rebuilt
+# with USE=sssd for Active Directory support (plan/18): the package merged, its VDB records
+# USE=sssd, pam_sss.so is installed and every package audit passes — and /etc/pam.d/system-auth
+# was still the pam_sss-less version from a build nine days earlier, sitting next to a
+# ._cfg0000_system-auth that had the twelve lines that make domain login work. The symptom would
+# have been "authentication just fails", on a correctly built image, with nothing anywhere to
+# point at a config file that was written and then ignored. Same shape as the cracklib
+# dictionary in section 2 and --all-root in stage 60: a build-time detail with no trace near the
+# symptom.
+#
+# Applied BEFORE install_rootfs_overlay, and the order is the whole design: the vendor's new file
+# replaces the vendor's old one, and then our own config replaces both. Reversing it would let a
+# package update clobber the files this repo ships. Numeric sort so that when several updates
+# have stacked up (._cfg0000_, ._cfg0001_) the newest wins.
+cfg_applied=0
+while IFS= read -r cfg; do
+  [[ -n $cfg ]] || continue
+  dir="$(dirname -- "$cfg")"; base="$(basename -- "$cfg")"
+  real="$dir/${base#._cfg????_}"
+  log "config update: applying ${real#"$TARGET"/} (was deferred by CONFIG_PROTECT)"
+  mv -f -- "$cfg" "$real"
+  cfg_applied=$((cfg_applied + 1))
+done < <(find "$TARGET/etc" -name '._cfg????_*' -print 2>/dev/null | sort)
+(( cfg_applied == 0 )) || log "applied $cfg_applied deferred config update(s)"
+
 install_rootfs_overlay "$REPO/config/rootfs" "$TARGET"
 
 # The overlay ships /etc/distrobox unconditionally (install_rootfs_overlay walks the whole
@@ -279,9 +314,13 @@ if [[ $FLATPAK_PREINSTALL_MODE == build && -n ${FLATPAK_PREINSTALL// /} ]]; then
   if [[ ${OFFLINE:-0} == 1 || -d ${VENDOR_DIR:-}/flatpak/repo ]]; then
     [[ -d ${VENDOR_DIR:-}/flatpak/repo ]] \
       || die "offline build, but the archive has no flatpak/ tree — stage 40 cannot supply apps"
-    log "restoring the archived flatpak tree (offline: install would need the remote summary)"
+    log "restoring the archived flatpak tree (install would need the remote summary)"
     ensure_dir "$TARGET/var/lib/flatpak"
     rsync -aH --delete "$VENDOR_DIR/flatpak/" "$TARGET/var/lib/flatpak/"
+    # The restored tree IS the locked state — the archive was packed from a build that had
+    # already been pinned, so its refs and its deployed directories both carry the locked
+    # commits. The pinning loop below must therefore not run over it; see the note there.
+    FLATPAK_RESTORED=1
   else
     for app in $FLATPAK_PREINSTALL; do
       log "preinstalling flatpak: $app"
@@ -296,8 +335,20 @@ if [[ $FLATPAK_PREINSTALL_MODE == build && -n ${FLATPAK_PREINSTALL// /} ]]; then
   #
   # Runtimes are in the lock too, and they arrive as dependencies rather than being named in
   # FLATPAK_PREINSTALL, so this loop is what pins most of the shipped bytes.
+  #
+  # NOT after a restore, and this is a real failure rather than an optimisation. A restored tree
+  # is already at the locked commits; running the loop over it re-contacts Flathub, and for
+  # EXTENSIONS — the .Locale and GL.default refs, which are most of the shipped bytes — flatpak
+  # re-resolves them against the remote's current summary while updating the runtime they hang
+  # off. The result is that pinning UNDOES the restore: measured 2026-09-07, a tree restored with
+  # org.kde.Platform.Locale at the locked fd8f2b9352c2 came back out of this loop at Flathub's
+  # current 3bd0cc910140, and the readback below then failed the build on a pin the archive had
+  # supplied correctly. The guard used to be `OFFLINE != 1`, which covered the fully-offline
+  # build and missed `--vendor-dir` on its own — the mode that rebuilds a release's Flatpak
+  # state while still emerging packages normally.
   APPS_LOCK="$REPO/config/flatpak/apps.lock"
-  if [[ -f $APPS_LOCK && ${OFFLINE:-0} != 1 ]]; then
+  if [[ -f $APPS_LOCK ]]; then
+   if [[ ${OFFLINE:-0} != 1 && ${FLATPAK_RESTORED:-0} != 1 ]]; then
     while read -r ref commit; do
       [[ -n $ref && $ref != \#* ]] || continue
       chroot_target "$TARGET" \
@@ -305,10 +356,19 @@ if [[ $FLATPAK_PREINSTALL_MODE == build && -n ${FLATPAK_PREINSTALL// /} ]]; then
         || die "could not deploy $ref at $commit.
   Flathub garbage-collects old commits, so a pin that has aged out is the expected cause.
   Re-resolve the flatpak lock:  scripts/relock.sh --flatpak
-  (or rebuild from the vendored archive, which still has the objects)"
+  (or rebuild from the vendored archive, which still has the objects — pass --vendor-dir and
+  stage 40 restores its tree instead of installing)"
     done < <(grep -v '^[[:space:]]*#' "$APPS_LOCK" | sed '/^[[:space:]]*$/d')
+   else
+    log "flatpak: tree restored from the archive; not re-pinning it (see the note above)"
+   fi
 
-    # Read it back. `flatpak update --commit=` on an already-current ref exits 0 and says
+    # Read it back. UNCONDITIONALLY — for the restored tree as much as the installed one.
+    #
+    # This used to sit inside the pinning branch, so the offline/restore path skipped it
+    # entirely while a comment above claimed that path "is verified exactly as the online one is
+    # rather than being taken on trust". It was not: an archive that had been packed wrong, or an
+    # rsync that dropped a ref, would have shipped unnoticed. It is the check either way. `flatpak update --commit=` on an already-current ref exits 0 and says
     # "Nothing to do", which is indistinguishable from success — so ask what is actually
     # deployed rather than trusting that the loop above did anything.
     #
@@ -335,8 +395,6 @@ if [[ $FLATPAK_PREINSTALL_MODE == build && -n ${FLATPAK_PREINSTALL// /} ]]; then
   (see the warnings above). The image would ship different application versions than the lock
   claims, which is the whole failure this lock exists to prevent."
     log "flatpak: $(grep -vc '^[[:space:]]*#' "$APPS_LOCK") refs deployed at their locked commits"
-  elif [[ -f $APPS_LOCK ]]; then
-    log "flatpak: restored from the archive; readback below is the check"
   else
     warn "no config/flatpak/apps.lock — preinstalled Flatpaks are UNPINNED (plan/15 layer 5)"
   fi
@@ -415,6 +473,82 @@ if [[ -x $TARGET/usr/bin/create-cracklib-dict ]]; then
   /usr/lib/cracklib_dict is empty, and libpwquality would pass every password it should reject.
   Is /usr/share/dict/ empty? sys-libs/cracklib installs cracklib-small there."
   log "cracklib dictionary: $CRACKLIB_WORDS words at /usr/lib/cracklib_dict"
+fi
+
+# ...and one more thing the vendor stacks do not do for us. A domain user (plan/18) has no home
+# directory until the first time they log in, and nothing in Gentoo's PAM stacks creates one:
+# sys-auth/pambase has no flag for it, and sys-auth/oddjob — which is what Fedora uses — is not
+# in the tree at all. So the line is ours.
+#
+# It is appended HERE, at build time, and not written at join time on purpose. /etc/pam.d lives
+# in the read-only lower; a join that edited it would copy the whole file up into the /etc
+# overlay and freeze it at this release's content forever, because the overlay has no 3-way
+# merge (plan/01). Appending at build time means every release ships a freshly generated pambase
+# stack with our one line on the end.
+#
+# system-login is the right file rather than system-auth: it is the session stack the console
+# getty (login -> system-local-login), the greeter (plasmalogin, `session substack system-login`)
+# and sshd (system-remote-login) all reach, and `sudo`/`su` — which include system-auth instead —
+# must NOT create home directories. Appending puts it after `-session optional pam_systemd.so`,
+# which is the same position Fedora's `postlogin` occupies.
+#
+# umask=0077 so a domain user's home is not world-readable on a shared machine. Gated on the
+# module existing, but the module ships with sys-libs/pam and @base has that in every profile,
+# so the verify block below turns "absent" into a build failure rather than a silent skip.
+# ...and one more finalizer, for the same reason as the cracklib dictionary: something that can
+# only be checked with the target's own tools, whose absence is invisible until a user hits it.
+#
+# sssd VALIDATES its configuration and refuses to start on an unknown option. Not a warning — the
+# daemon exits, and on a machine that has just been joined the symptom is "the join failed" with
+# the real cause three layers down in `systemctl status`. Two invalid options shipped in the very
+# first version of the generator here and were found only by booting a guest against a live
+# domain controller: `config_file_version`, which sssd 1.x required and 2.x rejects, and
+# `krb5_store_password_if_available`, which was simply invented — the real option is
+# `krb5_store_password_if_offline`. Neither is a typo a human would spot, and both look right.
+#
+# So the generator's output is checked against sssd's own schema at BUILD time, with sssctl from
+# the same package that will read it. `--print-config sssd` renders a representative config
+# without touching anything; the domain name is arbitrary because option NAMES are what is being
+# validated, not reachability.
+if [[ -x $TARGET/usr/sbin/sssctl || -x $TARGET/usr/bin/sssctl ]]; then
+  log "validating the generated sssd.conf against sssd's own schema"
+  ensure_dir "$TARGET/etc/sssd"
+  chroot_target "$TARGET" \
+    "${DISTRO_ID}-domain join --domain validate.invalid --user check --print-config sssd \
+       > /etc/sssd/sssd.conf && chmod 0600 /etc/sssd/sssd.conf" \
+    || die "could not render a sample sssd.conf with ${DISTRO_ID}-domain --print-config"
+  # sssctl reports "Issues identified by validators: 0" for an EMPTY file, so the render has to be
+  # shown to have produced something before its verdict means anything. The `|| die` above covers
+  # a generator that exits non-zero; this covers one that exits 0 and writes nothing, which is the
+  # same shape as the empty-check-passes-vacuously bug this file exists to prevent.
+  [[ -s $TARGET/etc/sssd/sssd.conf ]] \
+    || die "${DISTRO_ID}-domain --print-config sssd rendered an EMPTY file; sssctl would validate
+  it clean and prove nothing"
+  grep -q '^\[domain/' "$TARGET/etc/sssd/sssd.conf" \
+    || die "the rendered sssd.conf has no [domain/...] section — sssctl validates that clean too"
+  SSSD_CHECK="$(chroot_target "$TARGET" "sssctl config-check" 2>&1 || true)"
+  rm -f -- "$TARGET/etc/sssd/sssd.conf"
+  grep -q '^Issues identified by validators: 0' <<<"$SSSD_CHECK" || die \
+"the sssd.conf that ${DISTRO_ID}-domain generates is REJECTED by sssd's own validator:
+
+$SSSD_CHECK
+
+sssd exits rather than warns on an unknown option, so a machine joined with this config would
+report a failed join with the cause buried in systemctl status. Fix the generator in
+config/rootfs/usr/bin/distro-domain.in; the valid option names are in
+/usr/share/sssd/sssd.api.d/ inside the target."
+  log "sssd.conf validates clean"
+fi
+
+PAM_LOGIN="$TARGET/etc/pam.d/system-login"
+if [[ -f $PAM_LOGIN ]] && ! grep -q 'pam_mkhomedir\.so' "$PAM_LOGIN"; then
+  log "adding pam_mkhomedir to the system-login session stack (domain users have no home yet)"
+  {
+    printf '\n'
+    printf '# Added by stage 40 (plan/18): create a home directory on first login. Domain\n'
+    printf '# accounts come from sssd and have no home until they log in once.\n'
+    printf 'session\t\toptional\tpam_mkhomedir.so\tumask=0077 skel=/etc/skel\n'
+  } >> "$PAM_LOGIN"
 fi
 
 target_umount "$TARGET"
@@ -751,6 +885,15 @@ if profile_has_set installer; then
   cal_install "$CAL_SRC/system/installer-autostart.desktop.in" \
               "$TARGET/etc/xdg/autostart/$DISTRO_ID-installer.desktop"
   cal_install "$CAL_SRC/system/kscreenlockerrc.in" "$TARGET/etc/xdg/kscreenlockerrc"
+
+  # The Active Directory front door (plan/18 §7.1). Calamares' stock users module implements
+  # "join a domain" as literally one command — `realm join <domain> -U <user> --install=<root>
+  # --verbose`, on the HOST, with the password on stdin and a 30-second cap — and realmd is not
+  # in the Gentoo tree. This shim answers to that name and forwards to $DISTRO_ID-domain, which
+  # is the same implementation an installed system runs. Executable, unlike everything else
+  # cal_install places, because it is the only one of them that Calamares EXECUTES.
+  cal_install "$CAL_SRC/system/realm.in" "$TARGET/usr/bin/realm"
+  chmod 0755 -- "$TARGET/usr/bin/realm"
 
   # The live session's panel. Same argument one step further out: the medium exists to run one
   # application, so the task manager pins that application and nothing else. Left alone, the
@@ -1469,6 +1612,15 @@ if profile_has_set installer; then
     || die "verify: the installer autostart entry is missing — nothing would launch Calamares"
   [[ -f $TARGET/etc/polkit-1/rules.d/49-$DISTRO_ID-installer.rules ]] \
     || die "verify: the installer polkit rule is missing — pkexec would prompt for a password"
+  # The domain-join path is Calamares calling `realm`, by that exact name, on the host. Without
+  # this file the users page offers the checkbox and the install then fails at the job with
+  # "Failed to join realm: " and no output, because the command does not exist (plan/18 §7.1).
+  [[ -x $TARGET/usr/bin/realm ]] \
+    || die "verify: /usr/bin/realm is missing or not executable, but users.conf enables Active
+  Directory — ticking that box would fail the install at a command that is not there"
+  grep -qx 'allowActiveDirectory: true' "$TARGET/etc/calamares/modules/users.conf" \
+    || die "verify: users.conf does not set allowActiveDirectory: true — the users page would
+  have no domain-join option at all (plan/18 §7.1)"
   grep -qx 'RequirePassword=false' "$TARGET/etc/xdg/kscreenlockerrc" 2>/dev/null \
     || die "verify: /etc/xdg/kscreenlockerrc does not set RequirePassword=false — the live
   session would lock itself after five idle minutes and ask for a password nobody was told to
@@ -1522,7 +1674,7 @@ if ! profile_has_set installer; then
   for leak in etc/calamares "usr/share/calamares/local-modules" \
               "etc/xdg/autostart/$DISTRO_ID-installer.desktop" \
               "etc/polkit-1/rules.d/49-$DISTRO_ID-installer.rules" \
-              "etc/xdg/kscreenlockerrc" \
+              "etc/xdg/kscreenlockerrc" usr/bin/realm \
               "usr/share/plasma/look-and-feel/$DISTRO_ID/contents/layouts" \
               "${PAYLOAD_DIR#/}"; do
     [[ -e $TARGET/$leak ]] \
@@ -1543,11 +1695,115 @@ compgen -G "$TARGET/etc/systemd/system/*.target.wants/systemd-resolved.service" 
   || die "verify: systemd-resolved.service not enabled (preset did not take)"
 # The NSS modules named in nsswitch.conf are glibc dlopen() targets: a missing one is not an
 # error at build time and only shows up as silently degraded lookups on a booted machine.
-for m in resolve systemd myhostname; do
+for m in resolve systemd myhostname sss; do
   compgen -G "$TARGET/usr/lib64/libnss_$m.so"* >/dev/null \
     || compgen -G "$TARGET/usr/lib/libnss_$m.so"* >/dev/null \
     || die "verify: /etc/nsswitch.conf uses the $m module but libnss_$m is not installed"
 done
+
+# Nothing may still be deferred by CONFIG_PROTECT. Section 1 applies them all before the overlay
+# goes down; anything left here is a config update that this build wrote and then shipped without
+# — which is invisible in every package audit, because the PACKAGE is installed and correct.
+LEFTOVER_CFG="$(find "$TARGET/etc" -name '._cfg????_*' -printf '%P\n' 2>/dev/null | tr '\n' ' ')"
+[[ -z ${LEFTOVER_CFG// /} ]] \
+  || die "verify: CONFIG_PROTECT files are still pending in the target: $LEFTOVER_CFG
+  The image would ship the OLD version of each of these while the VDB records the new package.
+  Section 1 should have applied them — did something merge into \$TARGET after it ran?"
+
+# ---- Active Directory readiness (plan/18) ---------------------------------------------------
+# Every profile ships @domain, so every profile is checked. Each of these fails silently at
+# runtime if it is wrong, which is why they are build failures here.
+#
+# The NSS half is already covered by the loop above (nsswitch.conf names sss, and libnss_sss must
+# therefore exist). What is left is PAM, the units, and the one file a join needs to write into.
+grep -qE '^passwd:[[:space:]]+files[[:space:]]+sss[[:space:]]' "$TARGET/etc/nsswitch.conf" \
+  || die "verify: nsswitch.conf passwd line does not name the sss module — domain accounts would
+  not resolve, and the image cannot be fixed after the fact (there is no Portage on the target)"
+# pam_sss comes from sys-auth/pambase[sssd], which GENERATES the stack. Assert the outcome rather
+# than the flag: a pambase upgrade that changed the template is exactly the silent regression
+# this is here to catch.
+for f in system-auth system-login; do
+  [[ -f $TARGET/etc/pam.d/$f ]] || die "verify: /etc/pam.d/$f is missing — is sys-auth/pambase installed?"
+done
+grep -q 'pam_sss\.so' "$TARGET/etc/pam.d/system-auth" \
+  || die "verify: /etc/pam.d/system-auth has no pam_sss.so — sys-auth/pambase was built without
+  USE=sssd, so no domain user could ever authenticate (config/portage/package.use/image)"
+# ...and the converse, which is the one that would lock everyone out of an UNJOINED machine:
+# pam_unix must still be reachable.
+grep -q 'pam_unix\.so' "$TARGET/etc/pam.d/system-auth" \
+  || die "verify: /etc/pam.d/system-auth has no pam_unix.so — local password authentication is
+  gone. An unjoined image would have no way to log in at all."
+grep -q 'pam_mkhomedir\.so' "$TARGET/etc/pam.d/system-login" \
+  || die "verify: pam_mkhomedir is not in the system-login session stack — a domain user would
+  log in to a missing home directory"
+compgen -G "$TARGET/lib64/security/pam_sss.so" >/dev/null \
+  || compgen -G "$TARGET/usr/lib64/security/pam_sss.so" >/dev/null \
+  || die "verify: the PAM stack names pam_sss.so but the module is not installed"
+compgen -G "$TARGET/lib64/security/pam_mkhomedir.so" >/dev/null \
+  || compgen -G "$TARGET/usr/lib64/security/pam_mkhomedir.so" >/dev/null \
+  || die "verify: the PAM stack names pam_mkhomedir.so but the module is not installed"
+# The join tools themselves. Absent, `<id>-domain join` fails on a machine that cannot install
+# them — which is the whole reason @domain is in every profile.
+for b in sssd adcli; do
+  [[ -x $TARGET/usr/sbin/$b || -x $TARGET/usr/bin/$b ]] \
+    || die "verify: $b is in neither /usr/sbin nor /usr/bin — @domain did not deliver the AD
+  client (plan/18 §2), and the target cannot install it later"
+done
+# /etc/krb5.conf ends with `includedir /etc/krb5.conf.d/`, and MIT Kerberos treats a MISSING
+# include directory as a hard error ("Included profile directory could not be read") — which
+# would break kinit on every unjoined machine. The directory exists because config/rootfs ships
+# a README.md in it; assert the pair, since install_rootfs_overlay walks files and an empty
+# directory would simply not arrive.
+grep -q '^includedir[[:space:]]\+/etc/krb5\.conf\.d/' "$TARGET/etc/krb5.conf" \
+  || die "verify: /etc/krb5.conf does not include /etc/krb5.conf.d/"
+[[ -d $TARGET/etc/krb5.conf.d ]] \
+  || die "verify: /etc/krb5.conf names includedir /etc/krb5.conf.d/ but the directory does not
+  exist — MIT Kerberos fails to read any profile at all, so kinit breaks on every machine"
+# THE BOOT-INTEGRITY ONE (plan/18 §5.1). sssd must not be enabled on an image that has never been
+# joined: it exits non-zero with no sssd.conf, systemd-boot-check-no-failures gates
+# boot-complete.target, and a failed boot burns a try and eventually rolls the machine back. The
+# glob catches responder units the preset does not name by hand — and winbind*, which is not a
+# responder at all but arrives with net-fs/samba[winbind] because sys-auth/sssd[samba] demands it.
+# This image installs two domain clients and runs one; a `sssd*` glob alone would have let the
+# other one boot.
+SSSD_ENABLED="$(find "$TARGET/etc/systemd/system" \( -name 'sssd*' -o -name 'winbind*' \) \
+  -printf '%P\n' 2>/dev/null | tr '\n' ' ')"
+[[ -z ${SSSD_ENABLED// /} ]] \
+  || die "verify: domain units are ENABLED in the image: $SSSD_ENABLED
+  On an unjoined machine sssd exits non-zero, which fails boot-complete.target and burns a boot
+  try — three of those roll the machine back to the previous image (plan/18 §5.1). Add a
+  \`disable\` line for each to config/rootfs/usr/lib/systemd/system-preset/50-distro.preset.in."
+[[ -f $TARGET/usr/lib/systemd/system/sssd.service.d/10-conditional.conf ]] \
+  || die "verify: the sssd.service ConditionPathExists drop-in is missing — the second of the two
+  independent defences in plan/18 §5.1"
+[[ -x $TARGET/usr/bin/${DISTRO_ID}-domain ]] \
+  || die "verify: /usr/bin/${DISTRO_ID}-domain is missing or not executable — there would be no
+  way to join a domain on an image that cannot install one"
+# The provider module the generated sssd.conf names. `sssctl config-check` above validates the
+# file's SYNTAX and says nothing about whether the back end it names can be loaded: sssd's
+# providers are dlopen()ed plugins, and the AD one is built only under sys-auth/sssd[samba].
+# Built without it, everything here passed, the domain join SUCCEEDED, and sssd then died on
+# "Unable to load module [ad] ... libsss_ad.so: cannot open shared object file". Checked twice —
+# here, and again after the prune in stage 50.
+# Rendered ONCE into a variable, for the SIGPIPE/pipefail reason documented at the lsinitrd and
+# objdump checks above: `... | sed | head -1` lets head exit first, sed dies of SIGPIPE, and the
+# pipeline reports 141 — which under `set -e` aborts the stage before the die below can say why.
+# --computer-name is pinned, unlike the config-check call in section 2: this runs AFTER
+# target_umount, so /proc is no longer mounted in the chroot and the CLI's hostname fallback
+# (/proc/sys/kernel/hostname, since this image ships no /etc/hostname — the name is derived at
+# first boot) has nothing to read. The name is irrelevant to which provider the config names.
+SSSD_SAMPLE="$(chroot_target "$TARGET" \
+  "${DISTRO_ID}-domain join --domain validate.invalid --user check \
+     --computer-name VERIFYCHECK --print-config sssd" 2>/dev/null || true)"
+SSSD_PROVIDER="$(sed -n 's/^[[:space:]]*id_provider[[:space:]]*=[[:space:]]*\([a-z0-9_]\{1,\}\).*/\1/p' \
+  <<<"$SSSD_SAMPLE" | tail -1)"
+[[ -n $SSSD_PROVIDER ]] || die "verify: could not read id_provider from ${DISTRO_ID}-domain"
+[[ -e $TARGET/usr/lib64/sssd/libsss_$SSSD_PROVIDER.so \
+   || -e $TARGET/usr/lib/sssd/libsss_$SSSD_PROVIDER.so ]] \
+  || die "verify: sssd.conf says id_provider = $SSSD_PROVIDER but libsss_$SSSD_PROVIDER.so is not
+  installed. sssd dlopen()s that module by name and exits when it is missing — after a join that
+  otherwise succeeds. The AD provider is built ONLY with sys-auth/sssd[samba]; check that flag in
+  config/portage/package.use/image."
 log "configure complete; UKI at $UKI_DIR/$UKI_NAME"
 # The three hardware lists are stage-40 inputs now, not just stage-50 ones: section 2c prunes
 # firmware and microcode before dracut, and the omit list decides what goes into the initrd. A
