@@ -344,6 +344,32 @@ def run():
             mkdir=False,
         )
 
+        # ---- 4b. the hostname, EARLY, and this is not where it belongs ----------------------
+        # It is here because of an ordering fact in Calamares' users module that has no other
+        # answer available to us. Config::createJobs appends ActiveDirectoryJob at :1088 and
+        # SetHostNameJob at :1109 — so a domain join runs BEFORE the hostname is written. At that
+        # moment the target's /etc/hostname is still the image's, and this live medium's own
+        # hostname is "<id>-<machine-id prefix>" from <id>-hostname-init.service. The computer
+        # account would be created in Active Directory under that name, silently, and the machine
+        # would answer to a different one for the rest of its life (plan/18 §7.3).
+        #
+        # Config::setHostName publishes the user's choice to GlobalStorage as they type it on the
+        # page (Config.cpp:278), and this module runs in the exec phase, after every page. So the
+        # value is available here, an hour of wall-clock before the job that needs it.
+        # SetHostNameJob writes the same string again later, which makes this a harmless
+        # duplicate rather than a conflict.
+        #
+        # Written after the overlay mount above, so it lands in the upper on /var like every
+        # other identity file — not into the read-only lower, where it could not go anyway.
+        hostname = libcalamares.globalstorage.value("hostname")
+        if hostname:
+            with open(os.path.join(etc, "hostname"), "w") as f:
+                f.write(hostname + "\n")
+            debug("wrote /etc/hostname early for the AD join: {}".format(hostname))
+        else:
+            warning("no hostname in global storage; an AD join would name the computer "
+                    "account after the live medium")
+
         # ---- 5. the ESP and the API filesystems ---------------------------------------------
         # /efi, matching config/rootfs/etc/fstab. imagebootloader writes into it next.
         mount(parts["esp"]["device"], os.path.join(root_mount_point, "efi"), "vfat", "umask=0077")

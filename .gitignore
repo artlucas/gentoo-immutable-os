@@ -10,3 +10,7 @@ config/keys/*.asc
 .claude/worktrees/
 .claude/settings.local.json
 .claude/RESUME.md
+
+# Obsidian's vault state for plan/. Editor config, not project content: workspace.json alone
+# records which panes were open and changes on every scroll.
+plan/.obsidian/

@@ -4,12 +4,12 @@
 # SNAPSHOT_SHA256: c61294000825031e58a38f60fadb603423c61430b841d73b87705f789d83944b
 # SNAPSHOT_DATE: 20260820
 # PROFILE: default/linux/amd64/23.0/desktop/plasma/systemd
-# PORTAGE_CONFIG_HASH: 63536e8dea9f3f4a8ae2f9df6fe0b48b64ab6eb134531e9dc902bc8f335d66c3
+# PORTAGE_CONFIG_HASH: 81ac47bda2323af92a5520a28dc168ba051f00f5327baa0cc0f61818d794c773
 # INCLUDE_CJK_FONTS: 1
 # INCLUDE_PRINTING: 1
 # INCLUDE_DISTROBOX: 1
 # BUILD_PROFILE: console
-# PROFILE_SETS: base hardware
+# PROFILE_SETS: base hardware domain
 #
 =acct-group/adm-0-r3
 =acct-group/audio-0-r3
@@ -21,20 +21,25 @@
 =acct-group/flatpak-0-r2
 =acct-group/floppy-0-r1
 =acct-group/input-0-r3
+=acct-group/jobserver-0
 =acct-group/kmem-0-r3
 =acct-group/kvm-0-r3
 =acct-group/lp-0-r3
 =acct-group/lpadmin-0-r3
+=acct-group/mail-0-r3
 =acct-group/messagebus-0-r3
+=acct-group/named-0-r3
 =acct-group/nobody-0-r2
 =acct-group/pipewire-0-r2
 =acct-group/plugdev-0-r3
 =acct-group/polkitd-0-r3
+=acct-group/portage-0-r2
 =acct-group/render-0-r3
 =acct-group/root-0-r2
 =acct-group/sgx-0-r2
 =acct-group/shadow-0
 =acct-group/sshd-0-r3
+=acct-group/sssd-0
 =acct-group/systemd-coredump-0-r3
 =acct-group/systemd-journal-0-r3
 =acct-group/systemd-journal-remote-0-r3
@@ -50,11 +55,16 @@
 =acct-group/video-0-r3
 =acct-group/wheel-0-r3
 =acct-user/flatpak-0-r2
+=acct-user/mail-0-r3
 =acct-user/messagebus-0-r3
+=acct-user/named-0-r3
 =acct-user/nobody-0-r2
 =acct-user/polkitd-0-r3
+=acct-user/portage-0-r4
+=acct-user/postmaster-0-r3
 =acct-user/root-0-r3
 =acct-user/sshd-0-r3
+=acct-user/sssd-0
 =acct-user/systemd-coredump-0-r3
 =acct-user/systemd-journal-remote-0-r3
 =acct-user/systemd-network-0-r3
@@ -63,16 +73,19 @@
 =acct-user/systemd-timesync-0-r3
 =app-accessibility/at-spi2-core-2.58.6
 =app-admin/eselect-1.4.32
+=app-admin/perl-cleaner-2.31-r3
 =app-admin/sudo-1.9.17_p2
 =app-alternatives/awk-4
 =app-alternatives/bzip2-1
 =app-alternatives/gpg-1-r3
 =app-alternatives/gzip-1
+=app-alternatives/tar-0
 =app-arch/brotli-1.1.0
 =app-arch/bzip2-1.0.8-r5
 =app-arch/gzip-1.14
 =app-arch/libarchive-3.8.9
 =app-arch/lz4-1.10.0-r1
+=app-arch/tar-1.35-r1
 =app-arch/xz-utils-5.8.3
 =app-arch/zstd-1.5.7-r1
 =app-containers/aardvark-dns-1.17.1
@@ -86,11 +99,15 @@
 =app-containers/distrobox-1.8.2.5
 =app-containers/netavark-1.17.1
 =app-containers/podman-5.8.2
+=app-crypt/adcli-0.9.3.1
 =app-crypt/argon2-20190702-r1
 =app-crypt/gnupg-2.5.21
 =app-crypt/gpgme-2.1.2
 =app-crypt/libb2-0.98.1-r3
+=app-crypt/libmd-1.2.0
 =app-crypt/libsecret-0.21.7
+=app-crypt/mit-krb5-1.22.2-r2
+=app-crypt/p11-kit-0.26.2
 =app-crypt/pinentry-1.3.2-r1
 =app-crypt/qca-2.3.10-r1
 =app-editors/nano-9.1
@@ -99,16 +116,23 @@
 =app-misc/ca-certificates-20260223.3.112.4-r1
 =app-misc/editor-wrapper-4-r1
 =app-misc/mime-types-2.1.54
+=app-misc/pax-utils-1.3.10
+=app-portage/gemato-20.12
+=app-portage/getuto-2.0
+=app-portage/portage-utils-0.97.1
 =app-shells/bash-5.3_p15
 =app-text/iso-codes-4.20.1
 =app-text/libpaper-2.1.3
 =dev-db/sqlite-3.53.3
 =dev-lang/duktape-2.7.0-r3
 =dev-lang/lua-5.4.8
+=dev-lang/perl-5.42.2
 =dev-lang/python-3.14.6_p1
 =dev-lang/python-exec-2.4.10
 =dev-lang/python-exec-conf-2.4.6
 =dev-libs/appstream-1.0.6
+=dev-libs/cyrus-sasl-2.1.28-r5
+=dev-libs/ding-libs-0.6.2-r1
 =dev-libs/double-conversion-3.4.0
 =dev-libs/elfutils-0.195
 =dev-libs/ell-0.83
@@ -125,7 +149,9 @@
 =dev-libs/leancrypto-1.8.0
 =dev-libs/libassuan-3.0.0-r1
 =dev-libs/libatomic_ops-7.10.0
+=dev-libs/libbsd-0.11.8
 =dev-libs/libbytesize-2.12
+=dev-libs/libev-4.33
 =dev-libs/libevdev-1.13.6
 =dev-libs/libffi-3.5.2
 =dev-libs/libgcrypt-1.12.2
@@ -141,6 +167,8 @@
 =dev-libs/libtasn1-4.21.0
 =dev-libs/libunistring-1.4.2
 =dev-libs/libusb-1.0.29
+=dev-libs/libuv-1.52.1
+=dev-libs/libverto-0.3.2
 =dev-libs/libxml2-2.15.3
 =dev-libs/libxmlb-0.3.26
 =dev-libs/libyaml-0.2.5
@@ -156,10 +184,16 @@
 =dev-libs/openssl-3.5.7
 =dev-libs/popt-1.19-r1
 =dev-libs/snowball-stemmer-3.1.1
+=dev-libs/userspace-rcu-0.15.6
 =dev-libs/wayland-1.24.0
 =dev-libs/wayland-protocols-1.48
+=dev-libs/xxhash-0.8.3
+=dev-perl/Parse-Yapp-1.210.0-r1
+=dev-python/certifi-3024.7.22
+=dev-python/charset-normalizer-3.4.9
 =dev-python/ensurepip-pip-26.1.2
 =dev-python/gentoo-common-1
+=dev-python/idna-3.18
 =dev-python/jaraco-context-6.1.2
 =dev-python/jaraco-functools-4.6.0
 =dev-python/jaraco-text-4.3.0
@@ -168,9 +202,12 @@
 =dev-python/platformdirs-4.10.0
 =dev-python/pycairo-1.29.0-r1
 =dev-python/pygobject-3.56.3
+=dev-python/pysocks-1.7.1-r2
+=dev-python/requests-2.34.2
 =dev-python/setuptools-83.0.0
 =dev-python/setuptools-scm-10.1.2
 =dev-python/trove-classifiers-2026.6.1.19
+=dev-python/urllib3-2.7.0
 =dev-python/vcs-versioning-2.2.2
 =dev-python/wheel-0.47.0
 =dev-qt/qt5compat-6.11.1
@@ -179,6 +216,7 @@
 =dev-qt/qtshadertools-6.11.1
 =dev-qt/qtsvg-6.11.1
 =dev-qt/qttranslations-6.11.1
+=dev-util/debugedit-5.3
 =dev-util/desktop-file-utils-0.28-r1
 =dev-util/gtk-update-icon-cache-3.24.42
 =dev-util/ostree-2025.6
@@ -276,10 +314,13 @@
 =media-video/wireplumber-0.5.15
 =net-dialup/ppp-2.5.3
 =net-dialup/ppp-scripts-0
+=net-dns/bind-9.20.26
 =net-dns/c-ares-1.34.8
 =net-dns/libidn2-2.3.8
 =net-firewall/iptables-1.8.13
 =net-firewall/nftables-1.1.6
+=net-fs/cifs-utils-7.5
+=net-fs/samba-4.24.4
 =net-libs/glib-networking-2.80.1
 =net-libs/gnutls-3.8.13
 =net-libs/libasyncns-0.8-r4
@@ -296,6 +337,7 @@
 =net-libs/nghttp2-1.69.0
 =net-libs/nghttp3-1.17.0
 =net-libs/ngtcp2-1.24.0
+=net-mail/mailbase-1.8.1
 =net-misc/curl-8.21.0-r1
 =net-misc/ethertypes-0
 =net-misc/iputils-20250605-r4
@@ -304,11 +346,15 @@
 =net-misc/networkmanager-1.56.0
 =net-misc/openssh-10.4_p1-r1
 =net-misc/passt-2025.12.15
+=net-misc/rsync-3.4.4
 =net-misc/socat-1.8.1.3
+=net-nds/openldap-2.6.13
 =net-print/cups-2.4.19
 =net-wireless/bluez-5.86-r1
 =net-wireless/wireless-regdb-20251007
 =net-wireless/wpa_supplicant-2.11-r4
+=perl-core/File-Temp-0.231.100-r1
+=sec-keys/openpgp-keys-gentoo-release-20260125
 =sys-apps/acl-2.4.0-r2
 =sys-apps/attr-2.6.0
 =sys-apps/baselayout-2.18-r1
@@ -324,11 +370,14 @@
 =sys-apps/gptfdisk-1.0.10-r1
 =sys-apps/grep-3.12
 =sys-apps/hwdata-0.401
+=sys-apps/install-xattr-0.13
 =sys-apps/iproute2-7.0.0
 =sys-apps/kbd-2.10.0
 =sys-apps/keyutils-1.6.3-r1
 =sys-apps/kmod-34.2
 =sys-apps/pciutils-3.15.0
+=sys-apps/portage-3.0.81.3
+=sys-apps/sandbox-2.49
 =sys-apps/sed-4.10-r1
 =sys-apps/shadow-4.19.4
 =sys-apps/systemd-260.1-r2
@@ -341,6 +390,7 @@
 =sys-auth/passwdqc-2.1.0-r1
 =sys-auth/polkit-126-r3
 =sys-auth/polkit-qt-0.201.1
+=sys-auth/sssd-2.13.1
 =sys-block/parted-3.7
 =sys-devel/gcc-15.3.0
 =sys-devel/gcc-config-2.12.2
@@ -364,21 +414,29 @@
 =sys-libs/gpm-1.20.7-r6
 =sys-libs/libblockdev-3.4.0
 =sys-libs/libcap-2.78
+=sys-libs/libcap-ng-0.9.3
 =sys-libs/libnvme-1.16.2
 =sys-libs/libseccomp-2.6.0-r3
+=sys-libs/liburing-2.9
 =sys-libs/libxcrypt-4.4.38-r1
 =sys-libs/mtdev-1.1.7
 =sys-libs/ncurses-6.5_p20251220
 =sys-libs/pam-1.7.2
 =sys-libs/readline-8.3_p3
 =sys-libs/slang-2.3.3-r2
+=sys-libs/talloc-2.4.4
+=sys-libs/tdb-1.4.15
+=sys-libs/tevent-0.17.1
 =sys-libs/timezone-data-2026b
 =sys-libs/zlib-1.3.2-r1
 =sys-power/switcheroo-control-3.0
+=sys-process/psmisc-23.7
 =virtual/acl-0-r2
 =virtual/dist-kernel-6.18.43
 =virtual/editor-0-r7
 =virtual/glu-9.0-r2
+=virtual/krb5-0-r1
+=virtual/ldb-2.11.0
 =virtual/libcrypt-2-r1
 =virtual/libelf-3-r1
 =virtual/libiconv-0-r2
@@ -386,6 +444,12 @@
 =virtual/libudev-257
 =virtual/libusb-1-r2
 =virtual/opengl-8
+=virtual/perl-CPAN-2.380.0-r1
+=virtual/perl-Data-Dumper-2.192.0-r1
+=virtual/perl-Encode-3.210.0-r2
+=virtual/perl-File-Temp-0.231.100-r1
+=virtual/perl-Math-BigInt-2.5.2
+=virtual/perl-Test-Harness-3.500.0-r1
 =virtual/pkgconfig-3
 =virtual/secret-service-0-r1
 =virtual/tmpfiles-0-r6

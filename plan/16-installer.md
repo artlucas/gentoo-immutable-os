@@ -367,7 +367,7 @@ patching required for the identity steps.**
 | `welcome` | **Keep** — language picker + requirements (disk size, power, network) |
 | `locale` | **Keep** — timezone + locale, into the overlay |
 | `keyboard` | **Keep** |
-| `users` | **Keep** — writes passwd/shadow/group into the overlay (see 5.4) |
+| `users` | **Keep** — writes passwd/shadow/group into the overlay (see 5.4). Also carries the Active Directory page as of [plan/18](18-active-directory.md) §7: `allowActiveDirectory: true` adds a domain-join checkbox whose job runs `realm join … --install=<root>`, which the installer profile answers with a shim onto `<id>-domain` |
 | `summary`, `finished` | **Keep** |
 | `shellprocess`, `contextualprocess` | **Keep** — the workhorses for every step in 5.1 |
 | `umount` | **Keep** |
@@ -920,6 +920,9 @@ rather than replacing it:
    out to misbehave on hardware; releasing the atom and re-resolving is one `relock.sh` away.
 5. **Unattended-install config for T-INST-1.** Calamares can run non-interactively, but the
    exact shape that works headlessly in QEMU needs establishing before the test can exist.
+   **It now blocks T-DOM-1 as well** ([plan/18](18-active-directory.md) §9): the domain-join path
+   runs from this same users page, so automating "install with the AD box ticked" needs the same
+   unattended shape. T-DOM-2, -3 and -4 do not, and run automatically.
 6. **Should `console` remain a profile at all?** It exists for M1, which is long past. Keeping
    it costs a lock file; dropping it removes the only current consumer of `PROFILE_SETS`
    variation besides the installer. Decide at Phase 0, with the milestone status in hand.
@@ -928,6 +931,7 @@ rather than replacing it:
 
 | Document | Change |
 |---|---|
+| [18-active-directory](18-active-directory.md) | Adds the domain-join option to this installer's users page, and the `realm` shim that makes the stock module's one command work here |
 | [00-overview](00-overview.md) | Non-goals: "Graphical installer / installer ISO" and "Hibernation" both move out. M5 becomes concrete |
 | [01-architecture](01-architecture.md) | Disk layout gains swap for installed systems; the "swap: zram only, no hibernation" line points here; "First boot & default user" points at §5.4 for how the live user actually goes away |
 | [04-image-and-boot](04-image-and-boot.md) | "The future installer ISO (roadmap) automates exactly this" → §5.1 and §7 |

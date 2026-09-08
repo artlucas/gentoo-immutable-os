@@ -4,12 +4,12 @@
 # SNAPSHOT_SHA256: c61294000825031e58a38f60fadb603423c61430b841d73b87705f789d83944b
 # SNAPSHOT_DATE: 20260820
 # PROFILE: default/linux/amd64/23.0/desktop/plasma/systemd
-# PORTAGE_CONFIG_HASH: 63536e8dea9f3f4a8ae2f9df6fe0b48b64ab6eb134531e9dc902bc8f335d66c3
+# PORTAGE_CONFIG_HASH: 81ac47bda2323af92a5520a28dc168ba051f00f5327baa0cc0f61818d794c773
 # INCLUDE_CJK_FONTS: 1
 # INCLUDE_PRINTING: 1
 # INCLUDE_DISTROBOX: 1
 # BUILD_PROFILE: desktop
-# PROFILE_SETS: base hardware desktop
+# PROFILE_SETS: base hardware domain desktop
 #
 =acct-group/adm-0-r3
 =acct-group/audio-0-r3
@@ -27,7 +27,9 @@
 =acct-group/kvm-0-r3
 =acct-group/lp-0-r3
 =acct-group/lpadmin-0-r3
+=acct-group/mail-0-r3
 =acct-group/messagebus-0-r3
+=acct-group/named-0-r3
 =acct-group/netdev-0-r3
 =acct-group/nobody-0-r2
 =acct-group/pipewire-0-r2
@@ -40,6 +42,7 @@
 =acct-group/sgx-0-r2
 =acct-group/shadow-0
 =acct-group/sshd-0-r3
+=acct-group/sssd-0
 =acct-group/systemd-coredump-0-r3
 =acct-group/systemd-journal-0-r3
 =acct-group/systemd-journal-remote-0-r3
@@ -56,13 +59,17 @@
 =acct-group/wheel-0-r3
 =acct-user/avahi-0-r3
 =acct-user/flatpak-0-r2
+=acct-user/mail-0-r3
 =acct-user/messagebus-0-r3
+=acct-user/named-0-r3
 =acct-user/nobody-0-r2
 =acct-user/plasmalogin-0
 =acct-user/polkitd-0-r3
 =acct-user/portage-0-r4
+=acct-user/postmaster-0-r3
 =acct-user/root-0-r3
 =acct-user/sshd-0-r3
+=acct-user/sssd-0
 =acct-user/systemd-coredump-0-r3
 =acct-user/systemd-journal-remote-0-r3
 =acct-user/systemd-network-0-r3
@@ -100,6 +107,7 @@
 =app-containers/distrobox-1.8.2.5
 =app-containers/netavark-1.17.1
 =app-containers/podman-5.8.2
+=app-crypt/adcli-0.9.3.1
 =app-crypt/argon2-20190702-r1
 =app-crypt/gnupg-2.5.21
 =app-crypt/gpgme-2.1.2
@@ -107,6 +115,7 @@
 =app-crypt/libmd-1.2.0
 =app-crypt/libsecret-0.21.7
 =app-crypt/mit-krb5-1.22.2-r2
+=app-crypt/p11-kit-0.26.2
 =app-crypt/pinentry-1.3.2-r1
 =app-crypt/qca-2.3.10-r1
 =app-editors/nano-9.1
@@ -139,6 +148,8 @@
 =dev-lang/python-exec-2.4.10
 =dev-lang/python-exec-conf-2.4.6
 =dev-libs/appstream-1.0.6
+=dev-libs/cyrus-sasl-2.1.28-r5
+=dev-libs/ding-libs-0.6.2-r1
 =dev-libs/dotconf-1.4.1
 =dev-libs/double-conversion-3.4.0
 =dev-libs/elfutils-0.195
@@ -181,6 +192,7 @@
 =dev-libs/libtasn1-4.21.0
 =dev-libs/libunistring-1.4.2
 =dev-libs/libusb-1.0.29
+=dev-libs/libuv-1.52.1
 =dev-libs/libverto-0.3.2
 =dev-libs/libxml2-2.15.3
 =dev-libs/libxmlb-0.3.26
@@ -199,6 +211,7 @@
 =dev-libs/protobuf-31.1
 =dev-libs/qcoro-0.13.0
 =dev-libs/snowball-stemmer-3.1.1
+=dev-libs/userspace-rcu-0.15.6
 =dev-libs/wayland-1.24.0
 =dev-libs/wayland-protocols-1.48
 =dev-libs/xxhash-0.8.3
@@ -452,6 +465,7 @@
 =net-dialup/ppp-2.5.3
 =net-dialup/ppp-scripts-0
 =net-dns/avahi-0.9_rc3
+=net-dns/bind-9.20.26
 =net-dns/c-ares-1.34.8
 =net-dns/libidn-1.44
 =net-dns/libidn2-2.3.8
@@ -479,6 +493,7 @@
 =net-libs/nghttp2-1.69.0
 =net-libs/nghttp3-1.17.0
 =net-libs/ngtcp2-1.24.0
+=net-mail/mailbase-1.8.1
 =net-misc/curl-8.21.0-r1
 =net-misc/ethertypes-0
 =net-misc/iputils-20250605-r4
@@ -489,6 +504,7 @@
 =net-misc/passt-2025.12.15
 =net-misc/rsync-3.4.4
 =net-misc/socat-1.8.1.3
+=net-nds/openldap-2.6.13
 =net-print/cups-2.4.19
 =net-wireless/bluez-5.86-r1
 =net-wireless/wireless-regdb-20251007
@@ -534,6 +550,7 @@
 =sys-auth/passwdqc-2.1.0-r1
 =sys-auth/polkit-126-r3
 =sys-auth/polkit-qt-0.201.1
+=sys-auth/sssd-2.13.1
 =sys-block/parted-3.7
 =sys-block/partitionmanager-26.04.3
 =sys-devel/gcc-15.3.0
@@ -578,12 +595,14 @@
 =sys-power/power-profiles-daemon-0.30
 =sys-power/switcheroo-control-3.0
 =sys-power/upower-1.90.9
+=sys-process/psmisc-23.7
 =virtual/acl-0-r2
 =virtual/dist-kernel-6.18.43
 =virtual/editor-0-r7
 =virtual/glu-9.0-r2
 =virtual/jpeg-100-r1
 =virtual/krb5-0-r1
+=virtual/ldb-2.11.0
 =virtual/libcrypt-2-r1
 =virtual/libelf-3-r1
 =virtual/libiconv-0-r2

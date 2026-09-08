@@ -79,9 +79,14 @@ be indistinguishable from one dd'd from another's image, or `systemd-sysupdate` 
 
 | profile | role | sets | is |
 |---|---|---|---|
-| `desktop` | target | base hardware desktop | The product, and what the installer writes to disk |
-| `console` | target | base hardware | The M1 milestone image: systemd + getty, no desktop |
-| `installer` | live | base hardware desktop **installer** | A live Plasma session that runs Calamares, plus the `desktop` payload it installs. Booted from a USB stick, never installed. See [config/calamares](../calamares/README.md) |
+| `desktop` | target | base hardware domain desktop | The product, and what the installer writes to disk |
+| `console` | target | base hardware domain | The M1 milestone image: systemd + getty, no desktop |
+| `installer` | live | base hardware domain desktop **installer** | A live Plasma session that runs Calamares, plus the `desktop` payload it installs. Booted from a USB stick, never installed. See [config/calamares](../calamares/README.md) |
+
+`domain` is named by every profile, and that is not an oversight. An image cannot install
+software after the fact, so "this machine can be joined to an Active Directory domain later"
+has to mean the client is already on it. See [plan/18](../../plan/18-active-directory.md) §2 for
+what ships versus what a join writes, and §6.4 for what it costs `console` in particular.
 
 ## The `/var` template
 

@@ -108,6 +108,60 @@ done < <(cd "$ROOT_STAGE" && find . \( ! -uid 0 -o ! -gid 0 \) -printf '%U %G %P
   before stage 60, or the staging copy is not preserving it."
 log "ownership: $own_checked non-root path(s) preserved into the EROFS"
 
+# ---- file capabilities, which are the same class of bug one metadata field over -------------
+# sys-auth/sssd (plan/18) is the first package in this image whose correctness depends on POSIX
+# file capabilities rather than on ownership:
+#
+#   usr/libexec/sssd/ldap_child   cap_dac_read_search=p
+#   usr/libexec/sssd/krb5_child   cap_dac_read_search,cap_setuid,cap_setgid=p
+#   usr/libexec/sssd/sssd_pam     cap_dac_read_search=p
+#
+# cap_dac_read_search is how those helpers read /etc/krb5.keytab — 0600 root:root — while running
+# as the unprivileged sssd user. Lose it and authentication fails with a permission error nowhere
+# near the cause, which is the shape of every other bug this stage asserts against.
+#
+# Two places it can be lost, and they fail differently, so both halves are checked:
+#
+#  1. PORTAGE MAY NEVER HAVE SET IT. fcaps.eclass is not obviously safe under ROOT=$TARGET, and
+#     this pipeline has been bitten by exactly that assumption before: sys-libs/cracklib's
+#     pkg_postinst is guarded on `[[ -z ${ROOT} ]]` and had never run in this project's history
+#     (plan/16). getcap on the staging tree is that half.
+#  2. THE IMAGE FORMAT MAY DROP IT. rsync carries xattrs (-X above), but mkfs.erofs is where
+#     --all-root ate ownership, so this reads the BUILT image like the ownership check does.
+#
+# The image half asks dump.erofs for the inode's Xattr size rather than for the capability
+# itself, and that is a deliberate second choice: dump.erofs cannot print xattr VALUES, and
+# fsck.erofs --extract — the only other way in — silently declines to restore security.* xattrs,
+# so extracting and running getcap reports "no capability" on an image that has one. Measured, on
+# a two-file probe: a file with a capability gives `Xattr size: 48` and one without gives 0, and
+# `mkfs.erofs -x-1` (xattrs disabled) drops the first to 0. Portage sets no user.* xattrs on
+# these paths, so on a binary whose staging copy has exactly one xattr — the capability, proved
+# by getcap in half 1 — a non-zero Xattr size in the image is that capability and nothing else.
+SSSD_CAP_PATHS=(usr/libexec/sssd/ldap_child usr/libexec/sssd/krb5_child usr/libexec/sssd/sssd_pam)
+cap_checked=0
+for cp in "${SSSD_CAP_PATHS[@]}"; do
+  [[ -e $ROOT_STAGE/$cp ]] || continue
+  getcap "$ROOT_STAGE/$cp" | grep -q 'cap_dac_read_search' || die \
+"file capability missing: /$cp has no cap_dac_read_search in the staging tree.
+  sssd's helpers run as the sssd user and read /etc/krb5.keytab (0600 root:root) through that
+  capability, so a domain login fails with a permission error that names neither. The ebuild
+  sets it through fcaps.eclass; if that eclass skips ROOT=\$TARGET merges the way cracklib's
+  pkg_postinst does, this becomes a stage-40 chroot finalizer (setcap), exactly as the cracklib
+  dictionary did."
+  cap_xattr="$(dump.erofs --path="/$cp" "$ROOT_EROFS" 2>/dev/null \
+    | sed -n 's/.*Xattr size: *\([0-9]\{1,\}\).*/\1/p')"
+  [[ ${cap_xattr:-0} -gt 0 ]] || die \
+"file capability lost in the image: /$cp carries cap_dac_read_search in the staging tree but its
+  EROFS inode has Xattr size ${cap_xattr:-none}. Something is dropping extended attributes
+  between rsync and mkfs.erofs — the capability equivalent of --all-root."
+  cap_checked=$((cap_checked + 1))
+done
+# Same non-vacuity guard as the ownership check above: @domain is in every profile, so finding
+# none of these means the check proved nothing rather than that there was nothing to protect.
+(( cap_checked > 0 )) || die "capability check found no sssd helpers in $ROOT_STAGE — @domain is
+  named by every profile (config/profiles/README.md), so this check ran against nothing"
+log "capabilities: $cap_checked sssd helper(s) preserved into the EROFS"
+
 root_bytes="$(stat -c%s "$ROOT_EROFS")"
 slot_bytes="$((ROOT_SLOT_SIZE_MIB * 1024 * 1024))"
 (( root_bytes <= slot_bytes )) \

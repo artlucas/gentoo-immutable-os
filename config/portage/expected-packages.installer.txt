@@ -14,7 +14,9 @@ acct-group/kmem
 acct-group/kvm
 acct-group/lp
 acct-group/lpadmin
+acct-group/mail
 acct-group/messagebus
+acct-group/named
 acct-group/netdev
 acct-group/nobody
 acct-group/pipewire
@@ -27,6 +29,7 @@ acct-group/root
 acct-group/sgx
 acct-group/shadow
 acct-group/sshd
+acct-group/sssd
 acct-group/systemd-coredump
 acct-group/systemd-journal
 acct-group/systemd-journal-remote
@@ -43,13 +46,17 @@ acct-group/video
 acct-group/wheel
 acct-user/avahi
 acct-user/flatpak
+acct-user/mail
 acct-user/messagebus
+acct-user/named
 acct-user/nobody
 acct-user/plasmalogin
 acct-user/polkitd
 acct-user/portage
+acct-user/postmaster
 acct-user/root
 acct-user/sshd
+acct-user/sssd
 acct-user/systemd-coredump
 acct-user/systemd-journal-remote
 acct-user/systemd-network
@@ -76,6 +83,7 @@ app-arch/ncompress
 app-arch/tar
 app-arch/xz-utils
 app-arch/zstd
+app-crypt/adcli
 app-crypt/argon2
 app-crypt/gnupg
 app-crypt/gpgme
@@ -83,6 +91,7 @@ app-crypt/libb2
 app-crypt/libmd
 app-crypt/libsecret
 app-crypt/mit-krb5
+app-crypt/p11-kit
 app-crypt/pinentry
 app-crypt/qca
 app-editors/nano
@@ -114,6 +123,8 @@ dev-lang/python-exec
 dev-lang/python-exec-conf
 dev-libs/appstream
 dev-libs/boost
+dev-libs/cyrus-sasl
+dev-libs/ding-libs
 dev-libs/dotconf
 dev-libs/double-conversion
 dev-libs/elfutils
@@ -157,6 +168,7 @@ dev-libs/libpwquality
 dev-libs/libtasn1
 dev-libs/libunistring
 dev-libs/libusb
+dev-libs/libuv
 dev-libs/libverto
 dev-libs/libxml2
 dev-libs/libxmlb
@@ -175,6 +187,7 @@ dev-libs/popt
 dev-libs/protobuf
 dev-libs/qcoro
 dev-libs/snowball-stemmer
+dev-libs/userspace-rcu
 dev-libs/wayland
 dev-libs/wayland-protocols
 dev-libs/xxhash
@@ -421,6 +434,7 @@ media-video/wireplumber
 net-dialup/ppp
 net-dialup/ppp-scripts
 net-dns/avahi
+net-dns/bind
 net-dns/c-ares
 net-dns/libidn
 net-dns/libidn2
@@ -447,6 +461,7 @@ net-libs/libssh
 net-libs/nghttp2
 net-libs/nghttp3
 net-libs/ngtcp2
+net-mail/mailbase
 net-misc/curl
 net-misc/ethertypes
 net-misc/iputils
@@ -456,6 +471,7 @@ net-misc/networkmanager
 net-misc/openssh
 net-misc/rsync
 net-misc/socat
+net-nds/openldap
 net-print/cups
 net-wireless/bluez
 net-wireless/wireless-regdb
@@ -500,6 +516,7 @@ sys-auth/pambase
 sys-auth/passwdqc
 sys-auth/polkit
 sys-auth/polkit-qt
+sys-auth/sssd
 sys-block/parted
 sys-block/partitionmanager
 sys-boot/efibootmgr
@@ -550,12 +567,14 @@ sys-libs/zlib
 sys-power/power-profiles-daemon
 sys-power/switcheroo-control
 sys-power/upower
+sys-process/psmisc
 virtual/acl
 virtual/dist-kernel
 virtual/editor
 virtual/glu
 virtual/jpeg
 virtual/krb5
+virtual/ldb
 virtual/libcrypt
 virtual/libelf
 virtual/libiconv

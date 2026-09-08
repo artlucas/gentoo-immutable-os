@@ -222,6 +222,30 @@ interpreter**. That was already true under GNOME at one more remove (the printer
 hatch is one flag: `kio-extras[-samba]` drops samba, perl and Parse-Yapp together, at the cost
 of `smb://`. See plan/06.
 
+**That escape hatch is narrower as of [plan/18](18-active-directory.md), and the reason is worth
+recording here rather than being rediscovered.** `@domain` puts `sys-auth/sssd` in every profile,
+sssd DEPENDs on `virtual/ldb`, and the *stable* `virtual/ldb-2.11.0` is provided only by
+`net-fs/samba` — which carries `!sys-libs/ldb` as a blocker, so the two providers are mutually
+exclusive. samba is therefore held by two independent things now, and `kio-extras[-samba]` alone
+no longer removes it. It also means `console`, which had none of this, gains samba and perl: the
+alternative was pinning that profile to `sys-libs/ldb`, which gives it a different ldb ABI and
+forks `sys-auth/sssd` into two binpkgs — breaking the one rule that makes a second profile cheap
+(plan/16 §3.2). See plan/18 §6.4.
+
+### @domain — Active Directory client
+
+Two atoms, `sys-auth/sssd` and `app-crypt/adcli`, named by **every** profile. The reasoning is
+[plan/18](18-active-directory.md) §2 in one line: an image cannot install software after the fact,
+so "this machine can be joined to a domain later" has to mean the client is already on it.
+
+New to the closure beyond §"samba" above: `net-nds/openldap` (built `minimal`, so no slapd),
+`dev-libs/cyrus-sasl`, `dev-libs/ding-libs`, `app-crypt/p11-kit`, `virtual/ldb`, and
+`net-dns/bind`. That last one is a debt rather than a choice: every `sys-auth/sssd` ebuild in the
+tree carries `>=net-dns/bind-9.9[gssapi]` in `DEPEND` with no USE guard, for `nsupdate` — so a
+minimal desktop ships a DNS *server*'s files. Nothing runs it (the ebuild installs an OpenRC init
+script only, and there is no OpenRC here), and trimming it to `nsupdate` plus libraries is
+plan/18 Phase E, after the size is measured.
+
 ### Allowed GNOME residue
 
 Keeping the GTK theming bridge means "remove all GNOME" cannot be literal. `kde-gtk-config`

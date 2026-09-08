@@ -176,7 +176,7 @@ RUN mkdir -p /etc/portage/sets \
  && echo 'app-crypt/pinentry qt6 ncurses -gtk -efl -emacs' >> /etc/portage/package.use/builder \
  && echo 'x11-misc/xdg-utils -perl -gnome' >> /etc/portage/package.use/builder \
  && echo 'x11-misc/xdg-user-dirs -gtk' >> /etc/portage/package.use/builder \
- && echo 'net-fs/samba client' >> /etc/portage/package.use/builder \
+ && echo 'net-fs/samba client winbind' >> /etc/portage/package.use/builder \
  && echo 'net-libs/ngtcp2 gnutls' >> /etc/portage/package.use/builder \
  && echo 'net-wireless/wpa_supplicant -gui dbus' >> /etc/portage/package.use/builder \
  && echo 'media-libs/libpulse X' >> /etc/portage/package.use/builder \

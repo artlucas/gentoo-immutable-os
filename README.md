@@ -28,6 +28,7 @@ been run yet. The full design lives in [`plan/`](plan/00-overview.md):
 | [13-distrobox](plan/13-distrobox.md) | Rootless podman + distrobox: the mutable userland, and why it keeps the toolchain-free guarantee |
 | [16-installer](plan/16-installer.md) | Calamares installer, build profiles, swap/hibernation, the live ISO |
 | [17-animated-splash](plan/17-animated-splash.md) | The layer-pulse animation, and carrying the same mark through the login into a Plasma splash |
+| [18-active-directory](plan/18-active-directory.md) | Joining a Windows AD domain: sssd + adcli, what ships versus what a join writes, and the installer's domain page |
 
 ## Building
 
@@ -38,6 +39,7 @@ bash scripts/build.sh                 # full pipeline → out/immos-<ver>.img(.z
 bash scripts/build.sh --profile console   # a different build profile (default: desktop)
 bash scripts/build.sh --profile installer # the live installer medium (needs a desktop build first)
 bash scripts/build.sh --list-profiles     # what profiles exist
+bash scripts/build.sh --with-test-dc      # + a throwaway Samba AD domain for the stage-70 domain tests
 bash scripts/build.sh --dry-run       # show what would run
 bash scripts/build.sh --from 40       # resume after a failure
 bash scripts/enter.sh                 # debug shell in the builder container
@@ -80,5 +82,9 @@ Bash, WSL, or Linux. Shellcheck runs when available (e.g.
 `docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:stable -x -S warning <files>`).
 
 The QEMU boot/update/rollback tests (plan/07) run as pipeline stage 70 and require a built
-image. On Windows checkouts, keep files LF: `find . -path ./out -prune -o -type f -print0 |
+image. `--with-test-dc` adds the Active Directory tests ([plan/18](plan/18-active-directory.md)):
+it stands up a disposable Samba AD domain controller in a container and puts stage 70's container
+on its network with `--dns` pointing at it, so the guest discovers the domain through real SRV
+records with no guest-side configuration. Without it those tests skip; they never fail for being
+absent. On Windows checkouts, keep files LF: `find . -path ./out -prune -o -type f -print0 |
 xargs -0 dos2unix -q` (the suite's CRLF check catches violations).

@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+# /usr/bin/realm — a realmd-shaped front door for @DISTRO_NAME@'s own join tool (plan/18 §7.1).
+#
+# INSTALLER PROFILE ONLY. Stage 40 installs this from config/calamares/system/ and asserts it is
+# absent from every other profile, the same way it does for /etc/calamares itself.
+#
+# WHY THIS FILE EXISTS. Calamares' stock `users` module has built-in Active Directory support:
+# with `allowActiveDirectory: true` the users page grows a "Use Active Directory" checkbox and
+# four fields, in ~80 translations, for free. When it is ticked, Config::createJobs appends an
+# ActiveDirectoryJob whose entire implementation is one command
+# (src/modules/users/ActiveDirectoryJob.cpp, calamares 3.4.2):
+#
+#     Calamares::System::instance()->runCommand(
+#         RunLocation::RunInHost,
+#         { "realm", "join", m_domain, "-U", m_adminLogin, "--install=" + installPath, "--verbose" },
+#         QString(), m_adminPassword, std::chrono::seconds( 30 ) );
+#
+# `realm` is realmd, which is not in the Gentoo tree at all — and realmd is itself only a d-bus
+# wrapper around adcli plus sssd config generation, which is exactly what @DISTRO_ID@-domain is.
+# So rather than patch Calamares or write a C++ view module (calamares 3.4 has no QML or Python
+# VIEW interface — Descriptor.h's Interface enum is QtPlugin/Python/Process, and Python is jobs
+# only), we answer to the name it calls.
+#
+# THAT ARGV IS A CONTRACT. tests/test-domain.sh asserts this script still accepts each of those
+# tokens, quoted from the Calamares source, so a version bump that changes them fails the offline
+# suite rather than the install.
+#
+# TWO THINGS TO KNOW about how Calamares calls this:
+#   - RunInHost: this runs on the LIVE MEDIUM, with --install= naming the mounted target. Every
+#     write must therefore go through --root, which is what @DISTRO_ID@-domain takes.
+#   - 30 SECONDS, hard. Do no work that is not the join, and fail fast and loudly when the domain
+#     is unreachable rather than letting a DNS timeout eat the budget.
+#
+# THIS SCRIPT EXITS 0 EVEN WHEN THE JOIN DOES NOT HAPPEN, WHICH IS DELIBERATE.
+# ActiveDirectoryJob turns a non-zero exit here into JobResult::error, and Calamares stops the
+# installation on the first job that errors. This job is appended BEFORE SetupGroupsJob,
+# CreateUserJob, SetPasswordJob and SetHostNameJob (Config.cpp:1088 vs :1097-1109) — its own
+# module's remaining jobs — and long before `removeuser` and `imageidentity` in settings.conf's
+# exec list. So a domain controller that is merely unreachable, which is a Tuesday, would stop
+# the install on a disk that already has the entire OS and a working bootloader on it, with:
+#   - no account the operator chose, because CreateUserJob never ran;
+#   - @LIVE_USER@ still in /etc/passwd, because `removeuser` never ran; and
+#   - that account still autologging in, because `imageidentity` never ran.
+# An installed machine that boots straight into the live medium's throwaway session, presented
+# as a failed installation, is worse in every direction — including security — than an installed
+# machine that is simply not joined yet and says so. So the failure is recorded where the
+# installed system will report it (`<id>-domain status`) and the install is allowed to finish
+# with a working local administrator. Joining afterwards is one command; recovering from the
+# other outcome is a reinstall.
+set -euo pipefail
+
+ID="@DISTRO_ID@"
+
+fail() { echo "realm: $*" >&2; exit 1; }
+
+[[ ${1:-} == join ]] || fail "this is not realmd: only 'realm join' is implemented.
+  Use '$ID-domain' directly for anything else."
+shift
+
+domain=""
+user=""
+root="/"
+while (( $# )); do
+    case $1 in
+        -U|--user)   user=${2:?}; shift 2 ;;
+        --install=*) root=${1#--install=}; shift ;;
+        --install)   root=${2:?}; shift 2 ;;
+        --verbose|-v) shift ;;
+        --unattended|--no-password) shift ;;
+        -*)          fail "unsupported option: $1" ;;
+        *)           [[ -z $domain ]] || fail "more than one domain given: $domain and $1"
+                     domain=$1; shift ;;
+    esac
+done
+
+[[ -n $domain ]] || fail "no domain given"
+[[ -n $user   ]] || fail "no join account given (-U)"
+
+# Calamares writes the administrator's password to this process's stdin and nothing else. It is
+# read here rather than forwarded untouched because the exit code has to be inspected, which rules
+# out exec; it stays in this short-lived process's memory, is never an argument and never a file.
+IFS= read -r password || true
+
+# `join` preflights through `<id>-domain verify` before it writes anything, and hands verify's
+# exit code back: 2 unreachable, 3 credentials rejected, 4 clock skew. Anything else non-zero
+# means the domain checked out but the enrollment itself failed.
+rc=0
+printf '%s\n' "$password" | "$ID-domain" join \
+    --domain "$domain" \
+    --user "$user" \
+    --root "$root" \
+    --password-stdin || rc=$?
+
+(( rc == 0 )) && exit 0
+
+case $rc in
+    2) reason="the domain '$domain' could not be reached from the installer" ;;
+    3) reason="the domain controller rejected the account '$user'" ;;
+    4) reason="this machine's clock is too far from the domain controller's for Kerberos" ;;
+    *) reason="the domain answered and authenticated '$user', but enrolling failed (status $rc)" ;;
+esac
+
+echo "realm: NOT JOINED — $reason" >&2
+echo "realm: the installation will continue; this machine can be joined afterwards with" >&2
+echo "realm:   sudo $ID-domain join --domain $domain --user $user" >&2
+
+# Record it in the TARGET, so the installed system can report it rather than looking like a
+# machine nobody ever wanted in a domain. Same directory as the join stamp it stands in for.
+pending="${root%/}/var/lib/${ID}/domain-pending.json"
+if install -d -m 0755 "$(dirname "$pending")" 2>/dev/null; then
+    printf '{\n  "domain": "%s",\n  "user": "%s",\n  "status": %d,\n  "reason": "%s",\n  "requested": "%s"\n}\n' \
+        "$domain" "$user" "$rc" "$reason" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$pending" || true
+fi
+
+exit 0

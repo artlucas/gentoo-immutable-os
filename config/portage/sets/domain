@@ -1,0 +1,30 @@
+# @domain — Active Directory client authentication (plan/18).
+#
+# TWO ATOMS, and everything else resolves. sssd's own closure is large — openldap, cyrus-sasl,
+# ding-libs, p11-kit, virtual/ldb, net-dns/bind — and none of it is listed here, for the reason
+# @installer states: naming transitive deps in a set is how a set stops describing intent and
+# starts duplicating the resolver.
+#
+# UNLIKE @installer, this set is named by EVERY profile. That is deliberate. An image cannot
+# install software after the fact — there is no Portage on the target, by design (plan/06) — so
+# "this machine can be joined to a domain later" has to mean "the client is already on it".
+# Joining then writes configuration and a keytab into the /etc overlay and enables one unit; it
+# installs nothing. See plan/18 §2 for the full list of what ships versus what a join writes.
+#
+# The unjoined case is the one that matters, and it is asserted rather than assumed: with no
+# sssd socket, nss_sss returns unavailable and the next NSS module answers, and pam_sss returns
+# PAM_AUTHINFO_UNAVAIL and the stack falls through to pam_unix. sssd.service is disabled in the
+# vendor preset AND carries ConditionPathExists=/etc/sssd/sssd.conf, because on this system a
+# unit that starts and fails is not a warning — systemd-boot-check-no-failures gates
+# boot-complete.target, so it is a failed boot and an automatic rollback (plan/18 §5.1).
+#
+# sys-auth/sssd — stable amd64, so no keyword exception. Built with USE=-samba: that flag gates
+# only the PAC responder and GPO support and would pull net-fs/samba[winbind]; the `ad` provider
+# itself is unconditional, and with access_provider=permit there are no GPOs to evaluate.
+sys-auth/sssd
+# app-crypt/adcli — stable amd64. The join tool: creates the computer account over LDAP/GSSAPI
+# and writes the host keytab. ~200 KiB, and its only dependencies (mit-krb5, openldap[sasl]) are
+# ones sssd already requires. This is what realmd would have been used for; realmd is not in the
+# Gentoo tree at all, and it is only a d-bus wrapper around adcli plus config generation — which
+# is what usr/bin/<distro>-domain does (plan/18 §1, §4).
+app-crypt/adcli

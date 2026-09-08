@@ -5,6 +5,7 @@
 #   run-vm.sh IMG --headless serial.log    # no display, serial console to file
 #   run-vm.sh IMG --test smoke             # inject test-mode credential (self-reporting boot)
 #   run-vm.sh IMG --test update --update-url http://10.0.2.2:8000/stable
+#   run-vm.sh IMG --test domain --domain domain=corp.test,user=Administrator,password=...
 #   run-vm.sh IMG --writable                # guest writes hit IMG (see snapshot note below)
 #   run-vm.sh IMG --disk-size 32G           # bigger virtual disk; repart grows /var into it
 #   run-vm.sh IMG --disk-size 32G --writable  # ...and the overlay persists across reboots
@@ -20,14 +21,19 @@ export STAGE_NAME=run-vm
 source "$SCRIPT_DIR/lib/common.sh"
 
 IMG="${1:-}"; shift || true
-[[ -n $IMG && -f $IMG ]] || die "usage: run-vm.sh IMG [--headless LOG] [--test smoke|update] [--update-url URL] [--disk-size SIZE] [--extra-disk SIZE]"
+[[ -n $IMG && -f $IMG ]] || die "usage: run-vm.sh IMG [--headless LOG] [--test smoke|update|domain] [--update-url URL] [--domain SPEC] [--disk-size SIZE] [--extra-disk SIZE]"
 
 HEADLESS_LOG='' TEST_MODE='' TEST_URL='' MEM=4096 SNAPSHOT=on DISK_SIZE='' EXTRA_DISK=''
+DOMAIN_SPEC=''
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --headless)   HEADLESS_LOG="$2"; shift 2 ;;
     --test)       TEST_MODE="$2"; shift 2 ;;
     --update-url) TEST_URL="$2"; shift 2 ;;
+    # domain=<domain>,user=<u>,password=<p> for --test domain (plan/18). One credential
+    # rather than four, because io.systemd.credential values are SMBIOS strings and the
+    # guest parses one line more legibly than it juggles four optional ones.
+    --domain)     DOMAIN_SPEC="$2"; shift 2 ;;
     --memory)     MEM="$2"; shift 2 ;;
     --writable)   SNAPSHOT=off; shift ;;
     --disk-size)  DISK_SIZE="$2"; shift 2 ;;
@@ -172,6 +178,19 @@ QEMU=(qemu-system-x86_64
 if [[ -n $TEST_MODE ]]; then
   QEMU+=(-smbios "type=11,value=io.systemd.credential:${DISTRO_ID}.test=${TEST_MODE}")
   [[ -n $TEST_URL ]] && QEMU+=(-smbios "type=11,value=io.systemd.credential:${DISTRO_ID}.update_url=${TEST_URL}")
+  # The domain-join parameters for --test domain. A password on a QEMU command line is fine
+  # here and nowhere else: it belongs to a throwaway Samba domain that exists for the length of
+  # one stage-70 run (tests/ad-dc/), and the guest is a disposable copy of the image.
+  #
+  # THE COMMAS MUST BE DOUBLED. `-smbios type=11,value=...` is a QEMU option LIST, so QEMU splits
+  # the whole argument on commas before anything sees it — a spec like "domain=x,user=y" makes it
+  # read `user=y` as a second -smbios option and die with "Invalid parameter 'user'" before the
+  # guest boots at all. QEMU's escape for a literal comma is `,,`, and it un-escapes back to one
+  # comma, so the guest credential still reads exactly what --domain was given. The other
+  # credentials here never hit this because a URL and a mode name contain no commas.
+  if [[ -n $DOMAIN_SPEC ]]; then
+    QEMU+=(-smbios "type=11,value=io.systemd.credential:${DISTRO_ID}.domain=${DOMAIN_SPEC//,/,,}")
+  fi
 fi
 
 if [[ -n $HEADLESS_LOG ]]; then

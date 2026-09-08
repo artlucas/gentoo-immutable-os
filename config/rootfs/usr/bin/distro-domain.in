@@ -1,0 +1,495 @@
+#!/usr/bin/env bash
+# @DISTRO_ID@-domain — join this machine to an Active Directory domain (plan/18).
+#
+# Two callers, one implementation: a user running it on an installed system, and the installer
+# running it through the /usr/bin/realm shim on the live medium with --root pointed at the
+# freshly written target (plan/18 §7.1). Everything below is therefore relative to --root.
+#
+# The design rule this file exists to keep: the image ships DOMAIN-READY — nsswitch, the PAM
+# stacks, /etc/krb5.conf, the sssd unit and its drop-in are all in the read-only lower — and a
+# join writes only files that did not exist before. Nothing here edits a shipped file, because
+# the /etc overlay has no 3-way merge and an edited file stops receiving vendor updates forever
+# (plan/01).
+set -euo pipefail
+
+ID="@DISTRO_ID@"
+
+usage() {
+    cat <<EOF
+$ID-domain — Active Directory domain membership
+
+  join     enroll this machine in a domain and configure sssd
+  leave    remove the local enrollment and every file join wrote (the computer account
+           stays in Active Directory; deleting that needs a domain administrator)
+  status   what this machine is joined to, and whether sssd is healthy
+  verify   check that a domain is reachable and that an account authenticates against
+           it, WITHOUT joining anything and without writing a single file
+  test     diagnose a join that is not working (DNS, Kerberos, sssd)
+
+join options:
+  --domain DOMAIN          AD DNS domain, e.g. corp.example.com   (required)
+  --user USER              domain account allowed to join         (required)
+  --password-stdin         read that account's password from stdin
+  --root PATH              operate on a mounted target instead of /   (default: /)
+  --computer-name NAME     AD computer account name  (default: this host's short name,
+                           uppercased; AD caps it at 15 characters)
+  --ou OU                  DN of the OU to create the computer account in
+  --admin-group GROUP      domain group to grant sudo and polkit admin rights
+  --allow-groups A,B       restrict login to these groups (default: any valid domain user)
+  --print-config           print the files a join would write, and change nothing
+
+verify options:
+  --domain DOMAIN          the domain to check                    (required)
+  --user USER              an account to authenticate as; omit to check reachability only
+  --password-stdin         read that account's password from stdin
+EOF
+}
+
+# _DOMAIN_TEST_* hooks exist for the build's offline test suite only, exactly as
+# _UPDATE_TEST_* do in $ID-update. They are never set on a real system.
+need_root() {
+    [[ ${_DOMAIN_TEST_SKIP_ROOT:-0} == 1 ]] && return 0
+    [[ $EUID -eq 0 ]] || { echo "error: must run as root" >&2; exit 1; }
+}
+
+die()  { echo "error: $*" >&2; exit 1; }
+note() { echo "$*" >&2; }
+
+# ---- paths a join writes, all of them new ---------------------------------------------------
+# Kept in one place because `leave` removes exactly this list and nothing else.
+p_sssd()     { printf '%s/etc/sssd/sssd.conf' "${1%/}"; }
+# No extension, and that is not a slip: /etc/krb5.conf ends with `includedir /etc/krb5.conf.d/`,
+# and MIT Kerberos parses only those files in an includedir whose names consist SOLELY of
+# alphanumerics, dashes and underscores. A realm-named file like CORP.EXAMPLE.COM.conf would be
+# silently ignored and the realm would go unconfigured with no error anywhere.
+p_krb5()     { printf '%s/etc/krb5.conf.d/%s_domain' "${1%/}" "$ID"; }
+p_keytab()   { printf '%s/etc/krb5.keytab' "${1%/}"; }
+p_stamp()    { printf '%s/var/lib/%s/domain.json' "${1%/}" "$ID"; }
+# Written by the installer shim when a join was ASKED FOR and did not happen, so that the
+# installed machine can say so out of `status` rather than just being quietly un-joined.
+p_pending()  { printf '%s/var/lib/%s/domain-pending.json' "${1%/}" "$ID"; }
+p_sudoers()  { printf '%s/etc/sudoers.d/20-domain-admins' "${1%/}"; }
+p_polkit()   { printf '%s/etc/polkit-1/rules.d/50-domain-admins.rules' "${1%/}"; }
+p_timesync() { printf '%s/etc/systemd/timesyncd.conf.d/10-domain.conf' "${1%/}"; }
+
+realm_of() { printf '%s' "${1^^}"; }
+
+# The short hostname of the TARGET, which on an installer run is not this machine's.
+target_hostname() {
+    local root=${1%/} h=""
+    [[ -s ${root}/etc/hostname ]] && h=$(head -n1 "${root}/etc/hostname" | tr -d '[:space:]')
+    if [[ -z $h && -z $root ]]; then
+        h=$(cat /proc/sys/kernel/hostname 2>/dev/null || true)
+    fi
+    printf '%s' "${h%%.*}"
+}
+
+# AD stores a computer's sAMAccountName as NAME$ and caps the whole thing at 16 characters, so
+# the name itself may be at most 15. Failing here, by name, is far kinder than letting adcli fail
+# on it three steps later with an LDAP constraint violation.
+validate_computer_name() {
+    local n=$1
+    [[ -n $n ]] || die "could not determine a computer name; pass --computer-name"
+    (( ${#n} <= 15 )) || die "computer name '$n' is ${#n} characters; Active Directory allows 15.
+  Pass --computer-name with something shorter."
+    [[ $n =~ ^[A-Za-z0-9-]+$ ]] || die "computer name '$n' has characters AD will not accept
+  (letters, digits and dashes only)"
+}
+
+render_sssd_conf() {
+    local domain=$1 fqdn=$2 allow=$3
+    # One string rather than two, so the "any valid user" case emits no stray blank line.
+    local access="access_provider = permit"
+    if [[ -n $allow ]]; then
+        access=$(printf 'access_provider = simple\nsimple_allow_groups = %s' "$allow")
+    fi
+    cat <<EOF
+# Generated by ${ID}-domain. Rewritten on every join; removed by \`${ID}-domain leave\`.
+# Hand edits survive neither, and sssd refuses to start unless this file is mode 0600.
+[sssd]
+domains  = ${domain}
+services = nss, pam
+
+[domain/${domain}]
+id_provider   = ad
+auth_provider = ad
+# "permit": any valid account in the domain may log in. The ad provider's DEFAULT here is
+# access_provider = ad, which enforces the GPO "Allow log on locally" right and in practice locks
+# everyone out of a freshly joined Linux machine; evaluating GPOs also needs sssd built with
+# USE=samba, which this image is not. --allow-groups switches this to the "simple" provider.
+${access}
+# POSIX ids derived algorithmically from each object's SID. The alternative wants uidNumber and
+# gidNumber populated in AD, which most domains do not do.
+ldap_id_mapping = true
+# Offline login: the last successful password is cached, so a laptop off the corporate network
+# still logs its owner in.
+cache_credentials = true
+krb5_store_password_if_offline = true
+# Same ccache as /etc/krb5.conf's default_ccache_name, so a ticket obtained by PAM at login and
+# one obtained by kinit afterwards land in the same place.
+krb5_ccname_template = KEYRING:persistent:%U
+# Log in as \`alice\`, not \`alice@${domain}\`. Correct for a single domain; a forest with trusts
+# should set this true and accept the longer names.
+use_fully_qualified_names = false
+# /home is a symlink to /var/home on this system, so both spellings resolve — this is the one a
+# human reads in \`getent passwd\`. pam_mkhomedir creates it on first login.
+fallback_homedir = /home/%u
+default_shell = /bin/bash
+ad_hostname = ${fqdn}
+# Registers this machine's own A record in AD DNS. This is what net-dns/bind is in the image for:
+# sssd execs its nsupdate (plan/18 §6.3).
+dyndns_update = true
+EOF
+}
+
+render_krb5_drop() {
+    local realm=$1
+    cat <<EOF
+# Generated by ${ID}-domain. /etc/krb5.conf is shipped in the read-only image and is never
+# edited; this drop-in is the whole of the machine-local Kerberos configuration.
+[libdefaults]
+    default_realm = ${realm}
+EOF
+}
+
+render_sudoers() {
+    local group=$1
+    # sudo wants a backslash before the space in a group name, and %group for a group rule.
+    printf '# Generated by %s-domain --admin-group.\n%%%s ALL=(ALL:ALL) ALL\n' \
+        "$ID" "${group// /\\ }"
+}
+
+render_polkit() {
+    local group=$1
+    cat <<EOF
+// Generated by ${ID}-domain --admin-group. Sits alongside 49-wheel.rules, which grants the same
+// to the local administrator account; both are consulted, so neither replaces the other.
+polkit.addAdminRule(function(action, subject) {
+    return ["unix-group:${group}"];
+});
+EOF
+}
+
+# ---- join -----------------------------------------------------------------------------------
+cmd_join() {
+    local domain="" user="" root="/" computer="" ou="" admin_group="" allow="" \
+          pw_stdin=0 print_only=0 print_what=all
+    while (( $# )); do
+        case $1 in
+            --domain)        domain=${2:?}; shift 2 ;;
+            --user|-U)       user=${2:?};   shift 2 ;;
+            --root)          root=${2:?};   shift 2 ;;
+            --computer-name) computer=${2:?}; shift 2 ;;
+            --ou)            ou=${2:?};     shift 2 ;;
+            --admin-group)   admin_group=${2:?}; shift 2 ;;
+            --allow-groups)  allow=${2:?};  shift 2 ;;
+            --password-stdin) pw_stdin=1;   shift ;;
+            # Optional selector: `--print-config sssd` emits only sssd.conf, which is what
+            # stage 40's build-time `sssctl config-check` guard consumes. Bare --print-config
+            # still prints everything with ===== path ===== banners, for a human.
+            --print-config)  print_only=1
+                             case ${2:-} in sssd|krb5|all) print_what=$2; shift 2 ;;
+                                            *) shift ;; esac ;;
+            -h|--help)       usage; return 0 ;;
+            *) die "unknown option for join: $1" ;;
+        esac
+    done
+    [[ -n $domain ]] || die "join needs --domain"
+    domain=${domain,,}
+    local realm; realm=$(realm_of "$domain")
+
+    local host; host=$(target_hostname "$root")
+    [[ -n $computer ]] || computer=${host^^}
+    validate_computer_name "$computer"
+    local fqdn="${host}.${domain}"
+
+    if (( print_only )); then
+        # A single file, unbannered, for machine consumers.
+        case $print_what in
+            sssd) render_sssd_conf "$domain" "$fqdn" "$allow"; return 0 ;;
+            krb5) render_krb5_drop "$realm"; return 0 ;;
+        esac
+        printf '===== %s =====\n' "$(p_sssd "$root")"
+        render_sssd_conf "$domain" "$fqdn" "$allow"
+        printf '\n===== %s =====\n' "$(p_krb5 "$root")"
+        render_krb5_drop "$realm"
+        if [[ -n $admin_group ]]; then
+            printf '\n===== %s =====\n' "$(p_sudoers "$root")"
+            render_sudoers "$admin_group"
+            printf '\n===== %s =====\n' "$(p_polkit "$root")"
+            render_polkit "$admin_group"
+        fi
+        return 0
+    fi
+
+    [[ -n $user ]] || die "join needs --user"
+    need_root
+    [[ -d ${root%/}/etc ]] || die "--root $root does not look like a root filesystem"
+
+    # Kerberos rejects a clock skew over five minutes, and the error it gives names neither the
+    # clock nor the cause. systemd-timesyncd is enabled in this image's vendor preset, so the
+    # common case needs nothing; say so plainly when it is not the common case.
+    if command -v timedatectl >/dev/null 2>&1 && [[ ${root%/} == "" ]]; then
+        timedatectl show -p NTPSynchronized --value 2>/dev/null | grep -qx yes \
+            || note "warning: the clock is not NTP-synchronised. Kerberos rejects a skew over
+  five minutes; if the join fails on 'Clock skew too great', that is why."
+    fi
+
+    local password=""
+    if (( pw_stdin )); then
+        IFS= read -r password || true
+    fi
+
+    # Preflight. Nothing below this point is reached, and so nothing is written, unless the
+    # domain answered and the account authenticated. verify's exit code is passed straight
+    # through because the installer shim branches on it to decide what to tell the operator —
+    # "the domain is unreachable" and "that password is wrong" want different sentences.
+    local vrc=0
+    if (( pw_stdin )); then
+        printf '%s\n' "$password" | cmd_verify --domain "$domain" --user "$user" --password-stdin || vrc=$?
+    else
+        cmd_verify --domain "$domain" || vrc=$?
+    fi
+    (( vrc == 0 )) || { note "not joining ${domain}: nothing has been written."; exit "$vrc"; }
+
+    note "joining ${domain} as computer ${computer} (${fqdn})"
+    local -a adcli=(adcli join
+        "--domain=${domain}" "--domain-realm=${realm}" "--login-user=${user}"
+        "--host-fqdn=${fqdn}" "--computer-name=${computer}"
+        "--host-keytab=$(p_keytab "$root")")
+    [[ -n $ou ]] && adcli+=("--domain-ou=${ou}")
+    if (( pw_stdin )); then
+        adcli+=(--stdin-password)
+        printf '%s\n' "$password" | "${adcli[@]}" \
+            || die "adcli join failed. Common causes, in order: the account cannot create
+  computer objects; DNS does not resolve _ldap._tcp.dc._msdcs.${domain}; clock skew.
+  Run '${ID}-domain test --domain ${domain}' for each of those in turn."
+    else
+        "${adcli[@]}" || die "adcli join failed (see above)"
+    fi
+
+    install -d -m 0711 "${root%/}/etc/sssd"
+    install -d -m 0755 "${root%/}/etc/krb5.conf.d"
+    render_sssd_conf "$domain" "$fqdn" "$allow" > "$(p_sssd "$root")"
+    chmod 0600 "$(p_sssd "$root")"
+    render_krb5_drop "$realm" > "$(p_krb5 "$root")"
+    chmod 0644 "$(p_krb5 "$root")"
+
+    if [[ -n $admin_group ]]; then
+        install -d -m 0755 "${root%/}/etc/sudoers.d" "${root%/}/etc/polkit-1/rules.d"
+        render_sudoers "$admin_group" > "$(p_sudoers "$root")"
+        chmod 0440 "$(p_sudoers "$root")"
+        render_polkit "$admin_group" > "$(p_polkit "$root")"
+        chmod 0644 "$(p_polkit "$root")"
+    fi
+
+    # The domain controller is the canonical time source in an AD network, and Kerberos is what
+    # cares. Cheap insurance against the single most confusing failure mode there is.
+    install -d -m 0755 "${root%/}/etc/systemd/timesyncd.conf.d"
+    printf '# Generated by %s-domain: the DC is the domain time source.\n[Time]\nNTP=%s\n' \
+        "$ID" "$domain" > "$(p_timesync "$root")"
+
+    enable_sssd "$root"
+
+    install -d -m 0755 "$(dirname "$(p_stamp "$root")")"
+    printf '{\n  "domain": "%s",\n  "realm": "%s",\n  "computer_name": "%s",\n  "fqdn": "%s",\n  "joined": "%s"\n}\n' \
+        "$domain" "$realm" "$computer" "$fqdn" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        > "$(p_stamp "$root")"
+
+    rm -f -- "$(p_pending "$root")"
+
+    note "joined ${realm}. Domain users can log in with their short username."
+}
+
+# systemctl's offline --root mode, not chroot: it needs no /proc, no /sys and no running systemd
+# in the target, which is exactly the situation on an installer run.
+enable_sssd() {
+    local root=${1%/}
+    if [[ -z $root ]]; then
+        systemctl enable --now sssd.service \
+            || die "could not start sssd.service — 'systemctl status sssd' says why"
+    else
+        systemctl --root="$root" enable sssd.service \
+            || die "could not enable sssd.service in $root"
+    fi
+}
+
+# ---- verify ---------------------------------------------------------------------------------
+# Is the domain reachable, and would a domain account actually authenticate against it? Answers
+# both without joining anything, without credentials touching disk and without writing one file.
+#
+# WHY THIS IS ITS OWN SUBCOMMAND, and why every step is bounded. Calamares' users module hands
+# the domain and the administrator's credentials straight to its ActiveDirectoryJob and never
+# publishes them to GlobalStorage — in calamares 3.4.2 the m_activeDirectory* fields are plain
+# Config members, read by createJobs() and by nothing else. No module that runs earlier can see
+# them, so /usr/bin/realm is the FIRST code in the whole installation that learns a domain was
+# asked for at all, and by then `partition` and `imagedeploy` have written the disk. The check
+# therefore cannot be moved ahead of the destructive steps without the C++ view module §4
+# declined. What it can be is fast and specific, so the caller knows WHICH thing is wrong
+# instead of being handed adcli's output after thirty seconds of DNS timeout.
+#
+# The exit code is the interface — the shim branches on it, so these numbers are load-bearing:
+#   0 reachable (and, if --user was given, authenticated)
+#   2 the domain could not be reached
+#   3 the domain controller rejected the account
+#   4 the clock is too far out for Kerberos
+cmd_verify() {
+    local domain="" user="" pw_stdin=0 password=""
+    while (( $# )); do
+        case $1 in
+            --domain)         domain=${2:?}; shift 2 ;;
+            --user)           user=${2:?};   shift 2 ;;
+            --password-stdin) pw_stdin=1;    shift ;;
+            -h|--help)        usage; return 0 ;;
+            *) die "unknown option for verify: $1" ;;
+        esac
+    done
+    [[ -n $domain ]] || die "verify needs --domain"
+    local realm; realm=$(realm_of "$domain")
+    local t=${_DOMAIN_VERIFY_TIMEOUT:-5}
+
+    # 1. Is there a domain there at all? `adcli info` does the SRV lookup for
+    #    _ldap._tcp.dc._msdcs.<domain> and then talks to whichever controller answered, so this
+    #    one command covers DNS, routing and the DC being alive. It needs no credentials.
+    local info
+    if ! info=$(timeout "$t" adcli info "$domain" 2>&1); then
+        note "cannot reach the domain '${domain}'."
+        printf '%s\n' "$info" | sed 's/^/  /' >&2
+        note "  Looked up _ldap._tcp.dc._msdcs.${domain} and then tried the controller it named."
+        note "  Usual causes: the domain name is wrong, or this machine's DNS is not the domain's."
+        return 2
+    fi
+    local dc; dc=$(printf '%s\n' "$info" | sed -n 's/^domain-controller = //p' | head -n1)
+    note "domain ${domain} answered${dc:+ at ${dc}}"
+
+    [[ -n $user ]] || return 0
+
+    # 2. Would an account authenticate? Reaching a controller proves the network; a Kerberos
+    #    AS-REQ proves the realm, the account and the clock — which together are what "domain
+    #    logins will work on this machine later" actually rests on.
+    if (( pw_stdin )); then IFS= read -r password || true; fi
+    command -v kinit >/dev/null 2>&1 \
+        || { note "kinit is not installed; checked reachability only"; return 0; }
+
+    local princ=$user
+    [[ $princ == *@* ]] || princ="${user}@${realm}"
+    # A throwaway ccache in a private file, destroyed either way. On an installer run this is the
+    # LIVE MEDIUM: a domain administrator's TGT must not be left behind in its keyring, which is
+    # where the default KEYRING: ccache would put it.
+    local cc; cc="${TMPDIR:-/tmp}/.${ID}-verify.$$"
+    local out rc=0
+    out=$(printf '%s\n' "$password" | KRB5CCNAME="FILE:${cc}" timeout "$t" kinit "$princ" 2>&1) || rc=$?
+    KRB5CCNAME="FILE:${cc}" kdestroy >/dev/null 2>&1 || true
+    rm -f -- "$cc"
+    if (( rc != 0 )); then
+        printf '%s\n' "$out" | sed 's/^/  /' >&2
+        case $out in
+            *[Cc]lock\ skew*)
+                note "this machine's clock is too far from ${dc:-the domain controller}'s."
+                note "  Kerberos allows five minutes. systemd-timesyncd is enabled in this image,"
+                note "  so this usually means it has not had a chance to sync yet."
+                return 4 ;;
+            *)
+                note "the domain controller rejected '${princ}'."
+                return 3 ;;
+        esac
+    fi
+    note "${princ} authenticated against ${realm}."
+    note "domain logins will work on this machine once it is joined."
+    return 0
+}
+
+# ---- leave ----------------------------------------------------------------------------------
+cmd_leave() {
+    local root="/"
+    while (( $# )); do
+        case $1 in
+            --root) root=${2:?}; shift 2 ;;
+            -h|--help) usage; return 0 ;;
+            *) die "unknown option for leave: $1" ;;
+        esac
+    done
+    need_root
+    local r=${root%/}
+    if [[ -z $r ]]; then
+        systemctl disable --now sssd.service >/dev/null 2>&1 || true
+        command -v sss_cache >/dev/null 2>&1 && sss_cache -E >/dev/null 2>&1 || true
+    else
+        systemctl --root="$r" disable sssd.service >/dev/null 2>&1 || true
+    fi
+    # Exactly the list join writes, and nothing else. The sssd cache under /var/lib/sss goes too:
+    # leaving it behind means a later re-join inherits stale id mappings.
+    rm -f -- "$(p_sssd "$root")" "$(p_krb5 "$root")" "$(p_keytab "$root")" \
+             "$(p_stamp "$root")" "$(p_sudoers "$root")" "$(p_polkit "$root")" \
+             "$(p_timesync "$root")" "$(p_pending "$root")"
+    rm -rf -- "${r}/var/lib/sss/db" "${r}/var/lib/sss/mc"
+    note "left the domain locally. Local accounts are unaffected."
+    note "NB the computer account still exists in Active Directory — removing it needs a domain"
+    note "administrator ('adcli delete-computer', or Active Directory Users and Computers)."
+}
+
+# ---- status ---------------------------------------------------------------------------------
+cmd_status() {
+    local stamp; stamp=$(p_stamp "/")
+    # The installer records an asked-for join that did not happen, rather than letting the
+    # machine look like one nobody ever wanted in a domain. Reported first because it is the
+    # answer to the question someone running `status` on such a machine is actually asking.
+    local pending; pending=$(p_pending "/")
+    if [[ -f $pending ]]; then
+        echo "A domain join was requested during installation and did not complete:"
+        sed 's/^/  /' "$pending"
+        echo
+        echo "Nothing was written and this machine is not joined. To join it now, run:"
+        echo "  sudo $ID-domain join --domain <domain> --user <account>"
+        echo
+    fi
+    if [[ ! -f $stamp ]]; then
+        echo "not joined to a domain"
+        return 0
+    fi
+    cat "$stamp"
+    echo
+    systemctl is-active sssd.service >/dev/null 2>&1 \
+        && echo "sssd: running" || echo "sssd: NOT running"
+    command -v sssctl >/dev/null 2>&1 && sssctl domain-status \
+        "$(sed -n 's/.*"domain": "\([^"]*\)".*/\1/p' "$stamp")" 2>/dev/null || true
+}
+
+# ---- test -----------------------------------------------------------------------------------
+# "Domain login does not work" has about a dozen causes and eleven of them are the network.
+cmd_test() {
+    local domain=""
+    while (( $# )); do
+        case $1 in
+            --domain) domain=${2:?}; shift 2 ;;
+            -h|--help) usage; return 0 ;;
+            *) die "unknown option for test: $1" ;;
+        esac
+    done
+    if [[ -z $domain && -f $(p_stamp "/") ]]; then
+        domain=$(sed -n 's/.*"domain": "\([^"]*\)".*/\1/p' "$(p_stamp "/")")
+    fi
+    [[ -n $domain ]] || die "not joined; pass --domain to test a domain before joining it"
+
+    echo "== SRV records for ${domain}"
+    resolvectl query --type=SRV "_ldap._tcp.dc._msdcs.${domain}" 2>&1 | sed 's/^/  /' || true
+    echo "== domain discovery"
+    adcli info "$domain" 2>&1 | sed 's/^/  /' || true
+    echo "== clock"
+    timedatectl show -p NTPSynchronized -p TimeUSec --value 2>&1 | sed 's/^/  /' || true
+    echo "== sssd"
+    systemctl is-active sssd.service 2>&1 | sed 's/^/  /' || true
+    [[ -S /var/lib/sss/pipes/nss ]] \
+        && echo "  nss responder socket present" \
+        || echo "  nss responder socket MISSING (sssd not running, or services= is wrong)"
+}
+
+case ${1:-} in
+    join)   shift; cmd_join   "$@" ;;
+    leave)  shift; cmd_leave  "$@" ;;
+    status) shift; cmd_status "$@" ;;
+    verify) shift; cmd_verify "$@" ;;
+    test)   shift; cmd_test   "$@" ;;
+    -h|--help|"") usage ;;
+    *) usage; exit 1 ;;
+esac
