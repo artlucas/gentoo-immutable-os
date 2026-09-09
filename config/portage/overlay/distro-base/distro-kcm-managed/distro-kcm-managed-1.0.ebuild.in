@@ -20,6 +20,12 @@ KEYWORDS="amd64"
 # layout — po/, a KDE_ORG version scheme, doc handling — and imposes a src_test that has nothing
 # to test here. extra-cmake-modules is still needed, and is where kcmutils_add_qml_kcm and
 # KDEInstallDirs come from; it is a BDEPEND because it is cmake code, not a runtime library.
+#
+# ECM's dep is the one below written ":*" rather than ":6", and that is not a style choice.
+# frameworks.kde.org.eclass special-cases extra-cmake-modules (and kapidox) to SLOT=0 while every
+# other KF6 package gets SLOT=6/<catv> — so ":6" names a slot that has never existed, and portage
+# says "there are no ebuilds to satisfy" rather than anything about slots. ecm.eclass itself
+# writes ">=kde-frameworks/extra-cmake-modules-${KFMIN}:*"; this matches it.
 DEPEND="
 	>=dev-qt/qtbase-6.7.0:6[gui,widgets]
 	>=dev-qt/qtdeclarative-6.7.0:6
@@ -34,7 +40,7 @@ RDEPEND="${DEPEND}
 	>=kde-frameworks/kirigami-6.9.0:6
 	kde-plasma/systemsettings:6
 "
-BDEPEND=">=kde-frameworks/extra-cmake-modules-6.9.0:6"
+BDEPEND=">=kde-frameworks/extra-cmake-modules-6.9.0:*"
 
 src_unpack() {
 	# `cp -r`, not an unpack: there is no archive. FILESDIR is the ebuild's own files/ directory,

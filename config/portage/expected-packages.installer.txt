@@ -102,15 +102,10 @@ app-misc/editor-wrapper
 app-misc/mime-types
 app-misc/pax-utils
 app-shells/bash
-app-text/dvipsk
 app-text/editorconfig-core-c
-app-text/ghostscript-gpl
 app-text/iso-codes
 app-text/libpaper
 app-text/poppler
-app-text/poppler-data
-dev-cpp/abseil-cpp
-dev-cpp/eigen
 dev-cpp/highway
 dev-cpp/yaml-cpp
 dev-db/lmdb
@@ -130,7 +125,6 @@ dev-libs/double-conversion
 dev-libs/elfutils
 dev-libs/ell
 dev-libs/expat
-dev-libs/flatbuffers
 dev-libs/fribidi
 dev-libs/glib
 dev-libs/gmp
@@ -142,7 +136,6 @@ dev-libs/jansson
 dev-libs/json-c
 dev-libs/json-glib
 dev-libs/kirigami-addons
-dev-libs/kpathsea
 dev-libs/leancrypto
 dev-libs/libassuan
 dev-libs/libatomic_ops
@@ -184,7 +177,6 @@ dev-libs/nspr
 dev-libs/nss
 dev-libs/openssl
 dev-libs/popt
-dev-libs/protobuf
 dev-libs/qcoro
 dev-libs/snowball-stemmer
 dev-libs/userspace-rcu
@@ -212,7 +204,6 @@ dev-python/urllib3
 dev-qt/qt5compat
 dev-qt/qtbase
 dev-qt/qtdeclarative
-dev-qt/qtimageformats
 dev-qt/qtlocation
 dev-qt/qtmultimedia
 dev-qt/qtpositioning
@@ -237,6 +228,7 @@ gui-libs/egl-gbm
 gui-libs/egl-wayland
 gui-libs/egl-wayland2
 gui-libs/libdecor
+immos-base/immos-calamares-managed
 kde-apps/baloo-widgets
 kde-apps/dolphin
 kde-apps/kio-extras
@@ -301,7 +293,6 @@ kde-frameworks/kxmlgui
 kde-frameworks/modemmanager-qt
 kde-frameworks/networkmanager-qt
 kde-frameworks/prison
-kde-frameworks/purpose
 kde-frameworks/qqc2-desktop-style
 kde-frameworks/solid
 kde-frameworks/sonnet
@@ -311,7 +302,6 @@ kde-plasma/aurorae
 kde-plasma/bluedevil
 kde-plasma/breeze
 kde-plasma/breeze-gtk
-kde-plasma/discover
 kde-plasma/kactivitymanagerd
 kde-plasma/kde-cli-tools
 kde-plasma/kde-cli-tools-common
@@ -344,28 +334,23 @@ kde-plasma/plasma-nm
 kde-plasma/plasma-pa
 kde-plasma/plasma-systemmonitor
 kde-plasma/plasma-workspace
-kde-plasma/plasma-workspace-wallpapers
 kde-plasma/plasma5support
 kde-plasma/polkit-kde-agent
 kde-plasma/powerdevil
 kde-plasma/print-manager
 kde-plasma/qqc2-breeze-style
-kde-plasma/spectacle
 kde-plasma/systemsettings
 kde-plasma/xdg-desktop-portal-kde
 llvm-core/llvm
 llvm-core/llvm-common
-media-fonts/arphicfonts
 media-fonts/font-util
 media-fonts/hack
 media-fonts/liberation-fonts
 media-fonts/noto
 media-fonts/noto-cjk
 media-fonts/noto-emoji
-media-fonts/urw-fonts
 media-gfx/exiv2
 media-gfx/graphite2
-media-gfx/kio-ps-thumbnailer
 media-gfx/qrencode
 media-libs/alsa-lib
 media-libs/alsa-topology-conf
@@ -381,8 +366,6 @@ media-libs/giflib
 media-libs/glu
 media-libs/gmmlib
 media-libs/harfbuzz
-media-libs/jbig2dec
-media-libs/kquickimageeditor
 media-libs/lcms
 media-libs/libaom
 media-libs/libass
@@ -400,7 +383,6 @@ media-libs/libjpeg-turbo
 media-libs/libjxl
 media-libs/libldac
 media-libs/libmad
-media-libs/libmng
 media-libs/libogg
 media-libs/libpng
 media-libs/libpulse
@@ -411,7 +393,6 @@ media-libs/libva-intel-media-driver
 media-libs/libvorbis
 media-libs/libwebp
 media-libs/mesa
-media-libs/opencv
 media-libs/openjpeg
 media-libs/opus
 media-libs/pcaudiolib
@@ -436,7 +417,6 @@ net-dialup/ppp-scripts
 net-dns/avahi
 net-dns/bind
 net-dns/c-ares
-net-dns/libidn
 net-dns/libidn2
 net-firewall/iptables
 net-fs/cifs-utils
@@ -572,7 +552,6 @@ virtual/acl
 virtual/dist-kernel
 virtual/editor
 virtual/glu
-virtual/jpeg
 virtual/krb5
 virtual/ldb
 virtual/libcrypt

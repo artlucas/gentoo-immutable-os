@@ -87,9 +87,22 @@ done
 # ---- T0b: no CR bytes anywhere that Linux will read ---------------------------------
 # Byte-level via od: MSYS grep silently strips \r when reading files in text mode,
 # so a naive `grep $'\r'` is unreliable on Windows hosts.
+#
+# TEXT FILES ONLY, and the qualifier arrived with the first binary this repo committed:
+# config/calamares/system/wallpaper/contents/images/3840x1600.png, the live medium's one
+# wallpaper (plan/20 §2.1). A PNG's own 8-byte signature is \x89PNG\r\n\x1a\n, so every PNG ever
+# written fails a CR scan — which says nothing at all, because this check is about LINE ENDINGS
+# and a file with no lines has none to get wrong.
+#
+# The predicate is `grep -Iq .`, GNU grep's own binary test (a NUL byte in the first buffer), not
+# a path allowlist. A list would have to be maintained by whoever adds the next asset, and the
+# failure mode of forgetting is a red suite for a file nobody is asked to fix; the failure mode
+# of this is that a checked-in binary is not scanned for CRLF, which is the intended outcome.
+# Text files gain nothing from it: a source file with a NUL in it has a worse problem than CRLF.
 section "CRLF check"
 CRLF_HITS=""
 while IFS= read -r -d '' f; do
+    grep -Iq . -- "$f" || continue
     if od -An -c -- "$f" | grep -q '\\r'; then
         CRLF_HITS+="$f"$'\n'
     fi

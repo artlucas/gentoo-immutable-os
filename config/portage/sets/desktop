@@ -1,6 +1,7 @@
-# @desktop — minimal KDE Plasma 6 Wayland (plan/03, plan/09). Printing/CJK entries are
-# filtered out by stage 30 when INCLUDE_PRINTING/INCLUDE_CJK_FONTS are 0 (marker comments
-# below).
+# @desktop — minimal KDE Plasma 6 Wayland (plan/03, plan/09). Marked entries are filtered out
+# by stage 20's filter_set_file before portage ever sees the set: `#printing` / `#cjk` when
+# INCLUDE_PRINTING / INCLUDE_CJK_FONTS are 0, and `#not-live` on any profile whose
+# PROFILE_ROLE is `live` — a medium that boots once and is discarded (plan/16, plan/20).
 #
 # This is a 1:1 functional mirror of the GNOME set it replaces, not a full Plasma install:
 # session + compositor + settings + file manager + terminal + software centre, and nothing
@@ -22,7 +23,33 @@ kde-plasma/bluedevil
 kde-plasma/kscreen
 kde-plasma/polkit-kde-agent
 kde-plasma/kwallet-pam
-kde-plasma/discover
+# #not-live (plan/20 §4.3): an app store on a read-only stick that is discarded in twenty minutes.
+# Nothing it offers can outlive the session — the root is EROFS, and the Flatpaks a user installed
+# into the live /var are not what Calamares writes to the target: the payload's own var-template
+# is (plan/16 §5.1). So the one thing Discover is for on this medium is browsing a catalogue whose
+# every install is thrown away on reboot.
+#
+# TWO PACKAGES, and the second one is the resolver's answer rather than this comment's:
+# kde-plasma/discover itself (~3.3 MiB) and kde-frameworks/purpose, orphaned because Discover was
+# its only consumer in this closure. Everything else Discover names — appstream, attica,
+# knewstuff, kirigami-addons, kstatusnotifieritem, kidletime, qcoro — STAYS, because something
+# else in the closure already wanted it. dev-libs/appstream is the one worth naming: it looks
+# like Discover's dependency and is plasma-workspace's, which RDEPENDs >=dev-libs/appstream-1[qt6]
+# outright whenever its own `appstream` USE flag is on (config/portage/package.use/image).
+#
+# That ratio — two packages out of eight plausible ones — is why plan/20 §2.7 says the orphan set
+# has to be DERIVED and not read off an ebuild. It went the other way for Spectacle, where two
+# named packages took nineteen. Read the removals off installer.lock, not off this line.
+#
+# The layout script beside it (config/calamares/system/lookandfeel) has called Discover out by
+# name since plan/16, because the Icons-Only Task Manager pins it by KConfigXT default. That was
+# always an argument made in a comment; this is the same argument made in the set, and the two
+# are not redundant — the pin has to be rewritten whether or not the package is installed, since
+# KService drops an unresolvable launcher silently rather than leaving a hole.
+#
+# The PRODUCT keeps it, and that asymmetry is the point: on a machine somebody owns, an app store
+# is how they get software, and desktop.lock still carries it.
+kde-plasma/discover              #not-live
 kde-plasma/xdg-desktop-portal-kde
 kde-plasma/breeze
 # The GTK theming bridge, kept so Flatpak apps (Firefox is preinstalled) do not render as an
@@ -31,7 +58,18 @@ kde-plasma/breeze
 # full enumerated residue — dropping these two packages removes almost all of it.
 kde-plasma/breeze-gtk
 kde-plasma/kde-gtk-config
-kde-plasma/plasma-workspace-wallpapers
+# #not-live: 216.8 MiB of artwork, and the single most expensive tree in the image per byte
+# downloaded — PNG and JPEG, so EROFS gives back 1%, not the 44% it averages over everything
+# else (plan/10 §5). A medium that boots once to run Calamares and is then thrown away has no
+# use for a wallpaper PICKER at all, and this is a bare set member with no reverse dependency,
+# so dropping it drops the package rather than orphaning it.
+#
+# It is only half the wallpapers: kde-plasma/breeze carries the DEFAULT one, /usr/share/
+# wallpapers/Next, another 38.3 MiB, and breeze is not droppable — it is the widget style, the
+# colour scheme and the look-and-feel fallback. Stage 50 deletes that directory on live media
+# instead, and the live layout script switches the desktop to the solid-colour wallpaper plugin
+# so the containment is not left naming an image that is gone. See plan/20.
+kde-plasma/plasma-workspace-wallpapers  #not-live
 kde-plasma/plasma-login-manager  # the display manager; its System Settings KCM is built in
 # /usr/share/wayland-sessions/plasma.desktop lives HERE, not in the display manager and not in
 # plasma-workspace. It is a PDEPEND of plasma-workspace so it would arrive anyway, but its
@@ -49,7 +87,19 @@ kde-apps/konsole
 # needs — kpipewire, layer-shell-qt, prison, the xcb libs — is already pulled in by
 # plasma-workspace/kwin's own screencast support. Pinned tree has 6.6.6 stable; 6.6.6-r1 and
 # 6.7.4-r1 are both ~amd64 only, so no keyword exception is taken here.
-kde-plasma/spectacle
+#
+# #not-live, and the OpenCV line above is the whole reason: Spectacle itself is 2.8 MiB and
+# media-libs/opencv is 41.5, fifteen times the size of the thing that wants it. Dropping the
+# atom on a live medium drops three packages, because nothing else in the closure reaches them —
+# media-libs/kquickimageeditor is Spectacle's alone, and opencv is Spectacle's and
+# kquickimageeditor's alone. 45.0 MiB installed, 22.3 MiB of EROFS (plan/20 §4.5).
+#
+# It is a real loss and not a free one: someone whose install just failed is the person most
+# likely to want a screenshot of the error, and plan/16's standing rule is that a failed install
+# needs a usable session. What tips it is that they cannot easily get a PNG off a medium that is
+# about to be unplugged, and a phone photograph of an error dialog is what people actually do.
+# The PRODUCT keeps Spectacle: on a machine somebody owns, screenshots have somewhere to go.
+kde-plasma/spectacle             #not-live
 # Native for the same reason as Spectacle above: no `org.kde.partitionmanager` (or any casing)
 # has ever shipped on Flathub — plausibly because a disk partitioner is a bad sandbox fit in
 # the first place. sys-block/, not kde-apps/ or kde-plasma/. IUSE is empty; the only dependency
@@ -78,4 +128,16 @@ net-print/cups                   #printing
 #
 # It costs no NEW dependency: everything it links against (Qt6, kcmutils, ki18n, kirigami,
 # systemsettings) is already in this set's closure for Plasma itself.
-distro-base/distro-kcm-managed
+#
+# #not-live: a live medium is never enrolled. Managed mode's whole point is a machine an
+# organisation keeps and keeps talking to (plan/19), and this module is the surface for the
+# person sitting at that machine — "which policy is applied, when did it last sync, who
+# manages this". On a stick that is discarded at the end of one install it answers a question
+# nobody can ask: the live session enrols nothing, so the KCM would report "not enrolled" for
+# twenty minutes and then cease to exist.
+#
+# NOT the whole of managed mode, and the distinction matters. The Calamares enrolment page
+# (distro-base/distro-calamares-managed, in config/portage/sets/installer) is installer-ONLY
+# and stays exactly where it is: it is how the machine being INSTALLED gets enrolled, which is
+# the one managed-mode job a live medium does have.
+distro-base/distro-kcm-managed  #not-live

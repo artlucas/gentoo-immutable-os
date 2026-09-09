@@ -73,9 +73,40 @@ for f in "$IMAGE_LOCK" "$BUILDER_LOCK"; do
     assert_match '^[0-7]?[0-7][0-7]4$' "$perm" "$n has sane permissions (got ${perm:-unknown})"
     # The header is the whole reason a lock is reviewable rather than merely trusted.
     assert_eq "$SNAPSHOT_DATE" "$(lock_header_value "$f" SNAPSHOT_DATE)" "$n header records the tree pin"
-    assert_eq "$(portage_config_hash)" "$(lock_header_value "$f" PORTAGE_CONFIG_HASH)" \
-        "$n header records the CURRENT portage config hash"
+    if [[ $n == builder.lock ]]; then
+        # ...but NOT the config hash, and that absence is load-bearing rather than an omission.
+        # builder/Dockerfile COPYs this exact file, so docker keys the builder image — and the
+        # ~1 hour of source builds behind it — on its content. PORTAGE_CONFIG_HASH covers the
+        # whole of config/portage INCLUDING COMMENTS, so with that line here every prose edit
+        # anywhere in that tree rebuilt the builder. Measured 2026-09-09: three rebuilds in one
+        # session, ~3.5 hours, none for a change the builder could observe — it resolves against
+        # a /etc/portage the Dockerfile writes inline and reads nothing from config/portage.
+        assert_eq "" "$(lock_header_value "$f" PORTAGE_CONFIG_HASH)" \
+            "$n records NO config hash — the Dockerfile COPYs it, so that line cost an image rebuild per comment"
+        for k in PROFILE PROFILE_ROLE BUILD_PROFILE PROFILE_SETS INCLUDE_CJK_FONTS; do
+            assert_eq "" "$(lock_header_value "$f" "$k")" \
+                "$n records no $k either — it is not resolved from a build profile"
+        done
+    else
+        assert_eq "$(portage_config_hash)" "$(lock_header_value "$f" PORTAGE_CONFIG_HASH)" \
+            "$n header records the CURRENT portage config hash"
+    fi
 done
+
+# ...and the two halves of that fix must agree. lock_write must not write the key, AND --restamp
+# must not try to rewrite it: without the skip, restamp finds no line to sed, cannot verify the
+# rewrite, and dies on every run.
+assert_true "lock_write takes a KIND and omits the config keys for the builder lock" \
+    grep -q 'if \[\[ $kind == builder \]\]; then' "$REPO_ROOT/scripts/lib/common.sh"
+assert_true "relock --restamp skips builder.lock rather than failing on a line that is not there" \
+    grep -q 'if \[\[ ${name%.lock} == builder \]\]; then' "$REPO_ROOT/scripts/relock.sh"
+# The regression this all exists to prevent, stated as the property that matters: a restamp
+# must leave builder.lock byte-identical.
+BL_SUM_BEFORE="$(sha256sum "$BUILDER_LOCK" | cut -d' ' -f1)"
+assert_false "restamp_locks does not name builder.lock as a file it rewrites" \
+    grep -qE 'sed -i.*PORTAGE_CONFIG_HASH.*builder' "$REPO_ROOT/scripts/relock.sh"
+assert_eq "$BL_SUM_BEFORE" "$(sha256sum "$BUILDER_LOCK" | cut -d' ' -f1)" \
+    "builder.lock is unchanged by reading it"
 
 # ---- portage_config_hash must not hash what it constrains ---------------------------------
 # The locks record the hash they were generated under, so hashing the locks would make that

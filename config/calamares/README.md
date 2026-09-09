@@ -15,8 +15,9 @@ profile. Designed in [plan/16](../../plan/16-installer.md).
 | `local-modules/<name>/*` | `/usr/share/calamares/local-modules/<name>/` | a second `modules-search` entry, so "which of these did we write?" is answered by the path |
 | `system/49-installer.rules.in` | `/etc/polkit-1/rules.d/49-<id>-installer.rules` | lets the live user start the installer without a password prompt |
 | `system/installer-autostart.desktop.in` | `/etc/xdg/autostart/<id>-installer.desktop` | opens the installer on login |
-| `system/kscreenlockerrc.in` | `/etc/xdg/kscreenlockerrc` | drops the lock screen's password prompt — the live account's password is public |
-| `system/lookandfeel/contents/layouts/**` | `/usr/share/plasma/look-and-feel/<id>/contents/layouts/` | the Plasma layout script that pins Calamares — and nothing else — to the task manager, added to the image's own Look-and-Feel package |
+| `system/kscreenlockerrc.in` | `/etc/xdg/kscreenlockerrc` | drops the lock screen's password prompt — the live account's password is public — and gives the greeter the wallpaper below |
+| `system/lookandfeel/contents/layouts/**` | `/usr/share/plasma/look-and-feel/<id>/contents/layouts/` | the Plasma layout script that pins Calamares — and nothing else — to the task manager, and points the desktop at the wallpaper below; added to the image's own Look-and-Feel package |
+| `system/wallpaper/**` | `/usr/share/wallpapers/<id>/` | the medium's only wallpaper — see below |
 | `system/realm.in` | `/usr/bin/realm` (**mode 0755**) | the Active Directory front door — see below |
 
 `branding/installer/logo.png` is **not in this directory**. It is composed at build time by
@@ -29,10 +30,20 @@ splash.
 
 The medium exists to run one program, so its task manager pins one program. Left alone it pins
 four, none of them that one: the Icons-Only Task Manager's `launchers` default (plasma-desktop,
-`applets/taskmanager/main.xml`) is System Settings, **Discover** — an app store on a read-only
-stick that is discarded in twenty minutes — Dolphin, and `preferred://browser`, which on this
-profile resolves to nothing at all because `FLATPAK_PREINSTALL=""` and Firefox travels in the
-payload instead.
+`applets/taskmanager/main.xml`) is System Settings, Discover, Dolphin, and `preferred://browser`.
+
+**Two of those four are not installed here.** `kde-plasma/discover` is `#not-live` in
+`config/portage/sets/desktop` ([plan/20](../../plan/20-installer-slimming.md) §4.3) — an app
+store on a read-only stick that is discarded in twenty minutes, whose every install is thrown
+away on reboot because what Calamares writes to the target is the *payload's* `/var`, not this
+session's. The browser is a Flatpak this profile does not preinstall: `FLATPAK_PREINSTALL=""` and
+Firefox travels in the payload instead.
+
+That does **not** make this script redundant, and the distinction is worth keeping straight:
+`KService` drops an unresolvable launcher silently rather than leaving a hole, so a medium with
+the stock default and neither package installed comes up with a two-icon panel — System Settings
+and Dolphin — and still no installer. Removing the package changes what is on the stick; only the
+layout script changes what is on the panel.
 
 Changing it costs a Look-and-Feel package, and the indirection is upstream's, not ours:
 
@@ -61,15 +72,58 @@ fallback package for any id that is not Breeze's own, and `KPackage::Package::fi
 that fallback for every file the package does not ship, so the lock screen, logout dialog, colours
 and style all still resolve to Breeze, unchanged.
 
-The script itself changes one line. It calls `loadTemplate("org.kde.plasma.desktop.defaultPanel")`
-so the panel stays upstream's by reference — kickoff, pager, tray, clock, and the input-method
-widget it adds for the languages that need one — and then writes `launchers` on the icontasks
-widget it finds there. The pin is `applications:calamares.desktop`, `app-admin/calamares`'s own
-menu entry rather than our `/etc/xdg/autostart` copy: only the former is in an applications
-directory where `KService` can resolve it, and only the former is translated, which matters on a
-medium whose first control is a language picker.
+The script itself makes two edits and writes nothing else. It calls
+`loadTemplate("org.kde.plasma.desktop.defaultPanel")` so the panel stays upstream's by
+reference — kickoff, pager, tray, clock, and the input-method widget it adds for the languages
+that need one — and then writes `launchers` on the icontasks widget it finds there. The pin is
+`applications:calamares.desktop`, `app-admin/calamares`'s own menu entry rather than our
+`/etc/xdg/autostart` copy: only the former is in an applications directory where `KService` can
+resolve it, and only the former is translated, which matters on a medium whose first control is a
+language picker.
 
-Kickoff's *favourites* are untouched, and the application menu still lists everything installed.
+The second edit is the containment's wallpaper, and it is here for the *same* reason the first
+one is: a KConfigXT default is not beatable from a config file, so the layout script is the only
+hook. See "The one wallpaper" below.
+
+Kickoff's *favourites* are untouched, and the application menu still lists everything installed —
+minus the **Emoji Selector**, which stage 50 deletes on live media. It arrives inside
+`kde-plasma/plasma-desktop`, so there is no set marker and no USE flag for it; the argument is
+[section 3g](../../scripts/stages/50-prune.sh)'s, one audience further out. A tool with no
+audience on this image goes, and there is nowhere on a live stick to paste an emoji into.
+`media-fonts/noto-emoji` stays: that is the font that renders the glyphs Calamares' own language
+picker may have to draw, and it is not the same thing as an app that inserts them.
+
+## The one wallpaper
+
+`system/wallpaper/` is a Plasma `Wallpaper/Images` KPackage, installed as
+`/usr/share/wallpapers/<id>/` for this profile only, and it is the **only** wallpaper on the
+medium. Stage 50 section 3i prunes that directory down to this one package: the 216.8 MiB
+collection never arrives (`#not-live`), and Breeze's own 38.3 MiB `Next` is deleted, because
+`kde-plasma/breeze` is also the widget style and the look-and-feel fallback and cannot be dropped.
+0.4 MiB against 255.1 — the medium keeps a branded desktop and still gives back 254.7 MiB.
+
+Three things about it are constraints rather than choices:
+
+- **The descriptor's `Id` must equal the directory name.** Same rule, and the same silent failure,
+  as the Look-and-Feel package: KPackage uses that comparison to decide whether the package loads
+  at all. `metadata.json.in` renders it from `DISTRO_ID`, so renaming the distro moves both.
+- **The image's *basename* must parse as `<width>x<height>`.** `findPreferredImageInPackage()`
+  selects on it (`packagefinder.cpp`, `resSize()`) and skips every file that does not, so a
+  `wallpaper.png` would leave the package valid, the entry list non-empty and the chosen image
+  null. `FillMode` is left at its KConfigXT default of 2 (PreserveAspectCrop), which is what a
+  2.40:1 image needs on a 16:9 or 4:3 panel.
+- **It is named by absolute path, twice, in two different files.** `MediaProxy::setSource()` puts
+  the stored value through `QUrl::fromUserInput()`, which turns a bare package id into an
+  `http://` URL and not a wallpaper — so what is written is the package *directory*, which
+  `determineProviderType()` reads as `Provider::Type::Package`. The desktop containment gets it
+  from the layout script; the **lock screen does not read that** and gets it from
+  `kscreenlockerrc`'s `[Greeter][Wallpaper][org.kde.image][General]`, which is a separate config
+  file, a separate group and — because `Autolock` is deliberately left on — the screen most
+  likely to be facing the room during an unattended install.
+
+Stage 40 checks all three before the medium is built, and stage 50 checks that exactly one
+wallpaper survived and that both files still name it. Every one of those failures is silent at
+runtime: plasmashell draws an empty containment and logs nothing anyone reads.
 
 ## What is different about installing this distro
 

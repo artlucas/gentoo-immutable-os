@@ -4,10 +4,11 @@
 # SNAPSHOT_SHA256: c61294000825031e58a38f60fadb603423c61430b841d73b87705f789d83944b
 # SNAPSHOT_DATE: 20260820
 # PROFILE: default/linux/amd64/23.0/desktop/plasma/systemd
-# PORTAGE_CONFIG_HASH: 42cd3ea3708ab7ea36961918a274c8574f23d393e6256afaa3e1097452500e32
+# PORTAGE_CONFIG_HASH: 1c38a8febbccdd27a6a120a959f288602654a7df54777eb43fed709069b0e3ff
 # INCLUDE_CJK_FONTS: 1
 # INCLUDE_PRINTING: 1
 # INCLUDE_DISTROBOX: 0
+# PROFILE_ROLE: live
 # BUILD_PROFILE: installer
 # PROFILE_SETS: base hardware domain desktop installer
 #
@@ -119,15 +120,10 @@
 =app-portage/getuto-2.0
 =app-portage/portage-utils-0.97.1
 =app-shells/bash-5.3_p15
-=app-text/dvipsk-2024.03.11_p70015
 =app-text/editorconfig-core-c-0.12.9
-=app-text/ghostscript-gpl-10.06.0-r2
 =app-text/iso-codes-4.20.1
 =app-text/libpaper-2.1.3
 =app-text/poppler-26.05.0-r1
-=app-text/poppler-data-0.4.12
-=dev-cpp/abseil-cpp-20250814.1
-=dev-cpp/eigen-3.4.0-r3
 =dev-cpp/highway-1.4.0
 =dev-cpp/yaml-cpp-0.8.0-r2
 =dev-db/lmdb-0.9.35
@@ -147,7 +143,6 @@
 =dev-libs/elfutils-0.195
 =dev-libs/ell-0.83
 =dev-libs/expat-2.8.3
-=dev-libs/flatbuffers-25.12.19
 =dev-libs/fribidi-1.0.16
 =dev-libs/glib-2.88.2
 =dev-libs/gmp-6.3.0-r2
@@ -159,7 +154,6 @@
 =dev-libs/json-c-0.18
 =dev-libs/json-glib-1.10.8
 =dev-libs/kirigami-addons-1.12.1
-=dev-libs/kpathsea-6.4.0_p20240311-r1
 =dev-libs/leancrypto-1.8.0
 =dev-libs/libassuan-3.0.0-r1
 =dev-libs/libatomic_ops-7.10.0
@@ -201,7 +195,6 @@
 =dev-libs/nss-3.112.5
 =dev-libs/openssl-3.5.7
 =dev-libs/popt-1.19-r1
-=dev-libs/protobuf-31.1
 =dev-libs/qcoro-0.13.0
 =dev-libs/snowball-stemmer-3.1.1
 =dev-libs/userspace-rcu-0.15.6
@@ -234,7 +227,6 @@
 =dev-qt/qt5compat-6.11.1
 =dev-qt/qtbase-6.11.1
 =dev-qt/qtdeclarative-6.11.1-r1
-=dev-qt/qtimageformats-6.11.1
 =dev-qt/qtlocation-6.11.1
 =dev-qt/qtmultimedia-6.11.1
 =dev-qt/qtpositioning-6.11.1
@@ -259,6 +251,7 @@
 =gui-libs/egl-wayland-1.1.21
 =gui-libs/egl-wayland2-1.0.1
 =gui-libs/libdecor-0.2.5
+=immos-base/immos-calamares-managed-1.0
 =kde-apps/baloo-widgets-26.04.3
 =kde-apps/dolphin-26.04.3
 =kde-apps/kio-extras-26.04.3
@@ -323,7 +316,6 @@
 =kde-frameworks/modemmanager-qt-6.27.0
 =kde-frameworks/networkmanager-qt-6.27.0
 =kde-frameworks/prison-6.27.0
-=kde-frameworks/purpose-6.27.0
 =kde-frameworks/qqc2-desktop-style-6.27.0
 =kde-frameworks/solid-6.27.0
 =kde-frameworks/sonnet-6.27.0
@@ -333,7 +325,6 @@
 =kde-plasma/bluedevil-6.6.6
 =kde-plasma/breeze-6.6.6
 =kde-plasma/breeze-gtk-6.6.6
-=kde-plasma/discover-6.6.6
 =kde-plasma/kactivitymanagerd-6.6.6
 =kde-plasma/kde-cli-tools-6.6.6
 =kde-plasma/kde-cli-tools-common-6.6.6
@@ -366,30 +357,25 @@
 =kde-plasma/plasma-pa-6.6.6
 =kde-plasma/plasma-systemmonitor-6.6.6
 =kde-plasma/plasma-workspace-6.6.6
-=kde-plasma/plasma-workspace-wallpapers-6.6.6
 =kde-plasma/plasma5support-6.6.6
 =kde-plasma/polkit-kde-agent-6.6.6
 =kde-plasma/powerdevil-6.6.6-r1
 =kde-plasma/print-manager-6.6.6
 =kde-plasma/qqc2-breeze-style-6.6.6
-=kde-plasma/spectacle-6.6.6
 =kde-plasma/systemsettings-6.6.6
 =kde-plasma/xdg-desktop-portal-kde-6.6.6
 =llvm-core/llvm-22.1.8
 =llvm-core/llvm-common-22.1.8
 =llvm-core/llvm-toolchain-symlinks-22
 =llvm-core/llvmgold-22
-=media-fonts/arphicfonts-0.2.20080216.1-r2
 =media-fonts/font-util-1.4.2
 =media-fonts/hack-3.003
 =media-fonts/liberation-fonts-2.1.5
 =media-fonts/noto-20260701
 =media-fonts/noto-cjk-20190416
 =media-fonts/noto-emoji-20250912
-=media-fonts/urw-fonts-20230503-r1
 =media-gfx/exiv2-0.28.8
 =media-gfx/graphite2-1.3.14_p20210810-r5
-=media-gfx/kio-ps-thumbnailer-26.04.3
 =media-gfx/qrencode-4.1.1-r1
 =media-libs/alsa-lib-1.2.15.3
 =media-libs/alsa-topology-conf-1.2.5.1-r1
@@ -405,8 +391,6 @@
 =media-libs/glu-9.0.3
 =media-libs/gmmlib-22.10.0
 =media-libs/harfbuzz-12.3.2
-=media-libs/jbig2dec-0.20
-=media-libs/kquickimageeditor-0.6.2.1
 =media-libs/lcms-2.19.1
 =media-libs/libaom-3.12.1
 =media-libs/libass-0.17.4
@@ -424,7 +408,6 @@
 =media-libs/libjxl-0.12.0
 =media-libs/libldac-2.0.2.3-r2
 =media-libs/libmad-0.15.1b-r10
-=media-libs/libmng-2.0.3-r1
 =media-libs/libogg-1.3.6
 =media-libs/libpng-1.6.58
 =media-libs/libpulse-17.0
@@ -435,7 +418,6 @@
 =media-libs/libvorbis-1.3.7-r2
 =media-libs/libwebp-1.6.0
 =media-libs/mesa-26.1.6
-=media-libs/opencv-4.12.0-r1
 =media-libs/openjpeg-2.5.4-r1
 =media-libs/opus-1.5.2
 =media-libs/pcaudiolib-1.2-r2
@@ -460,7 +442,6 @@
 =net-dns/avahi-0.9_rc3
 =net-dns/bind-9.20.26
 =net-dns/c-ares-1.34.8
-=net-dns/libidn-1.44
 =net-dns/libidn2-2.3.8
 =net-firewall/iptables-1.8.13
 =net-fs/cifs-utils-7.5
@@ -598,7 +579,6 @@
 =virtual/dist-kernel-6.18.43
 =virtual/editor-0-r7
 =virtual/glu-9.0-r2
-=virtual/jpeg-100-r1
 =virtual/krb5-0-r1
 =virtual/ldb-2.11.0
 =virtual/libcrypt-2-r1

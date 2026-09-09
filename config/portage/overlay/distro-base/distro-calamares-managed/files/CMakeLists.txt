@@ -18,6 +18,21 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(Calamares REQUIRED)
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
 
+# KF6::CoreAddons is named in Calamares::calamares' INTERFACE_LINK_LIBRARIES, so linking against
+# Calamares drags it in — but nothing defines that imported target unless someone looks for it,
+# and CalamaresConfig.cmake does not. Its accumulate_deps() collects KF components by matching
+# the target prefix against "${kfname}::", with kfname set to the lowercase "kf6", while the
+# targets are spelled "KF6::CoreAddons". CMake's MATCHES is case-sensitive, so the match never
+# fires, kf_required stays empty, and the whole find_package(KF6) branch below it is skipped.
+# The failure lands here rather than there: "Target links to KF6::CoreAddons but the target was
+# not found" at generate time. Found by configuring this module against the real installed
+# 3.4.2, and fixed by asking for the framework directly.
+#
+# KF6CoreAddons, not KF6 COMPONENTS CoreAddons: the umbrella FindKF6.cmake is an ECM find-module
+# and would make extra-cmake-modules a build dependency of this package for no other reason,
+# whereas KF6CoreAddonsConfig.cmake ships with kcoreaddons itself.
+find_package(KF6CoreAddons REQUIRED)
+
 # The plugin includes "GlobalStorage.h" and "viewpages/ViewStep.h" by their in-tree paths, which
 # is how every Calamares module spells them; Calamares_INCLUDE_DIRS is what makes those resolve
 # from an installed prefix.

@@ -1,0 +1,81 @@
+# package.use for the INSTALLER profile only (plan/16, plan/19 §7.3).
+#
+# Files named profile.<name> in this directory are copied into the config root by stage 20 only
+# when that profile is the one being built; every other file here is shared by all of them. USE
+# is resolved once per package, so a flag that one image needs and another must not have has
+# nowhere else to live.
+#
+# ---------------------------------------------------------------------------------------------
+# dev-qt/qttools[linguist] — required to BUILD the installer page, not to run it.
+#
+# <id>-calamares-managed (config/portage/overlay) is a Calamares view module built out of tree
+# against the installed Calamares, because Calamares accepts only C++ QtPlugin view modules.
+# Building out of tree means find_package(Calamares), and the exported CalamaresConfig.cmake
+# opens with:
+#
+#     set(qt_required Core Widgets LinguistTools)
+#     find_package(${qtname} CONFIG REQUIRED ${qt_required})
+#
+# LinguistTools is hardcoded into the REQUIRED component list every consumer of the Calamares
+# CMake package inherits, whether or not that consumer has a single translatable string — and
+# this one does not. The cmake package /usr/lib64/cmake/Qt6LinguistTools is gated on this USE
+# flag, so with it off the module fails at configure time with
+#
+#     Failed to find required Qt component "LinguistTools"
+#
+# and the installer page cannot be built at all. Confirmed by configuring the module against the
+# real installed 3.4.2, not inferred from the ebuild.
+#
+# The flag costs no packages anywhere: qttools' linguist? RDEPEND is a lone
+# "widgets? ( !dev-qt/linguist:5 )" slot blocker, so no lock gains an atom — only qttools' own
+# contents grow, and only on this profile.
+#
+# It does also build the Qt Linguist GUI, which has no audience on an installer medium either.
+# USE has no move that keeps Qt6LinguistTools for the build while dropping the app from the
+# image, so the app is deleted after the merge instead: stage 50 section 3h, which asserts it
+# stays gone. That is the same treatment, for the same reason, that section 3g gives the Qt
+# D-Bus Viewer — see the long note in package.use/image about qdbus and widgets.
+dev-qt/qttools                    linguist
+
+# ---------------------------------------------------------------------------------------------
+# kde-apps/thumbnailers[-pdf] — Ghostscript, and 87 MiB of fonts nothing else in the image uses.
+#
+# The chain, read off the pinned tree rather than guessed (plan/20 §4.2):
+#
+#   kde-apps/dolphin
+#     -> kde-apps/thumbnailers[pdf]
+#          -> media-gfx/kio-ps-thumbnailer      RDEPEND: app-text/ghostscript-gpl, app-text/dvipsk
+#               -> app-text/ghostscript-gpl     RDEPEND: >=media-fonts/urw-fonts-2.4.9   (18 MiB)
+#                                                        app-text/poppler-data
+#                                        l10n_zh-CN? / l10n_zh-TW? ( media-fonts/arphicfonts )
+#                                                                                        (69 MiB)
+#               -> app-text/dvipsk -> dev-libs/kpathsea
+#
+# Six packages, 96.0 MiB installed and 70.9 MiB of EROFS measured on the real 0.3.0 medium, and
+# all of it serves ONE Dolphin thumbnailer: /usr/lib64/qt6/plugins/kf6/thumbcreator/gsthumbnail.so
+# draws the little preview for PDF and PostScript files. The arphicfonts half is not even about
+# rendering PDFs — it is ghostscript's l10n_zh-CN/l10n_zh-TW RDEPEND, which is on because
+# LOCALES_KEEP includes those two.
+#
+# app-text/poppler-data (12.3 MiB) DOES go with it, and the first reading of this said the
+# opposite. app-text/poppler names the atom too, so a grep for it finds two consumers — but
+# poppler's is `cjk? ( app-text/poppler-data )` and cjk is not in its default IUSE, so this image
+# never had that half. Ghostscript's is unconditional. Reading a dependency without reading the
+# condition it sits under is how the atom looked load-bearing; the resolver settled it.
+#
+# Nothing is lost by it either, for the same reason: poppler is built -cjk and has never used the
+# encoding tables poppler-data ships.
+#
+# The resolver found nine more orphans that no reading of the ebuilds would have produced by
+# hand — jbig2dec and libidn behind ghostscript, poppler-data as above, and dvipsk's kpathsea.
+# See the note in plan/20 §2.7 about why the lock for a removal has to be REGENERATED rather
+# than edited.
+#
+# INSTALLER ONLY. On the product this is plan/10 finding 6 and a genuine judgement call about
+# whether PDF thumbnails in a file manager are worth 137 MiB. On a medium that boots once to run
+# Calamares and is thrown away it is not a judgement call: nobody browses a PDF library on it.
+# The desktop profile is untouched and still has the thumbnailer.
+#
+# NB this REMOVES packages rather than reshaping one, so it moves installer.lock and
+# expected-packages.installer.txt — unlike the qttools flag above, which costs no atoms.
+kde-apps/thumbnailers             -pdf

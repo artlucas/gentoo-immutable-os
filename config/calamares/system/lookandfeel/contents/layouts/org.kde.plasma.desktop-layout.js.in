@@ -1,0 +1,98 @@
+// The live medium's Plasma desktop: upstream's panel, with the task manager's pins rewritten and
+// the containment's wallpaper named. Two edits, both of which have to be made HERE rather than in
+// a config file, and for the same reason — see below.
+//
+// LIVE MEDIUM ONLY. Stage 40 installs this (and the /etc/xdg/kdeglobals that selects the package
+// carrying it) for the `installer` profile alone.
+//
+// WHY THIS FILE EXISTS AT ALL. The Icons-Only Task Manager's stock pins come from its own
+// KConfigXT default (plasma-desktop, applets/taskmanager/main.xml):
+//
+//     applications:systemsettings.desktop,applications:org.kde.discover.desktop,
+//     preferred://filemanager,preferred://browser
+//
+// which on this medium is: System Settings, Discover, Dolphin, and a browser. Four pins, three of
+// them wrong, and not one of them the thing this medium exists to do — and TWO of the four now
+// resolve to nothing at all, because neither package is installed here: kde-plasma/discover is
+// `#not-live` in config/portage/sets/desktop (an app store on a read-only stick that is thrown
+// away in twenty minutes), and the browser is a Flatpak this profile does not preinstall, since
+// FLATPAK_PREINSTALL="" and Firefox travels in the payload instead.
+//
+// That the package is gone does NOT make this script redundant. KService silently drops a
+// launcher whose .desktop file it cannot resolve, so without the rewrite below the panel would
+// come up with two icons on it — System Settings and Dolphin — and still not the installer.
+//
+// A KConfigXT default cannot be overridden by a config file: Plasma::Corona::config() opens
+// plasma-org.kde.plasma.desktop-appletsrc with KConfig::SimpleConfig (libplasma, corona.cpp),
+// which does NOT cascade, so an /etc/xdg copy of that file — the trick baloofilerc and
+// kscreenlockerrc use — is never read. The layout script is the supported hook, and
+// ShellCorona::loadDefaultLayout() takes it from the Look-and-Feel package.
+
+// Upstream's panel, unmodified and by reference: kickoff, pager, icontasks, the system tray, the
+// clock, and the input-method panel it adds only for the ~29 languages that need one. Copying
+// those 70 lines here to edit one widget's config would silently freeze them at 6.6.6.
+loadTemplate("org.kde.plasma.desktop.defaultPanel")
+
+// The first change. applications:calamares.desktop is app-admin/calamares's own menu entry in
+// /usr/share/applications — not our /etc/xdg/autostart copy, which is not in an applications
+// directory and could not be resolved from here. Upstream's entry is also the translated one
+// ("Instalar el sistema", "システムをインストール", …), which matters on a medium whose first
+// control is a language picker.
+var pinned = 0;
+var allPanels = panels();
+for (var i = 0; i < allPanels.length; i++) {
+    var tasks = allPanels[i].widgets("org.kde.plasma.icontasks");
+    for (var t = 0; t < tasks.length; t++) {
+        tasks[t].currentConfigGroup = ["General"];
+        tasks[t].writeConfig("launchers", ["applications:calamares.desktop"]);
+        tasks[t].reloadConfig();
+        pinned++;
+    }
+}
+// Not fatal: a panel is far better than no panel, and the medium is still usable with the stock
+// pins. Said out loud so it is one grep in the live session's journal rather than a mystery.
+if (pinned === 0) {
+    print("installer layout: no org.kde.plasma.icontasks widget was found in the default panel; " +
+          "the task manager kept its stock launchers");
+}
+
+// The second change, and it is not cosmetic here — it is what keeps the desktop from coming up
+// black. Breeze's layout sets 'org.kde.image' and leaves the image itself to
+// org.kde.breeze.desktop/contents/defaults:
+//
+//     [Wallpaper]
+//     Image=Next
+//
+// `Next` is not on this medium. kde-plasma/plasma-workspace-wallpapers is dropped from the set on
+// a live profile (`#not-live` in config/portage/sets/desktop, 216.8 MiB) and stage 50 section 3i
+// deletes the 38.3 MiB Breeze ships as `Next`, which cannot be dropped as a package because
+// breeze is also the widget style, the colour scheme and the look-and-feel fallback. Left alone,
+// org.kde.image resolves `Next` to nothing and draws an empty containment — plasma-workspace's
+// DefaultWallpaper::defaultWallpaperPackage() falls back from the look-and-feel `defaults` to the
+// Plasma theme and then to `wallpapers/Next` again, so every arm of that fallback is missing too.
+//
+// So the plugin stays org.kde.image and the image is NAMED here: one wallpaper package, this
+// distro's own, installed by stage 40 for this profile only from config/calamares/system/
+// wallpaper and left alone by section 3i when it deletes everything else under
+// /usr/share/wallpapers. It is 0.4 MiB against the collection's 255.1, so the medium keeps a
+// branded desktop and still gives back 254.7 MiB of the artwork it used to carry.
+//
+// AN ABSOLUTE PATH, not the package's id, and that is a constraint rather than a style choice:
+// MediaProxy::setSource() puts this value through QUrl::fromUserInput(), which turns a bare
+// "@DISTRO_ID@" into an http:// URL and not into a wallpaper. A directory is what the wallpaper
+// KCM itself stores, and determineProviderType() reads Provider::Type::Package straight off it
+// being one.
+//
+// FillMode is deliberately NOT written. Its KConfigXT default is 2, PreserveAspectCrop, which is
+// what a 2.40:1 image has to have on a 16:9 or 4:3 panel; the mark sits right of centre and
+// survives the crop at both. Writing the default would only freeze it.
+//
+// The lock screen is a different config file and is covered separately, in
+// config/calamares/system/kscreenlockerrc.in: kscreenlocker's greeter reads its own
+// [Greeter][Wallpaper][org.kde.image][General], never this containment's.
+var desktopsArray = desktopsForActivity(currentActivity());
+for (var d = 0; d < desktopsArray.length; d++) {
+    desktopsArray[d].wallpaperPlugin = 'org.kde.image';
+    desktopsArray[d].currentConfigGroup = ['Wallpaper', 'org.kde.image', 'General'];
+    desktopsArray[d].writeConfig('Image', '/usr/share/wallpapers/@DISTRO_ID@/');
+}

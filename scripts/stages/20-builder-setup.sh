@@ -36,8 +36,28 @@ L10N="$(printf '%s' "$LOCALES_KEEP" | tr '_' '-')"
 export JOBS L10N   # BINHOST_URI is the builder's own setting; the target has no binhost
 render_template "$REPO/config/portage/make.conf.in" "$PC/make.conf"
 
-# straight copies
-cp "$REPO"/config/portage/package.use/*             "$PC/package.use/"
+# package.use is the one config directory that is NOT a straight copy, because USE is resolved
+# once per package and this pipeline builds several profiles from one repo.
+#
+# A file named "profile.<name>" belongs to that build profile alone and is skipped by every
+# other one; everything else is shared and always copied. The case that forced this: the
+# installer profile's <id>-calamares-managed is built out of tree against the installed
+# Calamares, and CalamaresConfig.cmake hardcodes LinguistTools into the REQUIRED Qt6 component
+# list every consumer inherits — so dev-qt/qttools needs USE=linguist to build the installer
+# page, while the desktop and console images want neither that flag nor the Qt Linguist GUI it
+# also builds. Copying package.use wholesale offered only "on everywhere" or "off everywhere",
+# and neither is true (plan/19 §7.3).
+#
+# The naming mirrors config/portage/sets/, where the profile likewise selects which files apply,
+# so there is one convention to learn rather than two.
+for f in "$REPO"/config/portage/package.use/*; do
+  b="$(basename "$f")"
+  if [[ $b == profile.* ]]; then
+    [[ $b == "profile.$BUILD_PROFILE" ]] || continue
+    log "package.use: including $b for the $BUILD_PROFILE profile"
+  fi
+  cp "$f" "$PC/package.use/"
+done
 cp "$REPO"/config/portage/package.license/*         "$PC/package.license/"
 cp "$REPO"/config/portage/package.accept_keywords/* "$PC/package.accept_keywords/"
 cp "$REPO"/config/portage/package.mask/*            "$PC/package.mask/"
@@ -123,7 +143,8 @@ if [[ -f $PROFILE_LOCK ]]; then
   # 2. Do the switches that reshape the closure still agree? filter_set_file resolves these
   #    before the set is ever emerged, so a lock generated with CJK fonts on is simply the
   #    wrong lock for a build with them off — and nothing downstream would say so.
-  for k in INCLUDE_CJK_FONTS INCLUDE_PRINTING INCLUDE_DISTROBOX BUILD_PROFILE PROFILE_SETS; do
+  for k in INCLUDE_CJK_FONTS INCLUDE_PRINTING INCLUDE_DISTROBOX PROFILE_ROLE \
+           BUILD_PROFILE PROFILE_SETS; do
     lv="$(lock_header_value "$PROFILE_LOCK" "$k")"
     cv="${!k:-}"
     [[ -z $lv || $lv == "$cv" || ${RELOCK:-0} == 1 ]] || die "${BUILD_PROFILE}.lock was generated with $k=$lv, this build has $k=$cv.

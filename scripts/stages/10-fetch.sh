@@ -79,7 +79,7 @@ BUILDER_LOCK="$LOCK_DIR/builder.lock"
 if [[ -f $BUILDER_LOCK ]]; then
   ensure_dir "$REPORT_DIR"
   vdb_atoms / | lock_write "$REPORT_DIR/builder.lock.generated" \
-    "builder.lock — the builder's own \"/\" closure, installed from the binhost"
+    "builder.lock — the builder's own \"/\" closure, installed from the binhost" builder
   if lock_diff "$BUILDER_LOCK" "$REPORT_DIR/builder.lock.generated" > "$REPORT_DIR/builder-lock.diff"; then
     log "builder closure matches builder.lock ($(lock_atoms "$BUILDER_LOCK" | wc -l) atoms)"
   else
@@ -91,7 +91,7 @@ if [[ -f $BUILDER_LOCK ]]; then
 else
   ensure_dir "$REPORT_DIR"
   vdb_atoms / | lock_write "$REPORT_DIR/builder.lock.generated" \
-    "builder.lock — the builder's own \"/\" closure, installed from the binhost"
+    "builder.lock — the builder's own \"/\" closure, installed from the binhost" builder
   warn "no config/portage/lock/builder.lock yet — review $REPORT_DIR/builder.lock.generated
   and commit it as config/portage/lock/builder.lock (plan/15)"
 fi

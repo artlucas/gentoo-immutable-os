@@ -164,4 +164,34 @@ for prof in "${PROFILES[@]}"; do
     else _fail "profile '$prof' ships no sys-devel/gcc — every C++ binary in it would fail to start"; fi
 done
 
+# ---- per-profile build state (the staleness fingerprint) -----------------------------------
+# init_paths' own rule is "everything per-BUILD is profile-scoped". TARGET_HASH_FILE is the one
+# that was not, and it is the fingerprint stage 30 compares $TARGET against before deciding the
+# root is stale. One shared file meant an installer build stamped its hash over the desktop's,
+# so each profile then read a fingerprint describing a root that is not its own — a false "wipe
+# and rebuild" on a good target, or, the half that actually ships a wrong image, silence on a
+# stale one because the other profile had just written the current hash over it.
+for _p in desktop installer console; do
+    eval "$( BUILD_PROFILE_OVERRIDE=$_p; WORK=/w; load_config
+             declare -p TARGET TARGET_HASH_FILE | sed 's/^declare -[-x]* /P_/; s/^P_/declare -g P_/' )"
+    assert_true "$_p: TARGET_HASH_FILE is defined by init_paths" test -n "${P_TARGET_HASH_FILE:-}"
+    # The fingerprint must sit beside the target it describes: same suffix, always.
+    assert_eq "${P_TARGET#/w/target}" "${P_TARGET_HASH_FILE#/w/target-config-hash}" \
+        "$_p: the fingerprint carries the same profile suffix as its target root"
+done
+# ...and no two profiles may share one, which is the bug stated directly.
+assert_eq "3" "$( for _p in desktop installer console; do
+                      ( BUILD_PROFILE_OVERRIDE=$_p; WORK=/w; load_config; printf '%s\n' "$TARGET_HASH_FILE" )
+                  done | sort -u | wc -l )" \
+    "the three profiles' fingerprints are three distinct paths"
+# Stage 30 must use the variable for BOTH halves of the guard. They used to be two literal
+# strings that happened to agree, which is how one of them could be fixed and the other missed.
+S30="$REPO_ROOT/scripts/stages/30-target-rootfs.sh"
+assert_true "stage 30 reads the guard through TARGET_HASH_FILE" \
+    grep -q 'PREV_TGT_HASH="$(cat "$TARGET_HASH_FILE"' "$S30"
+assert_true "...and writes it through the same variable" \
+    grep -qF '> "$TARGET_HASH_FILE"' "$S30"
+assert_false "...and nowhere spells the unsuffixed path by hand" \
+    grep -q 'WORK/target-config-hash"' "$S30"
+
 finish

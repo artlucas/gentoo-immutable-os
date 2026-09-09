@@ -18,6 +18,15 @@
 # app-admin/calamares with no USE flag to turn them off. On the install medium that is a shrug;
 # in the product image it would be indefensible.
 #
+# GRUB was the expensive part of that shrug — 68.4 MiB installed, 41.6 MiB of EROFS — so it is
+# no longer shrugged at: the PACKAGE still arrives, because nothing can stop it, but stage 50
+# section 3j deletes its files on any live profile (plan/20 §2.3). Both halves of the claim are
+# checked rather than assumed: this medium boots a UKI, and the `exec:` sequence in
+# config/calamares/settings.conf.in names our `imagebootloader` module and never the stock
+# `bootloader`/`grubcfg`. os-prober and squashfs-tools are left alone — they measure 0.0 and
+# 0.5 MiB, and deleting a package's contents for no bytes only adds a path that can stop
+# matching without anyone noticing.
+#
 # ~amd64, and mandatory rather than a preference: both STABLE calamares revisions cap at
 # PYTHON_COMPAT=python3_{11..13} and this image is on python 3.14 (plan/06), so the stable
 # ebuild does not resolve at all — REQUIRED_USE "exactly-one-of ( python_single_target_python3_12

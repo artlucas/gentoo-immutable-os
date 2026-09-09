@@ -1002,6 +1002,58 @@ if profile_has_set installer; then
   that nothing under config/calamares/system/lookandfeel overwrote the metadata.json section 2c
   rendered from config/plasma/lookandfeel"
 
+  # ---- the one wallpaper this medium carries (plan/20 §2.1) -----------------------------
+  # A Wallpaper/Images KPackage, installed for this profile alone. The live medium dropped the
+  # 216.8 MiB collection from the set and has stage 50 delete Breeze's own 38.3 MiB `Next`, so
+  # without this /usr/share/wallpapers is empty and the containment has nothing to draw. The
+  # answer used to be the solid-colour plugin; this is 0.4 MiB of branded artwork instead, which
+  # keeps all but 0.4 of the 255.1 MiB and gives the medium the same mark the boot splash showed.
+  #
+  # LIVE ONLY, like everything else in this block. The PRODUCT keeps the full collection and
+  # Breeze's default — a machine somebody owns gets to choose its own background, and section 3i
+  # of stage 50 asserts that direction too.
+  #
+  # THE DIRECTORY NAME IS THE PACKAGE ID and both are $DISTRO_ID, the same string the
+  # look-and-feel package above uses. metadata.json.in renders the id, so a renamed distro moves
+  # the directory and the descriptor together; they are compared below because KPackage uses that
+  # comparison to decide whether the package loads at all, and a mismatch is silent.
+  WP_DIR="$TARGET/usr/share/wallpapers/$DISTRO_ID"
+  # Rebuilt rather than merged into, for the reason section 2c gives about the look-and-feel
+  # package: `build.sh --from 40` reruns this against a work volume that already has the last
+  # run's package in it, and a renamed image file would otherwise leave its predecessor behind
+  # for findPreferredImageInPackage() to keep choosing.
+  rm -rf -- "$WP_DIR"
+  while IFS= read -r -d '' f; do
+    rel="${f#"$CAL_SRC/system/wallpaper/"}"
+    cal_install "$f" "$WP_DIR/${rel%.in}"
+  done < <(find "$CAL_SRC/system/wallpaper" -type f -print0)
+  find "$WP_DIR" -type d -exec chmod 0755 {} +
+
+  # The three things that have to be true for a wallpaper package to resolve, none of which fails
+  # loudly at runtime — plasmashell draws an empty containment and logs nothing anyone reads.
+  grep -q "\"Id\": \"$DISTRO_ID\"" "$WP_DIR/metadata.json" \
+    || die "verify: the wallpaper package in $WP_DIR does not declare Id \"$DISTRO_ID\". KPackage
+  compares the descriptor's id against the directory it loaded from, exactly as it does for the
+  look-and-feel package, and a mismatch makes the package invalid rather than wrong"
+  # WallpaperPackage::findPreferredImageInPackage() picks the file whose BASENAME parses as
+  # <width>x<height> and ignores every file that does not (packagefinder.cpp, resSize()). A
+  # wallpaper committed as `wallpaper.png` would leave the package valid, the entry list
+  # non-empty and the chosen image null.
+  wp_images=$(find "$WP_DIR/contents/images" -type f -regextype posix-extended \
+                   -regex '.*/[0-9]+x[0-9]+\.(png|jpg|jpeg|webp)' 2>/dev/null | wc -l)
+  [[ $wp_images -ge 1 ]] \
+    || die "verify: $WP_DIR/contents/images holds no file named <width>x<height>.<ext>.
+  findPreferredImageInPackage() selects on that basename and skips everything else, so the
+  package would load and then resolve to no image at all"
+  # ...and the layout script has to name the directory this section just created. Two independent
+  # strings, one rendered from config/calamares/system/wallpaper and one from the layout template,
+  # and a drift between them is a blank desktop on a medium that built clean.
+  grep -qF "'/usr/share/wallpapers/$DISTRO_ID/'" \
+       "$LNF_DIR/contents/layouts/org.kde.plasma.desktop-layout.js" \
+    || die "verify: the live layout script does not point org.kde.image at $WP_DIR — the
+  containment would fall back through DefaultWallpaper::defaultWallpaperPackage() to Breeze's
+  Next, which stage 50 section 3i deletes on this medium, and draw nothing"
+
   # ---- the payload ---------------------------------------------------------------------
   # Three files another profile's build produced, copied in unchanged. Under /var because stage
   # 60 builds the root EROFS with --exclude '/var/*' — it is the only place ~5 GiB can go — and
@@ -1700,6 +1752,16 @@ if profile_has_set installer; then
     || die "verify: /etc/xdg/kscreenlockerrc does not set RequirePassword=false — the live
   session would lock itself after five idle minutes and ask for a password nobody was told to
   expect. Grepped rather than stat'd: the file existing is not the property that matters."
+  # The other half of the same file, and it exists BECAUSE the half above leaves Autolock on: the
+  # shield engages five minutes into an unattended install, so this greeter is the screen most
+  # likely to be facing the room. kscreenlocker does not read the containment's wallpaper — its
+  # own fallback chain ends at Breeze's Next, which stage 50 deletes here — so an unset key is a
+  # black lock screen on a medium whose desktop has a wallpaper.
+  grep -qx "Image=/usr/share/wallpapers/$DISTRO_ID/" "$TARGET/etc/xdg/kscreenlockerrc" 2>/dev/null \
+    || die "verify: /etc/xdg/kscreenlockerrc does not point the greeter at
+  /usr/share/wallpapers/$DISTRO_ID — the lock screen would draw black behind the unlock UI while
+  the desktop behind it has a wallpaper. The key lives in
+  [Greeter][Wallpaper][org.kde.image][General], which is the group greeterapp.cpp builds."
 
   # The panel. Read back for the same reason: /etc/xdg/kdeglobals existing says nothing about
   # whether it names the package, and the package existing says nothing about whether its one
@@ -1751,6 +1813,7 @@ if ! profile_has_set installer; then
               "etc/polkit-1/rules.d/49-$DISTRO_ID-installer.rules" \
               "etc/xdg/kscreenlockerrc" usr/bin/realm \
               "usr/share/plasma/look-and-feel/$DISTRO_ID/contents/layouts" \
+              "usr/share/wallpapers/$DISTRO_ID" \
               "${PAYLOAD_DIR#/}"; do
     [[ -e $TARGET/$leak ]] \
       && die "verify: $BUILD_PROFILE does not include @installer, but /$leak exists in the target.
@@ -1994,7 +2057,15 @@ if [[ -n $MANAGED_KCM ]]; then
   # A Plasma 6 KCM carries its metadata INSIDE the plugin; there is no .desktop to read it from
   # any more. An empty or missing KPlugin block gives a module System Settings can load and
   # cannot name, so it appears as a blank row.
-  strings -- "${MANAGED_KCM%% *}" 2>/dev/null | grep -q 'KPlugin' \
+  # Rendered ONCE into a variable, not piped into `grep -q` — the same SIGPIPE/pipefail trap
+  # documented at the lsinitrd, objdump and nss-systemd checks above, and this assertion was
+  # written with the bug rather than against it. `strings` on a 50 KB plugin produces far more
+  # output than grep -q needs: grep exits at the first of the twelve KPlugin hits, strings dies
+  # of SIGPIPE, and the pipeline yields 141. Under `set -o pipefail` that reads as "no metadata"
+  # and fails the build on a correct image — CONFIRMED, this is exactly how it first failed, on
+  # a plugin whose metadata was intact.
+  KCM_STRINGS="$(strings -- "${MANAGED_KCM%% *}" 2>/dev/null || true)"
+  [[ $KCM_STRINGS == *KPlugin* ]] \
     || die "verify: kcm_managed.so carries no KPlugin metadata. System Settings reads the name,
   icon and category out of the plugin itself (Plasma 6 has no .desktop for KCMs), so this module
   would appear as an unnamed row or not at all."
@@ -2004,6 +2075,14 @@ if [[ -n $MANAGED_KCM ]]; then
     || warn "kcm_managed.so is installed but /usr/share/applications/kcm_managed.desktop is not.
   The module will be in System Settings and will not come up when someone searches for it."
   log "managed mode: the System Settings module is installed"
+elif [[ $PROFILE_ROLE == live ]]; then
+  # Not a warning here, and not an omission either: on a live medium the module is absent ON
+  # PURPOSE (plan/20). It is marked `#not-live` in config/portage/sets/desktop, so filter_set_file
+  # drops it before the set is ever emerged — a live session enrols nothing, so a "which policy
+  # is applied?" page would answer "not enrolled" for twenty minutes and then be thrown away
+  # with the stick. The Calamares enrolment page, which is the half a live medium DOES need, is
+  # checked separately above.
+  log "live profile ($BUILD_PROFILE): the managed System Settings module is deliberately absent"
 elif profile_has_set desktop; then
   warn "the managed-mode System Settings module is not installed (plan/19 §7.2, Phase D).
   The QML app at /usr/bin/${DISTRO_ID}-managed-ui still works and is in the launcher. The KCM

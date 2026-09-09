@@ -106,8 +106,34 @@ so this cannot be done once.
 | `config/portage/lock/builder.lock` | the builder's own `/` closure | the Dockerfile | stage 10 | 495 atoms |
 
 Sorted `=cat/pkg-ver` atoms, **generated, never authored** — the rule `expected-packages.txt`
-already states. Each carries a header recording `TREE_COMMIT`, `SNAPSHOT_DATE`, `PROFILE`,
-`PORTAGE_CONFIG_HASH` and the four `INCLUDE_*` / `CONSOLE_ONLY` switches.
+already states. A PROFILE lock carries a header recording `TREE_COMMIT`, `SNAPSHOT_DATE`,
+`PROFILE`, `PORTAGE_CONFIG_HASH` and the switches that reshape its closure (`INCLUDE_*`, and
+since plan/20 `PROFILE_ROLE`, which `#not-live` made a closure input).
+
+**`builder.lock` carries none of that, deliberately, and it is not an oversight to correct.**
+It records `SNAPSHOT_SHA256` and `SNAPSHOT_DATE` and stops. Two reasons, the second of which is
+the expensive one:
+
+1. *The keys are not true of it.* The builder emerges `@builder-request`/`@locked-builder`
+   against a `/etc/portage` that `builder/Dockerfile` writes inline — its own `package.use`, the
+   stage3's own profile. It never reads a byte of `config/portage`. `BUILD_PROFILE: desktop` sat
+   in that header only because `desktop` was whichever profile happened to be loaded when
+   `relock.sh --builder` last ran.
+2. *`builder/Dockerfile` COPYs that exact file*, and docker keys the layer — and the ~85 minutes
+   of source builds behind it — on its content. `PORTAGE_CONFIG_HASH` covers the whole of
+   `config/portage` **including comments**, so with that line present, editing a comment anywhere
+   in that tree rebuilt the builder image. Measured on 2026-09-09: three rebuilds in one session,
+   about 3.5 hours, not one of them for a change the builder could observe.
+
+The Dockerfile already strips the header (`grep -v '^#'`) before use, so nothing downstream sees
+a difference; the atoms are byte-identical either way. `--restamp` skips the file, `lock_write`
+takes a `KIND` argument to omit the keys, and `test-pin-policy.sh` asserts their **absence** —
+four places, because "why does this lock have no hash?" is a question whose obvious answer is
+wrong and whose obvious fix costs an hour per comment.
+
+What still invalidates the builder is what should: `SNAPSHOT_DATE` (already a `--build-arg`, and
+a tree bump is exactly when the builder wants rebuilding), the base image digest, and the atom
+list itself.
 
 Stage 30 emerges `@locked-image` **in place of** the loose sets. The lock is the full closure —
 every transitive dependency named at an exact version — so the resolver has no freedom left. The

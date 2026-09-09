@@ -275,6 +275,14 @@ init_paths() {
   local sfx; sfx="$(profile_suffix)"
   TARGET="$WORK/target$sfx"
   CONFIG_ROOT="$WORK/config$sfx"        # assembled portage --config-root (stage 20)
+  # The fingerprint stage 30's staleness guard compares $TARGET against. Suffixed for the same
+  # reason $TARGET is, and it was not: one file recorded "the config the target was built from"
+  # for EVERY profile at once, so building the installer overwrote the desktop's answer and vice
+  # versa. Each profile then read a fingerprint describing a root that is not its own, in both
+  # directions — a false "wipe and rebuild" on a target that was fine, and worse, silence on one
+  # that was genuinely stale because the other profile had just stamped the current hash over it.
+  # Defined here rather than in the stage so it cannot drift from $TARGET again.
+  TARGET_HASH_FILE="$WORK/target-config-hash$sfx"
   UKI_DIR="$OUT/uki$sfx"
   STATE_DIR="$OUT/state$sfx"
   LOG_DIR="$OUT/logs$sfx"
@@ -820,11 +828,33 @@ lock_header_value() {
   sed -nE "s/^#[[:space:]]*${k}:[[:space:]]*(.*[^[:space:]])[[:space:]]*$/\\1/p" -- "$f" | head -n1
 }
 
-# lock_write FILE TITLE < atoms-on-stdin — write a lock with the provenance header every
+# lock_write FILE TITLE [KIND] < atoms-on-stdin — write a lock with the provenance header every
 # consumer asserts against. The header is the whole reason a lock is reviewable: it says which
 # tree and which config produced these versions, so a diff can be judged rather than trusted.
+#
+# KIND is `image` (the default) or `builder`, and it decides how much of that header applies.
+# An image lock resolves out of config/portage — its profile sets, its package.use, its overlay
+# — so every key below is a fact about what produced it. THE BUILDER LOCK DOES NOT. The builder
+# emerges @builder-request (or @locked-builder) against a /etc/portage that builder/Dockerfile
+# writes inline, with its own package.use and its own stage3 profile; it never reads one byte of
+# config/portage. So for the builder every key after SNAPSHOT_DATE is not merely redundant, it
+# is untrue — BUILD_PROFILE said `desktop` there only because that is whichever profile happened
+# to be loaded when `relock.sh --builder` ran.
+#
+# THIS IS NOT TIDINESS, IT IS AN HOUR PER EDIT. builder/Dockerfile COPYs config/portage/lock/
+# builder.lock, and docker keys that layer — and the ~1 hour of source builds behind it — on the
+# file's CONTENT. PORTAGE_CONFIG_HASH covers the whole of config/portage, comments included, so
+# with that line in the file every comment typo anywhere under config/portage rebuilt the builder
+# image. Measured on 2026-09-09: three rebuilds in one session, ~3.5 hours, all of them triggered
+# by editing prose. The Dockerfile already `grep -v '^#'`s the header away before use, so nothing
+# is lost by not writing it.
+#
+# What stays is what is actually true of the builder and correctly invalidates it: the pinned
+# tree it resolved against. SNAPSHOT_DATE is already a --build-arg, so that layer is keyed on it
+# anyway, and a tree bump is exactly when the builder SHOULD rebuild.
 lock_write() {
   local f=${1:?lock_write: file required} title=${2:?lock_write: title required}
+  local kind=${3:-image}
   local tmp; tmp="$(mktemp)"
   {
     printf '# %s\n' "$title"
@@ -832,18 +862,38 @@ lock_write() {
     printf '#\n'
     printf '# SNAPSHOT_SHA256: %s\n'    "$SNAPSHOT_SHA256"
     printf '# SNAPSHOT_DATE: %s\n'      "$SNAPSHOT_DATE"
-    printf '# PROFILE: %s\n'            "$PROFILE"
-    printf '# PORTAGE_CONFIG_HASH: %s\n' "$(portage_config_hash)"
-    # These change the closure, so a lock generated under one setting is simply wrong for
-    # another. Recorded so that is visible rather than inferred. The first three act through
-    # filter_set_file; the last two ARE the closure's input — PROFILE_SETS names the sets that
-    # were emerged, and BUILD_PROFILE names the file they came from.
-    printf '# INCLUDE_CJK_FONTS: %s\n'  "${INCLUDE_CJK_FONTS:-1}"
-    printf '# INCLUDE_PRINTING: %s\n'   "${INCLUDE_PRINTING:-1}"
-    printf '# INCLUDE_DISTROBOX: %s\n'  "${INCLUDE_DISTROBOX:-1}"
-    printf '# BUILD_PROFILE: %s\n'      "${BUILD_PROFILE:-$DEFAULT_BUILD_PROFILE}"
-    printf '# PROFILE_SETS: %s\n'       "${PROFILE_SETS:-}"
-    printf '#\n'
+    # NB an if/else, not an early `return`. `return` inside this group would return from
+    # lock_write itself — the group's stdout is redirected to $tmp, but its control flow is the
+    # function's — so the chmod and mv below would be skipped and the lock never written.
+    if [[ $kind == builder ]]; then
+      printf '#\n'
+      printf '# No PORTAGE_CONFIG_HASH, PROFILE or PROFILE_* keys, deliberately: this closure does\n'
+      printf '# not come from config/portage (builder/Dockerfile writes the builder its own\n'
+      printf '# /etc/portage), and builder/Dockerfile COPYs THIS FILE — so a key that tracked\n'
+      printf '# config/portage would rebuild the image for every comment edit. See lock_write().\n'
+      printf '#\n'
+    else
+      printf '# PROFILE: %s\n'            "$PROFILE"
+      printf '# PORTAGE_CONFIG_HASH: %s\n' "$(portage_config_hash)"
+      # These change the closure, so a lock generated under one setting is simply wrong for
+      # another. Recorded so that is visible rather than inferred. The first four act through
+      # filter_set_file; the last two ARE the closure's input — PROFILE_SETS names the sets that
+      # were emerged, and BUILD_PROFILE names the file they came from.
+      #
+      # PROFILE_ROLE is here because `#not-live` made it a closure input: on a live medium
+      # filter_set_file drops every atom carrying that marker, so the same PROFILE_SETS resolve
+      # to a different package list depending on the role alone. BUILD_PROFILE nearly covers it —
+      # a lock is per profile — but "nearly" is what this header exists to remove: flipping
+      # installer.conf's PROFILE_ROLE would otherwise reuse a lock resolved under the other
+      # answer, silently, with the atoms it names still perfectly installable.
+      printf '# INCLUDE_CJK_FONTS: %s\n'  "${INCLUDE_CJK_FONTS:-1}"
+      printf '# INCLUDE_PRINTING: %s\n'   "${INCLUDE_PRINTING:-1}"
+      printf '# INCLUDE_DISTROBOX: %s\n'  "${INCLUDE_DISTROBOX:-1}"
+      printf '# PROFILE_ROLE: %s\n'       "${PROFILE_ROLE:-target}"
+      printf '# BUILD_PROFILE: %s\n'      "${BUILD_PROFILE:-$DEFAULT_BUILD_PROFILE}"
+      printf '# PROFILE_SETS: %s\n'       "${PROFILE_SETS:-}"
+      printf '#\n'
+    fi
     LC_ALL=C sort -u
   } > "$tmp"
   # mktemp creates 0600 and mv preserves it, so without this the committed locks end up
@@ -1165,9 +1215,21 @@ chroot_target() {
 # ---- misc ---------------------------------------------------------------------------
 ensure_dir() { mkdir -p -- "$@"; }
 
-# filter_set_file SRC DST — strips '#cjk' / '#printing' / '#distrobox' marked lines when the
-# corresponding build.conf switch is 0, and comment/blank lines otherwise pass through
-# to portage untouched (portage ignores comments itself; markers must go though).
+# filter_set_file SRC DST — strips '#cjk' / '#printing' / '#distrobox' / '#not-live' marked
+# lines when the corresponding switch says the image does not want them, and comment/blank
+# lines otherwise pass through to portage untouched (portage ignores comments itself; markers
+# must go though).
+#
+# The first three markers name a FEATURE and are driven by a build.conf switch. '#not-live' is
+# a different kind of predicate and is driven by the profile's own PROFILE_ROLE: it means "this
+# atom is for a system somebody keeps", and it is dropped from any medium that is booted once
+# and thrown away. Role rather than BUILD_PROFILE deliberately — a second live profile (a
+# rescue medium, say) wants the same answer without editing this file, and PROFILE_ROLE is
+# already the predicate stage 40 uses for sysupdate and stage 80 uses for releasing.
+#
+# It defaults to `target`, matching load_profile's own requirement that every profile declare
+# one: an unset role means this is not being called from a profile at all (the offline tests do
+# exactly that), and the safe reading there is "keep the line".
 filter_set_file() {
   local src=$1 dst=$2 line out cat pn
   : > "$dst"
@@ -1176,6 +1238,13 @@ filter_set_file() {
     if [[ $line == *'#cjk'* ]];      then [[ ${INCLUDE_CJK_FONTS:-1} == 1 ]] || continue; out="${line%%#*}"; fi
     if [[ $line == *'#printing'* ]]; then [[ ${INCLUDE_PRINTING:-1}  == 1 ]] || continue; out="${line%%#*}"; fi
     if [[ $line == *'#distrobox'* ]]; then [[ ${INCLUDE_DISTROBOX:-1} == 1 ]] || continue; out="${line%%#*}"; fi
+    if [[ $line == *'#not-live'* ]]; then [[ ${PROFILE_ROLE:-target} != live ]] || continue; out="${line%%#*}"; fi
+    # Trailing whitespace left behind by the marker strip above. Portage tolerates it, but the
+    # rebranding below does not: `${out#*/}` on "distro-kcm-managed  " hands render_dest_name a
+    # name whose last segment is "managed  ", and the atom that comes back out has two spaces
+    # inside it. Trimmed here rather than in the rebrand branch so every marked line is clean,
+    # including the ones that were already shipping this way (print-manager, noto-cjk, cups).
+    out="${out%"${out##*[![:space:]]}"}"
     # Atoms from the in-repo overlay are written with the same literal "distro" token the files
     # in config/rootfs use, and rebranded the same way (plan/19 Phase D). Two reasons it is not
     # simply spelled `immos-base/immos-kcm-managed`: renaming the distro would then need an edit

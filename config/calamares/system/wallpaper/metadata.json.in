@@ -1,0 +1,7 @@
+{
+    "KPlugin": {
+        "Id": "@DISTRO_ID@",
+        "License": "LicenseRef-Distro-Brand",
+        "Name": "@DISTRO_NAME@"
+    }
+}

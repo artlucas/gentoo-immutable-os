@@ -99,6 +99,10 @@ kde-plasma/plasma-workspace       screencast ksysguard wallpaper-metadata semant
 kde-plasma/plasma-desktop         semantic-desktop -webengine -ibus -scim -sdl
 # There is no "packagekit" flag on discover; the PackageKit backend is not built unless
 # firmware or snap are. Flatpak backend only, exactly as gnome-software was.
+#
+# STAYS IN THIS SHARED FILE even though the package is `#not-live` (plan/20 §4.3), and moving it
+# to package.use/profile.installer would be exactly backwards: USE is resolved per package for
+# the profile that still HAS the package, and a line here is inert on a profile that does not.
 kde-plasma/discover               flatpak -firmware -snap -telemetry -webengine
 # brightness-control is DDC/CI for external monitors via app-misc/ddcutil. Laptop backlight
 # goes through logind either way, so this buys a package and no function we need.
@@ -155,11 +159,18 @@ dev-qt/qtdeclarative              opengl vulkan
 dev-qt/qt5compat                  icu qml
 # Same shape: qttools[widgets] DEPENDs ~dev-qt/qtbase[opengl=]. Note this is NOT the "designer"
 # flag — that one is off globally (make.conf.in) and stays off.
-# assistant/linguist default ON in qttools' own IUSE and none of our packages need them (no
-# REQUIRED_USE or RDEPEND anywhere in the pinned tree asks for qttools[assistant|linguist]).
-# Left on they ship two menu entries with no audience on this image: Qt Assistant (a docs
-# viewer for Qt's own API docs) and Qt Linguist (a translation-file editor for Qt app
-# developers) — developer-facing tools, not something a user of the built image would launch.
+# assistant and linguist default ON in qttools' own IUSE and nothing in the pinned tree asks
+# for either (no REQUIRED_USE or RDEPEND anywhere requires qttools[assistant|linguist]). Left on
+# they ship two menu entries with no audience on this image: Qt Assistant (a docs viewer for
+# Qt's own API docs) and Qt Linguist (a translation-file editor for Qt app developers) —
+# developer-facing tools, not something a user of the built image would launch.
+#
+# linguist is off HERE and back on in package.use/profile.installer, for one profile only. The
+# installer image builds <id>-calamares-managed out of tree, and Calamares' exported
+# CalamaresConfig.cmake hardcodes LinguistTools into the REQUIRED Qt6 component list every
+# consumer inherits; /usr/lib64/cmake/Qt6LinguistTools is gated on this flag. See that file for
+# the whole story. The desktop and console images never build a Calamares module, so they keep
+# the flag off and never grow the GUI in the first place.
 #
 # qdbus and widgets are NOT the same case as assistant/linguist, both discovered the first time
 # "emerge ... @desktop" was actually run to completion rather than inspected:
@@ -352,6 +363,9 @@ net-libs/ngtcp2             gnutls
 # AppStreamQt and libportal-qt6 had no consumer and dragged qtbase in for nothing. Both have a
 # consumer here: plasma-workspace RDEPENDs >=dev-libs/appstream-1[qt6] outright when
 # appstream is on (which Discover needs), and libportal-qt6 is the Qt portal client binding.
+# NB that RDEPEND is plasma-workspace's own, so appstream does NOT leave the live medium with
+# Discover (plan/20 §4.3) — the flag is on this line for the profile that still has an app store,
+# and the atom stays in installer.lock for the profile that does not.
 # -gtk and -vala stay: nothing native uses the GTK portal binding, and .vapi files are
 # build-time inputs, which is the same reason stage 50 deletes usr/share/vala.
 dev-libs/appstream          qt6

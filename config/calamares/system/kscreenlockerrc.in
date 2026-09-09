@@ -15,8 +15,9 @@
 # Settings -> Screen Locking still writes a user's own choice to ~/.config/kscreenlockerrc and
 # wins over it.
 #
-# ONE KEY, and it is upstream's own rather than a PAM edit, because kscreenlocker already has an
-# answer for exactly this. CONFIRMED against kscreenlocker 6.6.6, the version this image pins:
+# ONE KEY DOES THE WORK, and it is upstream's own rather than a PAM edit, because kscreenlocker
+# already has an answer for exactly this. CONFIRMED against kscreenlocker 6.6.6, the version this
+# image pins:
 #
 #   settings/kscreenlockersettings.kcfg names the file `kscreenlockerrc`, the group [Daemon] and
 #   the key RequirePassword — "Sets whether the password is required to unlock the screen".
@@ -41,3 +42,27 @@
 # between the user and the installer. Add `Autolock=false` here if that changes.
 [Daemon]
 RequirePassword=false
+
+# The second group exists BECAUSE Autolock is on. The shield engages five minutes into an install
+# the user walked away from, so on this medium the lock screen is not an edge case — it is the
+# screen most likely to be on when somebody comes back to the machine.
+#
+# The greeter does NOT read the desktop containment's wallpaper. It builds its own config group
+# (greeterapp.cpp: KScreenSaverSettingsBase -> group "Greeter" -> "Wallpaper" ->
+# wallpaperPluginId()) and hands it to a KConfigLoader driven by the plugin's own main.xml, whose
+# only group is "General" — hence the four-level group name below, which is also exactly what
+# Plasma's own "Set as lock screen wallpaper" file action writes
+# (wallpaperfileitemactionplugin/wallpaperfileitemaction.cpp).
+#
+# WallpaperPlugin is not set: its kcfg default is already org.kde.image (kscreenlockersettings.
+# kcfg), so naming it would only pin a default that is not going to move.
+#
+# Without this the locker draws on nothing. Its fallback chain is the containment's — the
+# look-and-feel `defaults` say [Wallpaper] Image=Next, the Plasma theme's default is `Next` again,
+# and stage 50 section 3i deletes `Next` on live media — so every arm of it lands on a wallpaper
+# this medium does not have, and the greeter comes up black behind the unlock UI.
+#
+# The same package the desktop uses, named the same way and for the same reason: an absolute path
+# to the DIRECTORY, because QUrl::fromUserInput() turns a bare package id into an http:// URL.
+[Greeter][Wallpaper][org.kde.image][General]
+Image=/usr/share/wallpapers/@DISTRO_ID@/

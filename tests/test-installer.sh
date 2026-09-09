@@ -127,8 +127,12 @@ render_all() {
 }
 assert_true "every Calamares template renders with the enrolment page absent" render_all ""
 assert_true "every Calamares template renders (no unset @TOKEN@)" render_all "  - managed"
+# -I, GNU grep's own binary test, for the same reason run-tests.sh's CRLF scan grew one: this
+# tree now carries a PNG (the medium's one wallpaper, plan/20 §2.1), and 382 KB of DEFLATE output
+# contains "@Q@" and "@A@" by arithmetic rather than by anyone's mistake. A token scan is a
+# statement about text; a file with no text in it cannot fail it meaningfully.
 assert_false "no unrendered @TOKEN@ survives in the rendered tree" \
-    bash -c "grep -rlE '@[A-Z][A-Z0-9_]*@' '$RENDER' | grep -q ."
+    bash -c "grep -rIlE '@[A-Z][A-Z0-9_]*@' '$RENDER' | grep -q ."
 
 # ---- 5. the config and the pipeline agree on the disk ---------------------------------------
 # THE check this file exists for. emit_sfdisk_script() writes the factory image's partitions;
@@ -375,11 +379,33 @@ assert_true "stage 50 asserts the dictionary survived the prune" \
 # medium and refuses to let it exist anywhere else.
 LOCKRC="$RENDER/system/kscreenlockerrc"
 assert_file "$LOCKRC" "the live session's kscreenlockerrc rendered"
-# One group, so "is the key in the right section?" needs no parser: [Greeter] keys share this
-# file and RequirePassword means nothing there.
-assert_eq "[Daemon]" "$(grep '^\[' "$LOCKRC")" "kscreenlockerrc declares exactly one group, [Daemon]"
-assert_true "...and turns RequirePassword off in it" \
+# TWO groups now, and that is exactly why this needs a parser rather than a grep. The file used
+# to have one, so "is the key in the right section?" was free; since the greeter's wallpaper
+# joined it (plan/20 §2.1, the medium's one wallpaper) a RequirePassword that drifted below the
+# [Greeter] header would still grep clean and mean nothing at all — kscreenlocker reads
+# RequirePassword from [Daemon] and nowhere else.
+lockrc_group_of() {  # key -> the [Group] header it sits under
+    awk -v k="$1" '/^\[/ { g = $0 } $0 ~ "^" k "=" { print g; exit }' "$LOCKRC"
+}
+assert_eq "[Daemon]
+[Greeter][Wallpaper][org.kde.image][General]" "$(grep '^\[' "$LOCKRC")" \
+    "kscreenlockerrc declares exactly two groups"
+assert_true "...and turns RequirePassword off" \
     grep -qx 'RequirePassword=false' "$LOCKRC"
+assert_eq "[Daemon]" "$(lockrc_group_of RequirePassword)" \
+    "...in [Daemon], which is the only group kscreenlocker reads it from"
+# The greeter's wallpaper. Its group name is four levels deep because greeterapp.cpp builds it
+# that way — KScreenSaverSettingsBase -> "Greeter" -> "Wallpaper" -> wallpaperPluginId() — and
+# then hands it to a KConfigLoader driven by org.kde.image's main.xml, whose only group is
+# "General". Get any level wrong and the key is silently ignored.
+assert_eq "[Greeter][Wallpaper][org.kde.image][General]" "$(lockrc_group_of Image)" \
+    "the greeter's wallpaper is in the four-level group kscreenlocker actually reads"
+assert_true "...and names the one wallpaper package this medium carries" \
+    grep -qx "Image=/usr/share/wallpapers/$I_DISTRO_ID/" "$LOCKRC"
+# An absolute path to the DIRECTORY, not the package id: MediaProxy::setSource() runs this value
+# through QUrl::fromUserInput(), which turns a bare id into an http:// URL and not a wallpaper.
+assert_false "...as a path, not as a bare package id" \
+    grep -qx "Image=$I_DISTRO_ID" "$LOCKRC"
 # Autolock is left alone on purpose (the shield still engages, it just does not prompt). Asserted
 # so that turning it off later is a deliberate edit here rather than a quiet one there.
 assert_false "kscreenlockerrc does not also disable Autolock" \
@@ -466,9 +492,227 @@ assert_false "the layout pins none of Plasma's stock four" \
 assert_true "the layout builds the panel from upstream's template" \
     grep -qF 'loadTemplate("org.kde.plasma.desktop.defaultPanel")' "$LAYOUT"
 # Breeze's own layout sets this and ours replaces Breeze's, so dropping it would leave the
-# desktop containment with no wallpaper plugin.
-assert_true "...and still sets the wallpaper plugin Breeze's layout set" \
-    grep -qF "wallpaperPlugin = 'org.kde.image'" "$LAYOUT"
+# desktop containment with no wallpaper plugin at all.
+#
+# org.kde.image AND the image, in the same loop, because on this medium neither half means
+# anything alone: /usr/share/wallpapers holds exactly one package after stage 50 section 3i
+# (plan/20 — the collection is `#not-live` in the set and Breeze's own `Next` is deleted), and
+# org.kde.image that does not name it falls back through
+# DefaultWallpaper::defaultWallpaperPackage() to `Next`, which is the thing that is gone.
+#
+# Asserted against the comment-stripped copy, because the comments above these lines quote both
+# the plugin ids and the path, and a plain grep over the file would pass on the explanation alone.
+assert_true "...and selects the image wallpaper plugin" \
+    grep -qF "wallpaperPlugin = 'org.kde.image'" "$LAYOUT_CODE"
+assert_true "...and names the one wallpaper package this medium carries" \
+    grep -qF "writeConfig('Image', '/usr/share/wallpapers/$I_DISTRO_ID/')" "$LAYOUT_CODE"
+# The config group has to be the wallpaper's, not the containment's own. Applet::writeConfig
+# treats ["Wallpaper", ...] specially (applet.cpp: inWallpaperConfig), and a group path that
+# misses it writes a key nothing ever reads.
+assert_true "...into the wallpaper plugin's own config group" \
+    grep -qF "currentConfigGroup = ['Wallpaper', 'org.kde.image', 'General']" "$LAYOUT_CODE"
+# The solid-colour plugin was this medium's answer until it had a wallpaper of its own. Asserted
+# as absent so that a revert has to be deliberate: with both lines present the last write wins
+# and which one that is depends on statement order.
+assert_false "...and no longer falls back to the solid-colour plugin" \
+    grep -qF "wallpaperPlugin = 'org.kde.color'" "$LAYOUT_CODE"
+
+# ---- wallpapers: 254.7 of 255.1 MiB the live medium does not carry (plan/20) ---------------
+# Three halves now, which is one more than the design started with: the 216.8 MiB collection is
+# dropped from the SET so it is never emerged and never reaches installer.lock; the 38.3 MiB
+# Breeze ships as `Next` is deleted by stage 50, because breeze is also the widget style and the
+# look-and-feel fallback and cannot be dropped as a package; and 0.4 MiB of this distro's own
+# artwork is installed by stage 40 and deliberately survives the deletion, so that org.kde.image
+# has something to draw.
+DESKTOP_SET="$REPO_ROOT/config/portage/sets/desktop"
+STAGE50="$REPO_ROOT/scripts/stages/50-prune.sh"
+assert_true "@desktop marks the wallpaper collection #not-live" \
+    grep -qE '^kde-plasma/plasma-workspace-wallpapers\s+#not-live$' "$DESKTOP_SET"
+# The deletion is defined by what SURVIVES, not by a list of what goes — a wallpaper arriving in
+# the closure later (breeze picking up a second one, a dependency that ships artwork) is then
+# dropped by default rather than kept by default. Asserted on that shape, not just on the effect.
+assert_true "stage 50 prunes /usr/share/wallpapers to the distro's own package on a live profile" \
+    grep -qF 'find "$T/usr/share/wallpapers" -mindepth 1 -maxdepth 1 ! -name "$DISTRO_ID"' "$STAGE50"
+assert_false "...and no longer deletes the directory wholesale, which would take ours with it" \
+    grep -qF 'rm -rf -- "$T/usr/share/wallpapers"' "$STAGE50"
+# ...and only on a live one. This is the direction that would damage the PRODUCT, so it is
+# asserted from the outside rather than trusted to the reader of the stage.
+assert_true "...and the deletion is inside a PROFILE_ROLE == live guard" \
+    grep -qF 'if [[ $PROFILE_ROLE == live ]]; then' "$STAGE50"
+assert_true "...and the prune refuses a target image that lost Breeze's default wallpaper" \
+    grep -qF 'usr/share/wallpapers/Next' "$STAGE50"
+# Both directions on the live medium, because both are silent at runtime: a missing package is a
+# blank desktop, and a surviving collection is the cost without the saving.
+assert_true "...and refuses a live medium that lost the one wallpaper it does carry" \
+    grep -qF 'usr/share/wallpapers/$DISTRO_ID is missing from a live medium' "$STAGE50"
+assert_true "...and refuses one that still carries any other" \
+    grep -qF 'wallpapers other than $DISTRO_ID survived the prune' "$STAGE50"
+
+# The package itself. A Wallpaper/Images KPackage has exactly two requirements that fail silently
+# — a descriptor id matching its directory, and an image whose BASENAME parses as <W>x<H> —
+# and plasmashell reports neither: it draws an empty containment and logs nothing anyone reads.
+WP_SRC="$CAL/system/wallpaper"
+assert_file "$WP_SRC/metadata.json.in" "the live medium's wallpaper package has a descriptor"
+assert_true "...whose id renders to the directory stage 40 installs it as" \
+    grep -qF '"Id": "@DISTRO_ID@"' "$WP_SRC/metadata.json.in"
+# findPreferredImageInPackage() selects on the basename (packagefinder.cpp, resSize) and skips
+# every file that does not parse, so a wallpaper committed as `wallpaper.png` leaves the package
+# valid, the entry list non-empty and the chosen image null.
+assert_eq "1" "$(find "$WP_SRC/contents/images" -type f 2>/dev/null | wc -l)" \
+    "...and exactly one image, since this medium's whole point is that there is only one"
+assert_true "...named <width>x<height>, which is what Plasma selects on" \
+    bash -c 'find "$1/contents/images" -type f -regextype posix-extended \
+                  -regex ".*/[0-9]+x[0-9]+\.(png|jpg|jpeg|webp)" | grep -q .' _ "$WP_SRC"
+assert_true "stage 40 installs it into /usr/share/wallpapers for this profile" \
+    grep -qF 'WP_DIR="$TARGET/usr/share/wallpapers/$DISTRO_ID"' "$STAGE40"
+assert_true "...and reads the descriptor's id back before the medium is built" \
+    grep -qF 'does not declare Id \"$DISTRO_ID\"' "$STAGE40"
+assert_true "...and refuses to build a medium whose layout does not name the package" \
+    grep -qF "grep -qF \"'/usr/share/wallpapers/\$DISTRO_ID/'\"" "$STAGE40"
+# The product is untouched: it keeps the collection, keeps Breeze's default, and does NOT get
+# this package — a wallpaper the user cannot remove is a worse default than one they can. The
+# guarantee is positional, so it is checked positionally: the install has to sit after stage 40's
+# `if profile_has_set installer` guard, which is the same thing that keeps the polkit rule, the
+# autostart entry and the layout script off every other image.
+wp_line=$(grep -n 'WP_DIR="\$TARGET/usr/share/wallpapers' "$STAGE40" | head -1 | cut -d: -f1)
+inst_line=$(grep -n '^if profile_has_set installer; then' "$STAGE40" | head -1 | cut -d: -f1)
+assert_true "...inside stage 40's installer-only block, so no other profile installs it" \
+    bash -c '[[ -n $1 && -n $2 && $1 -gt $2 ]]' _ "$wp_line" "$inst_line"
+assert_true "desktop.lock still carries the wallpaper collection" \
+    grep -qE '^=kde-plasma/plasma-workspace-wallpapers-' "$REPO_ROOT/config/portage/lock/desktop.lock"
+
+# The two locks, from opposite directions. These are the assertions that actually catch a
+# regression: everything above is about intent, and a lock is what a build emerges.
+assert_false "installer.lock does not carry the wallpaper collection" \
+    grep -qE '^=kde-plasma/plasma-workspace-wallpapers-' "$REPO_ROOT/config/portage/lock/installer.lock"
+assert_true "...and desktop.lock still does — the product keeps its wallpapers" \
+    grep -qE '^=kde-plasma/plasma-workspace-wallpapers-' "$REPO_ROOT/config/portage/lock/desktop.lock"
+assert_false "installer.lock does not carry the managed System Settings module" \
+    grep -qE "^=${I_DISTRO_ID}-base/${I_DISTRO_ID}-kcm-managed-" "$REPO_ROOT/config/portage/lock/installer.lock"
+assert_true "...and desktop.lock still does" \
+    grep -qE "^=${I_DISTRO_ID}-base/${I_DISTRO_ID}-kcm-managed-" "$REPO_ROOT/config/portage/lock/desktop.lock"
+# The package audit has to agree with the lock, or stage 50 fails the build on drift rather
+# than on the thing that drifted.
+assert_false "expected-packages.installer.txt lists neither" \
+    grep -qE "^(kde-plasma/plasma-workspace-wallpapers|${I_DISTRO_ID}-base/${I_DISTRO_ID}-kcm-managed)$" \
+        "$REPO_ROOT/config/portage/expected-packages.installer.txt"
+assert_true "...and expected-packages.desktop.txt lists both" \
+    bash -c "grep -qx 'kde-plasma/plasma-workspace-wallpapers' '$REPO_ROOT/config/portage/expected-packages.desktop.txt' &&
+             grep -qx '${I_DISTRO_ID}-base/${I_DISTRO_ID}-kcm-managed' '$REPO_ROOT/config/portage/expected-packages.desktop.txt'"
+
+# ---- GRUB: 68.4 MiB of a bootloader this medium never runs (plan/20 §2.3) -------------------
+# A file deletion, because sys-boot/grub is an unconditional RDEPEND of app-admin/calamares and
+# keeps arriving. Nothing in the package audit can see this one, so these assertions and stage
+# 50's are the only things standing between a renamed upstream path and 68 MiB coming back.
+assert_true "stage 50 removes GRUB's platform modules and data" \
+    grep -qF 'rm -rf -- "$T/usr/lib/grub" "$T/usr/share/grub" "$T/etc/grub.d"' "$STAGE50"
+assert_true "...and its 27 tools, from /usr/bin only — /usr/sbin is a symlink to it" \
+    grep -qF "find \"\$T/usr/bin\" -maxdepth 1 -name 'grub-*' -delete" "$STAGE50"
+assert_true "...and fails the build if any GRUB path survives the prune" \
+    grep -qF 'GRUB residue after prune' "$STAGE50"
+# The half that matters more: the medium's REAL bootloader must outlive the deletion of its
+# dead one. imagebootloader reads this file out of the mounted target, not out of the medium,
+# but a prune that took it here is a prune that cut in the wrong direction.
+assert_true "...and asserts systemd-boot survived the GRUB deletion" \
+    grep -qF 'usr/lib/systemd/boot/efi/systemd-bootx64.efi' "$STAGE50"
+# The claim the deletion rests on: the install goes through our module, never the stock one.
+assert_true "the Calamares exec sequence names imagebootloader, not grub" \
+    grep -qE '^\s+- imagebootloader$' "$CAL/settings.conf.in"
+assert_false "...and never names the stock bootloader or grubcfg modules" \
+    grep -qE '^\s+- (bootloader|grubcfg)$' "$CAL/settings.conf.in"
+
+# ---- ghostscript and Spectacle: package removals, so the lock is the assertion --------------
+PU_INSTALLER="$REPO_ROOT/config/portage/package.use/profile.installer"
+assert_file "$PU_INSTALLER" "the installer-only package.use fragment exists"
+assert_true "it turns off the PDF thumbnailer that drags in ghostscript" \
+    grep -qE '^kde-apps/thumbnailers\s+-pdf$' "$PU_INSTALLER"
+assert_true "@desktop marks Spectacle #not-live" \
+    grep -qE '^kde-plasma/spectacle\s+#not-live$' "$DESKTOP_SET"
+# Six packages from the ghostscript chain and three from Spectacle's. Asserted against the LOCK,
+# because that is what a build emerges — the set and the USE flag are only the request.
+for gone in app-text/ghostscript-gpl app-text/dvipsk dev-libs/kpathsea \
+            media-fonts/arphicfonts media-fonts/urw-fonts media-gfx/kio-ps-thumbnailer \
+            kde-plasma/spectacle media-libs/kquickimageeditor media-libs/opencv; do
+    assert_false "installer.lock does not carry $gone" \
+        grep -qE "^=${gone}-[0-9]" "$REPO_ROOT/config/portage/lock/installer.lock"
+    assert_true "...and desktop.lock still does" \
+        grep -qE "^=${gone}-[0-9]" "$REPO_ROOT/config/portage/lock/desktop.lock"
+    assert_false "...and expected-packages.installer.txt does not list it" \
+        grep -qx "$gone" "$REPO_ROOT/config/portage/expected-packages.installer.txt"
+done
+# app-text/poppler-data looks like it should survive and does not, which is worth pinning down
+# because the first reading of this got it backwards. app-text/poppler names the atom, so a grep
+# finds two consumers — but poppler's is `cjk? ( app-text/poppler-data )` and cjk is not in its
+# default IUSE, while ghostscript's is unconditional. poppler stays (kfilemetadata needs it) and
+# poppler-data goes with ghostscript. Nothing is lost: poppler is built -cjk and never read them.
+assert_false "poppler-data goes with ghostscript — poppler's dep on it is cjk?, and cjk is off" \
+    grep -qE '^=app-text/poppler-data-[0-9]' "$REPO_ROOT/config/portage/lock/installer.lock"
+assert_true "...but poppler itself stays, for kde-frameworks/kfilemetadata" \
+    grep -qE '^=app-text/poppler-[0-9]' "$REPO_ROOT/config/portage/lock/installer.lock"
+# The orphan tail the resolver found and no hand-edit would have: dropping two named packages
+# took nineteen. These are the ones that prove the lock was REGENERATED, not edited (plan/20 §2.7).
+for orphan in dev-cpp/abseil-cpp dev-libs/protobuf dev-libs/flatbuffers dev-cpp/eigen \
+              dev-qt/qtimageformats media-libs/libmng media-libs/jbig2dec net-dns/libidn; do
+    assert_false "orphan dropped with its parent: $orphan" \
+        grep -qE "^=${orphan}-[0-9]" "$REPO_ROOT/config/portage/lock/installer.lock"
+done
+# kde-apps/thumbnailers itself stays: only its pdf flag changed, and Dolphin still RDEPENDs it.
+assert_true "kde-apps/thumbnailers itself stays — only the pdf flag moved" \
+    grep -qE '^=kde-apps/thumbnailers-[0-9]' "$REPO_ROOT/config/portage/lock/installer.lock"
+
+# ---- Discover: an app store on a stick that is discarded (plan/20 §4.3) ---------------------
+# A set marker, so the lock and the audit are the assertions — the same shape as Spectacle above,
+# and the reason that shape is preferred: the atom leaves installer.lock, so what the image IS
+# and what the audit SAYS cannot drift.
+assert_true "@desktop marks Discover #not-live" \
+    grep -qE '^kde-plasma/discover\s+#not-live$' "$DESKTOP_SET"
+assert_false "installer.lock does not carry Discover" \
+    grep -qE '^=kde-plasma/discover-[0-9]' "$REPO_ROOT/config/portage/lock/installer.lock"
+assert_true "...and desktop.lock still does — a machine somebody owns gets an app store" \
+    grep -qE '^=kde-plasma/discover-[0-9]' "$REPO_ROOT/config/portage/lock/desktop.lock"
+assert_false "...and expected-packages.installer.txt does not list it" \
+    grep -qx 'kde-plasma/discover' "$REPO_ROOT/config/portage/expected-packages.installer.txt"
+assert_true "...while expected-packages.desktop.txt does" \
+    grep -qx 'kde-plasma/discover' "$REPO_ROOT/config/portage/expected-packages.desktop.txt"
+# The USE line stays where it is. It is in package.use/image, which every profile reads, and that
+# is correct: USE is resolved per package, the flags are for the profile that still HAS Discover,
+# and moving them to profile.installer would say the opposite of what is meant.
+assert_true "Discover's USE flags stay in the shared package.use, for the profile that keeps it" \
+    grep -qE '^kde-plasma/discover\s' "$REPO_ROOT/config/portage/package.use/image"
+# The panel is a separate mechanism and is NOT made redundant by the package going away: KService
+# drops an unresolvable launcher silently, so without the rewrite the medium's panel would come
+# up with the two stock pins that DO resolve and still not the installer.
+assert_true "the layout script still rewrites the stock pins rather than relying on the removal" \
+    grep -qF 'writeConfig("launchers"' "$LAYOUT_CODE"
+
+# ---- the Emoji Selector: a file deletion, because plasma-desktop is not droppable -----------
+# 0.4 MiB, and not a size change — it is section 3g's argument (a tool with no audience on this
+# image) applied to a medium whose whole session is one installer. Nothing in the package audit
+# can see this one, so these assertions and stage 50's are all there is.
+assert_true "stage 50 removes the Emoji Selector's menu entry" \
+    grep -qF '"$T/usr/share/applications/org.kde.plasma.emojier.desktop"' "$STAGE50"
+# BOTH descriptors: /usr/share/applications is what Kickoff lists, /usr/share/kglobalaccel is the
+# global-shortcut registration. Deleting one leaves the feature half present.
+assert_true "...and its global-shortcut descriptor, not just the launcher" \
+    grep -qF '"$T/usr/share/kglobalaccel/org.kde.plasma.emojier.desktop"' "$STAGE50"
+assert_true "...and the binary behind them" \
+    grep -qF '"$T/usr/bin/plasma-emojier"' "$STAGE50"
+assert_true "...and the QML plugin, which nothing else in the target imports" \
+    grep -qF '"$T/usr/lib64/qt6/qml/org/kde/plasma/emoji"' "$STAGE50"
+assert_true "...and fails the build if any of those paths stops matching" \
+    grep -qF 'the Emoji Selector survived the prune' "$STAGE50"
+# Live media only, like sections 3i and 3j: the product keeps it. An emoji picker is worth
+# nothing on a stick with nowhere to paste into and is ordinary on a machine somebody owns.
+assert_true "...on live media only, so the product keeps it" \
+    bash -c 'awk "/^# ---- 3k[.]/,/^# ---- 4[.]/" "$1" | grep -qF "PROFILE_ROLE == live"' \
+    _ "$STAGE50"
+# media-fonts/noto-emoji is NOT touched and must not be. It is the font that renders emoji the
+# INSTALLER ITSELF may have to draw — Calamares' welcome page is a language picker, and a
+# translated string or a keyboard-layout name carrying an emoji renders as tofu without it.
+assert_true "the emoji FONT stays in the set — it is what renders glyphs, not an app" \
+    grep -qx 'media-fonts/noto-emoji' "$DESKTOP_SET"
+assert_true "...and in installer.lock" \
+    grep -qE '^=media-fonts/noto-emoji-[0-9]' "$REPO_ROOT/config/portage/lock/installer.lock"
 
 assert_true "stage 40 installs kdeglobals into /etc/xdg on every desktop profile" \
     grep -qF 'render_template "$PLASMA_SRC/kdeglobals.in" "$TARGET/etc/xdg/kdeglobals"' "$STAGE40"
@@ -487,6 +731,7 @@ assert_true "...and refuses a target whose calamares.desktop the pin could not r
 # entry there is quoted whole, so this matches the guard and not the install line above it.
 for leaked in 'etc/xdg/kscreenlockerrc' \
               'usr/share/plasma/look-and-feel/$DISTRO_ID/contents/layouts' \
+              'usr/share/wallpapers/$DISTRO_ID' \
               'etc/xdg/autostart/$DISTRO_ID-installer.desktop' \
               'etc/polkit-1/rules.d/49-$DISTRO_ID-installer.rules'; do
     assert_true "stage 40 refuses to let /$leaked reach a non-installer profile" \

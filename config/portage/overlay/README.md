@@ -8,6 +8,13 @@ therefore cannot be built the way everything else in `config/rootfs/` is:
 | `<id>-kcm-managed` | The System Settings module for managed mode ([plan/19](../../../plan/19-managed-mode.md) §7.2). A Plasma KCM is a C++ plugin; there is no QML-only path into System Settings |
 | `<id>-calamares-managed` | The installer page for managed enrolment (plan/19 §7.3). Calamares accepts **only** C++ `QtPlugin` view modules — `ModuleFactory.cpp:53` — so a page cannot be a script |
 
+They go to different images, and the split is deliberate rather than incidental. The KCM is in
+`@desktop` marked `#not-live`, so it reaches the product and **not** the installer medium — a live
+session is never enrolled, so a "which policy is applied?" page there answers a question nobody
+can ask ([plan/20](../../../plan/20-installer-slimming.md) §2.2). The Calamares page is in
+`@installer` and is therefore the exact opposite: installer-only, because it is how the machine
+*being installed* gets enrolled. Neither package is ever on both images.
+
 **Why an ebuild repository rather than a hand-compile in stage 40.** plan/18 §7.2 rejected
 compiling a Calamares module by hand, and the reason was never "C++ is hard": it was that a
 hand-compiled plugin is built against *whatever headers happen to be around*, while the target's
@@ -15,10 +22,24 @@ Qt6 and KF6 come from this pipeline's own resolution. The two can disagree, and 
 ABI does not match its host does not fail to build — it fails to **load**, silently, at runtime,
 on a machine with no way to install a fix.
 
-Letting Portage build them removes the question. Each package is emerged into the target root
-like every other package, against the exact `dev-qt/*` and `kde-frameworks/*` versions
-`config/portage/lock/<profile>.lock` pins, and it lands in the lock file and the package audit
-where the existing assertions can already see it.
+Letting Portage build them removes the question, though not quite in the way the shape of the
+thing suggests, and the difference is worth stating because it is the one that could bite.
+
+Each package is **installed** into the target root like every other package (`ROOT=$TARGET`), and
+it lands in `config/portage/lock/<profile>.lock` and the package audit where the existing
+assertions can already see it. But it is **compiled** against the BUILDER root, not the target:
+this pipeline never sets `SYSROOT`, so `portageq envvar ESYSROOT` answers `/`, and a `DEPEND` is
+therefore resolved and installed there. That is why releasing `<id>-calamares-managed` in a
+relock builds `app-admin/calamares` and its `dev-libs/boost` tail into the builder — the target
+already has them, and the builder is where the headers have to be.
+
+The ABI guarantee still holds, because stage 20 mirrors the target's `package.use` onto the
+builder and both roots install the same versions from the same pinned tree: at the time of
+writing both carry `dev-qt/qtbase-6.11.1` and `kde-frameworks/*-6.27.0`. It holds by
+CONSTRUCTION, not by ASSERTION — `builder.lock` and `<profile>.lock` are separate files and
+nothing compares them. If they ever drift on Qt6 or KF6, these plugins would be compiled against
+one and loaded against the other, which is exactly the silent load failure described above. Any
+change that moves Qt or KF in one lock and not the other should move both.
 
 ## Layout
 
@@ -57,7 +78,9 @@ overlay uses, and it is why `ebuild ... digest` is not part of anyone's workflow
 ## Adding a package
 
 1. Write `distro-base/<name>/<name>-<version>.ebuild.in` and its `files/`.
-2. Name it in the profile set that should carry it (`config/portage/sets/desktop`, `installer`…).
+2. Name it in the profile set that should carry it (`config/portage/sets/desktop`, `installer`…),
+   with `#not-live` after the atom if a medium that boots once and is discarded should not have
+   it — `filter_set_file` strips those lines on any profile whose `PROFILE_ROLE` is `live`.
 3. **Re-resolve the lock**, because a locked build emerges `@locked-image` and nothing else:
 
    ```sh

@@ -40,7 +40,16 @@ REC_CFG_HASH="$(cat "$CONFIG_ROOT/.inputs-hash" 2>/dev/null || echo none)"
 #    while the emerge resolution — correctly — no longer lists it. Portage has no safe fix
 #    here: the sets are not this root's @world, so --depclean would consider everything
 #    orphaned. Refuse instead.
-TARGET_HASH_FILE="$WORK/target-config-hash"
+#    The fingerprint file is PER PROFILE (init_paths sets TARGET_HASH_FILE beside $TARGET). It
+#    used to be one shared $WORK/target-config-hash for all of them, which broke the guard in
+#    both directions: an installer build stamped its hash over the desktop's, so the desktop
+#    could be refused for a config it had actually been built with, or — the dangerous half —
+#    waved through as current when its own root was stale.
+#
+#    A profile whose suffixed file does not exist yet reads `none` and skips the guard once.
+#    That is the intended behaviour for a first build, and the case is covered anyway: the
+#    bidirectional lock verify below catches a VDB carrying a package the lock does not name,
+#    which is precisely the failure this guard is a cheap proxy for.
 PREV_TGT_HASH="$(cat "$TARGET_HASH_FILE" 2>/dev/null || echo none)"
 if [[ -d $TARGET/var/db/pkg && $PREV_TGT_HASH != none && $PREV_TGT_HASH != "$CUR_CFG_HASH" ]]; then
   die "config changed since $TARGET was populated, and --changed-use cannot remove packages
@@ -125,8 +134,10 @@ ROOT="$TARGET" PORTAGE_CONFIGROOT="$CONFIG_ROOT" \
 
 # quick pre-prune report (full manifest + gate in stage 50)
 ensure_dir "$REPORT_DIR"
-# the target now matches this config; record it for the staleness guard above
-printf '%s' "$CUR_CFG_HASH" > "$WORK/target-config-hash"
+# the target now matches this config; record it for the staleness guard above. Through
+# $TARGET_HASH_FILE, not a second spelling of the path — the read above and this write are the
+# two halves of one guard, and they were literal strings that happened to agree.
+printf '%s' "$CUR_CFG_HASH" > "$TARGET_HASH_FILE"
 
 ( cd "$TARGET/var/db/pkg" && printf '%s\n' */* | sort ) > "$REPORT_DIR/target-packages-cpv.txt"
 log "target has $(wc -l < "$REPORT_DIR/target-packages-cpv.txt") packages"

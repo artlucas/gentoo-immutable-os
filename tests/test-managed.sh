@@ -475,7 +475,32 @@ assert_true "relock --restamp warns when the lock lacks an overlay package the p
     grep -q 'does not name the overlay package' "$REPO_ROOT/scripts/relock.sh"
 # The sets, with the same "distro" token the filenames use, rebranded by filter_set_file.
 assert_true "@desktop names the KCM from the overlay" \
-    grep -qx 'distro-base/distro-kcm-managed' "$REPO_ROOT/config/portage/sets/desktop"
+    grep -qE '^distro-base/distro-kcm-managed(\s|$)' "$REPO_ROOT/config/portage/sets/desktop"
+# ...and marked `#not-live`, which is what keeps it off the installer medium (plan/20). A live
+# session enrols nothing, so the module would report "not enrolled" until the stick is pulled.
+assert_true "...and marks it #not-live, so no live medium emerges it" \
+    grep -qE '^distro-base/distro-kcm-managed\s+#not-live$' "$REPO_ROOT/config/portage/sets/desktop"
+assert_eq "" \
+    "$(printf 'distro-base/distro-kcm-managed  #not-live\n' > "$TMP/s3.in"
+       PROFILE_ROLE=live filter_set_file "$TMP/s3.in" "$TMP/s3.out"; tr -d '[:space:]' < "$TMP/s3.out")" \
+    "filter_set_file drops a #not-live atom on a live profile"
+assert_eq "${DISTRO_ID}-base/${DISTRO_ID}-kcm-managed" \
+    "$(printf 'distro-base/distro-kcm-managed  #not-live\n' > "$TMP/s4.in"
+       PROFILE_ROLE=target filter_set_file "$TMP/s4.in" "$TMP/s4.out"; tr -d '[:space:]' < "$TMP/s4.out")" \
+    "...and keeps it, rebranded and with the marker stripped, on a target profile"
+# The Calamares half is the one a live medium DOES want, and it is in a different set precisely
+# so the two can differ. If this ever picked up a marker, the medium would lose the enrolment
+# page and installs would silently produce unenrolled machines.
+assert_false "the Calamares enrolment page is NOT #not-live — the installer needs it" \
+    grep -q '#not-live' "$REPO_ROOT/config/portage/sets/installer"
+# Stage 40 must not warn about the module being absent on a medium that dropped it on purpose:
+# a warning nobody should act on is how the ones that matter get ignored.
+assert_true "stage 40 treats a live profile's missing KCM as deliberate, not as a warning" \
+    grep -q 'the managed System Settings module is deliberately absent' \
+        "$REPO_ROOT/scripts/stages/40-configure.sh"
+assert_true "stage 50 fails a live medium that carries the KCM anyway" \
+    grep -q 'It is marked #not-live in config/portage/sets/desktop' \
+        "$REPO_ROOT/scripts/stages/50-prune.sh"
 assert_eq "${DISTRO_ID}-base/${DISTRO_ID}-kcm-managed" \
     "$(printf 'distro-base/distro-kcm-managed\n' > "$TMP/s.in"; filter_set_file "$TMP/s.in" "$TMP/s.out"; tr -d '[:space:]' < "$TMP/s.out")" \
     "filter_set_file rebrands an overlay atom"

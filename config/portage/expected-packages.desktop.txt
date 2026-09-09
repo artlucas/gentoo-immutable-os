@@ -294,6 +294,7 @@ gui-libs/egl-gbm
 gui-libs/egl-wayland
 gui-libs/egl-wayland2
 gui-libs/libdecor
+immos-base/immos-kcm-managed
 kde-apps/baloo-widgets
 kde-apps/dolphin
 kde-apps/kio-extras

@@ -22,8 +22,9 @@
 # this run re-resolves. --builder and --flatpak are profile-independent and ignore it.
 #
 # --restamp is the odd one out and the only mode that touches the committed locks in place. It
-# re-resolves NOTHING: it rewrites the PORTAGE_CONFIG_HASH line in every lock and changes not one
-# atom. That exists because portage_config_hash() covers the whole of config/build.conf, so
+# re-resolves NOTHING: it rewrites the PORTAGE_CONFIG_HASH line in every PROFILE lock and changes
+# not one atom. builder.lock is skipped — it has no such line, on purpose, because the Dockerfile
+# COPYs it and a hash over config/portage would rebuild the builder image for a comment edit. That exists because portage_config_hash() covers the whole of config/build.conf, so
 # adding a key the resolver never sees — MANAGED_API_BASE, say (plan/19 §5.1) — invalidates every
 # lock and would otherwise demand a full --all, which MOVES EVERY VERSION PIN as a side effect of
 # a documentation-shaped edit. That is exactly the accident plan/15 exists to prevent.
@@ -87,6 +88,18 @@ if [[ ${RELOCK_IN_CONTAINER:-0} != 1 ]]; then
     for f in "$REPO_ROOT"/config/portage/lock/*.lock; do
       [[ -f $f ]] || continue
       name="$(basename -- "$f")"
+      # builder.lock carries no PORTAGE_CONFIG_HASH to re-stamp, and that absence IS the fix:
+      # builder/Dockerfile COPYs that file, so docker keys the builder image — and the ~1 hour of
+      # source builds behind it — on its content. A hash covering the whole of config/portage,
+      # comments included, meant every prose edit anywhere in that tree rebuilt the builder.
+      # Measured 2026-09-09: three rebuilds in one session, ~3.5 hours, none of them for a change
+      # the builder could see. The builder resolves against /etc/portage that the Dockerfile
+      # writes inline and reads nothing from config/portage, so there is no hash to record.
+      # See lock_write() in common.sh for the rest of the reasoning.
+      if [[ ${name%.lock} == builder ]]; then
+        log "$name records no config hash (its closure does not come from config/portage) — skipped"
+        continue
+      fi
       local have; have="$(lock_header_value "$f" PORTAGE_CONFIG_HASH)"
       if [[ $have == "$want" ]]; then
         log "$name already records the current config hash"
@@ -98,15 +111,15 @@ if [[ ${RELOCK_IN_CONTAINER:-0} != 1 ]]; then
       # operator to a full re-resolve for a difference that is correct and recorded on purpose.
       #
       # A subshell per lock, so one profile's overrides cannot leak into the next one's.
-      # builder.lock is profile-independent and carries only the first three keys; only the keys
-      # a lock actually records are compared, so an older header with fewer of them is not
-      # treated as a mismatch it cannot express.
+      # Only the keys a lock actually records are compared, so an older header with fewer of them
+      # is not treated as a mismatch it cannot express. (builder.lock never reaches this loop —
+      # it is skipped above — and records only the two SNAPSHOT keys anyway.)
       if ! (
         if [[ ${name%.lock} != builder && -f $REPO_ROOT/config/profiles/${name%.lock}.conf ]]; then
           BUILD_PROFILE="${name%.lock}"; load_profile
         fi
         for k in SNAPSHOT_DATE SNAPSHOT_SHA256 PROFILE INCLUDE_CJK_FONTS INCLUDE_PRINTING \
-                 INCLUDE_DISTROBOX BUILD_PROFILE PROFILE_SETS; do
+                 INCLUDE_DISTROBOX PROFILE_ROLE BUILD_PROFILE PROFILE_SETS; do
           lv="$(lock_header_value "$f" "$k")"
           cv="${!k:-}"
           [[ -z $lv || $lv == "$cv" ]] && continue
@@ -131,6 +144,12 @@ if [[ ${RELOCK_IN_CONTAINER:-0} != 1 ]]; then
         # noise in a warning that is usually silent is how a real one gets ignored.
         (
           BUILD_PROFILE="${name%.lock}"; load_profile
+          # THROUGH filter_set_file, not straight off the raw set file. The markers decide
+          # membership: `#not-live` drops the KCM on a live profile (plan/20), and a raw grep
+          # would then warn that installer.lock is missing a package the installer must not
+          # have, and send whoever read it to relock one in. Filtering also does the "distro"
+          # rebranding, so the sed that used to do it here is gone with it.
+          ovl_tmp="$(mktemp)"
           # The SET NAME travels with the atom rather than being read from the loop variable.
           # These are two stages of one pipeline, so each runs in its own subshell and `$ps` from
           # the producer is simply not defined in the consumer — under `set -u` that is not a
@@ -138,10 +157,10 @@ if [[ ${RELOCK_IN_CONTAINER:-0} != 1 ]]; then
           # shellcheck disable=SC2086  # deliberate splitting: PROFILE_SETS is space-separated
           for ps in $PROFILE_SETS; do
             [[ -f $REPO_ROOT/config/portage/sets/$ps ]] || continue
-            grep -oE '^distro-[a-z0-9-]+/distro-[a-z0-9-]+' \
-              "$REPO_ROOT/config/portage/sets/$ps" 2>/dev/null \
+            filter_set_file "$REPO_ROOT/config/portage/sets/$ps" "$ovl_tmp"
+            grep -oE "^${DISTRO_ID}-[a-z0-9-]+/${DISTRO_ID}-[a-z0-9-]+" "$ovl_tmp" 2>/dev/null \
               | sed "s|^|$ps |" || true
-          done | sed "s/distro-/${DISTRO_ID}-/g" | sort -u | while read -r ovl_set ovl_atom; do
+          done | sort -u | while read -r ovl_set ovl_atom; do
             [[ -n ${ovl_atom:-} ]] || continue
             grep -qE "^=?${ovl_atom}-[0-9]" "$f" && continue
             warn "$name does not name the overlay package '$ovl_atom', which @${ovl_set} asks for.
@@ -149,6 +168,7 @@ if [[ ${RELOCK_IN_CONTAINER:-0} != 1 ]]; then
   lock does not carry is never emerged. Release it properly instead:
       scripts/relock.sh $ovl_atom --profile ${name%.lock}"
           done
+          rm -f -- "$ovl_tmp"
         )
       fi
       sed -i -E "s|^#([[:space:]]*)PORTAGE_CONFIG_HASH:.*|#\\1PORTAGE_CONFIG_HASH: $want|" "$f"
@@ -251,7 +271,7 @@ if [[ $MODE == builder ]]; then
   emerge --quiet-build=y --usepkg --getbinpkg --update --deep @builder-request
   ensure_dir "$REPORT_DIR"
   vdb_atoms / | lock_write "$REPORT_DIR/builder.lock.generated" \
-    "builder.lock — the builder's own \"/\" closure, installed from the binhost"
+    "builder.lock — the builder's own \"/\" closure, installed from the binhost" builder
   lock_diff "$LOCK_DIR/builder.lock" "$REPORT_DIR/builder.lock.generated" || true
   die "review out/reports/builder.lock.generated and copy it to config/portage/lock/builder.lock.
   NB the builder image must then be rebuilt so its own root matches the lock it ships."

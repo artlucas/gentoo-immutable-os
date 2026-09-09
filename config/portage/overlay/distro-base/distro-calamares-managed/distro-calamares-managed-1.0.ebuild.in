@@ -17,15 +17,52 @@ SLOT="0"
 KEYWORDS="amd64"
 
 # app-admin/calamares is a DEPEND, not merely an RDEPEND, and that is the interesting part of
-# this file. In this pipeline's two-root emerge, DEPEND lands in ESYSROOT — the TARGET root —
-# which is where calamares' headers and CalamaresConfig.cmake are at stage-30 time. Stage 50
-# then prunes /usr/include and /usr/lib64/cmake back out of the image, so the dev files exist
-# exactly as long as they are needed and not one stage longer.
+# this file. DEPEND is what portage installs into ESYSROOT, and ESYSROOT is where cmake looks for
+# headers and CalamaresConfig.cmake.
+#
+# ESYSROOT here is "/" — the BUILDER root — not the target. This pipeline emerges with ROOT set
+# and SYSROOT unset, and portage defaults SYSROOT to "/" rather than to ROOT, which is worth
+# knowing before reading a relock's output: releasing this package builds calamares and its
+# dev-libs/boost tail from source INTO THE BUILDER, because the target already has them and the
+# builder is where this module's compiler needs them. Confirmed with
+# `ROOT=$TARGET portageq envvar ESYSROOT`, which answers "/".
+#
+# The versions still match the image's, because stage 20 mirrors the target's package.use onto
+# the builder and both resolve against the same pinned tree — but that is a property of the
+# configuration, not something anything checks. See ../../README.md.
+#
+# The rest of this list is not "what the code includes" but "what CalamaresConfig.cmake resolves
+# when find_package(Calamares) runs". That file re-finds Qt6 with the components accumulated
+# from Calamares' own imported targets plus a hardcoded "Core Widgets LinguistTools", and then
+# find_package(YAMLCPP REQUIRED) — so qtsvg (Qt6::Svg), qtdeclarative (Qt6::QuickWidgets),
+# qttools[linguist] (Qt6LinguistTools) and yaml-cpp are all configure-time requirements of this
+# package even though not one of them appears in a #include here. They are already in the
+# installer closure as calamares' own RDEPENDs; naming them means a future USE or version change
+# that removes one fails on THIS ebuild's dependencies rather than deep inside a cmake trace.
+#
+# kcoreaddons is the KF6::CoreAddons in Calamares::calamares' link interface — see the long note
+# in files/CMakeLists.txt about why the Calamares config file does not find it itself.
 DEPEND="
 	>=app-admin/calamares-3.4.0
-	>=dev-qt/qtbase-6.7.0:6[gui,widgets]
+	>=dev-qt/qtbase-6.7.0:6[gui,network,widgets]
+	>=dev-qt/qtdeclarative-6.7.0:6
+	>=dev-qt/qtsvg-6.7.0:6
+	>=dev-qt/qttools-6.7.0:6[linguist]
+	>=kde-frameworks/kcoreaddons-6.9.0:6
+	dev-cpp/yaml-cpp:0=
 "
-RDEPEND="${DEPEND}"
+# NOT ${DEPEND}: qttools is a CONFIGURE-time requirement only. Nothing here links against it —
+# it is in DEPEND solely because CalamaresConfig.cmake asks find_package for Qt6LinguistTools,
+# and a plugin that has already been built has no more use for a translation compiler than the
+# image does. Everything else carries over, because it is genuinely linked.
+RDEPEND="
+	>=app-admin/calamares-3.4.0
+	>=dev-qt/qtbase-6.7.0:6[gui,network,widgets]
+	>=dev-qt/qtdeclarative-6.7.0:6
+	>=dev-qt/qtsvg-6.7.0:6
+	>=kde-frameworks/kcoreaddons-6.9.0:6
+	dev-cpp/yaml-cpp:0=
+"
 BDEPEND=">=dev-qt/qtbase-6.7.0:6"
 
 # This package is ONLY for the installer profile. On a target image it would install a Calamares

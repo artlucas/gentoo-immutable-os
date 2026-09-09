@@ -276,6 +276,18 @@ virtualization on Win11), falls back to TCG with longer timeouts.
 - A change that invalidates the target (any `config/portage` edit — stage 30's staleness guard
   spells this out) costs a recompile of whatever the cache no longer covers, so the binpkg
   cache volume is worth keeping even when the work volume is wiped.
+- **That guard is per profile.** It compares `$TARGET` against the config fingerprint in
+  `$TARGET_HASH_FILE`, which `init_paths` suffixes exactly the way it suffixes `$TARGET` itself.
+  It was one shared `$WORK/target-config-hash` for every profile until 2026-09-09, and one file
+  answering "which config was this root built from?" for three different roots is wrong in both
+  directions: an installer build stamped its hash over the desktop's, so the desktop could be
+  refused for a config it *had* been built with — or, the half that ships a wrong image, waved
+  through as current while its own root was stale, because another profile had just written the
+  current hash over it. Adding a profile now costs nothing here; the path follows `$TARGET`.
+- The guard is a cheap proxy, not the last line. A profile with no fingerprint yet reads `none`
+  and skips it — the intended first-build behaviour — and stage 30's bidirectional lock verify
+  covers the same failure directly: a VDB carrying a package the lock does not name is exactly
+  what `--changed-use` cannot remove.
 
 ## Failure & debugging
 
