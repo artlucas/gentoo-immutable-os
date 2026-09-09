@@ -1,0 +1,164 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+#
+# managedenroll — enrol the installed system in a managed organisation (plan/19 §7.3, Phase D).
+#
+# THE ONE RULE THIS MODULE EXISTS TO OBEY: it must never fail the install. plan/18 §7.4 learned
+# that lesson from the Active Directory page — a domain controller that is unreachable while
+# someone installs a machine is a Tuesday, and an installer that treats it as a fatal error hands
+# the person a disk with no account on it, still autologging into the live user, presented as a
+# failed install. A control plane is no different, and a household's is likelier to be behind a
+# router that is being replaced than a corporation's is.
+#
+# So `run()` returns None on every path. What varies is what it leaves behind:
+#
+#   enrolled          /var/lib/<id>/managed/enrollment.json, and the machine is managed
+#   asked but failed  /var/lib/<id>/managed/enrollment-pending.json, which `<id>-managed status`
+#                     prints first, above the words that fix it in one command
+#   not asked         nothing at all, and the installed system is an ordinary local-only machine
+#
+# The split with the C++ page beside it is deliberate: Calamares accepts only C++ QtPlugin VIEW
+# modules, so the page has to be compiled — but a JOB can be a script, like the three this
+# project already ships, and writing this in C++ would mean rebuilding it against Calamares' ABI
+# for nothing.
+
+import json
+import os
+import subprocess
+
+import libcalamares
+
+# See the note in imagedeploy/main.py: this is the idiom every stock module uses.
+debug = libcalamares.utils.debug
+warning = libcalamares.utils.warning
+
+import gettext
+
+_ = gettext.translation(
+    "calamares-python",
+    localedir=libcalamares.utils.gettext_path(),
+    languages=libcalamares.utils.gettext_languages(),
+    fallback=True,
+).gettext
+
+ID = "@DISTRO_ID@"
+
+# Bounded, and bounded low. This runs between "your disk has been written" and "your computer is
+# ready", with a progress bar in front of a person who is watching it. A control plane that
+# accepts the connection and then says nothing is exactly the failure this guards against; the
+# client has its own 30-second HTTP timeout, and this is the outer bound around the whole
+# enrol-plus-first-sync sequence.
+ENROLL_TIMEOUT_S = 120
+
+
+def pretty_name():
+    return _("Enrolling this computer with your organisation.")
+
+
+def state_dir(root):
+    return os.path.join(root, "var/lib", ID, "managed")
+
+
+def write_pending(root, code, name, reason):
+    """Record an enrolment that was ASKED FOR and did not happen.
+
+    Without this the installed machine is indistinguishable from one nobody ever wanted managed —
+    and the person who typed a code would have no way to find out what became of it. `status`
+    prints this first, above the one command that finishes the job.
+
+    The CODE IS NOT WRITTEN HERE. It is single-use with a 15-minute TTL (plan/19 §5.2), so by the
+    time anyone reads this file it is worthless, and a spent credential sitting in /var is a
+    liability with no upside.
+    """
+    try:
+        os.makedirs(state_dir(root), mode=0o755, exist_ok=True)
+        path = os.path.join(state_dir(root), "enrollment-pending.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "requested": True,
+                    "device_name": name,
+                    "reason": reason,
+                    "hint": "sudo %s-managed enroll --code CODE" % ID,
+                },
+                f,
+                indent=2,
+                sort_keys=True,
+            )
+            f.write("\n")
+        os.chmod(path, 0o644)
+        warning("managedenroll: recorded a pending enrolment: %s" % reason)
+    except OSError as e:
+        # Even this is not worth failing an install over.
+        warning("managedenroll: could not record the pending enrolment: %s" % e)
+
+
+def run():
+    """Enrol, or record why not. Returns None on every path — see the header."""
+    root = libcalamares.globalstorage.value("rootMountPoint")
+    if not root:
+        # Nothing to write into. The install itself is fine; say so and move on.
+        warning("managedenroll: no rootMountPoint — skipping")
+        return None
+
+    requested = libcalamares.globalstorage.value("managedEnrollmentRequested")
+    code = (libcalamares.globalstorage.value("managedEnrollmentCode") or "").strip()
+    name = (libcalamares.globalstorage.value("managedDeviceName") or "").strip()
+
+    if not requested or not code:
+        debug("managedenroll: no enrolment requested")
+        return None
+
+    # §8.7: one mode at a time. The client refuses this itself, in both directions, but doing it
+    # here as well means the installer says so in its own log rather than surfacing the client's
+    # refusal as an unexplained non-zero exit.
+    if os.path.exists(os.path.join(root, "etc/sssd/sssd.conf")):
+        write_pending(root, code, name, "this machine was joined to an Active Directory domain")
+        return None
+
+    cli = os.path.join(root, "usr/bin", "%s-managed" % ID)
+    if not os.path.exists(cli):
+        write_pending(root, code, name, "%s-managed is not present in the installed system" % ID)
+        return None
+
+    # --root, so the client writes into the TARGET rather than into the live medium. That is the
+    # same path plan/19 §4 designed enrol around, and the reason every path in the client is
+    # relative to a root: the installer and a running system are one implementation.
+    argv = ["/usr/bin/%s-managed" % ID, "enroll", "--code", code, "--root", root]
+    if name:
+        argv += ["--name", name]
+
+    debug("managedenroll: %s" % " ".join(argv[:3] + ["<code>"] + argv[4:]))
+    try:
+        proc = subprocess.run(
+            argv,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=ENROLL_TIMEOUT_S,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        write_pending(root, code, name, "the enrolment command could not be run: %s" % e)
+        return None
+
+    output = (proc.stdout or b"").decode("utf-8", "replace").strip()
+    for line in output.splitlines():
+        debug("managedenroll: %s" % line)
+
+    if proc.returncode != 0:
+        write_pending(
+            root, code, name,
+            "the organisation could not be reached during installation"
+            + (": %s" % output.splitlines()[-1] if output else ""),
+        )
+        return None
+
+    # `enroll` keeps the enrolment and exits 0 even when it could not fetch a first bundle — the
+    # device is enrolled and stale, which the design has to survive anyway (plan/19 §4). So the
+    # file, not the exit code, is what says whether this machine is managed.
+    if not os.path.exists(os.path.join(state_dir(root), "enrollment.json")):
+        write_pending(root, code, name, "the enrolment reported success but wrote nothing")
+        return None
+
+    debug("managedenroll: enrolled")
+    return None

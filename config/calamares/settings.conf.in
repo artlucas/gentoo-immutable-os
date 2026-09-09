@@ -30,6 +30,16 @@ sequence:
   # editor — see modules/partition.conf for how a fixed partitionLayout does that.
   - partition
   - users
+  # Managed enrolment (plan/19 §7.3). AFTER users, so the person has already made the local
+  # administrator account this machine keeps whatever happens to the control plane, and before
+  # summary, so the enrolment is one of the things summarised.
+  #
+  # This line is EMPTY unless <id>-calamares-managed is installed. The page is a compiled
+  # Calamares view module and comes from the in-repo Portage overlay (Phase D), which reaches an
+  # image only through a re-resolved lock — and settings.conf naming a module that is installed
+  # nowhere is a step Calamares silently drops. Stage 40 substitutes this token and warns, by
+  # name, when it substitutes nothing.
+@CAL_MANAGED_PAGE@
   - summary
 - exec:
   # 1. The disk. Writes the GPT and creates the filesystems, from the fixed layout in
@@ -55,6 +65,12 @@ sequence:
   # 5. What no stock module covers: subordinate UID/GID ranges, the autologin drop-in that turns
   #    the live medium's autologin OFF, and the locale/machine-id fixups this image needs.
   - imageidentity
+  # 6. Managed enrolment, if one was asked for. ALWAYS in the sequence, unlike the page above:
+  #    this is a python job that ships with the image, and it is also how a zero-touch enrolment
+  #    (plan/19 §7.3 route 2) works on a medium with no page at all. It does nothing when nothing
+  #    was requested, and it NEVER fails the install — plan/18 §7.4's lesson, and T-MAN-4's
+  #    subject.
+  - managedenroll
   - umount
 - show:
   - finished

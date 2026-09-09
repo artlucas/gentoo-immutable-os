@@ -1,0 +1,53 @@
+# Copyright 2026 @DISTRO_NAME@
+# Distributed under the terms of the GNU General Public License v3
+
+EAPI=8
+
+inherit cmake
+
+DESCRIPTION="Calamares view module: enrol @DISTRO_NAME@ in a managed organisation at install time"
+HOMEPAGE="@HOME_URL@"
+# No SRC_URI — see the sibling ebuild and ../../README.md.
+S="${WORKDIR}/${P}"
+
+# GPL-3 rather than the KCM's GPL-2+: this links against libcalamares, which is GPL-3-or-later,
+# so the combined work cannot be distributed under anything weaker.
+LICENSE="GPL-3"
+SLOT="0"
+KEYWORDS="amd64"
+
+# app-admin/calamares is a DEPEND, not merely an RDEPEND, and that is the interesting part of
+# this file. In this pipeline's two-root emerge, DEPEND lands in ESYSROOT — the TARGET root —
+# which is where calamares' headers and CalamaresConfig.cmake are at stage-30 time. Stage 50
+# then prunes /usr/include and /usr/lib64/cmake back out of the image, so the dev files exist
+# exactly as long as they are needed and not one stage longer.
+DEPEND="
+	>=app-admin/calamares-3.4.0
+	>=dev-qt/qtbase-6.7.0:6[gui,widgets]
+"
+RDEPEND="${DEPEND}"
+BDEPEND=">=dev-qt/qtbase-6.7.0:6"
+
+# This package is ONLY for the installer profile. On a target image it would install a Calamares
+# module into a system that has no Calamares — harmless, and still wrong, because the package
+# audit would then have to explain why an installer plugin is on a desktop.
+src_unpack() {
+	mkdir -p "${S}" || die
+	cp -r "${FILESDIR}"/. "${S}"/ || die
+}
+
+src_configure() {
+	local mycmakeargs=(
+		# Calamares' own build sets this; out of tree it has to be asked for by name, or
+		# calamares_add_plugin installs into ${CMAKE_INSTALL_LIBDIR}/calamares/modules relative
+		# to a prefix that is not the one Calamares itself used.
+		-DCMAKE_INSTALL_LIBDIR="$(get_libdir)"
+	)
+	cmake_src_configure
+}
+
+pkg_postinst() {
+	elog "The installer page is inert until settings.conf names it. This image's"
+	elog "config/calamares/settings.conf.in already does, in both the show: and exec: sequences"
+	elog "(plan/19 §7.3); nothing else needs enabling."
+}

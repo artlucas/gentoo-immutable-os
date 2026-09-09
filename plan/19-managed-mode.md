@@ -922,6 +922,15 @@ never-fail-the-install job.
 *Exit:* **T-MAN-4** and **T-MAN-7**; System Settings lists the module and the installer completes
 with the control plane unreachable.
 
+> **Built, 2026-09-08.** The repository, both ebuilds, both sources, the sequence wiring and the
+> `managedenroll` job are in. `portageq best_visible` resolves `<id>-base/<id>-kcm-managed` and
+> `<id>-base/<id>-calamares-managed` out of the rendered overlay, and the KCM compiles clean
+> against the builder's Qt 6.11.1 / KF6 6.27.0 — the exact versions the lock pins. What remains
+> is a **relock**, which needs a target root with a VDB and therefore a build: until the profile
+> locks name these two atoms, stage 30 emerges `@locked-image` and neither package is built. Both
+> surfaces degrade rather than break in the meantime — the QML app still ships and the installer
+> page's sequence line is substituted empty — and stage 40 warns by name, with the command.
+
 **Phase E — parental controls.** Its own document (§10).
 
 ## 12. Testing
@@ -1030,7 +1039,12 @@ decision.
 | **`relock.sh --restamp`** | `portage_config_hash()` covers the whole of `config/build.conf`, so adding `MANAGED_API_BASE` invalidated all four lock files. A full `--all` would have **moved every version pin** as a side effect of a config addition the resolver cannot see — exactly what plan/15 exists to prevent. `--restamp` rewrites only the recorded hash, and refuses if any key a lock header records disagrees with the config it would be re-stamped against |
 | **`leave` removes the records before it materialises** | The bug this order prevents is not hypothetical; it was hit on the first end-to-end run. `useradd` asks `getpwnam` whether the name is taken, and while the userdb record is still on disk the answer is yes — so materialising first fails on every user with "user 'alice' already exists", and `leave` then deletes the accounts §8.9 promises to keep. Each user's records are restored if their `useradd` fails, so a half-finished leave leaves working accounts rather than none |
 | **Phase C's client half came with Phase A** | Per-device access, the admin group and its drop-ins, subuid, the Flatpak install policy, the event queue, anti-rollback and the `410`-triggered self-unenrol are all in §4's sync algorithm, so they were written with it. What is left of Phase C is the guest-level offline test (T-MAN-6) and zero-touch enrolment by systemd credential |
-| **Phase D is not started** | The in-repo Portage overlay, `<id>-kcm-managed` and the Calamares view module. Open question 4 asks whether the KCM justifies the overlay at all, and the QML app should be used before that is answered |
+| **Phase D: the overlay is one function call** | `install_rootfs_overlay()` already renders `.in` files and rebrands the `distro` token in both file and directory names, so stage 20 reuses it verbatim on `config/portage/overlay/`. The repository, its category and its packages all follow `DISTRO_ID` with no second mechanism |
+| **…and `filter_set_file` learned the same rule** | So a profile set names `distro-base/distro-kcm-managed` — the same literal token the filenames use. The alternative, `@DISTRO_ID@-base/…`, is not a well-formed atom and would fail the suite's own set lint |
+| **The KCM is what makes `i18n()` work** | Measured: the bare `qml6` runtime installs no `KLocalizedContext`, so every string in the standalone app had to be unwrapped (§7.2). The KCM is loaded by a C++ host that installs one, so its QML uses `i18n()` normally. Translation is a thing the compiled surface buys, not a thing the QML app lost by accident |
+| **The installer page is C++; the enrolment is not** | Calamares accepts only C++ view modules, so the page is an ebuild — but a *job* can be a script, so `managedenroll` is an ordinary python module beside the three this project already ships. The page publishes to GlobalStorage and the job reads it back, which is precisely what plan/18 §7.1 could not do with Calamares' own AD page and why that feature needed a `realm` shim |
+| **The page is conditional, the job is not** | `settings.conf` names a module that is installed nowhere by dropping the step silently, so the sequence line is a token stage 40 substitutes — empty, with a warning naming the relock command, when the overlay package is not installed. The job ships with the image on every installer build, which is also what makes a zero-touch enrolment work on a medium with no page |
+| **`--restamp` had to learn about the overlay** | `portage_config_hash()` covers `config/portage` entirely, so the overlay is now part of it — and "the hash moved" can now mean "somebody added an ebuild", which re-stamping would hide. It warns, per profile and only for packages that profile's sets actually ask for, rather than refusing: the same hash also moves for a comment in a `.cpp` |
 
 The fixture's FastAPI stack is **not in the pinned tree** — no `dev-python/fastapi`, `uvicorn`,
 `starlette` or `pydantic`, checked 2026-09-08 — so `tests/managed-api/` installs it with `pip`

@@ -382,7 +382,8 @@ patching required for the identity steps.**
 | `removeuser` | **Replace** — see 5.4 |
 | `displaymanager` | **Replace** — see 5.4 |
 | `luks*` | **Drop** — no encryption in v1 |
-| managed enrolment | **Add, Phase D** — [plan/19](19-managed-mode.md) §7.3. A view module for the enrolment code, plus a job that runs before `CreateUserJob` and **must not fail the install** |
+| `managed` | **Add (plan/19 Phase D)** — the enrolment page. A C++ view module from `config/portage/overlay`, because Calamares accepts nothing else. Named in the sequence only on an image that has it: stage 40 substitutes the line, and warns by name when it substitutes nothing |
+| `managedenroll` | **Add** — the enrolment itself, as an ordinary python job beside the other three. Runs after `imageidentity`, and **never fails the install** ([plan/19](19-managed-mode.md) §7.3) |
 
 **Managed enrolment, and why it is not here yet.** [plan/19](19-managed-mode.md) §7.3 takes three
 routes to enrolling at install time, in order, and only the third touches this document. Unlike an
@@ -392,11 +393,19 @@ So Phase A defers it to **first boot**, where the network is up and the person h
 enrolment code is sitting in front of the machine, and it costs one screen. Phase C adds
 **zero-touch** for the shop with six identical machines: the code arrives as a systemd credential
 (the mechanism `run-vm.sh` already drives through `-smbios type=11`) or as a file on the medium,
-and a first-boot oneshot redeems it and deletes it. Only Phase D adds a real Calamares page, as an
+and a first-boot oneshot redeems it and deletes it. Phase D adds the real Calamares page, as an
 ebuild in the same in-repo overlay the KCM needs — and it inherits plan/18 §7.4's lesson whole:
 **a control plane that is unreachable while someone installs a machine is a Tuesday**, so the job
 records the intent in `enrollment-pending.json`, exits 0, and lets `CreateUserJob`, `removeuser`
-and `imageidentity` run. `<id>-managed status` on the installed disk then reports the requested
+and `imageidentity` run.
+
+The split between the two is worth stating, because it is the one plan/18 could not make: the
+**page** has to be C++ (`ModuleFactory.cpp:53` accepts nothing else), but the **job** does not,
+so it is an ordinary python module like the three above it. The page publishes the code to
+GlobalStorage and the job reads it back — which is exactly what Calamares' own Active Directory
+page does not do (§7.1 of plan/18: its fields are private `Config` members read by `createJobs()`
+and nothing else), and precisely why that feature needed a `/usr/bin/realm` shim and this one
+does not. `<id>-managed status` on the installed disk then reports the requested
 enrolment and why it did not happen — which is T-MAN-4, and is the whole difference between a
 recoverable machine and an install presented as failed.
 

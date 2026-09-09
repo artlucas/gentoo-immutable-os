@@ -55,6 +55,48 @@ for s in $PROFILE_SETS; do
   filter_set_file "$REPO/config/portage/sets/$s" "$PC/sets/$s"
 done
 
+# ---- the in-repo ebuild repository (plan/19 Phase D) ----------------------------------------
+# Two things this project ships have to be COMPILED against the target's own Qt6/KF6 — the
+# System Settings module and the Calamares installer page — and a hand-compile in a build stage
+# would build them against whatever headers happened to be around. An ABI-mismatched Qt plugin
+# does not fail to build; it fails to LOAD, silently, on a machine with no way to install a fix.
+# Letting Portage build them removes the question (config/portage/overlay/README.md).
+#
+# RENDERED, NOT COPIED, and with the same function stage 40 uses on config/rootfs: *.in files get
+# their @TOKEN@s substituted and every path segment that is exactly "distro" becomes $DISTRO_ID.
+# So the repository, its category and its packages all follow build.conf, and renaming the distro
+# stays a one-line change.
+#
+# Into $CONFIG_ROOT rather than left in /repo: /repo is mounted read-only, and portage writes
+# metadata cache into a repository's own directory.
+OVERLAY_SRC="$REPO/config/portage/overlay"
+OVERLAY_DST="$CONFIG_ROOT/overlay"
+if [[ -d $OVERLAY_SRC ]]; then
+  rm -rf -- "$OVERLAY_DST"
+  install_rootfs_overlay "$OVERLAY_SRC" "$OVERLAY_DST"
+  OVERLAY_NAME="$(cat "$OVERLAY_DST/profiles/repo_name" 2>/dev/null | tr -d '[:space:]')"
+  [[ $OVERLAY_NAME == "$DISTRO_ID" ]] \
+    || die "the overlay's profiles/repo_name renders to '${OVERLAY_NAME:-<empty>}' and DISTRO_ID
+  is '$DISTRO_ID'. Portage keys a repository by that file, so a mismatch makes every ::$DISTRO_ID
+  atom unresolvable while the repository itself looks perfectly present."
+  # An ebuild whose directory name does not match its own filename is invisible to portage, and
+  # the rebranding above touches BOTH — so a token rule that ever disagreed with itself would
+  # produce a repository with no packages in it and no error anywhere.
+  while IFS= read -r -d '' eb; do
+    ebdir="$(basename -- "$(dirname -- "$eb")")"
+    ebfile="$(basename -- "$eb")"
+    [[ ${ebfile%-*} == "$ebdir" ]] \
+      || die "overlay: $ebfile is in a directory called $ebdir. Portage looks up an ebuild by
+  <category>/<pn>/<pn>-<pv>.ebuild and finds nothing when those disagree."
+  done < <(find "$OVERLAY_DST" -name '*.ebuild' -print0)
+  OVERLAY_N="$(find "$OVERLAY_DST" -name '*.ebuild' | wc -l)"
+  log "overlay: rendered $OVERLAY_N ebuild(s) into ::$DISTRO_ID"
+else
+  OVERLAY_DST=""
+  warn "config/portage/overlay is missing — the System Settings module and the installer page
+  cannot be built (plan/19 Phase D)"
+fi
+
 # ---- the version lock (plan/15) ------------------------------------------------------
 # <profile>.lock is the full pre-prune closure at exact versions, so stage 30 can emerge it as
 # a set and the resolver has no freedom left. The loose sets above stay: they are the request
@@ -97,7 +139,21 @@ if [[ -f $PROFILE_LOCK ]]; then
   MD5C=/var/db/repos/gentoo/metadata/md5-cache
   missing=(); MISSING_ATOMS=()
   while IFS= read -r atom; do
-    [[ -f $MD5C/${atom#=} ]] || missing+=("$atom")
+    [[ -f $MD5C/${atom#=} ]] && continue
+    # ...and then the overlay, which has no md5-cache of its own and does not need one: it is a
+    # handful of ebuilds in a directory portage reads directly. Without this branch every locked
+    # overlay atom reads as "gone from the pinned tree" and the build stops, telling the operator
+    # to relock a package that upstream never carried in the first place (plan/19 Phase D).
+    if [[ -n $OVERLAY_DST ]]; then
+      cpv="${atom#=}"; ovl_cat="${cpv%%/*}"; ovl_pf="${cpv#*/}"
+      # PN from PF, in the order portage splits them: strip an optional -rN revision FIRST, then
+      # the version. `${pf%-*}` alone turns immos-kcm-managed-1.0-r1 into immos-kcm-managed-1.0,
+      # which is a directory that does not exist — and the atom would then be reported missing
+      # for the one build shape (a revbump) where it is most certainly present.
+      ovl_pn="${ovl_pf%-r[0-9]*}"; ovl_pn="${ovl_pn%-*}"
+      [[ -f $OVERLAY_DST/$ovl_cat/$ovl_pn/$ovl_pf.ebuild ]] && continue
+    fi
+    missing+=("$atom")
   done < <(lock_atoms "$PROFILE_LOCK")
   if (( ${#missing[@]} )); then
     printf '  %s\n' "${missing[@]}"
@@ -122,7 +178,10 @@ else
   warn "no config/portage/lock/${BUILD_PROFILE}.lock — stage 30 will resolve the loose sets and generate one"
 fi
 
-# repos.conf → builder's synced tree
+# repos.conf → builder's synced tree, plus the overlay above.
+#
+# masters = gentoo in the overlay's layout.conf makes the tree's eclasses and licences visible to
+# it; this file is what makes the overlay visible to portage at all.
 ensure_dir "$PC/repos.conf"
 cat > "$PC/repos.conf/gentoo.conf" <<'EOF'
 [DEFAULT]
@@ -130,6 +189,24 @@ main-repo = gentoo
 [gentoo]
 location = /var/db/repos/gentoo
 EOF
+if [[ -n $OVERLAY_DST ]]; then
+  # priority higher than the tree's default (0) so that, if a name ever did collide, the
+  # behaviour is the documented one rather than whichever repository portage happened to read
+  # first. config/portage/overlay/README.md says why a collision must never be created on purpose.
+  cat > "$PC/repos.conf/$DISTRO_ID.conf" <<EOF
+[$DISTRO_ID]
+location = $OVERLAY_DST
+masters = gentoo
+priority = 50
+auto-sync = no
+EOF
+  # ...and onto the BUILDER's own /etc/portage as well, for the same reason
+  # mirror_target_pkg_config exists: the depgraph for a ROOT= emerge is computed with the
+  # builder's configuration in play, and a repository the builder cannot see is one the resolver
+  # will not resolve against.
+  ensure_dir /etc/portage/repos.conf
+  cp -- "$PC/repos.conf/$DISTRO_ID.conf" "/etc/portage/repos.conf/$DISTRO_ID.conf"
+fi
 
 # Mirror the target's per-package config onto the builder's own "/" (see the function's
 # comment in lib/common.sh for why the depgraph needs this). Stage 30 repeats the call —

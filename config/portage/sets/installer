@@ -31,3 +31,13 @@
 # with — unpack a stage3, configure portage, install GRUB — is something this distro does not
 # have. Installing here is `dd` (plan/16 §5.1), and the modules that do it are ours.
 app-admin/calamares
+
+# ---- managed mode (plan/19 §7.3, Phase D) ---------------------------------------------------
+# The enrolment page. Calamares accepts ONLY C++ QtPlugin view modules (ModuleFactory.cpp:53),
+# so a page cannot be a script — which is why this is an ebuild in config/portage/overlay and
+# why the JOB beside it is an ordinary python module in config/calamares/local-modules.
+#
+# Named only by this profile: on a desktop image it would install a Calamares plugin into a
+# system with no Calamares. Harmless, and still wrong — the package audit would then have to
+# explain why an installer plugin is on a machine that cannot run the installer.
+distro-base/distro-calamares-managed

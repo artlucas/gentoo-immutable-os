@@ -48,6 +48,13 @@ bash scripts/enter.sh                 # debug shell in the builder container
 bash scripts/run-vm.sh out/immos-0.1.0.img   # boot the result in QEMU/OVMF
 ```
 
+Two packages are built from an **in-repo ebuild repository**, `config/portage/overlay`: the
+System Settings module and the Calamares page for managed mode ([plan/19](plan/19-managed-mode.md)
+Phase D). Both are compiled C++ plugins that must match the target's own Qt6/KF6 ABI, so Portage
+builds them like every other package rather than a build stage hand-compiling them against
+whatever headers are around. Adding one there needs a lock re-resolve to take effect —
+`scripts/relock.sh <atom>` — because a locked build emerges `@locked-image` and nothing else.
+
 The build inputs are pinned: the stage3 base by digest, the Portage tree by commit, and every
 package version by `config/portage/lock/*.lock` ([plan/15](plan/15-version-pinning.md)). A
 rebuild of a release therefore selects the same versions, and a patch release moves only what
@@ -56,6 +63,7 @@ needs moving:
 ```sh
 bash scripts/relock.sh --security     # only packages with a GLSA against them
 bash scripts/relock.sh --all          # re-resolve everything against the current tree
+bash scripts/relock.sh --restamp      # only re-record the config hash (no version moves)
 bash scripts/build.sh --vendor        # + the 13-14 GB offline archive (stage 90)
 bash scripts/build.sh --offline --vendor-dir out/vendor/immos-0.3.0
 ```

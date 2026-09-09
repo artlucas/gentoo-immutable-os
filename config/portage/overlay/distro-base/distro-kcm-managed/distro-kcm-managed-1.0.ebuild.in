@@ -1,0 +1,54 @@
+# Copyright 2026 @DISTRO_NAME@
+# Distributed under the terms of the GNU General Public License v2
+
+EAPI=8
+
+inherit cmake
+
+DESCRIPTION="System Settings module for @DISTRO_NAME@ managed mode"
+HOMEPAGE="@HOME_URL@"
+# No SRC_URI: the sources are in files/, inside this repository, and src_unpack copies them.
+# That is what makes the package buildable with --network none and what removes the need for a
+# Manifest (metadata/layout.conf sets thin-manifests, which records DIST entries only).
+S="${WORKDIR}/${P}"
+
+LICENSE="GPL-2+"
+SLOT="0"
+KEYWORDS="amd64"
+
+# cmake.eclass rather than ecm.eclass, deliberately. ecm.eclass wants an upstream KDE release
+# layout — po/, a KDE_ORG version scheme, doc handling — and imposes a src_test that has nothing
+# to test here. extra-cmake-modules is still needed, and is where kcmutils_add_qml_kcm and
+# KDEInstallDirs come from; it is a BDEPEND because it is cmake code, not a runtime library.
+DEPEND="
+	>=dev-qt/qtbase-6.7.0:6[gui,widgets]
+	>=dev-qt/qtdeclarative-6.7.0:6
+	>=kde-frameworks/kcmutils-6.9.0:6
+	>=kde-frameworks/kcoreaddons-6.9.0:6
+	>=kde-frameworks/ki18n-6.9.0:6
+"
+# systemsettings is the host that loads this plugin, and kirigami is what the QML imports. Both
+# are RDEPEND-only: nothing here compiles against them, and a KCM installed with no System
+# Settings to show it is a file nobody can reach.
+RDEPEND="${DEPEND}
+	>=kde-frameworks/kirigami-6.9.0:6
+	kde-plasma/systemsettings:6
+"
+BDEPEND=">=kde-frameworks/extra-cmake-modules-6.9.0:6"
+
+src_unpack() {
+	# `cp -r`, not an unpack: there is no archive. FILESDIR is the ebuild's own files/ directory,
+	# which portage resolves inside the repository, so this works offline and from a vendored
+	# tree exactly as it does from a checkout.
+	mkdir -p "${S}" || die
+	cp -r "${FILESDIR}"/. "${S}"/ || die
+}
+
+src_configure() {
+	local mycmakeargs=(
+		# The distro's identity as a compile definition, so no source file in this package is a
+		# template. The module execs /usr/bin/${DISTRO_ID}-managed and nothing else depends on it.
+		-DDISTRO_ID="@DISTRO_ID@"
+	)
+	cmake_src_configure
+}

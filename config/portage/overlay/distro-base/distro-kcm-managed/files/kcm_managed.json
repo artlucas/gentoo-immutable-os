@@ -1,0 +1,11 @@
+{
+    "KPlugin": {
+        "Description": "Enrol this computer with an organisation, or see what it manages",
+        "Icon": "preferences-system-users",
+        "Name": "Managed Settings",
+        "License": "GPL-2.0-or-later"
+    },
+    "X-KDE-Keywords": "managed,organisation,organization,enrol,enroll,family,school,work,accounts,policy",
+    "X-KDE-System-Settings-Parent-Category": "personalization",
+    "X-KDE-Weight": 60
+}

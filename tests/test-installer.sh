@@ -106,6 +106,10 @@ assert_true "an installable image still gets its _empty slot B" grep -q '_empty'
 # render_template dies on a token whose variable is unset, so this is also the check that stage
 # 40 exports everything the templates ask for. It is run with the same exports stage 40 makes.
 RENDER="$TMP/rendered"; mkdir -p "$RENDER"
+# CAL_MANAGED_PAGE is the one token stage 40 computes rather than reads from build.conf: the
+# managed-enrolment page is a compiled Calamares module from the in-repo overlay, so settings.conf
+# names it only on an image that has it (plan/19 §7.3). Both values are rendered below, because
+# both ship — an installer built before the overlay lands must still produce a valid settings.conf.
 render_all() {
     ( set -e
       export REPO="$REPO_ROOT" WORK="$TMP/w" OUT="$TMP/o" STAGE_NAME=t BUILD_PROFILE_OVERRIDE=installer
@@ -114,13 +118,15 @@ render_all() {
       export DISTRO_ID DISTRO_NAME VERSION HOME_URL LIVE_USER UPDATE_URL UPDATE_CHANNEL
       export GPT_TYPE_ROOT_X64 GPT_TYPE_VAR GPT_TYPE_ESP ROOT_SLOT_SIZE_MIB ROOT_PARTLABEL \
              UKI_NAME PAYLOAD_DIR
+      export CAL_MANAGED_PAGE="${1-}"
       while IFS= read -r -d '' f; do
           rel="${f#"$CAL"/}"; out="$RENDER/${rel%.in}"
           mkdir -p -- "$(dirname -- "$out")"
           if [[ $f == *.in ]]; then render_template "$f" "$out"; else cp -- "$f" "$out"; fi
       done < <(find "$CAL" -type f -print0) )
 }
-assert_true "every Calamares template renders (no unset @TOKEN@)" render_all
+assert_true "every Calamares template renders with the enrolment page absent" render_all ""
+assert_true "every Calamares template renders (no unset @TOKEN@)" render_all "  - managed"
 assert_false "no unrendered @TOKEN@ survives in the rendered tree" \
     bash -c "grep -rlE '@[A-Z][A-Z0-9_]*@' '$RENDER' | grep -q ."
 
@@ -204,11 +210,15 @@ done
 SETTINGS="$RENDER/settings.conf"
 assert_file "$SETTINGS" "settings.conf rendered"
 mapfile -t OURS < <(find "$CAL/local-modules" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort)
-(( ${#OURS[@]} == 3 )) || _fail "expected three local modules, found ${#OURS[@]}: ${OURS[*]}"
+# Four since plan/19 Phase D: managedenroll joined imagedeploy, imagebootloader and imageidentity.
+(( ${#OURS[@]} == 4 )) || _fail "expected four local modules, found ${#OURS[@]}: ${OURS[*]}"
 for m in "${OURS[@]}"; do
     d="$CAL/local-modules/$m"
     assert_file "$d/module.desc" "$m has a module descriptor"
-    assert_file "$d/main.py"     "$m has a main.py"
+    # main.py or main.py.in — cal_install renders the second into the first, and managedenroll
+    # needs to be a template because it execs /usr/bin/<id>-managed by name.
+    SCRIPT="$d/main.py"; [[ -f $SCRIPT ]] || SCRIPT="$d/main.py.in"
+    assert_file "$SCRIPT"        "$m has a main.py"
     # The silent-skip failure: ModuleManager compares this against the directory name.
     assert_true "$m's module.desc declares name: \"$m\"" \
         grep -qE "^name:[[:space:]]+\"$m\"" "$d/module.desc"
@@ -216,12 +226,24 @@ for m in "${OURS[@]}"; do
     assert_true "$m declares script: main.py"      grep -qE '^script:[[:space:]]+"main.py"' "$d/module.desc"
     # Calamares calls run(); a helper that shadows it means the module does nothing and reports
     # success, which is exactly what a first draft of imagedeploy did.
-    assert_eq "1" "$(grep -cE '^def run\(' "$d/main.py")" "$m defines run() exactly once"
-    assert_true "$m/main.py is valid python" python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$d/main.py"
+    assert_eq "1" "$(grep -cE '^def run\(' "$SCRIPT")" "$m defines run() exactly once"
+    # Rendered before parsing when it is a template: @DISTRO_ID@ is not valid Python, and a check
+    # that skipped templates would stop checking the newest module in the list.
+    PYSRC="$SCRIPT"
+    if [[ $SCRIPT == *.in ]]; then
+        PYSRC="$TMP/$m-main.py"
+        ( export REPO="$REPO_ROOT" WORK="$TMP/w" OUT="$TMP/o" STAGE_NAME=t
+          source "$REPO_ROOT/scripts/lib/common.sh"; load_config
+          render_template "$SCRIPT" "$PYSRC" )
+    fi
+    assert_true "$m/main.py is valid python" python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$PYSRC"
     # ...and it has to be IN the sequence, or it is dead code on the medium.
     assert_true "$m appears in settings.conf's sequence" grep -qE "^[[:space:]]*-[[:space:]]+$m$" "$SETTINGS"
-    # ...with a config, since every one of them reads build-time facts out of one.
-    assert_file "$RENDER/modules/$m.conf" "$m has a rendered config"
+    # ...with a config, since every one of them reads build-time facts out of one. managedenroll
+    # is the exception and says why: everything it needs arrives through GlobalStorage, written
+    # by the view module beside it, so a config file would be one that nothing reads.
+    [[ $m == managedenroll ]] \
+        || assert_file "$RENDER/modules/$m.conf" "$m has a rendered config"
 done
 
 # Every module named in the sequence must have a config we ship or be a stock module that needs
@@ -274,10 +296,13 @@ assert_eq "1" "${#installer_users[@]}" "exactly one profile emerges @installer"
 assert_eq "${#installer_users[@]}" "${#live_users[@]}" \
     "every profile that emerges @installer is a live profile"
 
-# The set itself names one atom. Everything else in the ~25-package tail is resolved, and a set
-# that starts listing transitive deps stops describing intent.
-assert_eq "1" "$(grep -cvE '^[[:space:]]*(#|$)' "$REPO_ROOT/config/portage/sets/installer")" \
-    "@installer names exactly one atom"
+# The set names two atoms: Calamares, and the enrolment page that plugs into it (plan/19 Phase D).
+# Everything else in the ~25-package tail is resolved, and a set that starts listing transitive
+# deps stops describing intent.
+assert_eq "2" "$(grep -cvE '^[[:space:]]*(#|$)' "$REPO_ROOT/config/portage/sets/installer")" \
+    "@installer names exactly two atoms"
+assert_true "@installer names the managed-enrolment view module from the overlay" \
+    grep -qx 'distro-base/distro-calamares-managed' "$REPO_ROOT/config/portage/sets/installer"
 assert_true "@installer names app-admin/calamares" \
     grep -qx 'app-admin/calamares' "$REPO_ROOT/config/portage/sets/installer"
 

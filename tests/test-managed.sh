@@ -87,6 +87,10 @@ QML="$DST/usr/share/${DISTRO_ID}/managed-ui/main.qml"
 # i18n() reaches QML through KLocalizedContext, which a C++ HOST application installs on the
 # engine. qml6 installs nothing, so every i18n() call raises "ReferenceError: i18n is not
 # defined" and renders an empty string — a window of blank labels.
+#
+# NB this is the STANDALONE app's QML. The Phase D KCM has its own main.qml in the overlay, and
+# that one uses i18n() correctly and must keep doing so: it is loaded by a C++ host that installs
+# the context. Two files, opposite rules, and the difference is which runtime opens them.
 # Comment lines are stripped first: the file's own header EXPLAINS the absence of i18n(), and a
 # check that could not tell an explanation from a call would forbid documenting the reason.
 assert_false "the QML calls no i18n() (bare qml6 has no KLocalizedContext)" \
@@ -361,6 +365,123 @@ if command -v gpg >/dev/null 2>&1; then
         "$(gpg --show-keys "$REPO_ROOT/$MANAGED_PUBRING" 2>/dev/null)" \
         "the committed default key says it is a test key (stage 40 warns on exactly this)"
 fi
+
+# ---- 10b. Phase D: the in-repo ebuild repository ---------------------------------------------
+# Two things managed mode ships have to be COMPILED against the target's own Qt6/KF6 — a Plasma
+# KCM and a Calamares view module — and neither can be a script. Everything asserted here is
+# structure that portage reads silently: a repository it cannot key, an ebuild it cannot find, a
+# category it does not accept. In each case the repository looks present and has no packages in
+# it, and nothing says so.
+OVL="$REPO_ROOT/config/portage/overlay"
+assert_file "$OVL/metadata/layout.conf" "the overlay has a layout.conf"
+assert_true "the overlay declares masters = gentoo (eclasses, licences, categories)" \
+    grep -qE '^masters = gentoo$' "$OVL/metadata/layout.conf"
+assert_true "the overlay uses thin manifests (no SRC_URI means no Manifest to write)" \
+    grep -qE '^thin-manifests = true$' "$OVL/metadata/layout.conf"
+assert_file "$OVL/profiles/repo_name.in" "the overlay's repo_name is a template, so it follows DISTRO_ID"
+assert_file "$OVL/profiles/categories.in" "...and so is its category list"
+# Rendered, the repo name must equal DISTRO_ID: portage keys a repository by that file, and a
+# mismatch makes every ::<id> atom unresolvable while the repository itself looks fine.
+OVL_DST="$TMP/overlay"
+install_rootfs_overlay "$OVL" "$OVL_DST"
+assert_eq "$DISTRO_ID" "$(tr -d '[:space:]' < "$OVL_DST/profiles/repo_name")" \
+    "the rendered repo_name is DISTRO_ID"
+assert_eq "${DISTRO_ID}-base" "$(tr -d '[:space:]' < "$OVL_DST/profiles/categories")" \
+    "the rendered category is <id>-base"
+assert_true "the category directory is rebranded too" test -d "$OVL_DST/${DISTRO_ID}-base"
+assert_false "no un-rebranded distro-base directory survives" test -d "$OVL_DST/distro-base"
+# Portage looks an ebuild up at <category>/<pn>/<pn>-<pv>.ebuild. A rebranding rule that ever
+# disagreed with itself between the directory and the file would produce a repository with no
+# packages and no error.
+EB_N=0
+while IFS= read -r eb; do
+    EB_N=$((EB_N + 1))
+    ebdir="$(basename -- "$(dirname -- "$eb")")"
+    ebfile="$(basename -- "$eb")"
+    assert_eq "$ebdir" "${ebfile%-*}" "$(basename "$eb") sits in a directory of its own name"
+    assert_false "$(basename "$eb") has no unrendered token left in it" \
+        grep -q '@[A-Z][A-Z0-9_]*@' "$eb"
+done < <(find "$OVL_DST" -name '*.ebuild')
+assert_eq "2" "$EB_N" "the overlay renders exactly the two Phase D ebuilds"
+# EAPI 8 and no SRC_URI: the sources are in files/, which is what makes these buildable with
+# --network none and what removes the need for a Manifest.
+while IFS= read -r eb; do
+    assert_true "$(basename "$eb") declares EAPI=8" grep -qx 'EAPI=8' "$eb"
+    assert_false "$(basename "$eb") has no SRC_URI" grep -qE '^SRC_URI=' "$eb"
+    assert_true "$(basename "$eb") copies its sources from FILESDIR" grep -q 'FILESDIR' "$eb"
+done < <(find "$OVL_DST" -name '*.ebuild')
+# The sources must NOT be templates: a .cpp with @TOKEN@ in it does not compile, does not lint
+# and does not open in an editor. The distro id arrives as a compile definition instead.
+assert_false "no C++ or QML source in the overlay is a template" \
+    bash -c "find '$OVL' \( -name '*.cpp' -o -name '*.h' -o -name '*.qml' \) -name '*.in' | grep -q ."
+# ...and the converse of the standalone app's rule, asserted so that nobody "fixes" one to match
+# the other: the KCM's QML is loaded by a C++ host that DOES install a KLocalizedContext, so its
+# strings are translatable and should stay wrapped.
+assert_true "the KCM's QML uses i18n() (its host installs a KLocalizedContext)" \
+    grep -q 'i18n(' "$OVL/distro-base/distro-kcm-managed/files/ui/main.qml"
+assert_true "the KCM takes the distro id as a compile definition" \
+    grep -q 'DISTRO_ID' "$OVL/distro-base/distro-kcm-managed/files/CMakeLists.txt"
+# The KCM must land where System Settings looks, and nowhere else is equivalent.
+assert_true "the KCM installs into plasma/kcms/systemsettings" \
+    grep -q 'kcmutils_add_qml_kcm' "$OVL/distro-base/distro-kcm-managed/files/CMakeLists.txt"
+assert_file "$OVL/distro-base/distro-kcm-managed/files/kcm_managed.json" \
+    "the KCM carries the plugin metadata System Settings reads out of the .so"
+assert_true "...including the parent category, without which it is kcmshell-only" \
+    grep -q 'X-KDE-System-Settings-Parent-Category' \
+    "$OVL/distro-base/distro-kcm-managed/files/kcm_managed.json"
+# The Calamares module: a view module, built out of tree against the installed Calamares.
+assert_true "the installer page uses upstream's own calamares_add_plugin" \
+    grep -q 'calamares_add_plugin' "$OVL/distro-base/distro-calamares-managed/files/CMakeLists.txt"
+assert_true "...declared as a viewmodule (a job cannot draw a page)" \
+    grep -q 'TYPE viewmodule' "$OVL/distro-base/distro-calamares-managed/files/CMakeLists.txt"
+assert_true "...and found with find_package(Calamares), not a vendored copy" \
+    grep -q 'find_package(Calamares REQUIRED)' \
+    "$OVL/distro-base/distro-calamares-managed/files/CMakeLists.txt"
+# THE RULE THE INSTALLER PAGE EXISTS UNDER (plan/18 §7.4, T-MAN-4): it must not fail the install.
+assert_true "the installer page always allows Next" \
+    grep -q 'return true;' "$OVL/distro-base/distro-calamares-managed/files/ManagedViewStep.cpp"
+assert_true "the page publishes the code to GlobalStorage for the job to read" \
+    grep -q 'managedEnrollmentCode' \
+    "$OVL/distro-base/distro-calamares-managed/files/ManagedViewStep.cpp"
+JOB="$REPO_ROOT/config/calamares/local-modules/managedenroll/main.py.in"
+assert_file "$JOB" "the enrolment job is a python module, not more C++"
+assert_true "the job reads the same GlobalStorage key the page writes" grep -q 'managedEnrollmentCode' "$JOB"
+assert_true "the job records an enrolment that was asked for and did not happen (T-MAN-4)" \
+    grep -q 'enrollment-pending.json' "$JOB"
+# The one property T-MAN-4 is: every path returns None. A Calamares python job fails the install
+# by returning a tuple, so a single `return (` in this file would be an installer that dies
+# because a household's router was being replaced.
+assert_false "the job never returns a failure tuple — it must not fail the install" \
+    grep -qE '^\s*return \(' "$JOB"
+assert_true "the job passes --root so it writes into the TARGET, not the live medium" \
+    grep -q -- '"--root"' "$JOB"
+# The sequence wiring. The page is conditional (it comes from the overlay); the job is not.
+CALSET="$REPO_ROOT/config/calamares/settings.conf.in"
+assert_true "settings.conf carries the conditional page token" grep -qx '@CAL_MANAGED_PAGE@' "$CALSET"
+assert_true "settings.conf names the enrolment job unconditionally" \
+    grep -qE '^[[:space:]]*-[[:space:]]+managedenroll$' "$CALSET"
+assert_true "stage 40 computes the page token rather than hardcoding it" \
+    grep -q 'CAL_MANAGED_PAGE=' "$REPO_ROOT/scripts/stages/40-configure.sh"
+# Stage 20 is what makes the repository exist at all.
+assert_true "stage 20 renders the overlay into the config root" \
+    grep -q 'install_rootfs_overlay "\$OVERLAY_SRC"' "$REPO_ROOT/scripts/stages/20-builder-setup.sh"
+assert_true "stage 20 writes a repos.conf entry for it" \
+    grep -q 'repos.conf/\$DISTRO_ID.conf' "$REPO_ROOT/scripts/stages/20-builder-setup.sh"
+# ...and the lock check must not report an overlay atom as missing from the pinned tree, which
+# would send whoever hit it off to relock a package upstream never carried.
+assert_true "stage 20's lock check looks in the overlay as well as the tree" \
+    grep -q 'OVERLAY_DST/\$ovl_cat' "$REPO_ROOT/scripts/stages/20-builder-setup.sh"
+assert_true "relock --restamp warns when the lock lacks an overlay package the profile wants" \
+    grep -q 'does not name the overlay package' "$REPO_ROOT/scripts/relock.sh"
+# The sets, with the same "distro" token the filenames use, rebranded by filter_set_file.
+assert_true "@desktop names the KCM from the overlay" \
+    grep -qx 'distro-base/distro-kcm-managed' "$REPO_ROOT/config/portage/sets/desktop"
+assert_eq "${DISTRO_ID}-base/${DISTRO_ID}-kcm-managed" \
+    "$(printf 'distro-base/distro-kcm-managed\n' > "$TMP/s.in"; filter_set_file "$TMP/s.in" "$TMP/s.out"; tr -d '[:space:]' < "$TMP/s.out")" \
+    "filter_set_file rebrands an overlay atom"
+assert_eq "app-misc/distrobox" \
+    "$(printf 'app-misc/distrobox\n' > "$TMP/s2.in"; filter_set_file "$TMP/s2.in" "$TMP/s2.out"; tr -d '[:space:]' < "$TMP/s2.out")" \
+    "...and leaves an atom that merely CONTAINS the word alone"
 
 # ---- 11. build wiring -------------------------------------------------------------------------
 assert_true "build.conf carries an https MANAGED_API_BASE" \

@@ -241,6 +241,14 @@ renders JSON user records; the bash alternative would shell out to `curl` and pa
 The distinction is the whole value of writing the policy down: one package moved from "could be
 removed" to "is load-bearing", and fifteen did not.
 
+**And one thing the toolchain-free guarantee is NOT threatened by (plan/19 Phase D).**
+`config/portage/overlay` is an in-repo ebuild repository carrying two compiled packages — a
+Plasma KCM and a Calamares view module. They are built by Portage, in the builder, against the
+target's own Qt6/KF6, and what lands in the image is a `.so`. No compiler, no headers and no
+CMake reach the image: stage 50 prunes `/usr/include` and `/usr/lib64/cmake` exactly as it
+always has, and the assertions that check it are unchanged. Building a package here is the same
+act as building any of the other 655.
+
 ## The first build's three blind spots (2026-08-21)
 
 The first completed build came in at **8342 MiB installed rootfs against the ~5.5 GiB budget

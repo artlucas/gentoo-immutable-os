@@ -847,7 +847,28 @@ if profile_has_set installer; then
   #   ROOT_PARTLABEL     the label the UKI cmdline's root=PARTLABEL= looks for
   #   UKI_NAME           the filename sysupdate's 60-uki.transfer matches
   #   PAYLOAD_DIR        where this section stages the payload, below
+  # The managed-enrolment PAGE is a compiled Calamares view module from the in-repo overlay
+  # (plan/19 §7.3, Phase D), and it reaches an image only through a re-resolved lock. Naming it
+  # in settings.conf when it is not installed is worse than leaving it out: the verify pass below
+  # would fail the build, and Calamares itself would silently drop the step.
+  #
+  # So the sequence line is substituted, not hardcoded — and its absence is WARNED about by name,
+  # because "the installer has no enrolment page" is otherwise indistinguishable from "nobody
+  # wanted one". The JOB is unconditional: it ships with the image and is what a zero-touch
+  # enrolment uses on a medium with no page at all.
+  if compgen -G "$TARGET/usr/lib*/calamares/modules/managed/module.desc" >/dev/null; then
+    CAL_MANAGED_PAGE="  - managed"
+    log "installer: the managed-enrolment page is installed; adding it to the sequence"
+  else
+    CAL_MANAGED_PAGE=""
+    warn "the managed-enrolment installer page is NOT installed, so the medium will have no
+  enrolment screen (the managedenroll job still runs, so a systemd-credential enrolment works).
+  It comes from ${DISTRO_ID}-base/${DISTRO_ID}-calamares-managed in config/portage/overlay, which
+  reaches an image only through a re-resolved lock:
+      scripts/relock.sh ${DISTRO_ID}-base/${DISTRO_ID}-calamares-managed --profile installer"
+  fi
   export GPT_TYPE_ROOT_X64 GPT_TYPE_VAR ROOT_SLOT_SIZE_MIB ROOT_PARTLABEL UKI_NAME PAYLOAD_DIR
+  export CAL_MANAGED_PAGE
 
   # Renders *.in through render_template and copies everything else verbatim. Deliberately NOT
   # install_rootfs_overlay: that walks config/rootfs and rebrands "distro" in basenames, and this
@@ -1625,6 +1646,28 @@ if profile_has_set installer; then
   done < <(sed -nE '/^sequence:/,/^[a-z]/ s/^[[:space:]]*-[[:space:]]+([a-z][a-z0-9_@-]*)[[:space:]]*$/\1/p' \
              "$CAL_SETTINGS" | grep -vxE 'show|exec')
 
+  # The managed-enrolment page (plan/19 §7.3, Phase D). The sequence check above already dies if
+  # settings.conf names a module that is installed nowhere; this is the converse, and it is the
+  # one that would otherwise be silent — a page that is installed and NOT in the sequence is a
+  # compiled plugin sitting on the medium that nobody will ever see.
+  if compgen -G "$TARGET/usr/lib*/calamares/modules/managed/module.desc" >/dev/null; then
+    grep -qE '^[[:space:]]*-[[:space:]]+managed$' "$CAL_SETTINGS" \
+      || die "verify: the managed-enrolment view module is installed but settings.conf's sequence
+  does not name it, so the installer would never show the page. Stage 40 substitutes that line
+  into settings.conf.in as @CAL_MANAGED_PAGE@ — check that it computed a value."
+    grep -qE '^type:[[:space:]]+"?viewmodule"?' \
+      "$(compgen -G "$TARGET/usr/lib*/calamares/modules/managed/module.desc" | head -1)" \
+      || die "verify: the managed module's descriptor does not declare type: viewmodule. A job
+  cannot draw a page, and Calamares would run it as a step with no UI."
+  fi
+  # ...and the JOB, which unlike the page ships with the image on every installer build. It is
+  # also what a zero-touch enrolment uses on a medium with no page at all (plan/19 §7.3).
+  [[ -f $TARGET/usr/share/calamares/local-modules/managedenroll/main.py ]] \
+    || die "verify: the managedenroll job is missing. Without it a ticked enrolment box on the
+  installer page does nothing at all, and the install reports success."
+  grep -qE '^[[:space:]]*-[[:space:]]+managedenroll$' "$CAL_SETTINGS" \
+    || die "verify: settings.conf's exec sequence does not name managedenroll"
+
   # The payload, and the one string that ties it to the boot: partition.conf creates a partition
   # with this label and the UKI cmdline looks for it. They are rendered from the same variable,
   # so this catches an edit that hardcoded one of them.
@@ -1939,6 +1982,35 @@ SHADOW_MODE="$(stat -c '%a %U:%G' "$TARGET/etc/shadow" 2>/dev/null || true)"
 [[ $SHADOW_MODE == "640 root:shadow" ]] \
   || warn "/etc/shadow is '$SHADOW_MODE', not '640 root:shadow'. Managed mode mirrors that mode
   for its own hashes; if the vendor changed it, plan/19 §2.3 should be re-measured."
+
+# ---- managed mode, Phase D: the two compiled surfaces (plan/19 §7.2, §7.3) ------------------
+# Both come from config/portage/overlay and reach an image only through a re-resolved lock, so
+# neither is asserted into existence — a build that has not been relocked yet must still produce
+# a working image. What IS asserted is that a package which DID install put its files where the
+# thing that loads them looks, because in both cases the failure is silent: System Settings shows
+# no module, and Calamares drops a step, and neither says a word.
+MANAGED_KCM="$(compgen -G "$TARGET/usr/lib*/qt6/plugins/plasma/kcms/systemsettings/kcm_managed.so" || true)"
+if [[ -n $MANAGED_KCM ]]; then
+  # A Plasma 6 KCM carries its metadata INSIDE the plugin; there is no .desktop to read it from
+  # any more. An empty or missing KPlugin block gives a module System Settings can load and
+  # cannot name, so it appears as a blank row.
+  strings -- "${MANAGED_KCM%% *}" 2>/dev/null | grep -q 'KPlugin' \
+    || die "verify: kcm_managed.so carries no KPlugin metadata. System Settings reads the name,
+  icon and category out of the plugin itself (Plasma 6 has no .desktop for KCMs), so this module
+  would appear as an unnamed row or not at all."
+  # kcmutils_generate_desktop_file writes this, and it is what makes the module findable by
+  # SEARCH rather than only by browsing to its category.
+  compgen -G "$TARGET/usr/share/applications/kcm_managed.desktop" >/dev/null \
+    || warn "kcm_managed.so is installed but /usr/share/applications/kcm_managed.desktop is not.
+  The module will be in System Settings and will not come up when someone searches for it."
+  log "managed mode: the System Settings module is installed"
+elif profile_has_set desktop; then
+  warn "the managed-mode System Settings module is not installed (plan/19 §7.2, Phase D).
+  The QML app at /usr/bin/${DISTRO_ID}-managed-ui still works and is in the launcher. The KCM
+  comes from ${DISTRO_ID}-base/${DISTRO_ID}-kcm-managed in config/portage/overlay, which reaches
+  an image only through a re-resolved lock:
+      scripts/relock.sh ${DISTRO_ID}-base/${DISTRO_ID}-kcm-managed --profile $BUILD_PROFILE"
+fi
 
 log "configure complete; UKI at $UKI_DIR/$UKI_NAME"
 # The three hardware lists are stage-40 inputs now, not just stage-50 ones: section 2c prunes

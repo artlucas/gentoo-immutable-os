@@ -773,6 +773,29 @@ fi
 [[ -e $T/etc/userdb ]] \
   && violation "/etc/userdb exists after prune. It is created by enrolment; an image that ships
   it puts a directory in the read-only lower that the /etc overlay then has to shadow (T-MAN-5)"
+# Phase D's compiled surfaces, IF this build installed them (plan/19 §7.2). Neither is asserted
+# into existence — a build whose lock predates the overlay must stay green — so what is checked
+# is that the halves still MATCH each other. A prune that took one and left the other is silent
+# in both directions, and each direction fails differently.
+MANAGED_KCM_SO="$(compgen -G "$T/usr/lib*/qt6/plugins/plasma/kcms/systemsettings/kcm_managed.so" || true)"
+MANAGED_KCM_DESKTOP="$(compgen -G "$T/usr/share/applications/kcm_managed.desktop" || true)"
+if [[ -n $MANAGED_KCM_DESKTOP && -z $MANAGED_KCM_SO ]]; then
+  violation "kcm_managed.desktop survived the prune but kcm_managed.so did not — System Settings
+  would list a module whose plugin is gone, and opening it is an error dialog"
+fi
+if [[ -n $MANAGED_KCM_SO && -z $MANAGED_KCM_DESKTOP ]]; then
+  violation "kcm_managed.so survived the prune but its .desktop did not — the module is still in
+  System Settings and no longer comes up when anyone searches for it"
+fi
+# The Calamares module is installer-only, and there its whole directory has to survive: the .so
+# and the module.desc beside it are read as a pair by ModuleManager.
+MANAGED_CAL="$(compgen -G "$T/usr/lib*/calamares/modules/managed" || true)"
+if [[ -n $MANAGED_CAL ]]; then
+  compgen -G "$T/usr/lib*/calamares/modules/managed/module.desc" >/dev/null \
+    || violation "the managed Calamares module directory survived the prune without its
+  module.desc — ModuleManager reads the descriptor to find the plugin, so the enrolment page
+  would be dropped from the sequence with no error anywhere"
+fi
 
 # ...and the resolver's counterpart must be gone: exactly one network manager, structurally.
 for b in usr/lib/systemd/systemd-networkd usr/lib/systemd/systemd-networkd-wait-online \

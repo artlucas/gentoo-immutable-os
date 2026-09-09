@@ -67,3 +67,15 @@ media-fonts/noto
 media-fonts/noto-emoji
 media-fonts/noto-cjk             #cjk
 net-print/cups                   #printing
+
+# ---- managed mode (plan/19 Phase D) ---------------------------------------------------------
+# The System Settings module. From config/portage/overlay, not from ::gentoo — a Plasma KCM is a
+# compiled C++ plugin and there is no QML-only path into System Settings, so this is the one
+# thing in managed mode that cannot be a script in config/rootfs.
+#
+# The "distro" token is rebranded by filter_set_file the same way it is in filenames, so this
+# line follows DISTRO_ID and nothing here needs editing to rename the distro.
+#
+# It costs no NEW dependency: everything it links against (Qt6, kcmutils, ki18n, kirigami,
+# systemsettings) is already in this set's closure for Plasma itself.
+distro-base/distro-kcm-managed

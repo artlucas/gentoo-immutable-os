@@ -118,6 +118,39 @@ if [[ ${RELOCK_IN_CONTAINER:-0} != 1 ]]; then
       ); then
         return 1
       fi
+      # THE ONE CASE RE-STAMPING WOULD HIDE. portage_config_hash covers config/portage entirely,
+      # which since plan/19 Phase D includes the in-repo overlay — so "the hash moved" can mean
+      # "somebody added an ebuild", and a lock that does not name it is genuinely stale: stage 30
+      # emerges @locked-image and nothing else, so the package would simply never be built. The
+      # header keys cannot express that, so it is checked directly and warned about rather than
+      # refused: the same hash also moves for a comment in a .cpp, and refusing on that would
+      # make --restamp useless exactly where it is most needed.
+      if [[ -d $REPO_ROOT/config/portage/overlay && ${name%.lock} != builder ]]; then
+        # Only the overlay packages THIS profile's sets actually name. The desktop image wants
+        # the KCM and not the installer page; warning about both on both would be noise, and
+        # noise in a warning that is usually silent is how a real one gets ignored.
+        (
+          BUILD_PROFILE="${name%.lock}"; load_profile
+          # The SET NAME travels with the atom rather than being read from the loop variable.
+          # These are two stages of one pipeline, so each runs in its own subshell and `$ps` from
+          # the producer is simply not defined in the consumer — under `set -u` that is not a
+          # subtly wrong message, it is an unbound-variable abort in the middle of a relock.
+          # shellcheck disable=SC2086  # deliberate splitting: PROFILE_SETS is space-separated
+          for ps in $PROFILE_SETS; do
+            [[ -f $REPO_ROOT/config/portage/sets/$ps ]] || continue
+            grep -oE '^distro-[a-z0-9-]+/distro-[a-z0-9-]+' \
+              "$REPO_ROOT/config/portage/sets/$ps" 2>/dev/null \
+              | sed "s|^|$ps |" || true
+          done | sed "s/distro-/${DISTRO_ID}-/g" | sort -u | while read -r ovl_set ovl_atom; do
+            [[ -n ${ovl_atom:-} ]] || continue
+            grep -qE "^=?${ovl_atom}-[0-9]" "$f" && continue
+            warn "$name does not name the overlay package '$ovl_atom', which @${ovl_set} asks for.
+  Re-stamping the hash will NOT make it build: stage 30 emerges @locked-image, so a package the
+  lock does not carry is never emerged. Release it properly instead:
+      scripts/relock.sh $ovl_atom --profile ${name%.lock}"
+          done
+        )
+      fi
       sed -i -E "s|^#([[:space:]]*)PORTAGE_CONFIG_HASH:.*|#\\1PORTAGE_CONFIG_HASH: $want|" "$f"
       [[ $(lock_header_value "$f" PORTAGE_CONFIG_HASH) == "$want" ]] \
         || die "$name: could not rewrite the PORTAGE_CONFIG_HASH line"
@@ -245,6 +278,13 @@ glsa_vdb() {
     slot=""
     if [[ -f $md5/$cat/$pf ]]; then
       slot="$(sed -n 's/^SLOT=//p' "$md5/$cat/$pf")"
+    elif [[ $cat == "$DISTRO_ID"-* ]]; then
+      # An overlay package (plan/19 Phase D). It is ours, upstream has never heard of it, and
+      # the GLSA database therefore has nothing to say about it — so it is not "approximate",
+      # it is simply out of scope, and counting it in the approximation warning would train
+      # whoever reads that warning to ignore a number that is usually zero.
+      slot="0"
+      printf '%s\n' "$DISTRO_ID" > "$d/repository"
     else
       # The exact version is gone from the tree — the normal case straight after a snapshot
       # bump, which is exactly when --security is run. A sibling version's SLOT is a far

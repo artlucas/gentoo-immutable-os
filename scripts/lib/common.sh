@@ -1169,13 +1169,27 @@ ensure_dir() { mkdir -p -- "$@"; }
 # corresponding build.conf switch is 0, and comment/blank lines otherwise pass through
 # to portage untouched (portage ignores comments itself; markers must go though).
 filter_set_file() {
-  local src=$1 dst=$2 line out
+  local src=$1 dst=$2 line out cat pn
   : > "$dst"
   while IFS= read -r line || [[ -n $line ]]; do
     out=$line
     if [[ $line == *'#cjk'* ]];      then [[ ${INCLUDE_CJK_FONTS:-1} == 1 ]] || continue; out="${line%%#*}"; fi
     if [[ $line == *'#printing'* ]]; then [[ ${INCLUDE_PRINTING:-1}  == 1 ]] || continue; out="${line%%#*}"; fi
     if [[ $line == *'#distrobox'* ]]; then [[ ${INCLUDE_DISTROBOX:-1} == 1 ]] || continue; out="${line%%#*}"; fi
+    # Atoms from the in-repo overlay are written with the same literal "distro" token the files
+    # in config/rootfs use, and rebranded the same way (plan/19 Phase D). Two reasons it is not
+    # simply spelled `immos-base/immos-kcm-managed`: renaming the distro would then need an edit
+    # here as well as in build.conf, and the offline suite's atom-shape lint reads these files as
+    # plain text — `@DISTRO_ID@-base/...` is not a well-formed atom and would fail it.
+    #
+    # Only whole segments named exactly "distro" move, via render_dest_name, so an upstream atom
+    # that merely contains the word (app-misc/distrobox) is untouched — the same rule, and the
+    # same bug it was written to stop, as the one on filenames.
+    if [[ $out == distro-*/* || $out == */distro-* ]]; then
+      cat="$(render_dest_name "${out%%/*}")"
+      pn="$(render_dest_name "${out#*/}")"
+      out="$cat/$pn"
+    fi
     printf '%s\n' "$out" >> "$dst"
   done < "$src"
 }
