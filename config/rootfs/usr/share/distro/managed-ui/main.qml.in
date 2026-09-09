@@ -1,0 +1,217 @@
+/*
+ * The managed-mode front end (plan/19 §7.2).
+ *
+ * PURE QML, ON PURPOSE. A Plasma KCM is a compiled C++ plugin that would have to be built
+ * against the target's Qt6/KF6, and the builder's Qt6 comes from the binhost and need not
+ * ABI-match — the same argument that left the Active Directory feature with no custom Calamares
+ * page (plan/18 §7.2). Measured on the built target: /usr/bin/qml6 ships, and so do
+ * org.kde.kirigami and kirigami-addons as QML modules. So this whole surface runs on the image
+ * today with no compilation, no ABI coupling and no new packages.
+ *
+ * HOW IT TALKS TO THE SYSTEM, and why it looks inside out. There is no process type in pure QML
+ * — no QProcess binding, nothing in Kirigami — so this file cannot run a command, and pretending
+ * otherwise is what would force a compiled plugin. Instead the shell wrapper
+ * @DISTRO_ID@-managed-ui is the controller: it writes the current status to a file, runs this
+ * view, and acts on what the view asks for. The view asks by printing one line and calling
+ * Qt.exit() with an agreed code, and the wrapper is what invokes pkexec — so the authentication
+ * prompt is polkit's, from the agent the desktop already runs, and this app is never privileged.
+ *
+ * Exit codes are the interface with the wrapper:
+ *   0  the user closed the window          10  enrol, with the code on the ACTION line
+ *  11  leave                               12  sync now
+ *
+ * THE STRINGS ARE NOT WRAPPED IN i18n(), and that is a consequence of the same constraint, not
+ * an oversight. KDE's i18n() reaches QML through KLocalizedContext, which a C++ HOST APPLICATION
+ * installs on the engine; the bare qml6 runtime installs nothing, so every i18n() call here
+ * raised "ReferenceError: i18n is not defined" and rendered an empty string — measured, on the
+ * built target, before this comment existed. Translating this app means giving it a host binary,
+ * which means the compiled plugin plan/19 §7.2 declined; when the Phase D KCM arrives it brings
+ * that context with it, and these strings can be wrapped then.
+ */
+import QtQuick
+import QtQuick.Layouts
+import QtQuick.Controls as QQC2
+import org.kde.kirigami as Kirigami
+
+Kirigami.ApplicationWindow {
+    id: root
+
+    title: "Managed Settings"
+    width: Kirigami.Units.gridUnit * 34
+    height: Kirigami.Units.gridUnit * 28
+    minimumWidth: Kirigami.Units.gridUnit * 24
+    minimumHeight: Kirigami.Units.gridUnit * 20
+
+    // Populated from the JSON the wrapper drops beside us. Read rather than computed: `status`
+    // is the ONE authoritative answer to "what is in force", and a second implementation of it
+    // in QML would be a second thing to keep true.
+    property var st: ({})
+    property bool enrolled: st.enrolled === true
+
+    function loadStatus() {
+        var path = Qt.application.arguments.length > 1
+            ? Qt.application.arguments[Qt.application.arguments.length - 1]
+            : "/run/@DISTRO_ID@-managed-ui/status.json";
+        var xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState === XMLHttpRequest.DONE) {
+                try {
+                    root.st = JSON.parse(xhr.responseText);
+                } catch (e) {
+                    root.st = {};
+                }
+            }
+        };
+        xhr.open("GET", "file://" + path);
+        xhr.send();
+    }
+
+    Component.onCompleted: loadStatus()
+
+    pageStack.initialPage: Kirigami.ScrollablePage {
+        title: "Managed Settings"
+
+        ColumnLayout {
+            spacing: Kirigami.Units.largeSpacing
+
+            Kirigami.InlineMessage {
+                Layout.fillWidth: true
+                visible: root.enrolled && root.st.last_error
+                type: Kirigami.MessageType.Warning
+                // §8.6: the control plane WILL be down, and when it is the device keeps
+                // authenticating and keeps enforcing. So this is information, never an alarm.
+                text: "This computer could not reach its organisation (" + (root.st.last_error || "")
+                      + "). Everything still works \u2014 the settings below stay in force until it can."
+            }
+
+            Kirigami.Heading {
+                Layout.fillWidth: true
+                level: 2
+                text: root.enrolled
+                      ? "Managed by " + (root.st.org || "your organisation")
+                      : "This computer is not managed"
+            }
+
+            QQC2.Label {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                visible: !root.enrolled
+                text: "Enrolling lets an organisation — a household or a small business — create the accounts on this computer and set what they are allowed to do. Accounts already on this computer are not affected, and you can leave at any time."
+            }
+
+            // ---- not enrolled: the code, and nothing else -------------------------------
+            Kirigami.FormLayout {
+                Layout.fillWidth: true
+                visible: !root.enrolled
+
+                QQC2.TextField {
+                    id: codeField
+                    Kirigami.FormData.label: "Enrolment code:"
+                    placeholderText: "K7QF-9M2B"
+                    // The code is typed by a human off a phone screen, so it is short and
+                    // case-insensitive; upper-casing here saves an error the server would
+                    // otherwise have to explain (§5.2).
+                    onTextChanged: {
+                        var up = text.toUpperCase();
+                        if (up !== text) text = up;
+                    }
+                    onAccepted: enrolButton.clicked()
+                }
+
+                QQC2.TextField {
+                    id: nameField
+                    Kirigami.FormData.label: "Name for this computer:"
+                    placeholderText: "kitchen-pc"
+                }
+            }
+
+            // ---- enrolled: what is in force ---------------------------------------------
+            Kirigami.FormLayout {
+                Layout.fillWidth: true
+                visible: root.enrolled
+
+                QQC2.Label {
+                    Kirigami.FormData.label: "Last checked:"
+                    text: root.st.last_success || "never"
+                }
+                QQC2.Label {
+                    Kirigami.FormData.label: "Accounts on this computer:"
+                    text: (root.st.users && root.st.users.length)
+                          ? root.st.users.join(", ") : "none yet"
+                }
+                QQC2.Label {
+                    Kirigami.FormData.label: "Settings version:"
+                    text: root.st.bundle_serial !== undefined && root.st.bundle_serial !== null
+                          ? String(root.st.bundle_serial) : "none"
+                }
+                QQC2.Label {
+                    Kirigami.FormData.label: "This computer is known as:"
+                    text: root.st.device_id || ""
+                }
+            }
+
+            // §8.8 in the interface rather than only in the design document: a person being
+            // managed can see exactly what is collected, on the machine, without asking anyone.
+            Kirigami.InlineMessage {
+                Layout.fillWidth: true
+                visible: root.enrolled
+                type: Kirigami.MessageType.Information
+                text: "Screen time and activity monitoring are not enabled on this computer. Nothing about how you use it is recorded or sent."
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Kirigami.Units.smallSpacing
+
+                QQC2.Button {
+                    id: enrolButton
+                    visible: !root.enrolled
+                    enabled: codeField.text.length >= 4
+                    icon.name: "cloud-upload"
+                    text: "Enrol this computer"
+                    onClicked: {
+                        console.log("ACTION enroll " + codeField.text + " " + nameField.text);
+                        Qt.exit(10);
+                    }
+                }
+                QQC2.Button {
+                    visible: root.enrolled
+                    icon.name: "view-refresh"
+                    text: "Check for changes now"
+                    onClicked: { console.log("ACTION sync"); Qt.exit(12); }
+                }
+                Item { Layout.fillWidth: true }
+                QQC2.Button {
+                    visible: root.enrolled
+                    icon.name: "dialog-cancel"
+                    text: "Leave…"
+                    onClicked: leaveSheet.open()
+                }
+            }
+        }
+
+        // Leaving is the promise §8.9 makes and it has to be stated where someone can read it,
+        // not only in a design document: a household that stops paying must not lose its
+        // computers.
+        Kirigami.PromptDialog {
+            id: leaveSheet
+            title: "Leave managed mode?"
+            subtitle: "Every managed account stays on this computer as an ordinary local account "
+                    + "\u2014 same name, same password, same files. This computer simply stops "
+                    + "receiving settings from " + (root.st.org || "your organisation") + "."
+            standardButtons: Kirigami.Dialog.NoButton
+            customFooterActions: [
+                Kirigami.Action {
+                    text: "Leave"
+                    icon.name: "dialog-ok"
+                    onTriggered: { console.log("ACTION leave"); Qt.exit(11); }
+                },
+                Kirigami.Action {
+                    text: "Cancel"
+                    icon.name: "dialog-cancel"
+                    onTriggered: leaveSheet.close()
+                }
+            ]
+        }
+    }
+}

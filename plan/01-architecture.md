@@ -191,6 +191,25 @@ updates. Unjoined, the client is inert — `sssd.service` is disabled in the pre
 `ConditionPathExists=/etc/sssd/sssd.conf`, because on this system a unit that starts and fails
 takes `boot-complete.target` with it and eventually triggers the rollback described above.
 
+And a fourth as of [plan/19](19-managed-mode.md), for the household with four people and three
+computers, or the shop with six seats and no server room: **managed mode**, where a hosted
+control plane owns the users and the device pulls a signed bundle and applies it locally. The
+accounts are **systemd JSON user records** dropped into a new `/etc` overlay tenant,
+`/etc/userdb/`, resolved by `nss-systemd` — `/etc/nsswitch.conf` already names `systemd` on
+`passwd`, `group` **and `shadow`**, and it is that last one which lets ordinary `pam_unix`
+authenticate them. So the record *is* the cache: a laptop at a friend's house logs its users in
+from local state with nothing on the login path but a file, and the network only ever refreshes
+it. Cost: no new packages at all.
+
+The overlay rule that governs the other three governs this one: `/etc/userdb` **does not exist in
+the image**, so every file enrolment writes is new and nothing shipped stops receiving vendor
+updates. The one exception is `/etc/subuid`/`/etc/subgid`, which are not NSS — `newuidmap` reads
+the files — and which the installer already copies up on every installed machine anyway; the
+client rewrites only the lines it owns. Unenrolled, the sync unit is disabled in the preset *and*
+carries `ConditionPathExists=/var/lib/<id>/managed/enrollment.json`, for the same
+rollback reason as sssd. All three of local-only, AD-joined and managed are mutually exclusive,
+and both CLIs refuse in both directions before writing anything.
+
 ## What can go wrong (designed-for failure modes)
 
 | Failure | Behavior |

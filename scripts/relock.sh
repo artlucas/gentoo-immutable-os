@@ -16,12 +16,25 @@
 #   ./scripts/relock.sh --builder           # the builder's own toolchain
 #   ./scripts/relock.sh --flatpak           # the preinstalled Flatpaks
 #   ./scripts/relock.sh --all --profile console   # a profile other than the default
+#   ./scripts/relock.sh --restamp           # ONLY re-record the config hash in every lock
 #
 # Locks are PER BUILD PROFILE (plan/16 §3.3): --profile picks which config/portage/lock/*.lock
 # this run re-resolves. --builder and --flatpak are profile-independent and ignore it.
 #
-# Nothing is committed for you: like expected-packages.txt, this writes a generated file and a
-# diff and stops. Review it, then copy it into config/portage/lock/.
+# --restamp is the odd one out and the only mode that touches the committed locks in place. It
+# re-resolves NOTHING: it rewrites the PORTAGE_CONFIG_HASH line in every lock and changes not one
+# atom. That exists because portage_config_hash() covers the whole of config/build.conf, so
+# adding a key the resolver never sees — MANAGED_API_BASE, say (plan/19 §5.1) — invalidates every
+# lock and would otherwise demand a full --all, which MOVES EVERY VERSION PIN as a side effect of
+# a documentation-shaped edit. That is exactly the accident plan/15 exists to prevent.
+#
+# It refuses unless every key the closure actually depends on still matches what the lock header
+# records, so it cannot be used to paper over a package.use change: those keys are in the header
+# precisely so this check is possible. Use it when `git diff config/` shows nothing but keys no
+# ebuild can see; use --all when you mean to move versions.
+#
+# Nothing else is committed for you: like expected-packages.txt, this writes a generated file and
+# a diff and stops. Review it, then copy it into config/portage/lock/.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -50,6 +63,7 @@ if [[ ${RELOCK_IN_CONTAINER:-0} != 1 ]]; then
     case "$1" in
       --security) MODE=security; shift ;;
       --all)      MODE=all; shift ;;
+      --restamp)  MODE=restamp; shift ;;
       --builder)  MODE=builder; shift ;;
       --flatpak)  MODE=flatpak; shift ;;
       --profile)  export BUILD_PROFILE_OVERRIDE="$2"; shift 2 ;;
@@ -60,12 +74,78 @@ if [[ ${RELOCK_IN_CONTAINER:-0} != 1 ]]; then
     esac
   done
 
+  # restamp_locks — rewrite PORTAGE_CONFIG_HASH in every committed lock, and nothing else.
+  #
+  # The guard is the point. Every key that reshapes the package closure is already recorded in
+  # each lock's own header (lock_write in common.sh writes them for exactly this reason), so a
+  # lock whose recorded switches still match the current config is a lock whose ATOMS are still
+  # the right answer — whatever else in build.conf moved. If one disagrees, the lock is genuinely
+  # stale and only a real re-resolve can fix it, so this refuses and says which key.
+  restamp_locks() {
+    local want changed=0 f name k lv cv
+    want="$(portage_config_hash)"
+    for f in "$REPO_ROOT"/config/portage/lock/*.lock; do
+      [[ -f $f ]] || continue
+      name="$(basename -- "$f")"
+      local have; have="$(lock_header_value "$f" PORTAGE_CONFIG_HASH)"
+      if [[ $have == "$want" ]]; then
+        log "$name already records the current config hash"
+        continue
+      fi
+      # Compared against the values IN EFFECT FOR THAT LOCK'S PROFILE, not against build.conf's
+      # — config/profiles/installer.conf sets INCLUDE_DISTROBOX=0, so a straight comparison
+      # against the global value declares the installer lock stale on every run and sends the
+      # operator to a full re-resolve for a difference that is correct and recorded on purpose.
+      #
+      # A subshell per lock, so one profile's overrides cannot leak into the next one's.
+      # builder.lock is profile-independent and carries only the first three keys; only the keys
+      # a lock actually records are compared, so an older header with fewer of them is not
+      # treated as a mismatch it cannot express.
+      if ! (
+        if [[ ${name%.lock} != builder && -f $REPO_ROOT/config/profiles/${name%.lock}.conf ]]; then
+          BUILD_PROFILE="${name%.lock}"; load_profile
+        fi
+        for k in SNAPSHOT_DATE SNAPSHOT_SHA256 PROFILE INCLUDE_CJK_FONTS INCLUDE_PRINTING \
+                 INCLUDE_DISTROBOX BUILD_PROFILE PROFILE_SETS; do
+          lv="$(lock_header_value "$f" "$k")"
+          cv="${!k:-}"
+          [[ -z $lv || $lv == "$cv" ]] && continue
+          die "$name records $k=$lv and this config resolves to $cv.
+  That key changes which versions resolve, so the lock is genuinely stale and re-stamping its
+  hash would hide that. Re-resolve it instead:
+      scripts/relock.sh --all --profile ${name%.lock}"
+        done
+      ); then
+        return 1
+      fi
+      sed -i -E "s|^#([[:space:]]*)PORTAGE_CONFIG_HASH:.*|#\\1PORTAGE_CONFIG_HASH: $want|" "$f"
+      [[ $(lock_header_value "$f" PORTAGE_CONFIG_HASH) == "$want" ]] \
+        || die "$name: could not rewrite the PORTAGE_CONFIG_HASH line"
+      log "$name re-stamped ${have:-<none>} -> $want"
+      changed=1
+    done
+    if [[ $changed == 1 ]]; then
+      log "re-stamped in place. The atom lists are untouched — \`git diff config/portage/lock\`
+  should show one changed line per file and nothing else."
+    fi
+    return 0
+  }
+
   export REPO="$REPO_ROOT" OUT="$REPO_ROOT/out" WORK="${WORK:-$REPO_ROOT/out/work}"
   export STAGE_NAME=relock
   # shellcheck source=lib/common.sh
   source "$SCRIPT_DIR/lib/common.sh"
   case "$(uname -s)" in MINGW*|MSYS*) export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*';; esac
   load_config
+
+  # --restamp needs no tree, no builder and no network: it recomputes a sha256 over files that
+  # are already in the checkout. Running it in the container would only make it fail on a machine
+  # that has never built anything, which is exactly the machine most likely to hit a stale hash
+  # after a config edit.
+  if [[ $MODE == restamp ]]; then
+    restamp_locks
+    exit $?
+  fi
 
   if [[ $RUNTIME == auto ]]; then
     if   command -v docker >/dev/null 2>&1; then RUNTIME=docker

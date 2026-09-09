@@ -1,0 +1,33 @@
+#!/bin/sh
+# Sync-on-connect for managed mode (plan/19 §3).
+#
+# A machine that comes home — or wakes on a train, or finally gets past a captive portal —
+# picks up the day's changes without waiting for the hourly timer. That matters most for the
+# case the timer serves worst: a revoked account should stop working within seconds of the
+# laptop finding a network, not within an hour.
+#
+# NetworkManager runs dispatcher scripts as root, synchronously, one at a time, with a 90-second
+# budget shared by all of them. So this hook does not sync: it asks systemd to, with --no-block,
+# and returns immediately. A dispatcher script that blocks on HTTP delays every other hook and
+# eventually gets killed.
+#
+# It must also be executable and root-owned or NetworkManager silently skips it —
+# install_rootfs_overlay's mode table has a dispatcher.d case for exactly that reason.
+set -eu
+
+IFACE="${1:-}"
+ACTION="${2:-}"
+
+case "$ACTION" in
+    up|dhcp4-change|dhcp6-change|connectivity-change) ;;
+    *) exit 0 ;;
+esac
+
+# An unenrolled machine has nothing to sync and must stay untouched by this feature (T-MAN-5).
+[ -f "/var/lib/@DISTRO_ID@/managed/enrollment.json" ] || exit 0
+
+# Loopback coming up is not a network.
+[ "$IFACE" = "lo" ] && exit 0
+
+systemctl start --no-block "@DISTRO_ID@-managed-sync.service" || true
+exit 0

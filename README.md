@@ -41,6 +41,7 @@ bash scripts/build.sh --profile console   # a different build profile (default: 
 bash scripts/build.sh --profile installer # the live installer medium (needs a desktop build first)
 bash scripts/build.sh --list-profiles     # what profiles exist
 bash scripts/build.sh --with-test-dc      # + a throwaway Samba AD domain for the stage-70 domain tests
+bash scripts/build.sh --with-test-api     # + a throwaway managed-mode control plane (plan/19)
 bash scripts/build.sh --dry-run       # show what would run
 bash scripts/build.sh --from 40       # resume after a failure
 bash scripts/enter.sh                 # debug shell in the builder container
@@ -87,5 +88,10 @@ image. `--with-test-dc` adds the Active Directory tests ([plan/18](plan/18-activ
 it stands up a disposable Samba AD domain controller in a container and puts stage 70's container
 on its network with `--dns` pointing at it, so the guest discovers the domain through real SRV
 records with no guest-side configuration. Without it those tests skip; they never fail for being
-absent. On Windows checkouts, keep files LF: `find . -path ./out -prune -o -type f -print0 |
+absent. `--with-test-api` does the same for managed mode ([plan/19](plan/19-managed-mode.md)): a
+FastAPI control plane in a container signs policy bundles with the test key the image trusts, and
+the guest enrols against it, authenticates a managed user, logs in, and leaves — all against the
+shipped image, unmodified. It skips the same way when absent.
+
+On Windows checkouts, keep files LF: `find . -path ./out -prune -o -type f -print0 |
 xargs -0 dos2unix -q` (the suite's CRLF check catches violations).

@@ -232,6 +232,22 @@ alternative was pinning that profile to `sys-libs/ldb`, which gives it a differe
 forks `sys-auth/sssd` into two binpkgs — breaking the one rule that makes a second profile cheap
 (plan/16 §3.2). See plan/18 §6.4.
 
+### Managed mode adds nothing
+
+[plan/19](19-managed-mode.md) is the sharpest contrast with the section below, and it is worth
+stating in the package document because the natural assumption is wrong: **managed mode costs
+zero new atoms on every profile.** There is no `@managed` set to write. Everything it needs is
+already here — `sys-apps/systemd` for `nss-systemd`'s userdb drop-ins and its shadow entry
+points, `sys-libs/pam` for `pam_unix` and `pam_mkhomedir`, `app-crypt/gnupg` for `gpgv`,
+`app-misc/ca-certificates` for the TLS trust path, `dev-lang/python` for the client, and `qml6`
+plus Kirigami for the front end.
+
+It does change one package's status, though. **`dev-lang/python` becomes load-bearing**:
+`/usr/bin/<id>-managed` is written in it, so the interpreter can no longer be treated as
+removable, and plan/06's interpreter whitelist gains its first recorded entry. The
+`dev-python/requests` cluster does **not** — the client uses only the standard library, so
+plan/10's orphan list is unchanged. Stage 50 asserts the client survives the prune.
+
 ### @domain — Active Directory client
 
 Two atoms, `sys-auth/sssd` and `app-crypt/adcli`, named by **every** profile. The reasoning is

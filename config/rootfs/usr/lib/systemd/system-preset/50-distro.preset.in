@@ -79,3 +79,16 @@ disable podman.socket
 disable podman-restart.service
 disable podman-auto-update.timer
 disable podman-clean-transient.service
+# ---- managed mode (plan/19 §8.1) ------------------------------------------------------------
+# The policy-sync timer must NOT be enabled on an image that has never enrolled, for exactly the
+# reason sssd above must not be: systemd-boot-check-no-failures.service gates
+# boot-complete.target, so a unit that starts and fails is a failed boot, and three of those roll
+# the machine back to the previous image.
+#
+# The sync client itself exits 0 on every path (plan/19 §4.1) and the service carries a
+# ConditionPathExists drop-in, so this is the outermost of three independent defences — and the
+# only one that keeps the timer from even appearing in `systemctl list-timers` on a machine
+# nobody has enrolled. `<distro>-managed enroll` enables it; `leave` disables it again, and
+# stage 40 asserts that no <distro>-managed* enablement symlink survives into the built image.
+disable @DISTRO_ID@-managed-sync.timer
+disable @DISTRO_ID@-managed-sync.service

@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# @DISTRO_ID@-managed-ui — the desktop front end for managed mode (plan/19 §7.2).
+#
+# The CONTROLLER half of a two-part app. main.qml is the view and can neither run a command nor
+# write a file — pure QML has no process type, and needing one is exactly what would force the
+# compiled C++ plugin §7.2 declined. So the split is: this script gathers state, runs the view,
+# and performs whatever the view asked for, with pkexec doing the authentication through the
+# polkit agent the desktop already runs.
+#
+# The view asks by printing one ACTION line and exiting with an agreed code:
+#   10 enrol (code and name follow on the ACTION line)   11 leave   12 sync now
+# Anything else means the window was closed, and the loop ends.
+#
+# THIS IS NOT THE SYSTEM SETTINGS MODULE, and the plan is plain about that (§7.2): getting into
+# System Settings means a real KCM, which means an in-repo Portage overlay, which is Phase D.
+# What this is, is the whole surface a device actually needs — enrol, show, unenrol — available
+# on the image as it is built today.
+set -uo pipefail
+
+ID="@DISTRO_ID@"
+QML_DIR="/usr/share/${ID}/managed-ui"
+RUN_DIR="${XDG_RUNTIME_DIR:-/tmp}/${ID}-managed-ui"
+STATUS="$RUN_DIR/status.json"
+
+command -v qml6 >/dev/null 2>&1 || { echo "qml6 is not installed" >&2; exit 1; }
+[[ -f $QML_DIR/main.qml ]] || { echo "$QML_DIR/main.qml is missing" >&2; exit 1; }
+
+mkdir -p -- "$RUN_DIR"
+chmod 0700 -- "$RUN_DIR"
+
+# `status` is deliberately readable by the user being managed (§8.8), so this needs no
+# privileges — which is what keeps the app itself unprivileged.
+refresh_status() {
+    "$ID-managed" status --json > "$STATUS" 2>/dev/null || echo '{"enrolled": false}' > "$STATUS"
+}
+
+# pkexec, not sudo and not setuid: the prompt comes from the desktop's own polkit agent, against
+# the actions in org.@DISTRO_ID@.managed.policy.
+run_privileged() {
+    if [[ $EUID -eq 0 ]]; then
+        "$ID-managed" "$@"
+    else
+        pkexec "/usr/bin/$ID-managed" "$@"
+    fi
+}
+
+while :; do
+    refresh_status
+    # QML_XHR_ALLOW_FILE_READ is not optional: Qt disables XMLHttpRequest on file:// URLs by
+    # default, and without it the view reads its status file as an empty response and shows a
+    # machine that looks unenrolled. It warns on stderr and carries on, so nothing else says so.
+    OUT="$(QML_XHR_ALLOW_FILE_READ=1 qml6 "$QML_DIR/main.qml" -- "$STATUS" 2>&1)"
+    RC=$?
+    ACTION_LINE="$(printf '%s\n' "$OUT" | sed -n 's/.*ACTION //p' | tail -n1)"
+    # shellcheck disable=SC2206  # deliberate word splitting: the view emits space-separated args
+    ARGS=($ACTION_LINE)
+    case "$RC" in
+        10)
+            CODE="${ARGS[1]:-}"
+            NAME="${ARGS[2]:-}"
+            [[ -n $CODE ]] || { echo "no enrolment code was given" >&2; break; }
+            if [[ -n $NAME ]]; then
+                run_privileged enroll --code "$CODE" --name "$NAME"
+            else
+                run_privileged enroll --code "$CODE"
+            fi
+            ;;
+        11) run_privileged leave --force ;;
+        12) run_privileged sync --now ;;
+        *)
+            # Includes qml6 failing to start, which is worth seeing rather than swallowing.
+            (( RC != 0 )) && printf '%s\n' "$OUT" >&2
+            break
+            ;;
+    esac
+done
+
+rm -f -- "$STATUS"
+exit 0

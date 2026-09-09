@@ -227,6 +227,20 @@ banned, and `perl` keeps an explicit assertion of its own. The toolchain-free gu
 unchanged: no compiler, no Portage, no headers in the image — a scripting interpreter is not a
 build toolchain.
 
+**The whitelist's first entry (2026-09-08, plan/19).** It started empty on purpose — "if the dep
+audit shows python arriving, that's a decision, not an accident" — and managed mode is the
+decision. `/usr/bin/<id>-managed` is written in Python 3 because it speaks JSON over HTTPS and
+renders JSON user records; the bash alternative would shell out to `curl` and parse JSON with
+`sed`, since there is no `jq` in the image, and the parsing would be the bug. So:
+
+| | |
+|---|---|
+| **Held** | `dev-lang/python` — by `<id>-managed`. Stage 50 asserts `/usr/bin/<id>-managed` survives the prune, so removing the interpreter fails the build rather than shipping a device that cannot enrol |
+| **Not held** | `dev-python/{requests,urllib3,idna,charset-normalizer,certifi,pysocks}`. The client uses only the standard library — `urllib.request` with `ssl.create_default_context()`, which verifies against `app-misc/ca-certificates` and needs nothing from site-packages. plan/19 §9 expected to spend this cluster and did not; plan/10's orphan list stands |
+
+The distinction is the whole value of writing the policy down: one package moved from "could be
+removed" to "is load-bearing", and fifteen did not.
+
 ## The first build's three blind spots (2026-08-21)
 
 The first completed build came in at **8342 MiB installed rootfs against the ~5.5 GiB budget

@@ -382,6 +382,23 @@ patching required for the identity steps.**
 | `removeuser` | **Replace** — see 5.4 |
 | `displaymanager` | **Replace** — see 5.4 |
 | `luks*` | **Drop** — no encryption in v1 |
+| managed enrolment | **Add, Phase D** — [plan/19](19-managed-mode.md) §7.3. A view module for the enrolment code, plus a job that runs before `CreateUserJob` and **must not fail the install** |
+
+**Managed enrolment, and why it is not here yet.** [plan/19](19-managed-mode.md) §7.3 takes three
+routes to enrolling at install time, in order, and only the third touches this document. Unlike an
+AD join — which *cannot* be deferred, because only the DC can issue the keytab and only the
+operator has domain credentials (plan/18 §7.4) — a managed enrolment needs nothing that expires.
+So Phase A defers it to **first boot**, where the network is up and the person holding the
+enrolment code is sitting in front of the machine, and it costs one screen. Phase C adds
+**zero-touch** for the shop with six identical machines: the code arrives as a systemd credential
+(the mechanism `run-vm.sh` already drives through `-smbios type=11`) or as a file on the medium,
+and a first-boot oneshot redeems it and deletes it. Only Phase D adds a real Calamares page, as an
+ebuild in the same in-repo overlay the KCM needs — and it inherits plan/18 §7.4's lesson whole:
+**a control plane that is unreachable while someone installs a machine is a Tuesday**, so the job
+records the intent in `enrollment-pending.json`, exits 0, and lets `CreateUserJob`, `removeuser`
+and `imageidentity` run. `<id>-managed status` on the installed disk then reports the requested
+enrolment and why it did not happen — which is T-MAN-4, and is the whole difference between a
+recoverable machine and an install presented as failed.
 
 ### 5.4 Three things that need custom steps
 

@@ -588,6 +588,18 @@ toolchain-free guarantee is untouched. That is a fair description of the cost, n
 it: the console image is 58 post-prune packages heavier than it was, and a perl interpreter is
 among them.
 
+### 6.6 One mode at a time (added by plan/19)
+
+`<id>-domain join` now refuses on a machine enrolled in managed mode ([plan/19](19-managed-mode.md)
+§8.7), naming `<id>-managed leave` as the way out; `<id>-managed enroll` carries the mirror of the
+check against `/etc/sssd/sssd.conf`. Both refusals are **preflight** — before `adcli` runs and
+before a single file is written — which is what makes "refuses and writes nothing" true rather
+than merely likely, and T-MAN-7 asserts the ordering rather than just the refusal.
+
+There is no technical reason the two would collide: sssd's uids are SID-derived and far above
+60000, and managed uids are capped at 60000 by `/etc/login.defs`. The exclusivity is a support
+decision — two systems provisioning accounts on one machine is a burden with no user behind it.
+
 ## 7. The installer
 
 ### 7.1 Calamares already has an Active Directory page

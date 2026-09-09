@@ -138,6 +138,41 @@ ConditionPathExists drop-in (plan/18 §5.1)" ;;
 /etc/nsswitch.conf's passwd line names the sss module; with sssd not running, nss_sss must
 return unavailable and let the files module answer (plan/18 §2)"
 
+  # ---- T-MAN-5: managed mode, on a machine nobody has enrolled (plan/19 §8.1) ----------
+  # The exact counterpart of T-DOM-4 above, for the same reason: managed mode ships on every
+  # profile and almost every machine will never enrol, so what has to be asserted is that adding
+  # it changed NOTHING for everyone else. "skipped" is the healthy state — the sync unit's
+  # ConditionPathExists says no, systemd records that as skipped rather than failed, and
+  # boot-check-no-failures does not count it.
+  local mgd userdb mtimer
+  mgd="$(field "$slog" managed)"; userdb="$(field "$slog" userdb)"
+  mtimer="$(field "$slog" managed_timer)"
+  case "$mgd" in
+    unenrolled|enrolled) : ;;
+    failed)
+      die "guest's ${DISTRO_ID}-managed-sync.service FAILED. On an unenrolled machine it must be
+SKIPPED by its ConditionPathExists drop-in; a unit that starts and fails takes
+boot-complete.target with it, burns a boot try, and on the third rolls the machine back to the
+previous image (plan/19 §8.1)" ;;
+    absent)
+      die "guest has no ${DISTRO_ID}-managed-sync.service at all. The unit ships in every profile
+and cannot be added later — there is no Portage on the target" ;;
+    *)
+      die "guest reported managed=$mgd, which this harness does not know how to read" ;;
+  esac
+  if [[ $mgd == unenrolled ]]; then
+    [[ $userdb == absent ]]       || die "guest has /etc/userdb without ever having enrolled (userdb=$userdb). That directory
+is created by enrolment; shipping one puts a directory in the read-only lower that the /etc
+overlay then has to shadow (plan/19 §3, T-MAN-5)"
+    # `enabled` here would mean the vendor preset did not take — which has happened in this
+    # project before, and is why plan/19 §8.1 has three independent defences rather than one.
+    case "$mtimer" in
+      disabled|masked|static|indirect|"") : ;;
+      *) die "guest's ${DISTRO_ID}-managed-sync.timer is '$mtimer' on a machine that never
+enrolled. Check the 'disable ${DISTRO_ID}-managed-sync.timer' line in the vendor preset" ;;
+    esac
+  fi
+
   # Rootless containers (plan/13). Asserted rather than reported, unlike dns above, because
   # nothing in it depends on the build host's network: `podman info` reads the kernel's userns
   # support, the setuid map helpers and the local storage driver and nothing else. "na" is the
@@ -282,6 +317,118 @@ against a domain this machine is no longer enrolled in"
     [[ $(field "$DLOG" local_user) == yes ]] \
       || die "domain: the local $LIVE_USER account stopped resolving after leaving the domain"
     log "domain tests passed: joined ${AD_DC_DOMAIN}, authenticated ${AD_DC_TEST_USER}, left cleanly"
+  fi
+
+  # ---- T-MAN-1: enrol in managed mode, and leave again (plan/19 §12) ----------------------
+  # SKIPPED, not failed, when no control plane is running. build.sh --with-test-api stands one
+  # up and exports MANAGED_API_URL; without it there is nothing to enrol with, and an offline
+  # build must stay green — the same rule the domain tests follow.
+  #
+  # Unlike the domain case, NOTHING has to be done about the guest's DNS. Managed mode reaches
+  # its control plane by URL, over one TCP port, which QEMU's user-mode networking NATs to
+  # whatever this container can reach. That is the difference that makes managed mode work from
+  # a coffee shop and a domain join not.
+  if [[ -z ${MANAGED_API_URL:-} ]]; then
+    log "managed tests: skipped (no test control plane — pass --with-test-api to build.sh)"
+  else
+    log "managed: enrolling against the test control plane at ${MANAGED_API_URL}"
+    MLOG="$LOG_DIR/managed-test.serial.log"
+    boot_and_watch "$WORKIMG" "$MLOG" --test managed \
+      --managed "api=${MANAGED_API_URL},code=${MANAGED_API_CODE},user=alice,password=${MANAGED_API_ALICE_PW},absent=carol"
+    grep -q "$MARKER ok" "$MLOG" \
+      || die "managed test: guest reported failure: $(grep "$MARKER" "$MLOG" | tail -n1)"
+
+    # Each of these is a different layer and each fails independently, so each gets its own
+    # message — the same discipline the domain assertions above follow.
+    [[ $(field "$MLOG" enroll) == ok ]] \
+      || die "managed: enrolment failed. See the IMAGE-TEST-DETAIL enroll: lines above. The
+three usual causes are the control plane being unreachable from the guest, the enrolment code
+having already been spent, and the guest's clock being too far out for TLS"
+    [[ $(field "$MLOG" managed_user) == yes ]] \
+      || die "managed: getent passwd alice found nothing (managed_user=$(field "$MLOG" managed_user)).
+The enrolment succeeded, so the bundle arrived and verified — this is nss-systemd not reading
+/etc/userdb. Check that /etc/nsswitch.conf's passwd line still ends in the systemd module and
+that libnss_systemd.so survived the prune"
+    MANAGED_UID="$(field "$MLOG" managed_uid)"
+    [[ $MANAGED_UID =~ ^[0-9]+$ ]] \
+      || die "managed: the managed user has no numeric uid (managed_uid=$MANAGED_UID)"
+    (( MANAGED_UID >= 1000 && MANAGED_UID <= 60000 )) \
+      || die "managed: uid $MANAGED_UID is outside [1000, 60000], so the account exists, logs in,
+and never appears on the greeter — /etc/login.defs bounds Plasma Login Manager's user list by
+exactly those two numbers (plan/19 §2.4)"
+    # §2.3's first silent failure: without the <uid>.user symlink the record resolves by name and
+    # not by number, and every ls -l in that user's own home prints a bare uid.
+    [[ $(field "$MLOG" byuid) == yes ]] \
+      || die "managed: getent passwd $MANAGED_UID found nothing while getent passwd alice worked.
+The <uid>.user symlink is missing from /etc/userdb (plan/19 §2.3)"
+    # ...and the second: membership is a FILE NAME, not a field in the record.
+    [[ $(field "$MLOG" group) == yes ]] \
+      || die "managed: alice is not in ${DISTRO_ID}-admins (group=$(field "$MLOG" group)). Group
+membership comes from an empty <user>:<group>.membership file; a memberOf field in the record
+does nothing at all through NSS (plan/19 §2.3)"
+    # ...and the third, which is the one that decides whether a person can use their computer.
+    [[ $(field "$MLOG" priv_mode) == "640:root:shadow" ]] \
+      || die "managed: alice.user-privileged is $(field "$MLOG" priv_mode), expected 640:root:shadow.
+At 0600 root:root the hash is unreadable to setgid-shadow unix_chkpwd, so a managed user logs in
+at the greeter and then cannot unlock their own screen (plan/19 §2.3, §13.1)"
+    [[ $(field "$MLOG" chkpwd) == yes ]] \
+      || die "managed: alice could not prove her own password unprivileged (chkpwd=$(field "$MLOG" chkpwd)).
+THIS IS THE LOCK SCREEN. kscreenlocker_greet is not setuid and runs as the user, so pam_unix
+execs unix_chkpwd, which is setgid shadow — and that is the only path by which an unprivileged
+caller can read a managed user's hash. rc=9 means it could not read the hash at all; rc=7 means
+it read it and disagreed"
+    [[ $(field "$MLOG" login) == yes ]] \
+      || die "managed: alice could not log in on the console (login=$(field "$MLOG" login)).
+unix_chkpwd already accepted her password, so the auth half works and the failure is in the
+system-login stack itself — see the IMAGE-TEST-DETAIL login: lines above"
+    [[ $(field "$MLOG" home) == yes ]] \
+      || die "managed: no home directory was created for alice (home=$(field "$MLOG" home)).
+The console login SUCCEEDED, so the session stack ran and pam_mkhomedir did not do its job. That
+line is appended to /etc/pam.d/system-login by stage 40 and is shared with the domain feature"
+    # T-MAN-2. carol is in the fixture's org and is NOT granted this device, so her hash was
+    # never sent here — enforcement by absence (plan/19 §6.1).
+    case "$(field "$MLOG" absent)" in
+      yes) : ;;
+      resolves) die "managed: carol RESOLVES on a device her bundle does not grant. The client is
+  provisioning users the control plane did not send to this device (plan/19 §6.1)" ;;
+      on-disk)  die "managed: carol's name appears under /etc/userdb on a device that may not log
+  her in. Her password hash should never have reached this disk (plan/19 §8.3)" ;;
+      *) die "managed: the absent-user check did not run (absent=$(field "$MLOG" absent))" ;;
+    esac
+    [[ $(field "$MLOG" sudoers) == yes ]] \
+      || die "managed: /etc/sudoers.d/30-managed-admins was not written, so the bundle's admin
+group grants nothing (plan/19 §6.2)"
+    [[ $(field "$MLOG" subuid) == yes ]] \
+      || die "managed: alice has no /etc/subuid range, so rootless podman cannot start a
+container for her (plan/19 §8.2)"
+    [[ $(field "$MLOG" sync_rc) == 0 ]] \
+      || die "managed: ${DISTRO_ID}-managed sync exited $(field "$MLOG" sync_rc). It must exit 0 on
+every path: a non-zero exit from a timer-driven oneshot on this OS is a failed unit, a failed
+boot, and on the third one a rollback to the previous image (plan/19 §4.1)"
+    [[ $(field "$MLOG" timer) == enabled ]] \
+      || die "managed: ${DISTRO_ID}-managed-sync.timer is $(field "$MLOG" timer) after enrolling.
+Enrolment is what enables it; without it the device never picks up a revoked account"
+    [[ $(field "$MLOG" failed_units) == 0 ]] \
+      || die "managed: the guest has failed units after enrolling ($(field "$MLOG" failed_list))"
+
+    # T-MAN-8. Leaving must produce a working, unmanaged machine — not a machine with no
+    # accounts. A household that stops paying must not lose its computers (plan/19 §8.9).
+    [[ $(field "$MLOG" left) == ok ]] || die "managed: ${DISTRO_ID}-managed leave failed"
+    [[ $(field "$MLOG" kept_uid) == yes ]] \
+      || die "managed: after leaving, alice does not exist with her original uid
+(kept_uid=$(field "$MLOG" kept_uid)). \`leave\` is supposed to materialise every managed user as a
+LOCAL account with the same uid, so that every file in her home still belongs to her. Note the
+ordering trap this catches: useradd asks getpwnam whether the name is taken, so materialising
+before the userdb records are removed fails on every user and deletes the accounts instead"
+    [[ $(field "$MLOG" kept_pw) == yes ]] \
+      || die "managed: after leaving, alice's password no longer works (kept_pw=$(field "$MLOG" kept_pw)).
+The crypt hash is copied out of the record into /etc/shadow by usermod -p"
+    [[ $(field "$MLOG" userdb_after) == absent ]] \
+      || die "managed: /etc/userdb survived the leave — the machine still has managed records
+that nothing will ever refresh"
+    [[ $(field "$MLOG" local_user) == yes ]] \
+      || die "managed: the local $LIVE_USER account stopped resolving after leaving managed mode"
+    log "managed tests passed: enrolled, authenticated alice unprivileged, logged in, left cleanly"
   fi
 fi
 

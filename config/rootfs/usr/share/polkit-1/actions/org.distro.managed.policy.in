@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD polkit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/software/polkit/policyconfig-1.dtd">
+<!--
+  Actions for the managed-mode front end (plan/19 §7.2).
+
+  This exists so the QML app can ask for the administrator's password PROPERLY — through the
+  agent the desktop already runs — instead of being setuid or being launched with sudo. The app
+  itself is unprivileged and runs `pkexec @DISTRO_ID@-managed ...` for the two operations that
+  change the machine.
+
+  auth_admin_keep, not auth_admin: enrolling is one authentication followed by a sync that may
+  take a minute, and being asked twice for the same act is how people learn to type their
+  password without reading the prompt.
+
+  Reading status needs no authorisation at all and therefore has no action here: `status` is
+  deliberately readable by the user being managed (§8.8 — a user who cannot see the rules cannot
+  follow them).
+-->
+<policyconfig>
+
+  <vendor>@DISTRO_NAME@</vendor>
+  <vendor_url>@HOME_URL@</vendor_url>
+
+  <action id="org.@DISTRO_ID@.managed.enroll">
+    <description>Enrol this computer in a managed organisation</description>
+    <message>Authentication is required to let an organisation manage the accounts and settings on this computer</message>
+    <defaults>
+      <allow_any>auth_admin_keep</allow_any>
+      <allow_inactive>auth_admin_keep</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/@DISTRO_ID@-managed</annotate>
+    <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
+  </action>
+
+  <action id="org.@DISTRO_ID@.managed.leave">
+    <description>Remove this computer from its managed organisation</description>
+    <message>Authentication is required to stop this computer being managed</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/@DISTRO_ID@-managed</annotate>
+    <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
+  </action>
+
+  <action id="org.@DISTRO_ID@.managed.sync">
+    <description>Refresh managed settings now</description>
+    <message>Authentication is required to refresh this computer's managed settings</message>
+    <defaults>
+      <allow_any>auth_admin_keep</allow_any>
+      <allow_inactive>auth_admin_keep</allow_inactive>
+      <!-- The one action a standard managed user may take unprompted. It fetches policy and
+           cannot loosen it; refusing it would only teach people to reboot instead. -->
+      <allow_active>yes</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/@DISTRO_ID@-managed</annotate>
+  </action>
+
+</policyconfig>

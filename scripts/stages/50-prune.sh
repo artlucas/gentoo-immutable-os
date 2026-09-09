@@ -735,6 +735,45 @@ if [[ -n ${SSSD_ENABLED_AFTER// /} ]]; then
   violation "domain units enabled after prune: $SSSD_ENABLED_AFTER — an unjoined machine would
   fail boot-complete.target and roll back to the previous image"
 fi
+# ---- managed mode, after the prune (plan/19 §12) --------------------------------------------
+# Checked here as well as in stage 40 for the reason the splash is: this stage is where it would
+# plausibly be LOST. Managed mode costs no packages, so nothing in the lock file or the audit
+# list mentions it — every part of it is either a file this repo ships into /usr or a symbol
+# inside sys-apps/systemd, and both are things a /usr/share sweep or a systemd trim can take.
+[[ -x $T/usr/bin/$DISTRO_ID-managed ]] \
+  || violation "/usr/bin/$DISTRO_ID-managed missing after prune — the image can no longer be
+  enrolled, and there is no Portage on the target to put it back"
+[[ -s $T/usr/lib/$DISTRO_ID/managed-pubring.gpg ]] \
+  || violation "/usr/lib/$DISTRO_ID/managed-pubring.gpg missing after prune — no policy bundle
+  could be verified, so managed mode would refuse every sync on a machine that had enrolled"
+# The identity mechanism itself: one symbol in one shared object (plan/19 §2.2). A prune that
+# took libnss_systemd.so leaves an image where managed users resolve nowhere and local login is
+# unaffected — so nothing else here would notice.
+MANAGED_NSS="$(compgen -G "$T/usr/lib64/libnss_systemd.so"* || compgen -G "$T/lib64/libnss_systemd.so"* || true)"
+if [[ -z $MANAGED_NSS ]]; then
+  violation "libnss_systemd.so missing after prune — /etc/nsswitch.conf names the systemd module
+  on passwd, group AND shadow, and managed mode's whole authentication path is its shadow half"
+else
+  MANAGED_SYMS="$(nm -D --defined-only "${MANAGED_NSS%% *}" 2>/dev/null \
+                  || readelf -sW --dyn-syms "${MANAGED_NSS%% *}" 2>/dev/null || true)"
+  [[ $MANAGED_SYMS == *_nss_systemd_getspnam_r* ]] \
+    || violation "libnss_systemd.so no longer exports _nss_systemd_getspnam_r — a managed user
+  would resolve through getent passwd and have no password to check"
+fi
+[[ -f $T/usr/share/$DISTRO_ID/managed-ui/main.qml ]] \
+  || violation "/usr/share/$DISTRO_ID/managed-ui/main.qml missing after prune — the /usr/share
+  sweeps run over this path, and without it the front end opens on nothing"
+# ...and the timer must still be disabled, for exactly the reason sssd must be (plan/19 §8.1).
+MANAGED_ENABLED_AFTER="$(find "$T/etc/systemd/system" -name "$DISTRO_ID-managed*" \
+  -printf '%P\n' 2>/dev/null | tr '\n' ' ')"
+if [[ -n ${MANAGED_ENABLED_AFTER// /} ]]; then
+  violation "managed-mode units enabled after prune: $MANAGED_ENABLED_AFTER — an unenrolled
+  machine would run a sync it has nothing to sync, and a non-zero exit is a failed boot"
+fi
+[[ -e $T/etc/userdb ]] \
+  && violation "/etc/userdb exists after prune. It is created by enrolment; an image that ships
+  it puts a directory in the read-only lower that the /etc overlay then has to shadow (T-MAN-5)"
+
 # ...and the resolver's counterpart must be gone: exactly one network manager, structurally.
 for b in usr/lib/systemd/systemd-networkd usr/lib/systemd/systemd-networkd-wait-online \
          usr/lib/systemd/systemd-network-generator usr/bin/networkctl usr/sbin/networkctl; do

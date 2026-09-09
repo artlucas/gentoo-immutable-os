@@ -1,0 +1,62 @@
+# Pull and apply the managed-mode policy bundle (plan/19 §4).
+#
+# THIS UNIT MAY NEVER FAIL, and that is not tidiness. systemd-boot-check-no-failures.service is
+# enabled in the vendor preset and gates boot-complete.target, which is what marks a UKI good —
+# so on this system a unit that starts and FAILS is a failed boot: the boot counter is not
+# cleared, and after three of them systemd-boot falls back to the previous image (plan/01). A
+# sync that exited non-zero because a hotel wifi has a captive portal would, on the third
+# reboot, roll the machine back to an older OS.
+#
+# Three independent defences, because the first two only protect a machine that never enrolled:
+#   1. the vendor preset disables the timer (50-@DISTRO_ID@.preset);
+#   2. 10-conditional.conf's ConditionPathExists, so an unenrolled machine SKIPS this unit —
+#      and skipped is precisely the distinction boot-check-no-failures cares about;
+#   3. the client itself, which exits 0 on every path (plan/19 §4.1). That is the one that
+#      matters in the field.
+[Unit]
+Description=@DISTRO_NAME@ managed-mode policy sync
+Documentation=man:@DISTRO_ID@-managed(8)
+# Wanted, not Required: on a machine that boots with no network this must still run, notice it
+# cannot reach the control plane, and exit 0 having changed nothing.
+Wants=network-online.target
+After=network-online.target nss-lookup.target time-sync.target
+# The bundle is fetched over TLS, and TLS needs a plausible clock. timesyncd is enabled in this
+# image's vendor preset; ordering after it costs nothing on a machine whose RTC was already right.
+After=systemd-timesyncd.service
+# NB the ConditionPathExists that makes an unenrolled machine SKIP this unit lives in
+# @DISTRO_ID@-managed-sync.service.d/10-conditional.conf, not here — one statement of it, in the
+# file stage 40 asserts the existence of, rather than two that can drift apart.
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/@DISTRO_ID@-managed sync --quiet
+# The client's own discipline is the primary guarantee; this is the belt to its braces. If a
+# future change ever did let a non-zero status escape, the unit still must not fail the boot.
+SuccessExitStatus=0 1 2 3 4 5
+# Hardened only where hardening cannot cost a boot. THIS UNIT MAY NEVER FAIL (see above), so
+# every setting here was chosen against that: a sandbox option that makes the sync die on some
+# machine and not another is worth less than the sync working.
+#
+# ProtectSystem=full, NOT strict. `strict` mounts the ENTIRE hierarchy read-only except
+# /dev, /proc and /sys — including /run and /tmp, which the signature check needs (gpgv verifies
+# in a temporary directory) and which the system bus lives in. `full` gives what is actually
+# wanted here: /usr, /boot and /efi read-only, /etc writable. On this image /usr is already
+# read-only at the block level, so this is belt and braces rather than the real defence.
+ProtectSystem=full
+# read-only rather than `yes`: the client never reads a home directory, but `leave` shells out to
+# useradd and gpg-family tools have a habit of wanting $HOME, and an inaccessible /root is the
+# kind of difference that shows up on one machine in fifty.
+ProtectHome=read-only
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+# NoNewPrivileges is safe here and would not be in the unit's own future: it writes
+# /etc/sudoers.d, but it never needs to GAIN privilege — it is already root.
+NoNewPrivileges=yes
+# NB there is deliberately no ReadWritePaths=. It has no effect without ProtectSystem=strict, and
+# with `full` the write set (/etc/userdb, /etc/sudoers.d, /etc/polkit-1, /etc/subuid,
+# /var/lib/@DISTRO_ID@, plus /etc/passwd and /etc/shadow when `leave` runs useradd) is already
+# writable. Listing it anyway would read as protection that is not there.
+TimeoutStartSec=300

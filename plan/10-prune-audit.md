@@ -88,6 +88,19 @@ Worth doing for hygiene — an image with no Portage should not ship Portage's s
 `install-xattr` shim or its user accounts — but it is a rounding error in bytes, and it should
 not be described as the next trim.
 
+**Update, managed mode (plan/19): `dev-lang/python` is now held; the requests cluster is
+not.** `/usr/bin/<id>-managed` is written in Python 3, so the interpreter itself is load-bearing
+and plan/06's interpreter policy has its first recorded holder — a prune that removed python3
+now produces an image that cannot enrol, which stage 50 asserts against directly.
+
+The **cluster above is untouched by that**, and deliberately so. plan/19 §9 assumed the client
+would use `dev-python/requests` and wrote off the 1.8 MiB; it does not. The client speaks HTTPS
+through `urllib.request` with `ssl.create_default_context()`, which verifies against the same
+`app-misc/ca-certificates` bundle and needs nothing from site-packages — so
+`dev-python/{requests,urllib3,idna,charset-normalizer,certifi,pysocks}` remain orphans and remain
+removable, exactly as this document had them. The convenience `requests` would have added was not
+worth spending an option plan/06 is still holding.
+
 **`setuptools` and the jaraco stack are not orphans.** plan/06 lists
 `dev-python/{setuptools,packaging,platformdirs,more-itertools,jaraco-*}` as part of the same
 orphan cluster. They are not: `dev-libs/gobject-introspection` RDEPENDs `dev-python/setuptools`,

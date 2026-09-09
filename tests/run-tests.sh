@@ -28,7 +28,7 @@ for f in "${SH_FILES[@]}"; do
 done
 
 # templates: render with dummy values, then bash -n
-section "bash -n on rendered templates"
+section "syntax check on rendered templates"
 export REPO="$REPO_ROOT" WORK="${TMPDIR:-/tmp}/rt-work" OUT="${TMPDIR:-/tmp}/rt-out"
 export STAGE_NAME=lint
 # shellcheck source=../scripts/lib/common.sh
@@ -37,11 +37,48 @@ set +e   # common.sh enables errexit; this runner must keep going after failures
 load_config
 export DISTRO_ID DISTRO_NAME VERSION HOME_URL UPDATE_URL LIVE_USER FLATPAK_PREINSTALL
 export VERIFY=yes
+export MANAGED_API_BASE MANAGED_PUBRING
+# Dispatched by SHEBANG, not by extension. config/rootfs/usr/bin holds bash programs and, since
+# plan/19, one Python one — and `bash -n` on Python is not a weaker check, it is a check of the
+# wrong language that happens to pass on some files and fail on others for no useful reason.
 for t in "$REPO_ROOT"/config/rootfs/usr/bin/*.in "$REPO_ROOT"/config/rootfs/usr/lib/image-test/*.in; do
     [[ -e $t ]] || continue
     out_f="${TMPDIR:-/tmp}/rendered-$(basename "$t" .in)"
-    if render_template "$t" "$out_f" && bash -n "$out_f"; then
-        printf '  ok   %s (rendered)\n' "${t#"$REPO_ROOT"/}"
+    if ! render_template "$t" "$out_f"; then
+        printf '  FAIL %s (render)\n' "${t#"$REPO_ROOT"/}"; FAILED=1; continue
+    fi
+    case "$(head -n1 "$out_f")" in
+        *python*)
+            if command -v python3 >/dev/null 2>&1; then
+                # compile(), not `python3 -c import`: it parses without EXECUTING, which is the
+                # difference between checking a file and running a client that talks to a
+                # control plane.
+                if python3 -c 'import sys; compile(open(sys.argv[1]).read(), sys.argv[1], "exec")' "$out_f"; then
+                    printf '  ok   %s (rendered, python)\n' "${t#"$REPO_ROOT"/}"
+                else
+                    printf '  FAIL %s\n' "${t#"$REPO_ROOT"/}"; FAILED=1
+                fi
+            else
+                printf '  skip %s (no python3 on this host)\n' "${t#"$REPO_ROOT"/}"
+            fi
+            ;;
+        *)
+            if bash -n "$out_f"; then
+                printf '  ok   %s (rendered)\n' "${t#"$REPO_ROOT"/}"
+            else
+                printf '  FAIL %s\n' "${t#"$REPO_ROOT"/}"; FAILED=1
+            fi
+            ;;
+    esac
+done
+# The dispatcher hook and the QML front end are rendered templates too, and neither lives in a
+# directory the loop above walks. /bin/sh, so it is checked with sh -n rather than bash -n: a
+# bashism here would work on every test host and fail on the image, which has no /bin/sh -> bash.
+for t in "$REPO_ROOT"/config/rootfs/usr/lib/NetworkManager/dispatcher.d/*.in; do
+    [[ -e $t ]] || continue
+    out_f="${TMPDIR:-/tmp}/rendered-$(basename "$t" .in)"
+    if render_template "$t" "$out_f" && sh -n "$out_f"; then
+        printf '  ok   %s (rendered, sh)\n' "${t#"$REPO_ROOT"/}"
     else
         printf '  FAIL %s\n' "${t#"$REPO_ROOT"/}"; FAILED=1
     fi

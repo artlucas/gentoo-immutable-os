@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Managed Settings
+GenericName=Organisation management
+Comment=Enrol this computer with an organisation, or see what it manages
+Exec=@DISTRO_ID@-managed-ui
+Icon=preferences-system-users
+Terminal=false
+Categories=Settings;System;
+Keywords=managed;organisation;organization;enrol;enroll;family;school;work;accounts;
+# System Settings does not list this: it is a launcher app, not a KCM (plan/19 §7.2).
+X-KDE-StartupNotify=true

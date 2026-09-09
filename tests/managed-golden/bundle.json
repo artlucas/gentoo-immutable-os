@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "serial": 412,
+  "issued_at": "2026-09-08T09:00:00Z",
+  "expires_at": "2026-10-08T09:00:00Z",
+  "min_client_version": 1,
+  "org": { "id": "org_01J8GOLDEN", "name": "The Smiths" },
+  "device": { "id": "dev_01J9GOLDEN", "name": "kitchen-pc", "state": "active" },
+  "users": [
+    { "name": "alice", "uid": 5001, "gid": 5001, "real_name": "Alice Smith",
+      "shell": "/bin/bash", "home": "/home/alice", "state": "active",
+      "roles": ["admin"],
+      "groups": ["immos-admins", "wheel"],
+      "hashed_password": ["$6$goldenalice$IEGZBgQNTPCPPqPSDbnhAAA8s/EJyBNfDXjGZH.mMEZC7pC4nZ4tPOAT8HFpMdcMHiOTMPTPPh0jTBWXpEQ0Q1"],
+      "ssh_authorized_keys": [],
+      "subid": { "start": 200000, "count": 65536 } },
+    { "name": "bobby", "uid": 5002, "gid": 5002, "real_name": "Bobby Smith",
+      "shell": "/bin/bash", "home": "/home/bobby", "state": "active",
+      "roles": ["standard"], "groups": [],
+      "hashed_password": ["$6$goldenbobby$8QDCgWnJKYd5xPn7QzBpP0MECaDbSAmXvFEnJ7dY4RQVwXzYmYIWkxbTWlIPIQZMPvvvKPZtTIQvBGRcaJ3PT."] },
+    { "name": "carol", "uid": 5003, "gid": 5003, "real_name": "Carol Smith",
+      "shell": "/bin/bash", "home": "/home/carol", "state": "active",
+      "roles": ["standard"], "groups": [],
+      "hashed_password": ["$6$goldencarol$NEVERSENTTOTHISDEVICE0000000000000000000000000000000000000000000000000000000000000000"] }
+  ],
+  "groups": [ { "name": "immos-admins", "gid": 4000 } ],
+  "access": { "mode": "listed", "logins_allowed": ["alice", "bobby"] },
+  "admin": { "group": "immos-admins", "sudo": true, "polkit": true },
+  "policy": {
+    "flatpak": { "install_requires_admin": true, "allow": ["*"], "deny": [] },
+    "updates": { "auto": true, "window": { "start": "02:00", "end": "05:00" } },
+    "session": { "idle_lock_s": 600 }
+  },
+  "parental": { "schema": 0, "subjects": [] },
+  "revoked_users": ["dave"]
+}

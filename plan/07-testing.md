@@ -126,6 +126,47 @@ network profile, no special build, nothing to keep in sync.
 T-DOM-4 needs no domain controller and is folded into the existing smoke report, so the property
 that matters to every user who will never join a domain is checked on every single build.
 
+## T-MAN — Managed mode (stage 70, `build.sh --with-test-api`)
+
+Added by [plan/19](19-managed-mode.md). Skipped, never failed, when no control plane is running,
+exactly as T-DOM is.
+
+**The fixture.** `tests/managed-api/` builds a container from the pinned builder and runs a
+FastAPI implementation of plan/19 §5 over HTTPS: one org, three users, one device, and a **real
+detached OpenPGP signature** over every bundle, made with the private half of the key baked into
+the image. The FastAPI stack is not in the pinned tree, so it is pip-installed into a venv under
+`/opt` — the same isolation argument `tests/ad-dc/` makes about samba's USE flags, and for the
+same reason: nothing there participates in resolving a package for the target. A `/test/` control
+surface, which no real server may have, is what makes the hard cases reachable — revoke a device,
+replay an old bundle, corrupt one byte of a current one.
+
+**How the guest reaches it**, and the contrast with T-DOM is the interesting part: it just does.
+Managed mode reaches its control plane by **URL, over one TCP port**, which QEMU's user-mode
+networking NATs to whatever the stage-70 container can reach. There are no SRV records, no
+Kerberos and no DNS involvement at all, so unlike the domain fixture there is nothing to arrange
+about the guest's resolver. That difference is not an accident of the test rig; it is why managed
+mode works from a coffee shop and a domain join does not.
+
+| ID | Asserts |
+|---|---|
+| **T-MAN-1** | **The round trip.** Enrol a running desktop image against the fixture; a managed user resolves through NSS by name *and by uid* (the `<uid>.user` symlink), carries a supplementary group (a `.membership` **file**, not a record field), has a `0640 root:shadow` hash, **proves that password unprivileged through `unix_chkpwd`** — the lock-screen path, plan/19 §13.1 — logs in on a real console and gets a home directory. Then `leave`, and both accounts are still there as local ones |
+| **T-MAN-2** | **Scoped records.** A user the bundle does not grant this device has no record, no `getent` entry and no trace under `/etc/userdb` — enforcement by absence, so the hash was never sent |
+| **T-MAN-3** | **Anti-rollback and tamper.** An older correctly-signed bundle is refused and the newer policy stays in force; a bundle with one byte changed fails signature verification; a bundle signed by a key not in the image is refused. All three exit 0 |
+| **T-MAN-4** | **The install that cannot reach the control plane.** Phase D; blocked on the same unattended-Calamares work as T-DOM-1 |
+| **T-MAN-5** | **The unenrolled regression, and the one that runs on every build.** A managed-ready image that has never enrolled boots with `failed_units=0`, its sync unit **skipped** rather than failed, `/etc/userdb` absent and the timer disabled |
+| **T-MAN-6** | **The offline machine.** Enrolled, then the API taken away: logins work, policy holds, the queue grows and is capped, `failed_units=0` across three reboots. Phase C |
+| **T-MAN-7** | **Mode exclusivity.** `<id>-domain join` on a managed machine refuses and writes nothing, and the converse. Asserted offline today, including that the refusal is *preflight* — before `adcli` runs |
+| **T-MAN-8** | **The exit.** `leave` on a device with two managed users leaves two working local accounts with the same uids, homes and passwords. Folded into T-MAN-1's guest run, because the ordering bug it catches (materialising before removing the records) turns `leave` into an account deletion |
+
+T-MAN-5, like T-DOM-4, needs no fixture and rides on the existing smoke report — so the property
+that matters to every user who will never enrol is checked on every single build.
+
+**Offline**, `tests/test-managed.sh` needs neither network nor fixture: `--print-config` diffed
+against golden records (including the symlinks, the `.membership` names and the `0640` mode — all
+three silent failures), signature verification with negatives for a tampered bundle and an
+untrusted key, the preset and the `ConditionPathExists` drop-in, the §5 request shapes, the UID
+window, and the one that protects the fleet — **the client exits 0 under every injected failure**.
+
 ## T2 — Update E2E (stage 70 `--update-test`)
 
 ```

@@ -150,6 +150,11 @@ validate_config() {
   # Same ${x=y} shape once more, for the installer payload switch (plan/16 §5.1). Only the
   # `installer` profile stages a payload, so every other build validates this and ignores it.
   : "${INSTALLER_PAYLOAD_FLATPAKS=1}"
+  # Managed mode (plan/19). Same ${x=y} shape as every knob above: a build.conf written before
+  # the feature existed still has to validate, and both keys are only ever READ by stage 40 and
+  # by the client's own template.
+  : "${MANAGED_API_BASE=https://managed.example.org}"
+  : "${MANAGED_PUBRING=config/keys/managed-pubring.asc}"
   # Root slots. NOT a build.conf key — it is a per-PROFILE geometry choice, so it is defaulted
   # rather than required, and config/profiles/installer.conf is the only file that sets it.
   : "${PROFILE_ROOT_SLOTS=2}"
@@ -183,6 +188,16 @@ validate_config() {
     || die "build.conf: FLATPAK_PREINSTALL_MODE must be build|firstboot"
   [[ $INSTALLER_PAYLOAD_FLATPAKS =~ ^[01]$ ]] \
     || die "build.conf: INSTALLER_PAYLOAD_FLATPAKS must be 0 or 1 (got: $INSTALLER_PAYLOAD_FLATPAKS)"
+  # Managed mode (plan/19 §5.1). HTTPS is checked here rather than only in the client because a
+  # build that bakes an http:// default produces an image whose every enrolment attempt is
+  # refused at runtime, with the reason three layers away from the file that caused it.
+  [[ $MANAGED_API_BASE =~ ^https://[A-Za-z0-9._~:/?#@!$\&\'\(\)*+,\;=%-]+$ ]] \
+    || die "build.conf: MANAGED_API_BASE must be an https:// URL (got: $MANAGED_API_BASE)"
+  [[ $MANAGED_API_BASE != */ ]] \
+    || die "build.conf: MANAGED_API_BASE must not end in a slash — the client appends /v1/... to
+  it, and a double slash is a different path to most routers (got: $MANAGED_API_BASE)"
+  [[ $MANAGED_PUBRING != /* ]] \
+    || die "build.conf: MANAGED_PUBRING must be a path relative to the repo root (got: $MANAGED_PUBRING)"
   [[ $SNAPSHOT_DATE =~ ^[0-9]{8}$ ]] || die "build.conf: SNAPSHOT_DATE must be YYYYMMDD"
   # Full 64-hex. This is what makes a vendored snapshot verifiable years after upstream has
   # dropped it, so a truncated or absent value is a pin that cannot be checked.
@@ -350,16 +365,38 @@ render_dest_name() {
   printf '%s' "$out"
 }
 
+# render_dest_dir RELATIVE_DIR — the same rebranding, applied to every segment of a directory
+# path. Two things the overlay ships need it: /usr/share/distro/managed-ui (plan/19 §7.2) and
+# the drop-in directory distro-managed-sync.service.d, whose names carry the distro id in a
+# DIRECTORY rather than in a file. Without this they installed as literal "distro", producing a
+# QML app systemd and the launcher would look for under a name nothing writes.
+#
+# render_dest_name is reused per segment rather than reimplemented, so the token rule stays in
+# one place — with one difference that matters: a DIRECTORY is never a template, so its trailing
+# ".in" must not be stripped. No directory in config/rootfs ends in .in today; the guard is
+# there so that one arriving later cannot silently lose its name.
+render_dest_dir() {
+  local rel=$1 out="" seg
+  [[ $rel == . ]] && { printf '.'; return; }
+  local IFS=/
+  for seg in $rel; do
+    [[ $seg == *.in ]] || seg="$(render_dest_name "$seg")"
+    out+="${out:+/}$seg"
+  done
+  printf '%s' "$out"
+}
+
 # install_rootfs_overlay SRC_ROOT DST_ROOT — copies the config/rootfs tree onto the
-# target: *.in files are rendered, "distro-" basenames rebranded, permissions set
-# explicitly (the repo may live on NTFS: exec bits are unreliable there).
+# target: *.in files are rendered, "distro" tokens in both directory names and basenames
+# rebranded, permissions set explicitly (the repo may live on NTFS: exec bits are unreliable
+# there).
 install_rootfs_overlay() {
   local src_root=$1 dst_root=$2
   [[ -d $src_root ]] || die "overlay source missing: $src_root"
   local f rel dir base dst mode
   while IFS= read -r -d '' f; do
     rel="${f#"$src_root"/}"
-    dir="$(dirname -- "$rel")"
+    dir="$(render_dest_dir "$(dirname -- "$rel")")"
     base="$(render_dest_name "$(basename -- "$rel")")"
     [[ $dir == . ]] && dst="$dst_root/$base" || dst="$dst_root/$dir/$base"
     mkdir -p -- "$(dirname -- "$dst")"
@@ -370,7 +407,10 @@ install_rootfs_overlay() {
     fi
     mode=0644
     case "/$dir/$base" in
-      */bin/*|*.sh) mode=0755 ;;
+      # NetworkManager REFUSES to run a dispatcher script that is not executable, and says so
+      # only in its own journal — so a 0644 hook is a sync-on-connect that silently never fires
+      # (plan/19 §3).
+      */bin/*|*.sh|*/dispatcher.d/*) mode=0755 ;;
     esac
     chmod "$mode" -- "$dst"
   done < <(find "$src_root" -type f -print0)

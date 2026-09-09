@@ -89,6 +89,38 @@ else
   warn "UPDATE_VERIFY=0 — image will accept unsigned updates (dev only)"
 fi
 
+# ---- managed mode: the bundle-signing trust anchor (plan/19 §5.7) --------------------------
+# ARMOURED IN THE REPO, BINARY IN THE IMAGE. gpgv wants a binary keyring; the repo wants a file
+# that diffs and that the suite's CRLF check can read a byte at a time, and a binary .gpg is
+# neither. One dearmor here settles it, and the result is what /usr/bin/<id>-managed verifies
+# every bundle against — the anchor is always the image, never a key fetched at enrolment time.
+#
+# Not gated on a MANAGED_VERIFY knob, deliberately, and this is the one place it differs from
+# UPDATE_VERIFY above. plan/19 §5.8 rule 1 is "never send unsigned policy", with no trusted
+# transport exception; a build switch that turned bundle verification off would be a switch that
+# turns the whole security model off, and it would eventually ship enabled.
+[[ -f $REPO/$MANAGED_PUBRING ]] \
+  || die "MANAGED_PUBRING points at $MANAGED_PUBRING, which does not exist. Managed mode cannot
+  verify a policy bundle without a trust anchor baked into the image, and there is no Portage on
+  the target to add one later (plan/19 §5.7)."
+require_cmds gpg
+gpg --dearmor < "$REPO/$MANAGED_PUBRING" > "$WORK/managed-pubring.gpg" \
+  || die "could not dearmor $MANAGED_PUBRING — is it an ASCII-armoured OpenPGP public key?"
+[[ -s $WORK/managed-pubring.gpg ]] \
+  || die "$MANAGED_PUBRING dearmored to an EMPTY keyring. gpg exits 0 on an armour block that
+  contains no key, so the size is the only evidence anything was in it."
+install -D -m 0644 "$WORK/managed-pubring.gpg" \
+  "$TARGET/usr/lib/$DISTRO_ID/managed-pubring.gpg"
+# The committed default is a throwaway whose PRIVATE half is in tests/managed-api/keys/, so that
+# the stage-70 fixture can sign bundles a real image accepts. An image built against it will take
+# policy from anyone who has read this repository.
+MANAGED_KEY_UIDS="$(gpg --show-keys --with-colons "$REPO/$MANAGED_PUBRING" 2>/dev/null || true)"
+if [[ $MANAGED_KEY_UIDS == *"TEST KEY"* ]]; then
+  warn "managed mode is trusting the TEST bundle-signing key from $MANAGED_PUBRING.
+  Its private half is committed in tests/managed-api/keys/ — anyone with this repo can sign
+  policy for this image. Fine for a dev build and for the stage-70 fixture; never ship it."
+fi
+
 # locale.gen from build.conf (';'-separated entries)
 printf '%s\n' "${LOCALE_GEN//;/$'\n'}" > "$TARGET/etc/locale.gen"
 echo 'LANG=en_US.UTF-8'   > "$TARGET/etc/locale.conf"
@@ -1804,6 +1836,110 @@ SSSD_PROVIDER="$(sed -n 's/^[[:space:]]*id_provider[[:space:]]*=[[:space:]]*\([a
   installed. sssd dlopen()s that module by name and exits when it is missing — after a join that
   otherwise succeeds. The AD provider is built ONLY with sys-auth/sssd[samba]; check that flag in
   config/portage/package.use/image."
+# ---- managed mode readiness (plan/19 §12) ---------------------------------------------------
+# Managed mode costs no packages, so almost nothing about it is observable until someone enrols
+# — which makes every check here a build failure rather than a runtime surprise on a machine
+# that cannot install anything.
+#
+# THE ONE THAT THE WHOLE FEATURE RESTS ON. Authentication for a managed user is one NSS symbol in
+# one shared object: nss-systemd's shadow interface, reached through /etc/nsswitch.conf's
+# `shadow: files systemd` line. Same class of check as plan/18 §5.4's libsss_<provider>.so
+# assertion and for the same reason — the module being installed and the module being able to
+# serve what the config names are two different questions.
+grep -qE '^shadow:[[:space:]]+files[[:space:]]+systemd[[:space:]]*$' "$TARGET/etc/nsswitch.conf" \
+  || die "verify: nsswitch.conf's shadow line does not end in the systemd module. Managed users
+  authenticate through pam_unix reading a shadow entry that nss-systemd synthesises from
+  /etc/userdb; without this line they resolve, appear on the greeter, and cannot log in."
+NSS_SYSTEMD_SO="$(compgen -G "$TARGET/usr/lib64/libnss_systemd.so"* || compgen -G "$TARGET/lib64/libnss_systemd.so"* || true)"
+[[ -n $NSS_SYSTEMD_SO ]] \
+  || die "verify: /etc/nsswitch.conf names the systemd module but libnss_systemd.so is not
+  installed — managed mode has no identity mechanism at all"
+# Rendered ONCE into a variable rather than piped into `grep -q`, for the SIGPIPE/pipefail
+# reason documented at the lsinitrd and objdump checks above: grep -q exits at the first match,
+# the producer dies of SIGPIPE, and the pipeline reports 141 — which here would be read as "the
+# symbol is missing" and would fail the build on a perfectly good image.
+NSS_SYMS="$(nm -D --defined-only "${NSS_SYSTEMD_SO%% *}" 2>/dev/null \
+            || readelf -sW --dyn-syms "${NSS_SYSTEMD_SO%% *}" 2>/dev/null || true)"
+for sym in _nss_systemd_getspnam_r _nss_systemd_getpwnam_r; do
+  # The whole authentication path is this symbol. A systemd built without the shadow half of
+  # nss-systemd installs cleanly, resolves users, and silently cannot verify a password.
+  [[ $NSS_SYMS == *"$sym"* ]] \
+    || die "verify: ${NSS_SYSTEMD_SO%% *} does not export $sym. nss-systemd cannot serve the
+  shadow entry pam_unix checks a managed user's password against (plan/19 §2.2)."
+done
+# /etc/userdb must NOT be in the image (T-MAN-5). Enrolment creates it; shipping it — even
+# empty — would put a directory in the read-only lower that the /etc overlay then has to shadow.
+[[ ! -e $TARGET/etc/userdb ]] \
+  || die "verify: /etc/userdb exists in the built image. It is created by enrolment, and an
+  image that has never enrolled must not have one (plan/19 §3, T-MAN-5)."
+# The client, the units, the keyring and the front end. None can be added later: there is no
+# Portage on the target and /usr is read-only.
+[[ -x $TARGET/usr/bin/${DISTRO_ID}-managed ]] \
+  || die "verify: /usr/bin/${DISTRO_ID}-managed is missing or not executable — there would be no
+  way to enrol an image that cannot install one"
+chroot_target "$TARGET" "python3 -c 'import ast,sys; ast.parse(open(\"/usr/bin/${DISTRO_ID}-managed\").read())'" \
+  || die "verify: /usr/bin/${DISTRO_ID}-managed does not parse as Python on the TARGET's own
+  interpreter. The offline suite compiles it with the build host's python; this is the one that
+  will actually run it."
+for u in ${DISTRO_ID}-managed-sync.service ${DISTRO_ID}-managed-sync.timer; do
+  [[ -f $TARGET/usr/lib/systemd/system/$u ]] \
+    || die "verify: /usr/lib/systemd/system/$u is missing. Units cannot be created by a machine
+  that must not edit /usr (plan/19 §3)."
+done
+MANAGED_DROPIN="$TARGET/usr/lib/systemd/system/${DISTRO_ID}-managed-sync.service.d/10-conditional.conf"
+[[ -f $MANAGED_DROPIN ]] \
+  || die "verify: the sync service's ConditionPathExists drop-in is missing — the second of the
+  three independent defences in plan/19 §8.1"
+grep -qx "ConditionPathExists=/var/lib/${DISTRO_ID}/managed/enrollment.json" "$MANAGED_DROPIN" \
+  || die "verify: $MANAGED_DROPIN does not carry the rendered enrollment.json path. A Condition
+  naming a path nothing ever writes makes the unit skip forever; one naming the wrong distro id
+  makes it run on an unenrolled machine. Neither says anything at runtime."
+[[ -s $TARGET/usr/lib/$DISTRO_ID/managed-pubring.gpg ]] \
+  || die "verify: /usr/lib/$DISTRO_ID/managed-pubring.gpg is missing or empty — no policy bundle
+  could ever be verified, and the trust anchor cannot be added after the image is built"
+# THE BOOT-INTEGRITY ONE (plan/19 §8.1), exactly as for sssd above: a timer enabled on an image
+# that has never enrolled runs a sync that has nothing to sync, and any non-zero exit from it is
+# a failed boot and, on the third, a rollback.
+MANAGED_ENABLED="$(find "$TARGET/etc/systemd/system" -name "${DISTRO_ID}-managed*" \
+  -printf '%P\n' 2>/dev/null | tr '\n' ' ')"
+[[ -z ${MANAGED_ENABLED// /} ]] \
+  || die "verify: managed-mode units are ENABLED in the image: $MANAGED_ENABLED
+  Add a \`disable\` line for each to config/rootfs/usr/lib/systemd/system-preset/50-distro.preset.in."
+# The front end §7.2 measured as possible. Each half fails silently without the other: a wrapper
+# with no QML shows nothing, and QML with no qml6 is a file nobody can open.
+[[ -x $TARGET/usr/bin/${DISTRO_ID}-managed-ui ]] \
+  || die "verify: /usr/bin/${DISTRO_ID}-managed-ui is missing or not executable"
+[[ -f $TARGET/usr/share/$DISTRO_ID/managed-ui/main.qml ]] \
+  || die "verify: /usr/share/$DISTRO_ID/managed-ui/main.qml is missing. install_rootfs_overlay
+  rebrands the 'distro' segment in DIRECTORY names too (render_dest_dir); if this is absent,
+  check whether it landed at /usr/share/distro/ instead."
+[[ -f $TARGET/usr/share/polkit-1/actions/org.$DISTRO_ID.managed.policy ]] \
+  || die "verify: the managed-mode polkit action file is missing — the QML front end would have
+  to be setuid or run under sudo to change anything"
+[[ -x $TARGET/usr/lib/NetworkManager/dispatcher.d/50-$DISTRO_ID-managed ]] \
+  || die "verify: the NetworkManager dispatcher hook is missing or not executable. NetworkManager
+  silently skips a non-executable dispatcher script, so sync-on-connect would never fire and
+  nothing would say why."
+if profile_has_set desktop; then
+  [[ -x $TARGET/usr/bin/qml6 ]] \
+    || die "verify: /usr/bin/qml6 is not in the image, so the pure-QML managed front end cannot
+  run. plan/19 §7.2 rests on it shipping; if dev-qt/qtdeclarative stopped installing it, the
+  front end needs a compiled plugin and that is a design change, not a build fix."
+fi
+# /etc/shadow's mode and group are load-bearing for managed mode, not just for local accounts:
+# .user-privileged is written 0640 root:shadow because unix_chkpwd is setgid shadow, and that is
+# the ONLY way an unprivileged PAM caller — the screen locker — can verify a managed user's
+# password (plan/19 §2.3, settled by probe). If the group ever went away, managed users would log
+# in at the greeter and be unable to unlock their own screens.
+MANAGED_SHADOW_GROUP="$(grep -c '^shadow:' "$TARGET/etc/group" || true)"
+[[ ${MANAGED_SHADOW_GROUP:-0} -ge 1 ]] \
+  || die "verify: there is no 'shadow' group in the image. Managed mode writes password hashes
+  0640 root:shadow so that setgid-shadow unix_chkpwd can read them for an unprivileged caller."
+SHADOW_MODE="$(stat -c '%a %U:%G' "$TARGET/etc/shadow" 2>/dev/null || true)"
+[[ $SHADOW_MODE == "640 root:shadow" ]] \
+  || warn "/etc/shadow is '$SHADOW_MODE', not '640 root:shadow'. Managed mode mirrors that mode
+  for its own hashes; if the vendor changed it, plan/19 §2.3 should be re-measured."
+
 log "configure complete; UKI at $UKI_DIR/$UKI_NAME"
 # The three hardware lists are stage-40 inputs now, not just stage-50 ones: section 2c prunes
 # firmware and microcode before dracut, and the omit list decides what goes into the initrd. A

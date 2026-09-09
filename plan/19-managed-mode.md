@@ -58,7 +58,7 @@ plane is unreachable, unpaid for, or gone. Managed mode is **additive**, never a
 
 ```
 /etc/userdb/alice.user                 0644 root:root   the public record
-/etc/userdb/alice.user-privileged      0600 root:root   the password hash — mode is load-bearing, §2.3
+/etc/userdb/alice.user-privileged      0640 root:shadow the password hash — mode is load-bearing, §2.3
 /etc/userdb/5001.user -> alice.user                     the UID lookup path, §2.3
 /etc/userdb/alice.group                0644 root:root
 /etc/userdb/5001.group -> alice.group
@@ -128,13 +128,17 @@ Each of these was found by probing rather than by reading, and each is a silent 
   `alice:wheel.membership` produced `groups=5001(alice),10(wheel)` and a matching
   `getent initgroups`. Membership is a *file name*, not a field. (Both together behave like the
   file alone.) This is the mechanism the admin group in §6.2 rests on.
-- **The mode of `.user-privileged` is the security boundary, not the daemon.** At `0644`, a
-  process running as uid 1000 read the full `$6$` hash back out of `getent shadow alice`. At
-  `0600` the same call returned nothing. In the daemonless path nss-systemd reads the file as the
-  *calling* process, so file permissions are the only gate; with `userdbd` running the daemon also
-  checks the peer's uid. Both paths must be right, so the client writes `0600 root:root` and
-  stage 40 and the offline suite both assert it. §8.3 is what this implies for whose hashes may
-  land on which device.
+- **The mode of `.user-privileged` is the security boundary, not the daemon — and it is
+  `0640 root:shadow`, not `0600 root:root`.** At `0644`, a process running as uid 1000 read the
+  full `$6$` hash back out of `getent shadow alice`. At `0600` the same call returned nothing —
+  and so did `unix_chkpwd` when the *record's own user* ran it, which is the case that decides
+  whether a person can unlock their screen. §13.1 has the measurement; the short version is that
+  `unix_chkpwd` is `2755 root:shadow` and that setgid bit is the only way an unprivileged PAM
+  caller reads any hash on this system, `/etc/shadow`'s included. `0640 root:shadow` is
+  `/etc/shadow`'s own mode and group, so a managed user's hash is protected by exactly the
+  mechanism that already protects the local administrator's, and group `shadow` has no members.
+  The client writes it; stage 40, the offline suite and T-MAN-1 all assert it. §8.3 is what this
+  implies for whose hashes may land on which device.
 - **`getent group wheel` returns duplicated members** — `wheel:x:10:live,live,alice` — because
   `nsswitch.conf`'s `[SUCCESS=merge]` concatenates sources without de-duplicating. Cosmetic:
   authorisation is by membership, not by list position, and `id` is unaffected. Recorded because
@@ -194,7 +198,7 @@ descendant of plan/18's T-DOM-4.
 | `/etc/userdb/*` | §2.1 |
 | `/etc/sudoers.d/30-managed-admins`, `/etc/polkit-1/rules.d/51-managed-admins.rules` | New files, only when the bundle names an admin group |
 | `/etc/subuid`, `/etc/subgid` | **Appends**, and the one exception to "new files only" — §8.2 |
-| `/etc/systemd/system/multi-user.target.wants/<id>-managed-sync.timer` | The one enablement symlink |
+| `/etc/systemd/system/timers.target.wants/<id>-managed-sync.timer` | The one enablement symlink. `timers.target`, not `multi-user.target` as this table first said — a timer wanted by multi-user.target starts, but leaves `systemctl list-timers` and the timer ordering behind |
 
 `<id>-managed leave` removes exactly that list, in reverse, except the home directories and except
 `/etc/subuid`'s lines, which are removed only with `--purge` (§8.9).
@@ -595,6 +599,27 @@ coupling and no new packages** — `<id>-managed-ui` is a three-line wrapper aro
 (`org.<id>.managed.policy`, `pkexec`, both shipped). It gets a `.desktop` entry, and System
 Settings does not list it.
 
+Two things a Kirigami app normally takes for granted are **absent** under the bare `qml6`
+runtime, both found by running this app against the built target's Qt6 rather than by reading,
+and both silent — the window opens and shows the wrong thing:
+
+- **`i18n()` does not exist.** It reaches QML through `KLocalizedContext`, which a C++ *host
+  application* installs on the engine; `qml6` installs nothing, so every call raised
+  `ReferenceError: i18n is not defined` and rendered an empty string. The strings are therefore
+  plain literals, and this app is **not translatable** until something gives it a host binary —
+  which is the Phase D KCM, and is one more thing that decision buys.
+- **`XMLHttpRequest` on `file://` is disabled by default.** The view reads its status from a file
+  the wrapper writes, so without `QML_XHR_ALLOW_FILE_READ=1` in the wrapper's environment it reads
+  an empty response and shows a machine that looks unenrolled. Qt warns on stderr and carries on.
+
+There is also no process type in pure QML — no `QProcess` binding, nothing in Kirigami — so the
+view cannot run a command, and pretending otherwise is exactly what would force the compiled
+plugin. The split that follows from that is: `<id>-managed-ui` is a shell **controller** that
+writes the status file, runs the view, and acts on what it asks for; the view asks by printing one
+`ACTION` line and calling `Qt.exit()` with an agreed code, and the controller is what invokes
+`pkexec`. So the authentication prompt is polkit's, from the agent the desktop already runs, and
+the app itself is never privileged.
+
 That last clause is the whole gap, and it is worth being plain about: **a QML app in the launcher
 is not the System Settings module that was asked for.** Getting into System Settings means a real
 KCM, and the honest way to build one on this pipeline is not to hand-compile it in stage 40 but to
@@ -682,9 +707,13 @@ authentication and there is no version of this design without it — but it boun
 - **Scope is policy.** §6.1's `access.mode: listed` means the child's laptop never receives the
   parent's hash. That is not a side effect; it is the reason per-device access control is in v1
   scope rather than deferred.
-- **Mode is the boundary**, measured in §2.3: `0600 root:root` on `.user-privileged`, asserted at
-  build time on the shipped tree and at run time by the test suite. At `0644` any local user reads
-  every hash on the machine through `getent shadow`.
+- **Mode is the boundary**, measured in §2.3: `0640 root:shadow` on `.user-privileged`, asserted
+  at build time on the shipped tree and at run time by the test suite. At `0644` any local user
+  reads every hash on the machine through `getent shadow`; at `0600` nobody can, including the
+  setgid-`shadow` helper that the lock screen depends on. Measured at `0640 root:shadow`: another
+  unprivileged uid cannot read the file, cannot get it out of `getent shadow`, and cannot ask
+  `unix_chkpwd` to check a password that is not its own — the same three answers `/etc/shadow`
+  gives today.
 - **A stolen disk yields the hashes**, exactly as `/etc/shadow` does on any Linux laptop today,
   because `/var` is not encrypted (plan/01; encryption is plan/08 roadmap). This is not a
   regression introduced here — it is the same exposure the local admin account already has — but a
@@ -926,24 +955,49 @@ feature's entire authentication path is one NSS symbol in one shared object.
 
 ## 13. Open questions
 
-1. **BLOCKER — can a managed user authenticate when PAM is *not* root?** §2.2's probes ran as
-   root, or as a uid *different* from the record's. The case that matters — a user proving their
-   own password, unprivileged — was never tested. `/etc/shadow` is `0640 root:shadow` and
-   `/usr/bin/unix_chkpwd` is setgid `shadow`, which stage 60's ownership note already calls
-   load-bearing: without that gid, "PAM cannot verify a password for a non-root caller"
-   (`scripts/stages/60-image.sh:79`). A `.user-privileged` at `0600 root:root` is unreadable to
-   that group, so the non-root path rests entirely on `systemd-userdbd` being up **and** on its
-   peer-uid policy handing the privileged section to the record's own uid. Neither is verified. If
-   it does not hold, a managed user logs in at the greeter — where PAM runs as root — and then
-   cannot unlock their own screen, which is worse than not shipping the feature.
+1. ~~**BLOCKER — can a managed user authenticate when PAM is *not* root?**~~ **Settled
+   2026-09-08, and the answer changed the design.**
 
-   **Settle before Phase A**, on a booted guest, in one run: the setuid/setgid inventory of
-   `unix_chkpwd`, `kcheckpass` and `polkit-agent-helper-1`; `unix_chkpwd` invoked as the user with
-   `systemd-userdbd.socket` up and again with it stopped; and a real Plasma lock/unlock. That run
-   also answers what this question used to ask — whether the daemon path still gates the
-   privileged section *twice* (peer uid and file mode), and whether §2.3's group-merge duplication
-   persists. T-MAN-1 is written against the result; if the answer is no, §2.1's mode and §8.3
-   change with it.
+   The question was real and the default answer was wrong. §2.2's probes ran `unix_chkpwd` as
+   root, which is the greeter's case and not a person's: PAM at the **lock screen** is
+   `/usr/libexec/kscreenlocker_greet`, which is measurably **not setuid** — it is absent from the
+   built target's entire setuid/setgid inventory — so it runs as the user and `pam_unix` execs
+   the helper.
+
+   Measured against the built 0.3.0 `desktop` target, through an overlay + `chroot`, with a real
+   `$6$` record, both daemonless and with `systemd-userdbd` socket-activated. A local
+   `/etc/shadow` account with the *same hash* was carried through every case as a control:
+
+   | `.user-privileged` | `unix_chkpwd` as root | as the record's **own uid** |
+   |---|---|---|
+   | `0600 root:root`, no daemon | rc=0 | **rc=9** — `PAM_AUTHINFO_UNAVAIL`, it cannot read the hash |
+   | `0600 root:root`, `userdbd` up | rc=0 | **rc=9** — the daemon changes nothing |
+   | `0640 root:shadow`, no daemon | rc=0 | **rc=0**, and rc=7 on a wrong password |
+   | `0640 root:shadow`, `userdbd` up | rc=0 | **rc=0**, and rc=7 on a wrong password |
+
+   So the peer-uid theory does not rescue `0600`: at that mode a managed user logs in at the
+   greeter and cannot unlock their own screen, which is worse than not shipping the feature.
+   **`.user-privileged` is `0640 root:shadow`** — `/etc/shadow`'s own mode and group on this
+   image, with `unix_chkpwd` at `2755 root:shadow` and **no members in group `shadow`** — so the
+   boundary is the one the local administrator's hash already has, not a new one. §2.1, §2.3 and
+   §8.3 are updated; T-MAN-1 asserts the mode *and* the unprivileged `unix_chkpwd` call on a
+   booted guest, and the offline suite asserts the mode in the golden records.
+
+   Two findings from the same run are worth keeping because both cost an hour:
+
+   - `pam_unix` writes the password to the helper **NUL-terminated** (`strlen(pass)+1` bytes). A
+     probe that omits the NUL gets rc=7 on a correct password — indistinguishable from a wrong
+     one, and it made the control fail too, which is the only reason the harness bug was caught
+     rather than reported as a defect in the mechanism.
+   - §2.3's `getent group` duplication was **not** reproduced through the daemon path here,
+     because the socket-activated `userdbd` in a chroot creates only its multiplexer socket and
+     nss-systemd may still have taken the drop-in fallback. T-MAN-1 on a booted guest is still
+     the honest place to answer that, and it is cosmetic either way.
+
+   What remains genuinely unverified is a **real Plasma lock/unlock**, which needs a graphical
+   session. `unix_chkpwd` invoked as the user is the mechanism underneath it and is now proven;
+   T-MAN-1 exercises the same call on a booted guest.
+
 2. **`$y$` (yescrypt) or `$6$`?** The image's libcrypt is `sys-libs/libxcrypt`, which supports
    yescrypt, but `unix_chkpwd` was measured against `$6$` only. Cheap to settle in Phase A, and
    the answer belongs in §5.4 before any password is ever hashed by the control plane.
@@ -957,6 +1011,32 @@ feature's entire authentication path is one NSS symbol in one shared object.
    page alone — or not at all.
 5. **Multi-org devices** — a machine shared between a household and a business, or a child's
    laptop that is also a school's. Out of scope for v1: one device, one org, one bundle.
+
+## Implementation notes (Phases A and B, 2026-09-08)
+
+Phases A and B are implemented. What follows is what the build actually does where it differs
+from what this document said it would — recorded here rather than silently, because each was a
+decision.
+
+| | |
+|---|---|
+| **The stdlib is the whole dependency** | §9 said a Python client "pins the Python cluster" and took `dev-python/{requests,urllib3,certifi,…}` off plan/10's table. It does not. `urllib.request` with `ssl.create_default_context()` gives HTTPS against the same `app-misc/ca-certificates` bundle, and `json` gives the parser, so **only `dev-lang/python` becomes load-bearing** and the 1.8 MiB cluster stays removable. plan/06 and plan/10 are updated to say so |
+| **`.user-privileged` is `0640 root:shadow`** | §13.1, settled by probe. The design's own security argument survives intact — it is `/etc/shadow`'s mode, group `shadow` is empty — but the number in §2.1 was wrong and would have shipped a machine whose users cannot unlock their screens |
+| **The signing key is armoured in the repo, binary in the image** | Dearmored by stage 40 into `/usr/lib/<id>/managed-pubring.gpg`. `gpgv` wants a binary keyring; a repo wants a file that diffs, survives a Windows checkout, and can be read by the suite's CRLF check. One `gpg --dearmor` removes the conflict |
+| **…and `MANAGED_PUBRING` defaults into `tests/`, not `config/keys/`** | `config/keys/` is `.gitignore`d — real keys are supplied, never committed, exactly as the release key is — so a default naming a file there would break every fresh clone on a file nobody could have. The default is a throwaway pair committed under `tests/managed-api/keys/`, which is also what makes `--with-test-api` work out of the box. Stage 40 warns loudly when an image trusts it. There is deliberately no `MANAGED_VERIFY=0`: a build with no key has no trust anchor and refuses every bundle, which is the safe failure, whereas a switch that accepted unsigned policy would eventually ship enabled (§5.8 rule 1) |
+| **`MANAGED_API_BASE` is validated, not just read** | `validate_config` refuses a non-`https://` base and a trailing slash. A build that bakes `http://` produces an image whose every enrolment is refused at runtime, three layers from the file that caused it |
+| **The timer installs into `timers.target`** | §3's table said `multi-user.target.wants`. A timer wanted by multi-user.target does start, but it sits outside `systemctl list-timers` and the timer ordering |
+| **`render_dest_dir` was needed** | `install_rootfs_overlay` rebranded basenames only, so `/usr/share/distro/managed-ui/` and the `distro-managed-sync.service.d` drop-in directory would have shipped under the literal name "distro". Directory segments are now rebranded by the same token rule, which no existing path changes under (`distrobox` is not the token `distro`) |
+| **`relock.sh --restamp`** | `portage_config_hash()` covers the whole of `config/build.conf`, so adding `MANAGED_API_BASE` invalidated all four lock files. A full `--all` would have **moved every version pin** as a side effect of a config addition the resolver cannot see — exactly what plan/15 exists to prevent. `--restamp` rewrites only the recorded hash, and refuses if any key a lock header records disagrees with the config it would be re-stamped against |
+| **`leave` removes the records before it materialises** | The bug this order prevents is not hypothetical; it was hit on the first end-to-end run. `useradd` asks `getpwnam` whether the name is taken, and while the userdb record is still on disk the answer is yes — so materialising first fails on every user with "user 'alice' already exists", and `leave` then deletes the accounts §8.9 promises to keep. Each user's records are restored if their `useradd` fails, so a half-finished leave leaves working accounts rather than none |
+| **Phase C's client half came with Phase A** | Per-device access, the admin group and its drop-ins, subuid, the Flatpak install policy, the event queue, anti-rollback and the `410`-triggered self-unenrol are all in §4's sync algorithm, so they were written with it. What is left of Phase C is the guest-level offline test (T-MAN-6) and zero-touch enrolment by systemd credential |
+| **Phase D is not started** | The in-repo Portage overlay, `<id>-kcm-managed` and the Calamares view module. Open question 4 asks whether the KCM justifies the overlay at all, and the QML app should be used before that is answered |
+
+The fixture's FastAPI stack is **not in the pinned tree** — no `dev-python/fastapi`, `uvicorn`,
+`starlette` or `pydantic`, checked 2026-09-08 — so `tests/managed-api/` installs it with `pip`
+into a venv under `/opt` in a container built FROM the builder. That is the same isolation
+argument `tests/ad-dc/` makes about samba's USE flags: nothing there participates in resolving a
+single package for the target rootfs, and every build works with the fixture absent.
 
 ## Changes to other documents
 

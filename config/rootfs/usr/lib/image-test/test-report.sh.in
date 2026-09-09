@@ -49,7 +49,7 @@ collect_and_report() {
     . /etc/os-release
     local etc_fs graphical failed failed_list machine_id var_size flatpak_remotes
     local resolved dns podman_rootless runuser_bin sound live_uid autologin
-    local sssd nss_local domain
+    local sssd nss_local domain managed userdb managed_timer
     local _as _an _ac
     etc_fs="$(findmnt -no FSTYPE /etc 2>/dev/null || echo none)"
     graphical="$(systemctl is-active graphical.target >/dev/null 2>&1 && echo yes || echo no)"
@@ -208,6 +208,31 @@ collect_and_report() {
         sssd=inactive
     fi
     domain="$( [[ -f /var/lib/$ID/domain.json ]] && echo joined || echo none )"
+    # ---- managed mode (plan/19), the unenrolled case — T-MAN-5 -------------------------
+    # The image ships managed mode on EVERY profile and almost no machine is enrolled, so the
+    # fields that matter here are the boring ones: the sync unit must not have run, /etc/userdb
+    # must not exist, and nothing about local login may have changed.
+    #
+    # "skipped" is the healthy unenrolled state and is a very different answer from "failed".
+    # The unit's ConditionPathExists says no, systemd records that as SKIPPED, and
+    # boot-check-no-failures does not count it — which is the entire mechanism of §8.1. A
+    # started-and-failed sync would be a failed boot and, on the third, a rollback.
+    if ! systemctl list-unit-files "$ID-managed-sync.service" >/dev/null 2>&1; then
+        managed=absent
+    elif systemctl is-failed "$ID-managed-sync.service" >/dev/null 2>&1; then
+        managed=failed
+    elif [[ -f /var/lib/$ID/managed/enrollment.json ]]; then
+        managed=enrolled
+    else
+        managed=unenrolled
+    fi
+    # The directory must not exist on a machine that never enrolled. It is created by enrolment,
+    # and an image that shipped one would put a directory in the read-only lower that the /etc
+    # overlay then has to shadow.
+    userdb="$( [[ -e /etc/userdb ]] && echo present || echo absent )"
+    # The timer must not be enabled. Checked as well as the unit state because a timer enabled by
+    # a preset that quietly did not take is how this class of bug has arrived before.
+    managed_timer="$(systemctl is-enabled "$ID-managed-sync.timer" 2>/dev/null || echo disabled)"
     # The regression this exists to catch, and it is the one a joined-machine test would never
     # see: /etc/nsswitch.conf names the sss module on the passwd and group lines, and PAM's
     # system-auth carries pam_sss. If either misbehaves when sssd is NOT running — nss_sss
@@ -220,6 +245,7 @@ collect_and_report() {
            "flatpak_remotes=$flatpak_remotes resolved=$resolved dns=$dns" \
            "podman_rootless=$podman_rootless sound=$sound autologin=$autologin" \
            "sssd=$sssd domain=$domain nss_local=$nss_local" \
+           "managed=$managed userdb=$userdb managed_timer=$managed_timer" \
            "failed_list=$failed_list phase=$1"
     # Same split as podman below: the marker line stays one parseable line, the reason goes on
     # DETAIL lines while the guest still exists to say it. "sound=no" alone cannot distinguish
@@ -449,6 +475,116 @@ domain)
            "left=$left sssd_after=$(systemctl is-active sssd.service 2>/dev/null || echo inactive)" \
            "local_user=$(getent passwd '@LIVE_USER@' >/dev/null 2>&1 && echo yes || echo no)" \
            "conf_gone=$( [[ -e /etc/sssd/sssd.conf ]] && echo no || echo yes )"
+    dump_failed
+    systemctl poweroff
+    ;;
+managed)
+    # T-MAN-1 (plan/19 §12): enrol against the throwaway control plane stage 70 stood up, then
+    # prove the things a managed machine has to be able to do, then leave and prove the machine
+    # is still usable. Runs against the SHIPPED image, unmodified — the only concession to the
+    # fixture is _MANAGED_TEST_INSECURE, because the fixture's TLS certificate is self-signed.
+    #
+    # Everything is measured BEFORE the single report at the end: the harness stops watching the
+    # serial log at the first marker line, so a second report is never read.
+    spec=""
+    if [[ -n ${CREDENTIALS_DIRECTORY:-} && -f $CREDENTIALS_DIRECTORY/$ID.managed ]]; then
+        spec="$(cat "$CREDENTIALS_DIRECTORY/$ID.managed")"
+    fi
+    m_api=""; m_code=""; m_user=""; m_password=""; m_absent=""
+    IFS=',' read -ra _parts <<< "$spec"
+    for _p in "${_parts[@]}"; do
+        case "$_p" in
+            api=*)      m_api="${_p#api=}" ;;
+            code=*)     m_code="${_p#code=}" ;;
+            user=*)     m_user="${_p#user=}" ;;
+            password=*) m_password="${_p#password=}" ;;
+            absent=*)   m_absent="${_p#absent=}" ;;
+        esac
+    done
+    if [[ -z $m_api || -z $m_code ]]; then
+        report "fail reason=no-managed-credential spec=${spec:-empty}"
+        systemctl poweroff
+    fi
+
+    export _MANAGED_TEST_INSECURE=1
+    "$ID-managed" enroll --code "$m_code" --api "$m_api" --name qemu-guest \
+        >/tmp/enroll.log 2>&1 && enroll=ok || enroll=fail
+    sed "s/^/$MARKER-DETAIL enroll: /" /tmp/enroll.log > "$CONSOLE"
+
+    # 1. The managed user resolves through NSS. This is nss-systemd reading /etc/userdb, and it
+    #    is the whole identity mechanism — no daemon on the login path, no new NSS module.
+    m_uid="$(getent passwd "$m_user" 2>/dev/null | cut -d: -f3)"
+    id_ok="$( [[ -n $m_uid ]] && echo yes || echo no )"
+    # 2. ...and BY NUMBER, which needs the <uid>.user symlink. Without it every ls -l in that
+    #    user's own home prints a bare number, and nothing else would notice (plan/19 §2.3).
+    byuid_ok="$( [[ -n $m_uid ]] && getent passwd "$m_uid" >/dev/null 2>&1 && echo yes || echo no )"
+    # 3. Group membership, which is a FILE NAME and not a record field (§2.3).
+    grp_ok="$(id -nG "$m_user" 2>/dev/null | tr ' ' '\n' | grep -qx "$ID-admins" && echo yes || echo no)"
+    # 4. The mode on the hash, which decides whether this person can unlock their own screen.
+    priv_mode="$(stat -c '%a:%U:%G' "/etc/userdb/$m_user.user-privileged" 2>/dev/null || echo none)"
+    # 5. THE ONE THAT MATTERS MOST, and the one plan/19 §13.1 called a blocker: the user proving
+    #    their OWN password, unprivileged. PAM at the greeter runs as root; PAM at the lock
+    #    screen (kscreenlocker_greet) does not, and falls back to setgid-shadow unix_chkpwd.
+    #    pam_unix writes the password NUL-TERMINATED to that helper — without the trailing NUL
+    #    every check fails and looks exactly like a wrong password.
+    printf '%s\0' "$m_password" > /tmp/mpw
+    if runuser -u "$m_user" -- sh -c '/usr/bin/unix_chkpwd '"$m_user"' nullok < /tmp/mpw' 2>/dev/null; then
+        chkpwd_ok=yes
+    else
+        chkpwd_ok="no-rc$?"
+    fi
+    rm -f /tmp/mpw
+    # 6. A real console login, which is a DIFFERENT PAM service and the only one that proves a
+    #    human gets a home directory (pam_mkhomedir is in the system-login session stack).
+    login_ok=no; home_ok=no
+    if command -v script >/dev/null 2>&1; then
+        printf '%s\n%s\n' "$m_user" "$m_password" > /tmp/login.in
+        script -qc "login" /dev/null < /tmp/login.in > /tmp/login.log 2>&1 || true
+        rm -f /tmp/login.in
+        grep -qi "Login incorrect" /tmp/login.log || login_ok=yes
+        sed "s/^/$MARKER-DETAIL login: /" /tmp/login.log > "$CONSOLE"
+        [[ -d "/home/$m_user" ]] && home_ok=yes
+    else
+        login_ok=no-script
+    fi
+    # 7. T-MAN-2: a user the bundle does not grant this device does not merely fail to log in —
+    #    they do not exist here, and their hash was never written to this disk.
+    absent_ok=yes
+    if [[ -n $m_absent ]]; then
+        getent passwd "$m_absent" >/dev/null 2>&1 && absent_ok=resolves
+        grep -rq "$m_absent" /etc/userdb/ 2>/dev/null && absent_ok=on-disk
+    fi
+    # 8. The policy files, all of them new files (rule 1).
+    sudoers_ok="$( [[ -f /etc/sudoers.d/30-managed-admins ]] && echo yes || echo no )"
+    subuid_ok="$(grep -q "^$m_user:" /etc/subuid && echo yes || echo no)"
+    # 9. The sync unit must have SUCCEEDED, not merely not-failed, now that there is something
+    #    to sync. And the timer must now be enabled, because enrol is what enables it.
+    "$ID-managed" sync >/tmp/sync.log 2>&1; sync_rc=$?
+    timer_on="$(systemctl is-enabled "$ID-managed-sync.timer" 2>/dev/null || echo disabled)"
+    failed_now="$(systemctl --failed --no-legend --plain 2>/dev/null | grep -c . || true)"
+
+    # 10. ...and leaving must leave a WORKING machine (§8.9). This is the promise that a
+    #     household which stops paying does not lose its computers, so it is measured, not
+    #     assumed: same uid, same home, same password, as an ordinary local account.
+    "$ID-managed" leave >/tmp/leave.log 2>&1 && left=ok || left=fail
+    sed "s/^/$MARKER-DETAIL leave: /" /tmp/leave.log > "$CONSOLE"
+    after_uid="$(getent passwd "$m_user" 2>/dev/null | cut -d: -f3)"
+    kept_uid="$( [[ -n $after_uid && $after_uid == "$m_uid" ]] && echo yes || echo no )"
+    printf '%s\0' "$m_password" > /tmp/mpw
+    if runuser -u "$m_user" -- sh -c '/usr/bin/unix_chkpwd '"$m_user"' nullok < /tmp/mpw' 2>/dev/null; then
+        kept_pw=yes
+    else
+        kept_pw=no
+    fi
+    rm -f /tmp/mpw
+
+    report "ok phase=managed enroll=$enroll managed_user=$id_ok managed_uid=${m_uid:-none}" \
+           "byuid=$byuid_ok group=$grp_ok priv_mode=$priv_mode chkpwd=$chkpwd_ok" \
+           "login=$login_ok home=$home_ok absent=$absent_ok" \
+           "sudoers=$sudoers_ok subuid=$subuid_ok sync_rc=$sync_rc timer=$timer_on" \
+           "failed_units=$failed_now left=$left kept_uid=$kept_uid kept_pw=$kept_pw" \
+           "userdb_after=$( [[ -e /etc/userdb ]] && echo present || echo absent )" \
+           "local_user=$(getent passwd '@LIVE_USER@' >/dev/null 2>&1 && echo yes || echo no)"
     dump_failed
     systemctl poweroff
     ;;

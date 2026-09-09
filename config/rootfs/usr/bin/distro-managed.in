@@ -1,0 +1,2055 @@
+#!/usr/bin/env python3
+# @DISTRO_ID@-managed — managed mode (plan/19).
+#
+# A hosted control plane owns users, groups, device assignment and policy for one household or
+# one small business. This machine enrols once with a code, then pulls a SIGNED bundle and
+# applies it locally. Everything that matters is enforced from cached state, so a laptop at a
+# friend's house authenticates, obeys its policy and keeps its books exactly as it does at home.
+#
+# THREE RULES SHAPE EVERY LINE BELOW, and each has already broken something in this project:
+#
+#   1. /etc is an overlay with no 3-way merge (plan/01). A vendor file this machine edits stops
+#      receiving vendor updates forever. So enrolment writes DATA IN FILES THAT DID NOT EXIST
+#      BEFORE — /etc/userdb/* is a directory the image does not ship — and the single exception
+#      (/etc/subuid, which is not NSS and so cannot be a drop-in) rewrites only its own lines.
+#
+#   2. A FAILED UNIT IS A FAILED BOOT. systemd-boot-check-no-failures.service gates
+#      boot-complete.target; three failed boots roll the machine back to the previous image. A
+#      sync that exits non-zero because the cafe wifi has a captive portal is not a warning, it
+#      is a rollback. So `sync` exits 0 on every path (§4.1), and errors are reported through
+#      `status`, the journal and the control plane's own last-seen clock.
+#
+#   3. THE NETWORK IS NOT AVAILABLE AT THE MOMENT THAT MATTERS. Login happens at the lock screen
+#      of a closed laptop on a train. Every authentication and authorisation decision here is
+#      made from local state; the network only ever REFRESHES that state.
+#
+# WHY PYTHON, unlike its bash siblings @DISTRO_ID@-update and @DISTRO_ID@-domain: this speaks
+# JSON over HTTPS and renders JSON user records. A bash version would shell out to curl and
+# parse JSON with sed — there is no jq in the image — and the parsing would be the bug. The cost
+# is that dev-lang/python becomes load-bearing (plan/06's interpreter policy, plan/09 §9).
+#
+# NB THE STANDARD LIBRARY IS THE WHOLE DEPENDENCY. urllib.request with a default SSL context
+# gives HTTPS against the system CA bundle, and json gives the parser, so the
+# dev-python/{requests,urllib3,certifi,idna,...} cluster plan/10 holds as removable STAYS
+# removable. plan/19 §9 assumed this client would pin it; it does not, and that is worth more
+# than the convenience requests would have added.
+"""Managed-mode client: enrol, sync, status, verify, leave."""
+
+import base64
+import errno
+import getpass
+import grp
+import json
+import os
+import pwd
+import re
+import shutil
+import socket
+import ssl
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.request
+import uuid
+
+ID = "@DISTRO_ID@"
+DISTRO_NAME = "@DISTRO_NAME@"
+IMAGE_VERSION = "@VERSION@"
+
+# The control plane this image talks to unless enrolment was told otherwise. A build knob, never
+# a hardcoded string, for the same reason DISTRO_ID is one (plan/00) — and the per-device
+# override is what makes a self-hosted or staging control plane possible.
+API_BASE_DEFAULT = "@MANAGED_API_BASE@"
+
+# Bumped when the client gains a capability a bundle may then depend on. The bundle's
+# min_client_version is the other direction: too new a bundle is REFUSED and the old one keeps
+# running, rather than being half-applied by a client that does not understand it.
+CLIENT_VERSION = 1
+
+# The trust anchor. A key fetched at enrolment time is not a trust anchor, so this one is baked
+# into the read-only image (plan/19 §5.7) and rotation ships old+new for a release cycle.
+KEYRING = "/usr/lib/%s/managed-pubring.gpg" % ID
+
+# plan/19 §2.4. Plasma Login Manager bounds its user list by /etc/login.defs' UID_MIN/UID_MAX,
+# which this image ships as 1000/60000 and must not edit (editing a sys-apps/shadow vendor file
+# freezes it in the overlay forever). A managed uid outside this window produces an account that
+# exists, logs in, and never appears on the greeter — a silent failure, so it is a hard refusal.
+UID_MIN, UID_MAX = 1000, 60000
+
+# Rootless podman's ranges (plan/13). /etc/subuid ships live:100000:65536 and imageidentity
+# appends the installed user's, so 200000 is clear of both. Derived from the uid rather than
+# allocated, because a counter in a file is state that can be lost and then REUSED — and an
+# overlapping subuid range is a container-isolation hole, which imageidentity's own comment says.
+SUBID_BASE, SUBID_COUNT = 200000, 65536
+
+# Server-controlled with a client floor and ceiling (§5.6), so a misconfigured control plane can
+# neither hammer a family's connection nor silence a fleet.
+POLL_MIN, POLL_MAX = 900, 86400
+
+# A device that never reconnects must not fill /var — which on this image is the same partition
+# as every home directory (plan/01).
+QUEUE_CAP_BYTES = 10 * 1024 * 1024
+
+HTTP_TIMEOUT = 30
+
+USERNAME_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
+GROUPNAME_RE = USERNAME_RE
+
+# Test hooks, exactly as _UPDATE_TEST_* and _DOMAIN_TEST_* are in the bash siblings. Never set
+# on a real system; the offline suite sets them to run as a normal user against a fake root.
+TEST_SKIP_ROOT = os.environ.get("_MANAGED_TEST_SKIP_ROOT") == "1"
+TEST_KEYRING = os.environ.get("_MANAGED_TEST_KEYRING")
+if TEST_KEYRING:
+    KEYRING = TEST_KEYRING
+
+
+# ---------------------------------------------------------------------------------------------
+# output
+# ---------------------------------------------------------------------------------------------
+
+QUIET = False
+
+
+def note(msg):
+    if not QUIET:
+        print(msg, file=sys.stderr)
+
+
+def warn(msg):
+    print("warning: %s" % msg, file=sys.stderr)
+
+
+class Fatal(Exception):
+    """A condition that stops the current command. Whether it stops the PROCESS with a non-zero
+    status is the caller's decision, and for `sync` the answer is always no (§4.1)."""
+
+
+# ---------------------------------------------------------------------------------------------
+# paths
+# ---------------------------------------------------------------------------------------------
+# Everything is relative to --root, so the installer path (plan/19 §7.3) and a running system
+# are the same code. Kept in one class because `leave` removes exactly this list and nothing
+# else, and because a path that exists in only one of the two places is how a leave leaks.
+
+
+class Paths:
+    def __init__(self, root="/"):
+        self.root = root.rstrip("/")
+
+    def _p(self, *parts):
+        return os.path.join(self.root + "/", *parts)
+
+    @property
+    def state_dir(self):
+        return self._p("var/lib", ID, "managed")
+
+    @property
+    def enrollment(self):
+        return os.path.join(self.state_dir, "enrollment.json")
+
+    @property
+    def pending(self):
+        # An enrolment that was ASKED FOR and did not happen — written by the installer path so
+        # the machine can say so out of `status` instead of looking like one nobody wanted
+        # managed. plan/18 §7.4's lesson, and T-MAN-4's subject.
+        return os.path.join(self.state_dir, "enrollment-pending.json")
+
+    @property
+    def bundle(self):
+        return os.path.join(self.state_dir, "bundle.json")
+
+    @property
+    def bundle_sig(self):
+        return os.path.join(self.state_dir, "bundle.sig")
+
+    @property
+    def serial(self):
+        return os.path.join(self.state_dir, "serial")
+
+    @property
+    def owned(self):
+        # The manifest of every path this client has written into /etc. Without it, "remove the
+        # records for users the bundle no longer grants" is indistinguishable from "remove
+        # whatever is in /etc/userdb", and the second one deletes a record a human put there.
+        return os.path.join(self.state_dir, "owned.json")
+
+    @property
+    def status_cache(self):
+        return os.path.join(self.state_dir, "last-sync.json")
+
+    @property
+    def queue_dir(self):
+        return os.path.join(self.state_dir, "queue")
+
+    @property
+    def userdb(self):
+        return self._p("etc/userdb")
+
+    @property
+    def sudoers(self):
+        return self._p("etc/sudoers.d/30-managed-admins")
+
+    @property
+    def polkit_admin(self):
+        return self._p("etc/polkit-1/rules.d/51-managed-admins.rules")
+
+    @property
+    def polkit_flatpak(self):
+        return self._p("etc/polkit-1/rules.d/52-managed-flatpak.rules")
+
+    @property
+    def subuid(self):
+        return self._p("etc/subuid")
+
+    @property
+    def subgid(self):
+        return self._p("etc/subgid")
+
+    @property
+    def passwd(self):
+        return self._p("etc/passwd")
+
+    @property
+    def group(self):
+        return self._p("etc/group")
+
+
+# ---------------------------------------------------------------------------------------------
+# atomic writes
+# ---------------------------------------------------------------------------------------------
+# write .tmp-*, fsync, rename (§4 step 4). A half-written user record is an account that cannot
+# log in, and the window is exactly as long as a power cut is unlucky.
+
+
+def atomic_write(path, data, mode=0o644, uid=0, gid=0):
+    if isinstance(data, str):
+        data = data.encode("utf-8")
+    d = os.path.dirname(path)
+    os.makedirs(d, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".tmp-", dir=d)
+    try:
+        os.write(fd, data)
+        os.fsync(fd)
+        os.close(fd)
+        os.chmod(tmp, mode)
+        if os.geteuid() == 0:
+            os.chown(tmp, uid, gid)
+        os.replace(tmp, path)
+        # The rename is only durable once the DIRECTORY is synced too.
+        dfd = os.open(d, os.O_RDONLY)
+        try:
+            os.fsync(dfd)
+        finally:
+            os.close(dfd)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def atomic_symlink(path, target):
+    d = os.path.dirname(path)
+    os.makedirs(d, exist_ok=True)
+    tmp = os.path.join(d, ".tmp-%s" % os.path.basename(path))
+    try:
+        os.unlink(tmp)
+    except OSError:
+        pass
+    os.symlink(target, tmp)
+    os.replace(tmp, path)
+
+
+def write_json(path, obj, mode=0o600):
+    atomic_write(path, json.dumps(obj, indent=2, sort_keys=True) + "\n", mode=mode)
+
+
+def read_json(path, default=None):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return default
+
+
+# ---------------------------------------------------------------------------------------------
+# the shadow group, and why the mode of .user-privileged is not 0600
+# ---------------------------------------------------------------------------------------------
+# plan/19 §13.1 called this a BLOCKER and it was right to. §2.2's probes ran unix_chkpwd as
+# root, which is the greeter's case and not a person's: PAM's authenticating process at the
+# LOCK SCREEN is /usr/libexec/kscreenlocker_greet, which is not setuid and runs as the user.
+# Unprivileged, pam_unix cannot read a hash itself and execs the helper.
+#
+# Measured on the built 0.3.0 desktop target, through an overlay + chroot, with a real
+# $6$ record (correct password / wrong password / another user's uid), both daemonless and with
+# systemd-userdbd socket-activated:
+#
+#   .user-privileged 0600 root:root    unix_chkpwd as the record's OWN uid → rc=9
+#                                      (PAM_AUTHINFO_UNAVAIL: it cannot read the hash)
+#   .user-privileged 0640 root:shadow  same call → rc=0, and rc=7 on a wrong password
+#
+# and running systemd-userdbd changed NEITHER result, so the peer-uid policy does not rescue
+# 0600. A managed user would have logged in at the greeter and then been unable to unlock their
+# own screen — worse than not shipping the feature.
+#
+# 0640 root:shadow is not a weakening. It is /etc/shadow's OWN mode and group on this image
+# (measured: 0640 root:shadow, with unix_chkpwd 2755 root:shadow and NO members in group
+# shadow), so a managed user's hash is protected by exactly the mechanism that already protects
+# the local administrator's — and the same probe confirmed the boundary holds: another
+# unprivileged uid cannot read the file, cannot get it out of `getent shadow`, and cannot ask
+# the helper to check a password that is not its own (rc=9).
+PRIV_MODE = 0o640
+
+
+def shadow_gid():
+    try:
+        return grp.getgrnam("shadow").gr_gid
+    except KeyError:
+        return None
+
+
+# ---------------------------------------------------------------------------------------------
+# local identity: the namespace managed users must not collide with
+# ---------------------------------------------------------------------------------------------
+# Read from the FILES, deliberately, not through getpwnam: NSS would answer with the records
+# this client wrote, so every record would look like a collision with itself on the second sync.
+
+
+def local_users(paths):
+    names, uids = set(), set()
+    try:
+        with open(paths.passwd, "r", encoding="utf-8") as f:
+            for line in f:
+                parts = line.split(":")
+                if len(parts) > 2:
+                    names.add(parts[0])
+                    try:
+                        uids.add(int(parts[2]))
+                    except ValueError:
+                        pass
+    except OSError:
+        pass
+    return names, uids
+
+
+def local_groups(paths):
+    names, gids = set(), set()
+    try:
+        with open(paths.group, "r", encoding="utf-8") as f:
+            for line in f:
+                parts = line.split(":")
+                if len(parts) > 2:
+                    names.add(parts[0])
+                    try:
+                        gids.add(int(parts[2]))
+                    except ValueError:
+                        pass
+    except OSError:
+        pass
+    return names, gids
+
+
+# ---------------------------------------------------------------------------------------------
+# rendering a bundle into files
+# ---------------------------------------------------------------------------------------------
+# Pure: bundle in, {path: Entry} out, nothing written. That is what makes --print-config a real
+# diff against golden records rather than a second implementation that can drift from this one.
+
+
+class Entry:
+    __slots__ = ("kind", "content", "mode", "uid", "gid", "target")
+
+    def __init__(self, kind, content=None, mode=0o644, uid=0, gid=0, target=None):
+        self.kind = kind          # "file" | "symlink"
+        self.content = content
+        self.mode = mode
+        self.uid = uid
+        self.gid = gid
+        self.target = target
+
+
+def user_record(u):
+    """The public half. Field order is irrelevant to nss-systemd and load-bearing to the golden
+    diffs, so everything this client emits is sorted."""
+    rec = {
+        "userName": u["name"],
+        "uid": int(u["uid"]),
+        "gid": int(u["gid"]),
+        "homeDirectory": u.get("home") or "/home/%s" % u["name"],
+        "shell": u.get("shell") or "/bin/bash",
+        "disposition": "regular",
+    }
+    if u.get("real_name"):
+        rec["realName"] = u["real_name"]
+    if u.get("ssh_authorized_keys"):
+        rec["sshAuthorizedKeys"] = list(u["ssh_authorized_keys"])
+    return rec
+
+
+def render(bundle, paths, priv_gid=None):
+    """Render every file a bundle implies. Raises Fatal on a bundle this client refuses to apply
+    — which is a different thing from a bundle that fails to verify, and both are refusals."""
+    entries = {}
+    ud = paths.userdb
+
+    lu_names, lu_uids = local_users(paths)
+    lg_names, lg_gids = local_groups(paths)
+
+    access = bundle.get("access") or {}
+    mode = access.get("mode", "listed")
+    if mode not in ("listed", "all"):
+        raise Fatal("bundle access.mode is %r; expected 'listed' or 'all'" % mode)
+    allowed = set(access.get("logins_allowed") or [])
+
+    users = bundle.get("users") or []
+    bundle_groups = {g["name"]: g for g in (bundle.get("groups") or [])}
+
+    # Groups the bundle defines in their own right (the admin group, chiefly). Rendered before
+    # the users so a membership file can never name a group with no record behind it.
+    for gname, g in sorted(bundle_groups.items()):
+        if not GROUPNAME_RE.match(gname):
+            raise Fatal("bundle group name %r is not a valid POSIX group name" % gname)
+        gid = int(g["gid"])
+        if gname in lg_names:
+            # A local group of the same name already exists. Merging is nsswitch's job
+            # ([SUCCESS=merge]) and re-declaring the gid here would be a second opinion about a
+            # number the local file already owns.
+            continue
+        if gid in lg_gids:
+            raise Fatal(
+                "bundle group %s wants gid %d, which a local group already holds. Refusing: a "
+                "gid collision is a silent authorisation change." % (gname, gid)
+            )
+        entries[os.path.join(ud, "%s.group" % gname)] = Entry(
+            "file", json.dumps({"groupName": gname, "gid": gid}, indent=2, sort_keys=True) + "\n"
+        )
+        entries[os.path.join(ud, "%d.group" % gid)] = Entry("symlink", target="%s.group" % gname)
+
+    provisioned = []
+    for u in sorted(users, key=lambda x: x.get("name", "")):
+        name = u.get("name", "")
+        if not USERNAME_RE.match(name):
+            raise Fatal("bundle user name %r is not a valid POSIX user name" % name)
+        if u.get("state") not in (None, "active"):
+            continue
+        # §6.1: enforcement is BY ABSENCE. A user this device may not log in gets no record, no
+        # NSS entry and no hash on this disk at all.
+        if mode == "listed" and name not in allowed:
+            continue
+
+        uid = int(u["uid"])
+        gid = int(u.get("gid", uid))
+        # §2.4. Outside the window the account exists, logs in, and is invisible on the greeter.
+        if not (UID_MIN <= uid <= UID_MAX):
+            raise Fatal(
+                "bundle user %s has uid %d, outside [%d, %d]. /etc/login.defs bounds the "
+                "greeter's user list by exactly those numbers, so the account would never "
+                "appear on it." % (name, uid, UID_MIN, UID_MAX)
+            )
+        # §1: managed accounts must not land in the local administrator's namespace, where a
+        # name collision is a silent takeover rather than an error.
+        if name in lu_names:
+            raise Fatal(
+                "bundle user %s already exists as a LOCAL account in /etc/passwd. Refusing to "
+                "shadow it — rename the managed user in the control plane." % name
+            )
+        if uid in lu_uids:
+            raise Fatal(
+                "bundle user %s wants uid %d, which a local account already holds. Refusing: "
+                "every file that uid owns would change hands." % (name, uid)
+            )
+
+        entries[os.path.join(ud, "%s.user" % name)] = Entry(
+            "file", json.dumps(user_record(u), indent=2, sort_keys=True) + "\n"
+        )
+        # §2.3, found by probing: with only <name>.user present, `getent passwd 5001` returns
+        # NOT FOUND while `getent passwd alice` works — so every `ls -l` in the user's own home
+        # prints a bare number. Membership of the fix in the golden diff is not decoration.
+        entries[os.path.join(ud, "%d.user" % uid)] = Entry("symlink", target="%s.user" % name)
+
+        hashes = u.get("hashed_password") or []
+        if hashes:
+            priv = {"userName": name, "privileged": {"hashedPassword": list(hashes)}}
+            entries[os.path.join(ud, "%s.user-privileged" % name)] = Entry(
+                "file",
+                json.dumps(priv, indent=2, sort_keys=True) + "\n",
+                mode=PRIV_MODE,
+                gid=priv_gid if priv_gid is not None else 0,
+            )
+
+        # The user's own group. Absent it, `getent group alice` finds nothing and the login
+        # session has a gid nothing can name.
+        if name not in lg_names:
+            entries[os.path.join(ud, "%s.group" % name)] = Entry(
+                "file",
+                json.dumps({"groupName": name, "gid": gid}, indent=2, sort_keys=True) + "\n",
+            )
+            entries[os.path.join(ud, "%d.group" % gid)] = Entry(
+                "symlink", target="%s.group" % name
+            )
+
+        # §2.3 again, and the one that reads most like a bug: "memberOf" IN THE RECORD DOES
+        # NOTHING through NSS. Membership is a FILE NAME — an empty <user>:<group>.membership.
+        for g in sorted(set(u.get("groups") or [])):
+            if not GROUPNAME_RE.match(g):
+                raise Fatal("bundle user %s names invalid group %r" % (name, g))
+            if g not in bundle_groups and g not in lg_names:
+                raise Fatal(
+                    "bundle user %s is a member of group %r, which exists neither locally nor "
+                    "in the bundle's groups array. Refusing rather than creating a dangling "
+                    "membership." % (name, g)
+                )
+            entries[os.path.join(ud, "%s:%s.membership" % (name, g))] = Entry("file", "")
+
+        provisioned.append(u)
+
+    return entries, provisioned
+
+
+def render_subid(users, existing_lines):
+    """Rewrite only the lines this client owns, matched by user name, leaving every other line
+    byte-identical (§8.2). /etc/subuid is not NSS — newuidmap reads the FILE — so this is the one
+    vendor file the feature appends to, and it is already copied up into the overlay on every
+    installed machine by imageidentity."""
+    owned = {}
+    for u in users:
+        name = u["name"]
+        sub = u.get("subid") or {}
+        start = int(sub.get("start") or (SUBID_BASE + (int(u["uid"]) - UID_MIN) * SUBID_COUNT))
+        count = int(sub.get("count") or SUBID_COUNT)
+        owned[name] = "%s:%d:%d" % (name, start, count)
+
+    out, seen = [], set()
+    for line in existing_lines:
+        stripped = line.rstrip("\n")
+        name = stripped.split(":", 1)[0] if ":" in stripped else None
+        if name in owned:
+            out.append(owned[name])
+            seen.add(name)
+        else:
+            out.append(stripped)
+    for name in sorted(owned):
+        if name not in seen:
+            out.append(owned[name])
+    return "\n".join(out) + "\n"
+
+
+def render_sudoers(group):
+    return (
+        "# Generated by %s-managed from the policy bundle's admin.group.\n"
+        "# NOT by adding managed users to wheel: wheel is the LOCAL administrator's group and\n"
+        "# the local administrator is the way back in when the control plane is unreachable,\n"
+        "# unpaid for or gone (plan/19 §6.2). Keeping the two sets separate means a\n"
+        "# control-plane mistake cannot remove the account that would fix it.\n"
+        "%%%s ALL=(ALL:ALL) ALL\n" % (ID, group.replace(" ", "\\ "))
+    )
+
+
+def render_polkit_admin(group):
+    return (
+        "// Generated by %s-managed from the policy bundle's admin.group. Sits alongside\n"
+        "// 49-wheel.rules, which grants the same to the local administrator; both are\n"
+        "// consulted, so neither replaces the other.\n"
+        "polkit.addAdminRule(function(action, subject) {\n"
+        '    return ["unix-group:%s"];\n'
+        "});\n" % (ID, group)
+    )
+
+
+def render_polkit_flatpak(admin_group):
+    """§6.3. The image is Flatpak-first (plan/03), so app policy is Flatpak policy, and in v1 the
+    client enforces the ONE thing that is enforceable cleanly: installing needs an administrator.
+    Blocking LAUNCH needs a session-side agent that can see what is starting, and that agent
+    arrives with the milestone that actually needs it (§10)."""
+    return (
+        "// Generated by %s-managed from policy.flatpak.install_requires_admin.\n"
+        "// A standard managed user gets an authentication prompt they cannot answer; an\n"
+        "// administrator gets one they can. allow/deny lists are carried in the bundle and\n"
+        "// deliberately NOT enforced in v1 — see plan/19 §6.3.\n"
+        "polkit.addRule(function(action, subject) {\n"
+        "    if (action.id.indexOf('org.freedesktop.Flatpak.app-install') === 0 ||\n"
+        "        action.id.indexOf('org.freedesktop.Flatpak.runtime-install') === 0 ||\n"
+        "        action.id.indexOf('org.freedesktop.Flatpak.app-uninstall') === 0) {\n"
+        '        if (subject.isInGroup("wheel")%s) {\n'
+        '            return polkit.Result.AUTH_ADMIN_KEEP;\n'
+        "        }\n"
+        "        return polkit.Result.AUTH_ADMIN;\n"
+        "    }\n"
+        "});\n"
+        % (ID, (' || subject.isInGroup("%s")' % admin_group) if admin_group else "")
+    )
+
+
+# ---------------------------------------------------------------------------------------------
+# signature verification
+# ---------------------------------------------------------------------------------------------
+# The client writes the bundle to disk VERBATIM AS BYTES and verifies the detached signature over
+# THOSE bytes, then parses. Handing the client a string rather than a nested object removes JSON
+# canonicalisation from the trust path entirely, which is where this class of design usually
+# breaks (§5.7).
+
+
+def verify_signature(data_bytes, signature_text, keyring=None):
+    keyring = keyring or KEYRING
+    if not os.path.exists(keyring):
+        raise Fatal("the bundle-signing keyring %s is missing from this image" % keyring)
+    d = tempfile.mkdtemp(prefix=".%s-managed-verify." % ID)
+    try:
+        data_path = os.path.join(d, "bundle.json")
+        sig_path = os.path.join(d, "bundle.sig")
+        with open(data_path, "wb") as f:
+            f.write(data_bytes)
+        with open(sig_path, "w", encoding="utf-8") as f:
+            f.write(signature_text)
+        # gpgv, not gpg: it verifies and does nothing else — no keyring mutation, no trust
+        # database, no agent, and no home directory to create on a read-only filesystem.
+        for cmd in (
+            ["gpgv", "--keyring", keyring, sig_path, data_path],
+            ["gpg", "--batch", "--no-default-keyring", "--keyring", keyring,
+             "--verify", sig_path, data_path],
+        ):
+            if shutil.which(cmd[0]) is None:
+                continue
+            p = subprocess.run(cmd, capture_output=True, text=True)
+            if p.returncode == 0:
+                return True
+            raise Fatal(
+                "the bundle's signature does not verify against %s:\n%s"
+                % (keyring, (p.stderr or "").strip())
+            )
+        raise Fatal("neither gpgv nor gpg is installed; a bundle cannot be verified")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------------------------
+# the API client
+# ---------------------------------------------------------------------------------------------
+
+
+class ApiError(Exception):
+    def __init__(self, status, body="", detail=""):
+        super().__init__(detail or "HTTP %s" % status)
+        self.status = status
+        self.body = body
+
+
+class Api:
+    def __init__(self, base, secret=None, insecure=False):
+        self.base = (base or API_BASE_DEFAULT).rstrip("/")
+        self.secret = secret
+        # HTTPS only, verified against the system CA bundle (app-misc/ca-certificates, in the
+        # image today). No certificate pinning in v1: pinning a CA in a read-only image that
+        # updates on its own cadence is a way to brick a fleet from the server side (§5.1).
+        self.ctx = ssl.create_default_context()
+        if insecure:
+            # _MANAGED_TEST_INSECURE only. The stage-70 fixture serves a self-signed certificate
+            # on a private docker network; nothing on a real device sets this, and `verify`
+            # reports it loudly when it is set.
+            self.ctx.check_hostname = False
+            self.ctx.verify_mode = ssl.CERT_NONE
+
+    def request(self, method, path, body=None, etag=None, idempotency_key=None):
+        url = self.base + path
+        data = None
+        headers = {
+            "Accept": "application/json",
+            "User-Agent": "%s-managed/%d (%s %s)" % (ID, CLIENT_VERSION, ID, IMAGE_VERSION),
+        }
+        if body is not None:
+            data = json.dumps(body).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+        if self.secret:
+            headers["Authorization"] = "Bearer %s" % self.secret
+        if etag:
+            headers["If-None-Match"] = etag
+        # Every POST accepts an Idempotency-Key and the server must return the original response
+        # for a repeat within 24h (§5.1). The client retries after a timeout, and must not create
+        # two devices or double-count an event by doing so.
+        if idempotency_key:
+            headers["Idempotency-Key"] = idempotency_key
+
+        req = urllib.request.Request(url, data=data, headers=headers, method=method)
+        if not url.startswith("https://") and not os.environ.get("_MANAGED_TEST_ALLOW_HTTP"):
+            raise Fatal("refusing to talk to %s: the control plane must be HTTPS" % url)
+        try:
+            with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT, context=self.ctx) as r:
+                raw = r.read()
+                payload = json.loads(raw.decode("utf-8")) if raw else {}
+                return r.status, payload, r.headers.get("ETag")
+        except urllib.error.HTTPError as e:
+            raw = e.read()
+            if e.code == 304:
+                return 304, {}, e.headers.get("ETag")
+            detail = ""
+            try:
+                # RFC 9457 application/problem+json. The client branches on the STATUS and logs
+                # the rest — a stable type URI is for humans and dashboards, not for control flow.
+                detail = json.loads(raw.decode("utf-8")).get("detail", "")
+            except Exception:
+                pass
+            raise ApiError(e.code, raw.decode("utf-8", "replace"), detail)
+        except (urllib.error.URLError, socket.timeout, ssl.SSLError, OSError) as e:
+            raise ApiError(0, "", str(e))
+
+    def rotate_secret_from(self, payload):
+        """The server may hand back a next_secret on ANY response (§5.2). Rotation limits the
+        window in which a stolen /var is a stolen device identity."""
+        nxt = payload.get("next_secret") if isinstance(payload, dict) else None
+        if nxt:
+            self.secret = nxt
+        return nxt
+
+
+# ---------------------------------------------------------------------------------------------
+# device facts
+# ---------------------------------------------------------------------------------------------
+
+
+def hw_fingerprint(paths):
+    """machine-id, salted and hashed. The control plane can RECOGNISE a re-enrolled machine
+    without ever holding a stable hardware identifier for it (§5.2)."""
+    import hashlib
+
+    try:
+        with open(paths._p("etc/machine-id"), "r", encoding="utf-8") as f:
+            mid = f.read().strip()
+    except OSError:
+        mid = ""
+    if not mid:
+        return ""
+    h = hashlib.sha256(("%s-managed:" % ID).encode() + mid.encode()).hexdigest()
+    return "sha256:%s" % h
+
+
+def os_release(paths, key, default=""):
+    try:
+        with open(paths._p("etc/os-release"), "r", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith(key + "="):
+                    return line.split("=", 1)[1].strip().strip('"')
+    except OSError:
+        pass
+    return default
+
+
+def device_facts(paths, name=None):
+    try:
+        with open(paths._p("etc/hostname"), "r", encoding="utf-8") as f:
+            hostname = f.read().strip()
+    except OSError:
+        hostname = socket.gethostname()
+    product = ""
+    try:
+        with open("/sys/class/dmi/id/product_name", "r", encoding="utf-8") as f:
+            product = f.read().strip()
+    except OSError:
+        pass
+    return {
+        "name": name or hostname or "unnamed",
+        "hostname": hostname,
+        "hw_fingerprint": hw_fingerprint(paths),
+        "image_id": ID,
+        "image_version": os_release(paths, "IMAGE_VERSION", IMAGE_VERSION),
+        "arch": os.uname().machine,
+        "product": product,
+        "client_version": CLIENT_VERSION,
+    }
+
+
+# ---------------------------------------------------------------------------------------------
+# the event queue
+# ---------------------------------------------------------------------------------------------
+
+
+def now_rfc3339():
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def queue_event(paths, etype, **fields):
+    ev = {"id": uuid.uuid4().hex, "at": now_rfc3339(), "type": etype}
+    ev.update(fields)
+    os.makedirs(paths.queue_dir, exist_ok=True)
+    path = os.path.join(paths.queue_dir, "current.jsonl")
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(ev, sort_keys=True) + "\n")
+    enforce_queue_cap(paths)
+    return ev
+
+
+def queue_size(paths):
+    total = 0
+    try:
+        for n in os.listdir(paths.queue_dir):
+            try:
+                total += os.path.getsize(os.path.join(paths.queue_dir, n))
+            except OSError:
+                pass
+    except OSError:
+        pass
+    return total
+
+
+def queue_depth(paths):
+    n = 0
+    try:
+        for name in os.listdir(paths.queue_dir):
+            with open(os.path.join(paths.queue_dir, name), "r", encoding="utf-8") as f:
+                n += sum(1 for line in f if line.strip())
+    except OSError:
+        pass
+    return n
+
+
+def enforce_queue_cap(paths):
+    """Capped at 10 MiB, oldest dropped, and the drop itself is reported — because a device that
+    never reconnects must not fill /var, which on this image is the same partition as every home
+    directory (§5.5)."""
+    dropped = 0
+    while queue_size(paths) > QUEUE_CAP_BYTES:
+        try:
+            files = sorted(
+                (n for n in os.listdir(paths.queue_dir) if n != "current.jsonl"),
+                key=lambda n: os.path.getmtime(os.path.join(paths.queue_dir, n)),
+            )
+        except OSError:
+            return
+        if not files:
+            return
+        victim = os.path.join(paths.queue_dir, files[0])
+        try:
+            with open(victim, "r", encoding="utf-8") as f:
+                dropped += sum(1 for line in f if line.strip())
+            os.unlink(victim)
+        except OSError:
+            return
+    if dropped:
+        warn("event queue over %d MiB: dropped %d oldest events"
+             % (QUEUE_CAP_BYTES // (1024 * 1024), dropped))
+
+
+def drain_queue(paths, api, device_id):
+    """Oldest first, at-least-once with an idempotency key per event, deleted only on 202."""
+    os.makedirs(paths.queue_dir, exist_ok=True)
+    cur = os.path.join(paths.queue_dir, "current.jsonl")
+    if os.path.exists(cur) and os.path.getsize(cur) > 0:
+        os.replace(cur, os.path.join(paths.queue_dir, "%d-%s.jsonl" % (time.time(), uuid.uuid4().hex[:8])))
+    try:
+        files = sorted(os.listdir(paths.queue_dir))
+    except OSError:
+        return 0
+    sent = 0
+    for name in files:
+        if name == "current.jsonl" or not name.endswith(".jsonl"):
+            continue
+        path = os.path.join(paths.queue_dir, name)
+        events = []
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        try:
+                            events.append(json.loads(line))
+                        except ValueError:
+                            pass
+        except OSError:
+            continue
+        if not events:
+            os.unlink(path)
+            continue
+        # At most 1000 or 1 MiB per request (§5.3).
+        for i in range(0, len(events), 1000):
+            chunk = events[i:i + 1000]
+            status, payload, _ = api.request(
+                "POST", "/v1/devices/%s/events" % device_id,
+                body={"events": chunk}, idempotency_key=chunk[0]["id"],
+            )
+            api.rotate_secret_from(payload)
+            if status != 202:
+                return sent
+            sent += len(chunk)
+        os.unlink(path)
+    return sent
+
+
+# ---------------------------------------------------------------------------------------------
+# applying a bundle
+# ---------------------------------------------------------------------------------------------
+
+
+def apply_entries(paths, entries, priv_gid):
+    """Write every entry, then remove exactly those paths this client wrote LAST time and does
+    not want this time. A file the client did not write is never deleted (§4 step 4)."""
+    previous = set((read_json(paths.owned) or {}).get("paths") or [])
+
+    for path in sorted(entries):
+        e = entries[path]
+        if e.kind == "symlink":
+            atomic_symlink(path, e.target)
+        else:
+            gid = e.gid
+            if e.mode == PRIV_MODE and priv_gid is not None:
+                gid = priv_gid
+            elif e.mode == PRIV_MODE and priv_gid is None:
+                # No shadow group: fall back to the strictest thing that is still correct, and
+                # say what it costs. See the PRIV_MODE note — at 0600 the greeter still logs a
+                # managed user in and the LOCK SCREEN cannot let them back.
+                warn("group 'shadow' does not exist on this system; writing %s as 0600 root:root. "
+                     "Managed users will be able to log in but NOT to unlock their screen."
+                     % os.path.basename(path))
+                atomic_write(path, e.content, mode=0o600, uid=0, gid=0)
+                continue
+            atomic_write(path, e.content, mode=e.mode, uid=e.uid, gid=gid)
+
+    stale = previous - set(entries)
+    removed = []
+    for path in sorted(stale):
+        try:
+            os.unlink(path)
+            removed.append(path)
+        except OSError as e:
+            if e.errno != errno.ENOENT:
+                warn("could not remove %s: %s" % (path, e))
+    write_json(paths.owned, {"paths": sorted(entries), "at": now_rfc3339()})
+    return removed
+
+
+def apply_policy(paths, bundle, provisioned, priv_gid):
+    """Everything a bundle changes outside /etc/userdb. Each is a NEW file except the subid pair,
+    which is §8.2's single, argued exception."""
+    written = []
+    admin = bundle.get("admin") or {}
+    admin_group = admin.get("group") or ""
+    policy = bundle.get("policy") or {}
+
+    if admin_group and admin.get("sudo"):
+        atomic_write(paths.sudoers, render_sudoers(admin_group), mode=0o440)
+        written.append(paths.sudoers)
+    elif os.path.exists(paths.sudoers):
+        os.unlink(paths.sudoers)
+
+    if admin_group and admin.get("polkit"):
+        atomic_write(paths.polkit_admin, render_polkit_admin(admin_group), mode=0o644)
+        written.append(paths.polkit_admin)
+    elif os.path.exists(paths.polkit_admin):
+        os.unlink(paths.polkit_admin)
+
+    flatpak = policy.get("flatpak") or {}
+    if flatpak.get("install_requires_admin"):
+        atomic_write(paths.polkit_flatpak, render_polkit_flatpak(admin_group), mode=0o644)
+        written.append(paths.polkit_flatpak)
+    elif os.path.exists(paths.polkit_flatpak):
+        os.unlink(paths.polkit_flatpak)
+
+    # subuid/subgid: rootless podman for a managed user (plan/13, §8.2).
+    for path in (paths.subuid, paths.subgid):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                existing = f.readlines()
+        except OSError:
+            existing = []
+        new = render_subid(provisioned, existing)
+        if "".join(l if l.endswith("\n") else l + "\n" for l in existing) != new:
+            atomic_write(path, new, mode=0o644)
+        written.append(path)
+
+    return written
+
+
+# ---------------------------------------------------------------------------------------------
+# systemd enablement
+# ---------------------------------------------------------------------------------------------
+# systemctl's offline --root mode, not chroot: it needs no /proc, no /sys and no running systemd
+# in the target, which is exactly the situation on an installer run.
+
+
+def systemctl(paths, *args, check=False):
+    cmd = ["systemctl"]
+    if paths.root:
+        cmd.append("--root=%s" % paths.root)
+    cmd.extend(args)
+    if shutil.which("systemctl") is None:
+        return 1
+    p = subprocess.run(cmd, capture_output=True, text=True)
+    if check and p.returncode != 0:
+        raise Fatal("%s failed: %s" % (" ".join(cmd), (p.stderr or "").strip()))
+    return p.returncode
+
+
+def enable_timer(paths):
+    systemctl(paths, "enable", "%s-managed-sync.timer" % ID)
+    if not paths.root:
+        systemctl(paths, "start", "%s-managed-sync.timer" % ID)
+
+
+def disable_timer(paths):
+    systemctl(paths, "disable", "%s-managed-sync.timer" % ID)
+
+
+# ---------------------------------------------------------------------------------------------
+# commands
+# ---------------------------------------------------------------------------------------------
+
+
+def need_root():
+    if TEST_SKIP_ROOT:
+        return
+    if os.geteuid() != 0:
+        raise Fatal("must run as root")
+
+
+def check_not_ad_joined(paths):
+    """§8.7. Local-only, AD-joined and managed are mutually exclusive, and the two CLIs enforce
+    it in BOTH directions — @DISTRO_ID@-domain join carries the mirror of this check. The refusal
+    is preflight, before anything is written. There is no technical reason the uid spaces would
+    collide; two systems provisioning accounts on one machine is a support burden with no user
+    behind it."""
+    sssd = paths._p("etc/sssd/sssd.conf")
+    if os.path.exists(sssd):
+        raise Fatal(
+            "this machine is joined to an Active Directory domain (%s exists).\n"
+            "  Managed mode and a domain join are mutually exclusive. To switch:\n"
+            "      sudo %s-domain leave" % (sssd, ID)
+        )
+
+
+def load_enrollment(paths):
+    e = read_json(paths.enrollment)
+    if not e:
+        raise Fatal(
+            "this machine is not enrolled in managed mode.\n"
+            "  Enrol it with:  sudo %s-managed enroll --code CODE" % ID
+        )
+    return e
+
+
+def load_bundle(paths):
+    try:
+        with open(paths.bundle, "rb") as f:
+            return json.loads(f.read().decode("utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def cmd_enroll(argv):
+    opts = parse_opts(argv, {"--code": str, "--name": str, "--api": str, "--root": str})
+    paths = Paths(opts.get("--root", "/"))
+    code = opts.get("--code")
+    if not code:
+        raise Fatal("enroll needs --code")
+
+    # 1. Preflight. Nothing below is reached, and so nothing is written, unless every one of
+    #    these holds — including the network, because an enrolment that half-happened is worse
+    #    than one that did not.
+    need_root()
+    if not os.path.isdir(paths._p("etc")):
+        raise Fatal("--root %s does not look like a root filesystem" % paths.root)
+    check_not_ad_joined(paths)
+    if os.path.exists(paths.enrollment):
+        # Idempotent: re-running enroll on an enrolled machine syncs instead of creating a
+        # second device in the org.
+        note("already enrolled; syncing instead")
+        return cmd_sync([] if not opts.get("--root") else ["--root", paths.root])
+    if not os.path.exists(paths._p("etc/machine-id")):
+        raise Fatal("/etc/machine-id does not exist; this machine has not completed a first boot")
+    if time.time() < 1700000000:
+        raise Fatal("the clock is implausibly far in the past; TLS will reject every certificate")
+
+    api_base = opts.get("--api") or API_BASE_DEFAULT
+    api = Api(api_base, insecure=os.environ.get("_MANAGED_TEST_INSECURE") == "1")
+    facts = device_facts(paths, opts.get("--name"))
+    note("enrolling with %s" % api_base)
+    try:
+        status, payload, _ = api.request(
+            "POST", "/v1/enroll",
+            body={"code": code, "device": facts},
+            idempotency_key=facts.get("hw_fingerprint", "") or uuid.uuid4().hex,
+        )
+    except ApiError as e:
+        if e.status == 409:
+            raise Fatal("that enrolment code has already been used")
+        if e.status == 410:
+            raise Fatal("that enrolment code has expired; ask for a new one")
+        if e.status == 429:
+            raise Fatal("too many attempts; wait and try again")
+        if e.status == 0:
+            raise Fatal("could not reach %s: %s\n  Nothing has been written." % (api_base, e))
+        raise Fatal("enrolment refused (HTTP %s): %s\n  Nothing has been written."
+                    % (e.status, e.body[:400]))
+
+    enrollment = {
+        "device_id": payload["device_id"],
+        "device_secret": payload["device_secret"],
+        "org": payload.get("org", {}),
+        "api_base": payload.get("api_base") or api_base,
+        "poll_interval": clamp_poll(payload.get("poll_interval")),
+        "enrolled_at": now_rfc3339(),
+    }
+    os.makedirs(paths.state_dir, exist_ok=True)
+    write_json(paths.enrollment, enrollment, mode=0o600)
+    try:
+        os.unlink(paths.pending)
+    except OSError:
+        pass
+    queue_event(paths, "enrollment.completed", device=payload["device_id"])
+    note("enrolled as device %s in %s"
+         % (payload["device_id"], (payload.get("org") or {}).get("name", "?")))
+
+    # 3./4. Fetch a first bundle and enable the timer. On failure to fetch: KEEP the enrolment,
+    # report it, exit 0 — the device is enrolled and stale, which is a state this design has to
+    # survive anyway (§4).
+    rc = do_sync(paths)
+    enable_timer(paths)
+    if rc != 0:
+        note("enrolled, but no policy bundle could be fetched yet. The next sync will retry.")
+    return 0
+
+
+def clamp_poll(v):
+    try:
+        v = int(v)
+    except (TypeError, ValueError):
+        return 3600
+    return max(POLL_MIN, min(POLL_MAX, v))
+
+
+def do_sync(paths, force=False):
+    """The body of `sync`. Returns 0 on a completed sync and non-zero for the CALLER's
+    information only — the process exit status is decided in cmd_sync, and it is always 0."""
+    enrollment = load_enrollment(paths)
+    api = Api(enrollment["api_base"], enrollment["device_secret"],
+              insecure=os.environ.get("_MANAGED_TEST_INSECURE") == "1")
+    device_id = enrollment["device_id"]
+    state = read_json(paths.status_cache) or {}
+    etag = None if force else state.get("bundle_etag")
+
+    # 1. GET the bundle with If-None-Match.
+    try:
+        status, payload, new_etag = api.request(
+            "GET", "/v1/devices/%s/bundle" % device_id, etag=etag)
+    except ApiError as e:
+        if e.status == 410:
+            # Revoked at the control plane. Treated as an INSTRUCTION TO UNENROL, not as an
+            # error (§5.3): a revoked device degrades into a working, unmanaged, local-only
+            # machine rather than into a brick.
+            note("this device has been revoked by the control plane; unenrolling locally")
+            return cmd_leave(["--force"] + (["--root", paths.root] if paths.root else []))
+        if e.status in (401, 403):
+            record_sync(paths, ok=False, reason="credentials-rejected")
+            queue_event(paths, "sync.failed", reason="credentials-rejected")
+            note("the control plane rejected this device's credentials. The cached policy stays "
+                 "in force; re-enrol to fix it.")
+            return 3
+        record_sync(paths, ok=False, reason="unreachable" if e.status == 0 else "http-%s" % e.status)
+        queue_event(paths, "sync.failed", reason=str(e)[:200])
+        note("could not fetch a bundle: %s" % e)
+        return 2
+
+    if status == 304:
+        note("policy is up to date")
+        drained = safe_drain(paths, api, device_id)
+        heartbeat(paths, api, device_id, enrollment)
+        record_sync(paths, ok=True, etag=etag, drained=drained)
+        persist_secret(paths, enrollment, api)
+        return 0
+
+    # 2. VERIFY THE SIGNATURE OVER THE BYTES RECEIVED, BEFORE PARSING THEM.
+    bundle_text = payload.get("bundle")
+    signature = payload.get("signature")
+    if not isinstance(bundle_text, str) or not isinstance(signature, str):
+        record_sync(paths, ok=False, reason="malformed-response")
+        note("the control plane returned something that is not a signed bundle")
+        return 5
+    bundle_bytes = bundle_text.encode("utf-8")
+    verify_signature(bundle_bytes, signature)
+    bundle = json.loads(bundle_text)
+
+    # 3. Anti-rollback, and the version gate. An OLD, CORRECTLY SIGNED BUNDLE IS A VALID BUNDLE
+    #    — replaying yesterday's, before a user was revoked or a limit was tightened, is the
+    #    cheapest attack on any offline policy system (§8.5).
+    serial = int(bundle.get("serial", 0))
+    high = 0
+    try:
+        with open(paths.serial, "r", encoding="utf-8") as f:
+            high = int(f.read().strip() or 0)
+    except (OSError, ValueError):
+        pass
+    if serial < high:
+        record_sync(paths, ok=False, reason="rollback-refused")
+        queue_event(paths, "device.state", bundle_serial=high, rollback_refused=serial)
+        note("REFUSED a bundle with serial %d; this device has already accepted %d. "
+             "The newer policy stays in force." % (serial, high))
+        return 5
+    minver = int(bundle.get("min_client_version", 1))
+    if minver > CLIENT_VERSION:
+        record_sync(paths, ok=False, reason="client-too-old")
+        note("this bundle needs client version %d and this image has %d. Keeping the previous "
+             "bundle in force; a system update will bring a newer client." % (minver, CLIENT_VERSION))
+        return 5
+    # §5.4: absence removes a record, but only after the client has verified the bundle covers
+    # the whole org. A truncated or filtered bundle must never silently delete accounts.
+    for required in ("users", "access"):
+        if required not in bundle:
+            record_sync(paths, ok=False, reason="incomplete-bundle")
+            note("the bundle has no %r key; refusing to apply a partial view of the org" % required)
+            return 5
+
+    # 4./5. Render and apply.
+    priv_gid = shadow_gid()
+    entries, provisioned = render(bundle, paths, priv_gid)
+    for name in bundle.get("revoked_users") or []:
+        for suffix in (".user", ".user-privileged", ".group"):
+            entries.pop(os.path.join(paths.userdb, name + suffix), None)
+    removed = apply_entries(paths, entries, priv_gid)
+    apply_policy(paths, bundle, provisioned, priv_gid)
+
+    atomic_write(paths.bundle, bundle_bytes, mode=0o644)
+    atomic_write(paths.bundle_sig, signature, mode=0o644)
+    atomic_write(paths.serial, "%d\n" % max(serial, high), mode=0o644)
+
+    note("applied bundle serial %d: %d user%s provisioned%s"
+         % (serial, len(provisioned), "" if len(provisioned) == 1 else "s",
+            ", %d record(s) removed" % len(removed) if removed else ""))
+
+    # 6./7. Drain the queue, heartbeat, apply commands.
+    drained = safe_drain(paths, api, device_id)
+    heartbeat(paths, api, device_id, enrollment, bundle_serial=serial)
+    record_sync(paths, ok=True, etag=new_etag, serial=serial, users=len(provisioned),
+                drained=drained)
+    persist_secret(paths, enrollment, api)
+    return 0
+
+
+def safe_drain(paths, api, device_id):
+    try:
+        return drain_queue(paths, api, device_id)
+    except ApiError as e:
+        note("could not upload queued events: %s" % e)
+        return 0
+
+
+def persist_secret(paths, enrollment, api):
+    if api.secret and api.secret != enrollment.get("device_secret"):
+        enrollment["device_secret"] = api.secret
+        write_json(paths.enrollment, enrollment, mode=0o600)
+
+
+def heartbeat(paths, api, device_id, enrollment, bundle_serial=None):
+    if bundle_serial is None:
+        b = load_bundle(paths) or {}
+        bundle_serial = b.get("serial")
+    body = {
+        "at": now_rfc3339(),
+        "uptime_s": uptime_seconds(),
+        "boot_slot": boot_slot(),
+        "image_version": os_release(paths, "IMAGE_VERSION", IMAGE_VERSION),
+        "bundle_serial": bundle_serial,
+        "queue_depth": queue_depth(paths),
+        "users_provisioned": count_users(paths),
+        "last_sync_ok": True,
+        "sessions_active": active_sessions(),
+    }
+    try:
+        _, payload, _ = api.request("POST", "/v1/devices/%s/heartbeat" % device_id, body=body)
+    except ApiError as e:
+        note("heartbeat failed: %s" % e)
+        return
+    api.rotate_secret_from(payload)
+    poll = clamp_poll(payload.get("poll_interval"))
+    if poll != enrollment.get("poll_interval"):
+        enrollment["poll_interval"] = poll
+        write_json(paths.enrollment, enrollment, mode=0o600)
+    for cmd in payload.get("commands") or []:
+        run_command(paths, api, device_id, cmd)
+
+
+def run_command(paths, api, device_id, cmd):
+    """v1's command types are deliberately few and all reversible. THERE IS NO REMOTE WIPE, and
+    there should not be one until there is a threat model that survives §8.4 — a command that
+    destroys data, authorised by a bearer token in a file on the device it destroys, is a footgun
+    pointed at a family's photos (§5.3)."""
+    ctype = cmd.get("type")
+    result = "ok"
+    if ctype == "sync_now":
+        pass  # we are already inside a sync
+    elif ctype == "lock_sessions":
+        if shutil.which("loginctl"):
+            subprocess.run(["loginctl", "lock-sessions"], capture_output=True)
+        else:
+            result = "unsupported"
+    elif ctype == "unenroll":
+        note("the control plane asked this device to unenrol")
+        cmd_leave(["--force"] + (["--root", paths.root] if paths.root else []))
+    else:
+        result = "unknown"
+    try:
+        api.request("POST", "/v1/devices/%s/commands/%s/ack" % (device_id, cmd.get("id")),
+                    body={"result": result}, idempotency_key=cmd.get("id"))
+    except ApiError as e:
+        note("could not acknowledge command %s: %s" % (cmd.get("id"), e))
+
+
+def count_users(paths):
+    owned = (read_json(paths.owned) or {}).get("paths") or []
+    return len([p for p in owned if p.endswith(".user") and not os.path.basename(p)[0].isdigit()])
+
+
+def uptime_seconds():
+    try:
+        with open("/proc/uptime", "r", encoding="utf-8") as f:
+            return int(float(f.read().split()[0]))
+    except (OSError, ValueError, IndexError):
+        return 0
+
+
+def boot_slot():
+    try:
+        with open("/proc/cmdline", "r", encoding="utf-8") as f:
+            for tok in f.read().split():
+                if tok.startswith("%s.slot=" % ID):
+                    return tok.split("=", 1)[1]
+    except OSError:
+        pass
+    return ""
+
+
+def active_sessions():
+    if shutil.which("loginctl") is None:
+        return 0
+    p = subprocess.run(["loginctl", "list-sessions", "--no-legend"],
+                       capture_output=True, text=True)
+    return len([l for l in p.stdout.splitlines() if l.strip()])
+
+
+def record_sync(paths, ok, reason="", etag=None, serial=None, users=None, drained=0):
+    state = read_json(paths.status_cache) or {}
+    state["last_attempt"] = now_rfc3339()
+    if ok:
+        state["last_success"] = state["last_attempt"]
+        state["last_error"] = ""
+        if etag:
+            state["bundle_etag"] = etag
+        if serial is not None:
+            state["serial"] = serial
+        if users is not None:
+            state["users"] = users
+        state["events_uploaded"] = state.get("events_uploaded", 0) + drained
+    else:
+        state["last_error"] = reason
+    os.makedirs(paths.state_dir, exist_ok=True)
+    write_json(paths.status_cache, state, mode=0o644)
+
+
+def cmd_sync(argv):
+    """THE ONLY THING THE TIMER RUNS, and the reason §4.1 exists. Every path here ends in exit 0:
+    an exit code from a timer-driven oneshot on this OS is a failed unit, a failed boot, and
+    eventually an automatic rollback to a previous image — triggered, in the field, by hotel
+    wifi. Errors are reported by `status`, the journal and the control plane's own last-seen
+    clock, none of which can brick a machine."""
+    global QUIET
+    opts = parse_opts(argv, {"--root": str}, flags={"--now", "--quiet"})
+    QUIET = "--quiet" in opts
+    paths = Paths(opts.get("--root", "/"))
+    try:
+        need_root()
+        do_sync(paths, force="--now" in opts)
+    except Fatal as e:
+        note("sync: %s" % e)
+    except Exception as e:  # noqa: BLE001 — see the docstring; nothing may escape this frame
+        note("sync: unexpected error: %s: %s" % (type(e).__name__, e))
+    return 0
+
+
+def cmd_status(argv):
+    opts = parse_opts(argv, {"--root": str}, flags={"--json"})
+    paths = Paths(opts.get("--root", "/"))
+    enrollment = read_json(paths.enrollment)
+    bundle = load_bundle(paths)
+    state = read_json(paths.status_cache) or {}
+    pending = read_json(paths.pending)
+
+    owned = (read_json(paths.owned) or {}).get("paths") or []
+    users = sorted({
+        os.path.basename(p)[:-5] for p in owned
+        if p.endswith(".user") and not os.path.basename(p)[0].isdigit()
+    })
+
+    info = {
+        "enrolled": bool(enrollment),
+        "org": (enrollment or {}).get("org", {}).get("name", ""),
+        "device_id": (enrollment or {}).get("device_id", ""),
+        "api_base": (enrollment or {}).get("api_base", ""),
+        "last_success": state.get("last_success", ""),
+        "last_attempt": state.get("last_attempt", ""),
+        "last_error": state.get("last_error", ""),
+        "bundle_serial": (bundle or {}).get("serial"),
+        "bundle_issued_at": (bundle or {}).get("issued_at", ""),
+        "bundle_expires_at": (bundle or {}).get("expires_at", ""),
+        "users": users,
+        "queue_depth": queue_depth(paths),
+        "poll_interval": (enrollment or {}).get("poll_interval"),
+        "pending_enrollment": pending,
+    }
+    if "--json" in opts:
+        print(json.dumps(info, indent=2, sort_keys=True))
+        return 0
+
+    if pending:
+        print("An enrolment was requested during installation and did not complete:")
+        for k, v in sorted(pending.items()):
+            print("  %s: %s" % (k, v))
+        print()
+        print("Nothing managed was written and this machine is not enrolled. To enrol it now:")
+        print("  sudo %s-managed enroll --code CODE" % ID)
+        print()
+    if not enrollment:
+        print("not enrolled in managed mode")
+        return 0
+
+    print("organisation:  %s" % (info["org"] or "?"))
+    print("device:        %s" % info["device_id"])
+    print("control plane: %s" % info["api_base"])
+    if info["last_success"]:
+        age = staleness(info["last_success"])
+        print("last sync:     %s (%s)" % (info["last_success"], age))
+    else:
+        print("last sync:     never")
+    if info["last_error"]:
+        print("last error:    %s" % info["last_error"])
+    print("bundle:        serial %s, issued %s"
+          % (info["bundle_serial"], info["bundle_issued_at"] or "?"))
+    # §5.4: expires_at is ADVISORY FOR IDENTITY AND BINDING FOR NOTHING. A device past it keeps
+    # authenticating its users and keeps enforcing its policy. A control plane that can lock a
+    # family out of their own computers by going down for a week is not a feature (§8.6).
+    if info["bundle_expires_at"] and info["bundle_expires_at"] < now_rfc3339():
+        print("               STALE (past %s) — still authenticating and still enforcing"
+              % info["bundle_expires_at"])
+    print("users:         %s" % (", ".join(users) if users else "none"))
+    print("queue:         %d event(s) waiting" % info["queue_depth"])
+    policy = (bundle or {}).get("policy") or {}
+    if policy:
+        print("policy in force:")
+        for line in policy_lines(bundle):
+            print("  %s" % line)
+    return 0
+
+
+def staleness(iso):
+    try:
+        t = time.mktime(time.strptime(iso, "%Y-%m-%dT%H:%M:%SZ")) - time.timezone
+    except ValueError:
+        return "?"
+    d = max(0, int(time.time() - t))
+    if d < 3600:
+        return "%d minutes ago" % (d // 60)
+    if d < 86400:
+        return "%d hours ago" % (d // 3600)
+    return "%d days ago" % (d // 86400)
+
+
+def policy_lines(bundle):
+    policy = (bundle or {}).get("policy") or {}
+    admin = (bundle or {}).get("admin") or {}
+    out = []
+    fp = policy.get("flatpak") or {}
+    if fp:
+        out.append("installing apps %s"
+                   % ("needs an administrator" if fp.get("install_requires_admin")
+                      else "is allowed for everyone"))
+    up = policy.get("updates") or {}
+    if up:
+        w = up.get("window") or {}
+        out.append("automatic updates %s%s"
+                   % ("on" if up.get("auto") else "off",
+                      " (%s-%s)" % (w.get("start"), w.get("end")) if w else ""))
+    se = policy.get("session") or {}
+    if se.get("idle_lock_s"):
+        out.append("screen locks after %d minutes idle" % (int(se["idle_lock_s"]) // 60))
+    if admin.get("group"):
+        out.append("administrators: members of %s" % admin["group"])
+    # §8.8: a monitored session says so, and the monitored user can read exactly what is
+    # collected. Nothing collects anything in v1, and status says that rather than staying quiet.
+    par = (bundle or {}).get("parental") or {}
+    if int(par.get("schema", 0)) == 0:
+        out.append("screen time / activity monitoring: not enabled")
+    return out
+
+
+def cmd_policy(argv):
+    opts = parse_opts(argv, {"--root": str}, flags={"--json"})
+    paths = Paths(opts.get("--root", "/"))
+    bundle = load_bundle(paths)
+    if not bundle:
+        print("no policy bundle on this machine")
+        return 0
+    if "--json" in opts:
+        print(json.dumps(bundle.get("policy") or {}, indent=2, sort_keys=True))
+        return 0
+    for line in policy_lines(bundle):
+        print(line)
+    return 0
+
+
+def cmd_passwd(argv):
+    """§2.5: passwd(1) cannot write a userdb record, so a managed user changes their password
+    through the API — online only. Offline the answer is "you cannot", and it is said plainly
+    here rather than letting passwd fail with something cryptic."""
+    opts = parse_opts(argv, {"--root": str})
+    paths = Paths(opts.get("--root", "/"))
+    args = opts.get("_positional") or []
+    user = args[0] if args else pwd.getpwuid(os.getuid()).pw_name
+    enrollment = load_enrollment(paths)
+
+    old = getpass.getpass("Current password for %s: " % user)
+    new = getpass.getpass("New password: ")
+    if new != getpass.getpass("Retype new password: "):
+        raise Fatal("the two new passwords do not match")
+
+    api = Api(enrollment["api_base"], enrollment["device_secret"],
+              insecure=os.environ.get("_MANAGED_TEST_INSECURE") == "1")
+    try:
+        # THE DEVICE NEVER HASHES A PASSWORD FOR THE CONTROL PLANE (§5.3). The hash format the
+        # record carries is the server's choice, and letting a device propose one is how a weak
+        # hash gets in.
+        api.request("POST", "/v1/devices/%s/password" % enrollment["device_id"],
+                    body={"user": user, "old": old, "new": new},
+                    idempotency_key=uuid.uuid4().hex)
+    except ApiError as e:
+        if e.status == 0:
+            raise Fatal(
+                "the control plane is unreachable, so this password cannot be changed right "
+                "now.\n  Managed passwords live in the control plane; the copy on this machine "
+                "is a cache.\n  Connect to a network and try again, or change it in the web "
+                "interface.")
+        if e.status in (401, 403):
+            raise Fatal("that current password was not accepted")
+        raise Fatal("the control plane refused the change (HTTP %s): %s" % (e.status, e.body[:200]))
+    note("password changed. Fetching the new record...")
+    do_sync(paths, force=True)
+    return 0
+
+
+def cmd_leave(argv):
+    """§8.9. A household that stops paying, or an operator that shuts down, must not take the
+    family's computers with it. So `leave` is NOT merely the inverse of enrol: by default it
+    MATERIALISES every managed user as a local account with the same uid, the same home, the same
+    group memberships and the same hash, and only then removes the drop-ins. Every file in every
+    home directory still belongs to the person who owns it."""
+    opts = parse_opts(argv, {"--root": str}, flags={"--purge", "--force"})
+    paths = Paths(opts.get("--root", "/"))
+    need_root()
+    if not os.path.exists(paths.enrollment) and not os.path.exists(paths.userdb):
+        note("not enrolled; nothing to do")
+        return 0
+
+    purge = "--purge" in opts
+    if purge and "--force" not in opts:
+        if not confirm("Remove %d managed account(s) and their group memberships from this "
+                       "machine? Home directories are NOT deleted." % len(managed_users(paths))):
+            return 1
+        if not confirm("Are you sure? Any file owned only by a managed uid becomes ownerless."):
+            return 1
+
+    enrollment = read_json(paths.enrollment)
+    if enrollment and "--force" not in opts:
+        # Tell the control plane, best-effort. A device that cannot reach it still leaves.
+        api = Api(enrollment["api_base"], enrollment["device_secret"],
+                  insecure=os.environ.get("_MANAGED_TEST_INSECURE") == "1")
+        try:
+            api.request("POST", "/v1/devices/%s/unenroll" % enrollment["device_id"], body={})
+        except (ApiError, Fatal):
+            pass
+
+    disable_timer(paths)
+    owned = sorted((read_json(paths.owned) or {}).get("paths") or [])
+    # Read BEFORE anything is deleted: managed_users() derives the names from the ownership
+    # manifest, and strip_subid() below runs after that manifest is gone.
+    names_at_start = managed_users(paths)
+
+    # ORDER IS LOAD-BEARING, and getting it wrong quietly turns §8.9 into its opposite. useradd
+    # asks getpwnam whether the name is taken, and while the userdb record is still on disk the
+    # answer is yes — so materialising BEFORE removing the records fails on every single user
+    # with "user 'alice' already exists", and `leave` then deletes the accounts it promised to
+    # keep. The records come out first; each user's are put back if their useradd fails, so a
+    # half-finished leave leaves working accounts rather than none.
+    materialised, kept = ([], [])
+    if not purge:
+        materialised, kept = materialise_local(paths, owned)
+    else:
+        for path in owned:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+    for path in (paths.sudoers, paths.polkit_admin, paths.polkit_flatpak,
+                 paths.enrollment, paths.bundle_sig, paths.serial,
+                 paths.status_cache, paths.pending):
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+    # The bundle and the ownership manifest are kept ONLY when something could not be
+    # materialised: those records are still on disk and still logging people in, and without the
+    # manifest nothing knows which files they are.
+    if kept:
+        write_json(paths.owned, {"paths": sorted(kept), "at": now_rfc3339()})
+    else:
+        for path in (paths.owned, paths.bundle):
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+    shutil.rmtree(paths.queue_dir, ignore_errors=True)
+    try:
+        os.rmdir(paths.userdb)
+    except OSError:
+        pass
+
+    # §3: the subuid lines go only with --purge, because removing a range a container's storage
+    # was created under makes that storage unreadable.
+    if purge:
+        strip_subid(paths, names_at_start)
+
+    if materialised:
+        note("left managed mode. %d account(s) are now ordinary local accounts with the same "
+             "uid, home and password: %s" % (len(materialised), ", ".join(materialised)))
+    else:
+        note("left managed mode.")
+    if kept:
+        warn("%d record(s) could not be turned into local accounts and were left in place, so "
+             "those people can still log in: %s\n  Fix the cause above and re-run `%s-managed "
+             "leave`, or remove them with `--purge`."
+             % (len(kept), ", ".join(sorted({os.path.basename(p).split(".")[0].split(":")[0]
+                                             for p in kept})), ID))
+    note("The local administrator account is unaffected.")
+    return 0
+
+
+def managed_users(paths):
+    owned = (read_json(paths.owned) or {}).get("paths") or []
+    names = []
+    for p in owned:
+        b = os.path.basename(p)
+        if p.endswith(".user") and not b[0].isdigit():
+            names.append(b[:-5])
+    return names
+
+
+def snapshot_paths(paths_list):
+    """Remember enough about each file to put it back byte for byte, including whether it was a
+    symlink — the <uid>.user links are symlinks and restoring one as a regular file would leave a
+    record that resolves by name and not by number (§2.3)."""
+    snap = {}
+    for p in paths_list:
+        try:
+            if os.path.islink(p):
+                snap[p] = ("symlink", os.readlink(p), None, None)
+            else:
+                st = os.stat(p)
+                with open(p, "rb") as f:
+                    snap[p] = ("file", f.read(), st.st_mode & 0o7777, st.st_gid)
+        except OSError:
+            continue
+    return snap
+
+
+def restore_paths(snap):
+    for p, (kind, data, mode, gid) in snap.items():
+        try:
+            if kind == "symlink":
+                atomic_symlink(p, data)
+            else:
+                atomic_write(p, data, mode=mode or 0o644, gid=gid or 0)
+        except OSError as e:
+            warn("could not restore %s: %s" % (p, e))
+
+
+def user_owned_paths(owned, name, uid, gid):
+    """The subset of the manifest that belongs to one user. Matched on basenames rather than by
+    re-deriving them, so a record this client wrote under an older naming scheme still gets
+    removed by the client that replaced it."""
+    want = {"%s.user" % name, "%s.user-privileged" % name, "%s.group" % name,
+            "%d.user" % uid, "%d.group" % gid}
+    out = []
+    for p in owned:
+        b = os.path.basename(p)
+        if b in want or b.startswith("%s:" % name):
+            out.append(p)
+    return out
+
+
+def materialise_local(paths, owned):
+    """useradd with the SAME uid, the same home, the same group memberships and the shadow hash
+    copied out of the record — so every file in every home directory still belongs to the person
+    who owns it. Returns (materialised, kept): the names that became local accounts, and the
+    record paths that had to stay because they could not."""
+    bundle = load_bundle(paths) or {}
+    by_name = {u["name"]: u for u in (bundle.get("users") or [])}
+    made, kept = [], []
+
+    if shutil.which("useradd") is None:
+        warn("useradd is not installed, so no managed account can be turned into a local one. "
+             "Leaving every record in place; the accounts keep working and simply stop being "
+             "refreshed.")
+        return [], list(owned)
+
+    # The bundle's own groups first, and as LOCAL groups: a supplementary membership is only
+    # meaningful if something can resolve the group afterwards, and the userdb record that
+    # resolved it is about to be deleted.
+    lg_names, lg_gids = local_groups(paths)
+    for g in bundle.get("groups") or []:
+        gname, ggid = g["name"], int(g["gid"])
+        if gname in lg_names or ggid in lg_gids:
+            continue
+        for p in [p for p in owned if os.path.basename(p) in
+                  ("%s.group" % gname, "%d.group" % ggid)]:
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
+        r = subprocess.run(["groupadd", "-g", str(ggid), gname], capture_output=True, text=True)
+        if r.returncode != 0:
+            warn("could not create local group %s: %s" % (gname, (r.stderr or "").strip()))
+
+    for name in managed_users(paths):
+        u = by_name.get(name)
+        if not u:
+            # No bundle entry to copy from — the hash, the uid and the home all live there, and
+            # inventing any of them would produce an account that is not the same account.
+            kept.extend(user_owned_paths(owned, name, -1, -1))
+            warn("%s has a record but is not in the cached bundle, so there is nothing to copy "
+                 "its uid and password from. Leaving the record in place." % name)
+            continue
+        uid, gid = int(u["uid"]), int(u.get("gid", u["uid"]))
+        home = u.get("home") or "/home/%s" % name
+        shell = u.get("shell") or "/bin/bash"
+
+        mine = user_owned_paths(owned, name, uid, gid)
+        snap = snapshot_paths(mine)
+        for p in mine:
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
+
+        subprocess.run(["groupadd", "-g", str(gid), name], capture_output=True)
+        p = subprocess.run(
+            ["useradd", "-u", str(uid), "-g", str(gid), "-d", home, "-s", shell,
+             "-c", u.get("real_name") or "", "-M", name],
+            capture_output=True, text=True)
+        if p.returncode != 0:
+            warn("could not create local account %s: %s" % (name, (p.stderr or "").strip()))
+            restore_paths(snap)
+            kept.extend(mine)
+            continue
+        hashes = u.get("hashed_password") or []
+        if hashes and shutil.which("usermod"):
+            # -p takes the CRYPT HASH, not a password, which is what makes "the same password"
+            # true without the password ever being known here.
+            subprocess.run(["usermod", "-p", hashes[0], name], capture_output=True)
+        for g in u.get("groups") or []:
+            subprocess.run(["gpasswd", "-a", name, g], capture_output=True)
+        made.append(name)
+
+    # Anything left in the manifest that belonged to no user — the admin group's records, say.
+    for p in owned:
+        if p in kept:
+            continue
+        try:
+            os.unlink(p)
+        except OSError:
+            pass
+    return made, kept
+
+
+def strip_subid(paths, names):
+    names = set(names)
+    for path in (paths.subuid, paths.subgid):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+        except OSError:
+            continue
+        keep = [l for l in lines if l.split(":", 1)[0] not in names]
+        if len(keep) != len(lines):
+            atomic_write(path, "".join(keep), mode=0o644)
+
+
+def confirm(question):
+    if not sys.stdin.isatty():
+        return False
+    try:
+        return input("%s [y/N] " % question).strip().lower() in ("y", "yes")
+    except EOFError:
+        return False
+
+
+def cmd_verify(argv):
+    """The diagnostic path, with EXIT CODES AS AN INTERFACE — the way plan/18 §7.4 made
+    @DISTRO_ID@-domain verify's codes one:
+
+        0  reachable and the cached state verifies
+        2  network or DNS: the API could not be reached
+        3  the API rejected our credentials — the device needs re-enrolling
+        4  clock outside tolerance for TLS
+        5  signature or anti-rollback failure — the cached bundle is not trustworthy
+    """
+    opts = parse_opts(argv, {"--root": str})
+    paths = Paths(opts.get("--root", "/"))
+    rc = 0
+
+    print("== keyring")
+    if os.path.exists(KEYRING) and os.path.getsize(KEYRING) > 0:
+        print("   %s (%d bytes)" % (KEYRING, os.path.getsize(KEYRING)))
+    else:
+        print("   MISSING: %s — no bundle can ever be verified on this image" % KEYRING)
+        rc = 5
+
+    print("== clock")
+    if time.time() < 1700000000:
+        print("   the clock is implausibly far in the past; TLS will reject every certificate")
+        rc = rc or 4
+    else:
+        print("   %s" % now_rfc3339())
+
+    print("== cached bundle")
+    if os.path.exists(paths.bundle) and os.path.exists(paths.bundle_sig):
+        try:
+            with open(paths.bundle, "rb") as f:
+                data = f.read()
+            with open(paths.bundle_sig, "r", encoding="utf-8") as f:
+                sig = f.read()
+            verify_signature(data, sig)
+            b = json.loads(data.decode("utf-8"))
+            print("   signature OK, serial %s, issued %s"
+                  % (b.get("serial"), b.get("issued_at")))
+            high = 0
+            try:
+                with open(paths.serial, "r", encoding="utf-8") as f:
+                    high = int(f.read().strip() or 0)
+            except (OSError, ValueError):
+                pass
+            if int(b.get("serial", 0)) < high:
+                print("   ROLLBACK: the cached bundle is older than serial %d" % high)
+                rc = 5
+        except Fatal as e:
+            print("   %s" % e)
+            rc = 5
+    else:
+        print("   none cached")
+
+    print("== NSS round-trip")
+    users = managed_users(paths)
+    if not users:
+        print("   no managed users provisioned")
+    else:
+        name = users[0]
+        try:
+            e = pwd.getpwnam(name)
+            print("   getent passwd %s -> uid %d, home %s" % (name, e.pw_uid, e.pw_dir))
+            try:
+                pwd.getpwuid(e.pw_uid)
+            except KeyError:
+                print("   BUT getent passwd %d finds nothing — the <uid>.user symlink is "
+                      "missing, and every ls -l in that home prints a bare number" % e.pw_uid)
+                rc = rc or 5
+        except KeyError:
+            print("   getent passwd %s FOUND NOTHING — nss-systemd is not resolving "
+                  "/etc/userdb" % name)
+            rc = rc or 5
+        priv = os.path.join(paths.userdb, "%s.user-privileged" % name)
+        if os.path.exists(priv):
+            st = os.stat(priv)
+            gname = ""
+            try:
+                gname = grp.getgrgid(st.st_gid).gr_name
+            except KeyError:
+                gname = str(st.st_gid)
+            print("   %s is %04o root:%s" % (os.path.basename(priv), st.st_mode & 0o7777, gname))
+            if (st.st_mode & 0o7777) != PRIV_MODE or gname != "shadow":
+                print("   EXPECTED 0640 root:shadow — at any other mode a managed user can log "
+                      "in at the greeter and cannot unlock their own screen")
+                rc = rc or 5
+
+    print("== control plane")
+    enrollment = read_json(paths.enrollment)
+    if not enrollment:
+        print("   not enrolled")
+        return rc
+    api = Api(enrollment["api_base"], enrollment["device_secret"],
+              insecure=os.environ.get("_MANAGED_TEST_INSECURE") == "1")
+    try:
+        status, _, _ = api.request("GET", "/v1/devices/%s/bundle" % enrollment["device_id"],
+                                   etag=(read_json(paths.status_cache) or {}).get("bundle_etag"))
+        print("   %s answered (HTTP %d)" % (enrollment["api_base"], status))
+    except ApiError as e:
+        if e.status == 0:
+            print("   could not reach %s: %s" % (enrollment["api_base"], e))
+            return 2
+        if e.status in (401, 403):
+            print("   %s rejected this device's credentials — it needs re-enrolling"
+                  % enrollment["api_base"])
+            return 3
+        if e.status == 410:
+            print("   this device has been revoked at the control plane")
+            return 3
+        print("   %s returned HTTP %d" % (enrollment["api_base"], e.status))
+        return 2
+    except Fatal as e:
+        print("   %s" % e)
+        return 2
+    return rc
+
+
+def cmd_print_config(argv):
+    """Render the records a bundle implies and WRITE NOTHING. This is what the offline suite
+    diffs against golden records — including the <uid>.user symlinks, the .membership file names
+    and the mode on .user-privileged, all three of which are silent failures (§12)."""
+    opts = parse_opts(argv, {"--bundle": str, "--root": str})
+    bundle_path = opts.get("--bundle")
+    if not bundle_path:
+        raise Fatal("--print-config needs --bundle FILE")
+    paths = Paths(opts.get("--root", "/"))
+    with open(bundle_path, "rb") as f:
+        raw = f.read()
+    doc = json.loads(raw.decode("utf-8"))
+    # Accept either a bare bundle or the signed envelope the API serves, so a golden file can be
+    # exactly what the wire carries.
+    if "bundle" in doc and isinstance(doc.get("bundle"), str):
+        doc = json.loads(doc["bundle"])
+
+    # priv_gid is reported symbolically rather than numerically: the gid of group shadow is 42
+    # on this image and need not be on a developer's laptop, and a golden diff must not depend
+    # on which machine ran it.
+    entries, provisioned = render(doc, paths, priv_gid=None)
+
+    # Printed WITHOUT the --root prefix. The golden files in tests/managed-golden/ are then the
+    # paths the machine actually gets, and a diff does not depend on where the test unpacked its
+    # fake root — which is the whole reason this output is diffable at all.
+    def show(path):
+        return path[len(paths.root):] if paths.root and path.startswith(paths.root) else path
+
+    for path in sorted(entries):
+        e = entries[path]
+        if e.kind == "symlink":
+            print("===== %s -> %s =====" % (show(path), e.target))
+            continue
+        owner = "root:shadow" if e.mode == PRIV_MODE else "root:root"
+        print("===== %s (%04o %s) =====" % (show(path), e.mode, owner))
+        if e.content:
+            sys.stdout.write(e.content)
+
+    admin = doc.get("admin") or {}
+    if admin.get("group") and admin.get("sudo"):
+        print("===== %s (0440 root:root) =====" % show(paths.sudoers))
+        sys.stdout.write(render_sudoers(admin["group"]))
+    if admin.get("group") and admin.get("polkit"):
+        print("===== %s (0644 root:root) =====" % show(paths.polkit_admin))
+        sys.stdout.write(render_polkit_admin(admin["group"]))
+    if ((doc.get("policy") or {}).get("flatpak") or {}).get("install_requires_admin"):
+        print("===== %s (0644 root:root) =====" % show(paths.polkit_flatpak))
+        sys.stdout.write(render_polkit_flatpak(admin.get("group") or ""))
+    print("===== %s (0644 root:root) =====" % show(paths.subuid))
+    sys.stdout.write(render_subid(provisioned, []))
+    return 0
+
+
+# ---------------------------------------------------------------------------------------------
+# argument parsing
+# ---------------------------------------------------------------------------------------------
+# Deliberately not argparse: the subcommands share almost no options, argparse's subparsers
+# would be more code than this, and its error paths call sys.exit() with codes this program is
+# very particular about (§4.1).
+
+
+def parse_opts(argv, takes_value, flags=frozenset()):
+    out = {"_positional": []}
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a in takes_value:
+            if i + 1 >= len(argv):
+                raise Fatal("%s needs a value" % a)
+            out[a] = argv[i + 1]
+            i += 2
+        elif a in flags:
+            out[a] = True
+            i += 1
+        elif a in ("-h", "--help"):
+            usage()
+            sys.exit(0)
+        elif a.startswith("-"):
+            raise Fatal("unknown option: %s" % a)
+        else:
+            out["_positional"].append(a)
+            i += 1
+    return out
+
+
+def usage():
+    print("""%(id)s-managed — managed mode: users and policy from a hosted control plane
+
+  enroll   join this machine to an organisation with a one-time code
+  sync     fetch and apply the current policy bundle (what the timer runs)
+  status   what is in force on this machine, from cached state, without the network
+  policy   the policy this machine is enforcing
+  passwd   change a managed user's password (needs the control plane)
+  verify   diagnose enrolment, signatures and NSS, with exit codes as an interface
+  leave    stop being managed; by default every managed account becomes a local one
+
+enroll options:
+  --code CODE          the enrolment code from the web interface   (required)
+  --name NAME          what to call this device                    (default: hostname)
+  --api URL            a different control plane                   (default: %(api)s)
+  --root PATH          operate on a mounted target instead of /
+
+sync options:
+  --now                ignore the cached ETag and re-fetch
+  --quiet              say nothing unless something changed
+
+leave options:
+  --purge              remove the managed accounts instead of making them local
+  --force              do not ask, and do not tell the control plane
+
+  --print-config --bundle FILE
+                       print the files a bundle would produce, and write nothing
+""" % {"id": ID, "api": API_BASE_DEFAULT})
+
+
+COMMANDS = {
+    "enroll": cmd_enroll,
+    "sync": cmd_sync,
+    "status": cmd_status,
+    "policy": cmd_policy,
+    "passwd": cmd_passwd,
+    "verify": cmd_verify,
+    "leave": cmd_leave,
+}
+
+
+def main(argv):
+    if not argv or argv[0] in ("-h", "--help"):
+        usage()
+        return 0
+    if argv[0] == "--print-config":
+        return cmd_print_config(argv[1:])
+    fn = COMMANDS.get(argv[0])
+    if fn is None:
+        usage()
+        return 1
+    return fn(argv[1:])
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except Fatal as exc:
+        print("error: %s" % exc, file=sys.stderr)
+        sys.exit(1)
+    except KeyboardInterrupt:
+        sys.exit(130)

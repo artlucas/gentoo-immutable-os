@@ -1,0 +1,22 @@
+# The managed-mode sync schedule (plan/19 §5.6).
+#
+# DISABLED in the vendor preset and enabled by `@DISTRO_ID@-managed enroll`. An image that has
+# never enrolled ships this file and no enablement symlink, which stage 40 asserts.
+[Unit]
+Description=@DISTRO_NAME@ managed-mode policy sync schedule
+Documentation=man:@DISTRO_ID@-managed(8)
+
+[Timer]
+# Not at boot-complete: a machine that has been off for a week should pick up a revoked account
+# early, and the sync unit cannot fail the boot (see the service).
+OnBootSec=3min
+OnUnitActiveSec=1h
+# Ten devices in one house must not arrive at the control plane together, and a household's
+# uplink is one connection (§5.6). The jitter is a quarter of the interval.
+RandomizedDelaySec=15min
+# A laptop that was asleep at the scheduled time syncs when it wakes, rather than waiting for
+# the next whole interval.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

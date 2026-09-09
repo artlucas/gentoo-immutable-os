@@ -226,6 +226,21 @@ cmd_join() {
     need_root
     [[ -d ${root%/}/etc ]] || die "--root $root does not look like a root filesystem"
 
+    # ONE MODE AT A TIME (plan/19 §8.7). Local-only, AD-joined and managed are mutually
+    # exclusive, and both CLIs enforce it in both directions — $ID-managed enroll carries the
+    # mirror of this check. There is no technical reason the UID spaces would collide (sssd's
+    # are SID-derived and far above 60000, managed ones are capped at 60000), but two systems
+    # provisioning accounts on one machine is a support burden with no user behind it.
+    #
+    # PREFLIGHT, before adcli is run and before anything is written — which is what makes
+    # T-MAN-7's "refuses and writes nothing" true rather than merely likely.
+    if [[ -f ${root%/}/var/lib/${ID}/managed/enrollment.json ]]; then
+        die "this machine is enrolled in managed mode, which owns its accounts and policy.
+  Managed mode and an Active Directory join are mutually exclusive. To switch:
+      sudo ${ID}-managed leave
+  (that leaves every managed account behind as an ordinary local account)"
+    fi
+
     # Kerberos rejects a clock skew over five minutes, and the error it gives names neither the
     # clock nor the cause. systemd-timesyncd is enabled in this image's vendor preset, so the
     # common case needs nothing; say so plainly when it is not the common case.

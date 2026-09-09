@@ -6,6 +6,7 @@
 #   run-vm.sh IMG --test smoke             # inject test-mode credential (self-reporting boot)
 #   run-vm.sh IMG --test update --update-url http://10.0.2.2:8000/stable
 #   run-vm.sh IMG --test domain --domain domain=corp.test,user=Administrator,password=...
+#   run-vm.sh IMG --test managed --managed api=https://10.0.2.2:8443,code=K7QF-9M2B,...
 #   run-vm.sh IMG --writable                # guest writes hit IMG (see snapshot note below)
 #   run-vm.sh IMG --disk-size 32G           # bigger virtual disk; repart grows /var into it
 #   run-vm.sh IMG --disk-size 32G --writable  # ...and the overlay persists across reboots
@@ -21,10 +22,10 @@ export STAGE_NAME=run-vm
 source "$SCRIPT_DIR/lib/common.sh"
 
 IMG="${1:-}"; shift || true
-[[ -n $IMG && -f $IMG ]] || die "usage: run-vm.sh IMG [--headless LOG] [--test smoke|update|domain] [--update-url URL] [--domain SPEC] [--disk-size SIZE] [--extra-disk SIZE]"
+[[ -n $IMG && -f $IMG ]] || die "usage: run-vm.sh IMG [--headless LOG] [--test smoke|update|domain|managed] [--update-url URL] [--domain SPEC] [--managed SPEC] [--disk-size SIZE] [--extra-disk SIZE]"
 
 HEADLESS_LOG='' TEST_MODE='' TEST_URL='' MEM=4096 SNAPSHOT=on DISK_SIZE='' EXTRA_DISK=''
-DOMAIN_SPEC=''
+DOMAIN_SPEC='' MANAGED_SPEC=''
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --headless)   HEADLESS_LOG="$2"; shift 2 ;;
@@ -34,6 +35,9 @@ while [[ $# -gt 0 ]]; do
     # rather than four, because io.systemd.credential values are SMBIOS strings and the
     # guest parses one line more legibly than it juggles four optional ones.
     --domain)     DOMAIN_SPEC="$2"; shift 2 ;;
+    # api=<url>,code=<c>,user=<u>,password=<p> for --test managed (plan/19). One credential for
+    # the same reason --domain is one, and subject to the same comma-doubling rule below.
+    --managed)    MANAGED_SPEC="$2"; shift 2 ;;
     --memory)     MEM="$2"; shift 2 ;;
     --writable)   SNAPSHOT=off; shift ;;
     --disk-size)  DISK_SIZE="$2"; shift 2 ;;
@@ -190,6 +194,11 @@ if [[ -n $TEST_MODE ]]; then
   # credentials here never hit this because a URL and a mode name contain no commas.
   if [[ -n $DOMAIN_SPEC ]]; then
     QEMU+=(-smbios "type=11,value=io.systemd.credential:${DISTRO_ID}.domain=${DOMAIN_SPEC//,/,,}")
+  fi
+  # Same comma doubling, and it matters more here: a managed spec carries a URL with a port and
+  # three passwords, so it is the longest of these and the most likely to contain a comma.
+  if [[ -n $MANAGED_SPEC ]]; then
+    QEMU+=(-smbios "type=11,value=io.systemd.credential:${DISTRO_ID}.managed=${MANAGED_SPEC//,/,,}")
   fi
 fi
 

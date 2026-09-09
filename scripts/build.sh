@@ -14,6 +14,8 @@
 #                                          # rebuild from a vendored archive, no network at all
 #   ./scripts/build.sh --with-test-dc      # stand up a throwaway Samba AD domain for
 #                                          # stage 70's domain tests (plan/18)
+#   ./scripts/build.sh --with-test-api     # stand up a throwaway managed-mode control plane
+#                                        for the stage-70 managed tests (plan/19 Phase B)
 #   ./scripts/build.sh --dry-run           # print what would run, execute nothing
 #
 # Runtimes: docker (default), podman, none (run stages directly — Linux host that
@@ -39,6 +41,7 @@ usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' 
 
 RUNTIME=auto FROM='' ONLY='' DRY_RUN=0 CLEAN=0 FORCE=0 LIST=0 OFFLINE=0 VENDOR_DIR='' LIST_PROFILES=0
 WITH_TEST_DC=0
+WITH_TEST_API=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --from)         FROM="$2"; shift 2 ;;
@@ -64,6 +67,7 @@ while [[ $# -gt 0 ]]; do
     # every other test in the suite is unaffected by its absence — stage 70 skips the domain
     # tests when it is not there, the way stage 80 skips a live profile.
     --with-test-dc) WITH_TEST_DC=1; shift ;;
+    --with-test-api) WITH_TEST_API=1; shift ;;
     --dry-run)      DRY_RUN=1; shift ;;
     --runtime)      RUNTIME="$2"; shift 2 ;;
     --list)         LIST=1; shift ;;
@@ -312,6 +316,37 @@ if [[ $WITH_TEST_DC == 1 ]]; then
   mapfile -t AD_DC_ENV  < <(ad_dc_env_args)
 fi
 
+# ---- the test control plane (plan/19 Phase B) ----------------------------------------
+# Same shape as the DC above and the same rule: optional, off by default, not a stage. It
+# contributes only a network to join and a handful of environment variables; managed mode needs
+# no DNS tricks, because the API base is a URL the client is handed rather than a domain it has
+# to discover (scripts/lib/managed-api.sh).
+MANAGED_API_ARGS=() MANAGED_API_ENV=()
+if [[ ${WITH_TEST_API:-0} == 1 ]]; then
+  [[ $OFFLINE == 1 ]] && die "--with-test-api needs a network to build its image (it pip-installs
+  FastAPI into a venv); it is incompatible with --offline. The managed tests skip cleanly on
+  offline builds by design."
+  [[ $RUNTIME == none ]] && die "--with-test-api needs a container runtime (it runs the control
+  plane in one); --runtime none cannot provide it."
+  # shellcheck source=lib/managed-api.sh
+  source "$SCRIPT_DIR/lib/managed-api.sh"
+  if [[ $DRY_RUN == 0 ]]; then
+    managed_api_build "$RUNTIME" "$BUILDER_TAG"
+    managed_api_up "$RUNTIME"
+    # Composed with the DC's trap rather than replacing it: both fixtures can run in one build,
+    # and a bare `trap managed_api_down EXIT` would silently leave a domain controller running.
+    if [[ $WITH_TEST_DC == 1 ]]; then
+      trap 'managed_api_down "$RUNTIME"; ad_dc_down "$RUNTIME"' EXIT
+    else
+      trap 'managed_api_down "$RUNTIME"' EXIT
+    fi
+  else
+    log "DRY-RUN: would build $MANAGED_API_TAG and start $MANAGED_API_NAME at $MANAGED_API_IP"
+  fi
+  mapfile -t MANAGED_API_ARGS < <(managed_api_run_args)
+  mapfile -t MANAGED_API_ENV  < <(managed_api_env_args)
+fi
+
 # ---- dispatch ------------------------------------------------------------------------
 KVM_ARGS=()
 [[ -e /dev/kvm ]] && KVM_ARGS=(--device /dev/kvm)
@@ -340,6 +375,14 @@ for s in "${STAGES[@]}"; do
     if [[ ${#AD_DC_ARGS[@]} -gt 0 && $n == 70 ]]; then
       STAGE_DC_ARGS=("${AD_DC_ARGS[@]}"); STAGE_DC_ENV=("${AD_DC_ENV[@]}")
       NET_ARGS=()   # --network none and --network <net> are mutually exclusive
+    fi
+    # The control plane sits on the SAME user-defined network as the DC, so when both fixtures
+    # are up the second --network would be a duplicate flag docker rejects. Only the environment
+    # is added in that case; when the API runs alone it brings the network itself.
+    if [[ ${#MANAGED_API_ENV[@]} -gt 0 && $n == 70 ]]; then
+      [[ ${#STAGE_DC_ARGS[@]} -eq 0 ]] && STAGE_DC_ARGS=("${MANAGED_API_ARGS[@]}")
+      STAGE_DC_ENV+=("${MANAGED_API_ENV[@]}")
+      NET_ARGS=()
     fi
     run "$RUNTIME" run --rm --privileged \
       "${KVM_ARGS[@]}" \

@@ -1,0 +1,17 @@
+# The managed-mode sync must not run on a machine that has never enrolled (plan/19 §8.1).
+#
+# Same rule, and the same failure mode, as the sssd drop-in beside it (plan/18 §5.1):
+# systemd-boot-check-no-failures.service is enabled in the vendor preset and gates
+# boot-complete.target, so a unit that starts and FAILS is a failed boot — the boot counter is
+# not cleared, and after three of them systemd-boot falls back to the previous image (plan/01).
+# On a factory image, where there is no previous image, it simply fails every boot forever.
+#
+# A unit whose Condition fails is recorded as SKIPPED, not failed, and skipped is precisely the
+# distinction boot-check-no-failures cares about.
+#
+# Belt and braces with the preset's `disable @DISTRO_ID@-managed-sync.timer`, deliberately: a
+# preset that quietly did not take has produced a broken image in this project before, and the
+# two mechanisms fail independently. `@DISTRO_ID@-managed enroll` creates the file this names;
+# `leave` removes it, and the machine goes back to skipping this unit.
+[Unit]
+ConditionPathExists=/var/lib/@DISTRO_ID@/managed/enrollment.json
