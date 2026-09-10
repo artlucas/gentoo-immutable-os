@@ -1020,9 +1020,28 @@ else
     || violation "libnss_systemd.so no longer exports _nss_systemd_getspnam_r — a managed user
   would resolve through getent passwd and have no password to check"
 fi
-[[ -f $T/usr/share/$DISTRO_ID/managed-ui/main.qml ]] \
-  || violation "/usr/share/$DISTRO_ID/managed-ui/main.qml missing after prune — the /usr/share
+# The front end, in whichever direction this profile wants it. On a medium somebody keeps, the
+# /usr/share sweeps above run straight over this path and taking it leaves a wrapper that opens
+# on nothing. On a live medium stage 40 removed all three files on purpose (plan/20 §2.2), and
+# the check that matters is the opposite one — the front end ships from config/rootfs, not from
+# a package, so neither the lock nor the audit would ever mention it coming back.
+if [[ $PROFILE_ROLE == live ]]; then
+  MANAGED_UI_AFTER=""
+  for f in "usr/bin/$DISTRO_ID-managed-ui" \
+           "usr/share/applications/$DISTRO_ID-managed-ui.desktop" \
+           "usr/share/$DISTRO_ID/managed-ui"; do
+    [[ -e $T/$f ]] && MANAGED_UI_AFTER+=" /$f"
+  done
+  [[ -z ${MANAGED_UI_AFTER// /} ]] \
+    || violation "the managed-mode front end survived onto a PROFILE_ROLE=$PROFILE_ROLE medium:$MANAGED_UI_AFTER
+  A live session is never enrolled, so this is a 'Managed Settings' entry in Kickoff that can
+  only answer 'not enrolled'. Stage 40 removes it just after install_rootfs_overlay; if it is
+  here, those paths no longer match what the overlay installs."
+else
+  [[ -f $T/usr/share/$DISTRO_ID/managed-ui/main.qml ]] \
+    || violation "/usr/share/$DISTRO_ID/managed-ui/main.qml missing after prune — the /usr/share
   sweeps run over this path, and without it the front end opens on nothing"
+fi
 # ...and the timer must still be disabled, for exactly the reason sssd must be (plan/19 §8.1).
 MANAGED_ENABLED_AFTER="$(find "$T/etc/systemd/system" -name "$DISTRO_ID-managed*" \
   -printf '%P\n' 2>/dev/null | tr '\n' ' ')"

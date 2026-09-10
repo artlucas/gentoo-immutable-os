@@ -600,6 +600,48 @@ assert_true "...and expected-packages.desktop.txt lists both" \
     bash -c "grep -qx 'kde-plasma/plasma-workspace-wallpapers' '$REPO_ROOT/config/portage/expected-packages.desktop.txt' &&
              grep -qx '${I_DISTRO_ID}-base/${I_DISTRO_ID}-kcm-managed' '$REPO_ROOT/config/portage/expected-packages.desktop.txt'"
 
+# ---- the managed-mode QML front end: the half no lock can see (plan/20 §2.2) ---------------
+# Every assertion above this one reads a lock or an audit list, and for the KCM that is enough.
+# For the front end it is not, and the gap is the bug it was written for: <id>-managed-ui is
+# three files in config/rootfs, install_rootfs_overlay copies the whole tree onto every profile,
+# and so a live medium showed "Managed Settings" in Kickoff while installer.lock,
+# expected-packages.installer.txt and the KCM assertions above all correctly reported the module
+# gone. Nothing that records what the image contains could see it.
+#
+# So these assert the removal and its two guards directly, by path. They are deliberately
+# literal: the failure mode is a rename in config/rootfs leaving a removal that matches nothing,
+# and a test that recomputed the paths the same way the stage does would rename right along with
+# it and stay green.
+assert_true "the overlay ships the managed front end unconditionally (so a profile must remove it)" \
+    bash -c "[[ -f '$REPO_ROOT/config/rootfs/usr/bin/distro-managed-ui.in' &&
+                -f '$REPO_ROOT/config/rootfs/usr/share/distro/managed-ui/main.qml.in' &&
+                -f '$REPO_ROOT/config/rootfs/usr/share/applications/distro-managed-ui.desktop.in' ]]"
+assert_true "...and its launcher entry is the 'Managed Settings' row a live medium must not show" \
+    grep -qx 'Name=Managed Settings' \
+        "$REPO_ROOT/config/rootfs/usr/share/applications/distro-managed-ui.desktop.in"
+assert_true "stage 40 removes the wrapper and the launcher entry on live media" \
+    grep -qF 'rm -f  -- "${TARGET:?}/usr/bin/${DISTRO_ID}-managed-ui"' "$STAGE40"
+assert_true "...and the QML the wrapper opens" \
+    grep -qF 'rm -rf -- "${TARGET:?}/usr/share/${DISTRO_ID}/managed-ui"' "$STAGE40"
+# The removal is only correct if it is INSIDE a live-role guard: unguarded, it would take the
+# front end off the product too, and the product is the one profile that needs it.
+ui_rm_line=$(grep -n 'rm -rf -- "${TARGET:?}/usr/share/${DISTRO_ID}/managed-ui"' "$STAGE40" | head -1 | cut -d: -f1)
+ui_guard_line=$(awk 'NR < '"$ui_rm_line"' && /^if \[\[ \$PROFILE_ROLE == live \]\]; then$/ { n = NR } END { print n }' "$STAGE40")
+assert_true "...inside a PROFILE_ROLE=live guard, so the desktop profile keeps its front end" \
+    bash -c '[[ -n $1 && -n $2 && $1 -lt $2 && $(( $2 - $1 )) -lt 12 ]]' _ "$ui_guard_line" "$ui_rm_line"
+# Both stages assert the ABSENCE, because the removal itself is silent when it stops matching.
+assert_true "stage 40 verifies the front end is gone from a live medium" \
+    grep -qF 'the managed-mode front end is on a PROFILE_ROLE=$PROFILE_ROLE medium' "$STAGE40"
+assert_true "stage 50 re-checks it after the prune, where nothing else would notice" \
+    grep -qF 'the managed-mode front end survived onto a PROFILE_ROLE=$PROFILE_ROLE medium' "$STAGE50"
+# The line this whole section draws: the CLI is not the front end and must stay, or the
+# Calamares enrolment page has nothing to exec.
+assert_false "...but the CLI itself is never removed — managedenroll execs it" \
+    grep -qE 'rm .*\$\{TARGET:\?\}/usr/bin/\$\{DISTRO_ID\}-managed"' "$STAGE40"
+assert_true "...and the managedenroll module is what execs it from the live session" \
+    grep -qF '"/usr/bin/%s-managed" % ID' \
+        "$REPO_ROOT/config/calamares/local-modules/managedenroll/main.py.in"
+
 # ---- GRUB: 68.4 MiB of a bootloader this medium never runs (plan/20 §2.3) -------------------
 # A file deletion, because sys-boot/grub is an unconditional RDEPEND of app-admin/calamares and
 # keeps arriving. Nothing in the package audit can see this one, so these assertions and stage

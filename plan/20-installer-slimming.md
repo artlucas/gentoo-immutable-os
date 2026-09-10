@@ -68,6 +68,7 @@ there:
 | the wallpaper collection, Spectacle, the managed KCM, Discover | named in `@desktop` | `#not-live` marker in the set — never emerged, gone from the lock and the audit |
 | ghostscript and its fonts | a USE flag on a package that stays | `-pdf` in `package.use/profile.installer`, the profile-scoped fragment |
 | GRUB, Breeze's `Next` wallpaper, the Emoji Selector | files inside a package that has to stay | no lever exists — stage 50 deletes the files |
+| the managed-mode QML front end | files this repo's own overlay ships, on every profile | no set can name it — stage 40 removes it just after installing it |
 
 The first is much the best of the three, and the ordering is not aesthetic. A set marker removes
 the atom from `installer.lock` and `expected-packages.installer.txt`, so the audit records what
@@ -157,7 +158,7 @@ And the value is an **absolute path to the directory**, not the package id, in b
 an `http://` URL and not into a wallpaper. A directory is what the wallpaper KCM itself stores,
 and `determineProviderType()` reads `Provider::Type::Package` straight off it being one.
 
-### 2.2 The managed System Settings module — ~60 KiB, and not about size
+### 2.2 The managed-mode settings surfaces — ~65 KiB, and not about size
 
 `<id>-base/<id>-kcm-managed` is `#not-live` for a reason that has nothing to do with bytes: a
 live session is never enrolled. Managed mode (plan/19) is about a machine an organisation keeps
@@ -168,6 +169,35 @@ stick that is discarded twenty minutes later it answers a question nobody can as
 installer-only and stays exactly where it is. It is how the machine *being installed* gets
 enrolled, which is the one managed-mode job a live medium genuinely has. The split is the point:
 the two halves live in different sets precisely so they can differ.
+
+**And the KCM was only half of the surface.** Marking the package `#not-live` took it out of
+`installer.lock` and out of the audit, and a live medium still showed **Managed Settings** in
+Kickoff under System — because the *other* front end is not a package at all. `<id>-managed-ui`
+(plan/19 §7.2) is three files in `config/rootfs`:
+
+```
+usr/bin/<id>-managed-ui                          the wrapper
+usr/share/<id>/managed-ui/main.qml               the app
+usr/share/applications/<id>-managed-ui.desktop   Name=Managed Settings, Categories=Settings;System;
+```
+
+`install_rootfs_overlay` walks the whole of `config/rootfs`, so all three land on every profile
+unconditionally — 13.6 KiB of them, measured on the 0.3.0 installer target. No set marker can
+reach them and neither the lock nor the package audit can see them, which is exactly why this
+went unnoticed: every artifact that records what the image
+contains agreed the module was gone, and the launcher disagreed.
+
+So it takes the fourth mechanism in the table above, and it is not a new one — `/etc/distrobox`
+has used the same shape since plan/13: install the overlay, then remove what this profile must
+not have. Stage 40 does it immediately after `install_rootfs_overlay`, and both stage 40 and
+stage 50 then assert the *absence*, because a rename in `config/rootfs` would leave the removal
+silently matching nothing and put the entry straight back.
+
+**What stays, on purpose.** `/usr/bin/<id>-managed` — the CLI — is what the Calamares
+`managedenroll` module execs from the live session with `--root` pointed at the mounted target,
+so it is half of how the installed machine gets enrolled. The polkit action stays with it: it
+authorises `pkexec <id>-managed`, which is still on the medium. The line is between *the front
+end a person opens* and *the tool the installer drives*, not between "managed mode" and "not".
 
 ### 2.3 GRUB — −68.4 MiB installed, **−41.6 MiB EROFS**
 
@@ -477,6 +507,7 @@ Each of these looks like an obvious saving and is not:
 |---|---|---|---|---|
 | 2.1 | wallpapers off live media, less the one that stays | −254.7 | **−254.4** | done |
 | 2.2 | managed KCM off live media | −0.06 | ~0 | done |
+| 2.2 | managed QML front end off live media | −0.01 | ~0 | done |
 | 2.3 | GRUB, never executed | −68.4 | **−41.6** | done |
 | 2.4 | ghostscript + arphic/urw fonts | −96.0 | **−70.9** | done |
 | 2.5 | Spectacle + kquickimageeditor + OpenCV | −45.0 | **−22.3** | done |

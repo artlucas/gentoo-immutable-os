@@ -65,6 +65,32 @@ if [[ ${INCLUDE_DISTROBOX:-1} != 1 ]]; then
   rm -rf -- "${TARGET:?}/etc/distrobox"
 fi
 
+# The same argument as /etc/distrobox above, one surface further out — and it is the half of
+# plan/20 §2.2 that the set marker cannot reach.
+#
+# The managed-mode KCM is `#not-live` in config/portage/sets/desktop, so a live build never
+# emerges it. The QML front end beside it (plan/19 §7.2) is NOT a package: it is three files in
+# config/rootfs, and install_rootfs_overlay walks the whole tree, so /usr/bin/<id>-managed-ui,
+# its QML and its launcher entry land on every profile including this one. The result is a live
+# medium carrying "Managed Settings" in Kickoff under System — visually the exact row §2.2 was
+# written to remove, arriving by a different road. A live session enrols nothing, so the app
+# opens on "not enrolled" and is discarded with the stick twenty minutes later.
+#
+# THE CLI STAYS, and that split is the whole point. /usr/bin/<id>-managed is what the Calamares
+# managedenroll module execs — from this session, with --root pointed at the mounted target — so
+# it is how the machine BEING INSTALLED gets enrolled, the one managed-mode job a live medium
+# genuinely has. What goes is the front end a person would open; what stays is the tool the
+# installer drives. The polkit action stays with it for the same reason: it authorises
+# `pkexec <id>-managed`, and that binary is still here.
+if [[ $PROFILE_ROLE == live ]]; then
+  rm -f  -- "${TARGET:?}/usr/bin/${DISTRO_ID}-managed-ui" \
+            "${TARGET:?}/usr/share/applications/${DISTRO_ID}-managed-ui.desktop"
+  rm -rf -- "${TARGET:?}/usr/share/${DISTRO_ID}/managed-ui"
+  log "live profile ($BUILD_PROFILE): removed the managed-mode front end (launcher entry,
+  wrapper and QML) — a live session is never enrolled. The CLI stays: Calamares execs it to
+  enrol the installed system"
+fi
+
 # permissions the generic overlay rules can't know:
 [[ -f $TARGET/etc/sudoers.d/wheel ]] && chmod 0440 "$TARGET/etc/sudoers.d/wheel"
 
@@ -2013,12 +2039,34 @@ MANAGED_ENABLED="$(find "$TARGET/etc/systemd/system" -name "${DISTRO_ID}-managed
   Add a \`disable\` line for each to config/rootfs/usr/lib/systemd/system-preset/50-distro.preset.in."
 # The front end §7.2 measured as possible. Each half fails silently without the other: a wrapper
 # with no QML shows nothing, and QML with no qml6 is a file nobody can open.
-[[ -x $TARGET/usr/bin/${DISTRO_ID}-managed-ui ]] \
-  || die "verify: /usr/bin/${DISTRO_ID}-managed-ui is missing or not executable"
-[[ -f $TARGET/usr/share/$DISTRO_ID/managed-ui/main.qml ]] \
-  || die "verify: /usr/share/$DISTRO_ID/managed-ui/main.qml is missing. install_rootfs_overlay
+#
+# ...on a medium somebody keeps. On a live one the assertion runs the other way: section 1
+# deletes all three files right after install_rootfs_overlay, so what is checked here is that
+# the deletion actually matched. It is the only thing that would notice a rename — the overlay
+# would keep installing the front end under a new basename and the removal would keep silently
+# matching nothing, which is precisely how "Managed Settings" reached a live medium the set
+# marker was already excluding.
+if [[ $PROFILE_ROLE == live ]]; then
+  MANAGED_UI_LEFT=""
+  for f in "usr/bin/${DISTRO_ID}-managed-ui" \
+           "usr/share/applications/${DISTRO_ID}-managed-ui.desktop" \
+           "usr/share/$DISTRO_ID/managed-ui"; do
+    [[ -e $TARGET/$f ]] && MANAGED_UI_LEFT+=" /$f"
+  done
+  [[ -z ${MANAGED_UI_LEFT// /} ]] \
+    || die "verify: the managed-mode front end is on a PROFILE_ROLE=$PROFILE_ROLE medium:$MANAGED_UI_LEFT
+  A live session enrols nothing, so this is a Settings entry that can only ever say 'not
+  enrolled' (plan/20 §2.2). It ships from config/rootfs rather than from a package, so no set
+  marker can drop it — check the removal in section 1 of this stage against the paths above."
+  log "live profile ($BUILD_PROFILE): the managed-mode front end is deliberately absent"
+else
+  [[ -x $TARGET/usr/bin/${DISTRO_ID}-managed-ui ]] \
+    || die "verify: /usr/bin/${DISTRO_ID}-managed-ui is missing or not executable"
+  [[ -f $TARGET/usr/share/$DISTRO_ID/managed-ui/main.qml ]] \
+    || die "verify: /usr/share/$DISTRO_ID/managed-ui/main.qml is missing. install_rootfs_overlay
   rebrands the 'distro' segment in DIRECTORY names too (render_dest_dir); if this is absent,
   check whether it landed at /usr/share/distro/ instead."
+fi
 [[ -f $TARGET/usr/share/polkit-1/actions/org.$DISTRO_ID.managed.policy ]] \
   || die "verify: the managed-mode polkit action file is missing — the QML front end would have
   to be setuid or run under sudo to change anything"
@@ -2026,7 +2074,10 @@ MANAGED_ENABLED="$(find "$TARGET/etc/systemd/system" -name "${DISTRO_ID}-managed
   || die "verify: the NetworkManager dispatcher hook is missing or not executable. NetworkManager
   silently skips a non-executable dispatcher script, so sync-on-connect would never fire and
   nothing would say why."
-if profile_has_set desktop; then
+# Only where the front end above survived: on a live medium qml6 has no managed-mode caller,
+# and demanding it there would fail a build over a dependency of something this profile just
+# deleted on purpose.
+if [[ $PROFILE_ROLE != live ]] && profile_has_set desktop; then
   [[ -x $TARGET/usr/bin/qml6 ]] \
     || die "verify: /usr/bin/qml6 is not in the image, so the pure-QML managed front end cannot
   run. plan/19 §7.2 rests on it shipping; if dev-qt/qtdeclarative stopped installing it, the
