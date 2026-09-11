@@ -1,9 +1,0 @@
-# The managed-enrolment installer page (plan/19 §7.3, Phase D).
-#
-# /etc/calamares/modules is the FIRST path Calamares searches, so this overrides the copy the
-# <id>-calamares-managed package installs into /usr/share/calamares/modules.
----
-# Shown on the page under the code field. A shop imaging six identical machines puts its own name
-# here — through the same branding it already customises — so the person in front of the screen
-# recognises what they are being asked to join. Empty for a household enrolling one laptop.
-organisationHint: ""

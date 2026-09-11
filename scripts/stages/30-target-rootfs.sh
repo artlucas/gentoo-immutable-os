@@ -129,8 +129,39 @@ tgt_binhost="$(ROOT="$TARGET" PORTAGE_CONFIGROOT="$CONFIG_ROOT" portageq envvar 
 # different, so a build resumed with --from 30 silently keeps the old flags. That is how
 # x11-misc/xdg-utils kept its perl deps after being switched to -perl, and it would let any
 # later USE fix appear to apply while the image still carried the old build.
+#
+# OUR OWN OVERLAY PACKAGES ARE THE ONE THING NEITHER A BINPKG NOR AN INSTALLED COPY MAY SATISFY.
+# Portage decides a binpkg is still good from the ebuild, the CPV and the USE flags, and decides
+# an installed package needs nothing from the same three. None of them can see
+# config/portage/overlay/*/*/files/** — the C++ and QML this repo compiles into the image — so a
+# source edit leaves the rendered ebuild byte-identical, the depgraph says there is nothing to do,
+# and the image ships the previous build of our own code with no line anywhere saying so.
+# Measured on 2026-09-11, after the accounts page's view step was rewritten: stage 30 logged
+# ">>> Emerging binary (650 of 653) immos-base/immos-calamares-accounts-1.0" and went on to
+# assemble an image around the day-old plugin, with every assertion passing.
+#
+# --reinstall-atoms makes the depgraph treat them as not installed; --usepkg-exclude stops a
+# binpkg from answering in their place. Together they cost one source compile of two small
+# packages per build, and buy the property the rest of this pipeline assumes: the image contains
+# THIS checkout. The atoms are read off the rendered overlay rather than a hand-kept list, so a
+# third package is covered the day somebody adds it.
+mapfile -t OVERLAY_CP < <(
+  [[ -d $CONFIG_ROOT/overlay ]] \
+    && find "$CONFIG_ROOT/overlay" -mindepth 3 -maxdepth 3 -name '*.ebuild' -printf '%h\n' \
+       | sed "s|^$CONFIG_ROOT/overlay/||" | sort -u
+)
+OWN_CODE=()
+if (( ${#OVERLAY_CP[@]} )); then
+  OWN_CODE=( --reinstall-atoms "${OVERLAY_CP[*]}" --usepkg-exclude "${OVERLAY_CP[*]}" )
+  log "overlay packages rebuild from the checkout every time: ${OVERLAY_CP[*]}"
+else
+  warn "no overlay ebuilds under $CONFIG_ROOT/overlay — nothing forces a rebuild of this repo's
+  own packages, so an edit to one of them would not reach the image"
+fi
+
 ROOT="$TARGET" PORTAGE_CONFIGROOT="$CONFIG_ROOT" \
-  emerge --verbose --usepkg --with-bdeps=n --changed-use --quiet-build=y "${SETS[@]}"
+  emerge --verbose --usepkg --with-bdeps=n --changed-use --quiet-build=y \
+    "${OWN_CODE[@]}" "${SETS[@]}"
 
 # quick pre-prune report (full manifest + gate in stage 50)
 ensure_dir "$REPORT_DIR"

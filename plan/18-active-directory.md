@@ -602,6 +602,13 @@ decision — two systems provisioning accounts on one machine is a burden with n
 
 ## 7. The installer
 
+> **Superseded in part by [plan/21](21-installer-accounts-page.md).** Everything below described
+> the feature as a checkbox on Calamares' *stock* users page, which is how it shipped. plan/21
+> replaced that page: domain join is now the third **mode** of our own `accounts` page, the
+> `/usr/bin/realm` shim is deleted, and §7.2's conclusion is reversed — see the notes in each
+> subsection. §7.3 and §7.4's *reasoning* survives intact and is the reason the new job looks
+> the way it does; only the code that carries it moved.
+
 ### 7.1 Calamares already has an Active Directory page
 
 `config/calamares/modules/users.conf.in` has carried `allowActiveDirectory: false` since Phase A,
@@ -627,7 +634,23 @@ profile, ships a ~40-line `/usr/bin/realm` shim that parses those tokens and for
 is already the installer-only install path, and stage 40 asserts it is present on `installer` and
 absent everywhere else — the same converse assertion pattern that guards `/etc/calamares` itself.
 
+> **plan/21:** deleted. With the stock users module out of the sequence, nothing calls `realm`
+> any more, and `accountsetup` runs `<id>-domain join` directly. The assertion is now the
+> inverse — stage 40 dies if `/usr/bin/realm` exists on the medium, because a file with that
+> name that is not realmd is worse than no file at all. The shim's argv parsing goes; its
+> exit-code mapping and its `domain-pending.json` writer move into the job verbatim.
+
 ### 7.2 Why not a custom page
+
+> **Reversed by [plan/21](21-installer-accounts-page.md).** The Descriptor.h finding below is
+> still exactly true and is *why* the new page is a compiled plugin. What changed is the
+> cost/benefit: plan/19 Phase D built the machinery this section called "real new machinery"
+> — an in-repo ebuild repository that lets Portage compile a Calamares plugin against the
+> target's own Qt6/KF6 — for the managed-enrolment page, so the second plugin was nearly free.
+> And the last paragraph's conclusion turned out to be a description of a *default*, not of a
+> requirement: the local account is still not redundant in domain mode and is still created
+> there, exactly as argued below. It is redundant in **managed** mode, which this section did
+> not know about yet, and that is the case a strict either/or was needed for.
 
 Checked against the Calamares 3.4.2 source rather than remembered:
 
@@ -659,6 +682,12 @@ validate the domain before the destructive steps have run, because the page neve
 the operator typed anywhere an earlier module could read it. §7.4 is what that costs and how it
 is contained. All are reachable later from Phase E if they bite.
 
+> **plan/21:** all four are gone. The Advanced section carries `--ou`, `--admin-group` and
+> `--computer-name`; the cap is the job's own; and the page publishes everything it collects to
+> GlobalStorage (passwords excepted, which go to a 0600 file on tmpfs), so a `Check domain`
+> button can run `<id>-domain verify` before Next. It is advisory and does not block — a failed
+> join still cannot brick this mode, for §7.2's own reason.
+
 ### 7.3 The hostname ordering trap
 
 `ActiveDirectoryJob` is appended at `Config.cpp:1088`; `SetHostNameJob` at `:1109`. **The join
@@ -673,6 +702,11 @@ writes `<root>/etc/hostname` from GlobalStorage immediately after it mounts the 
 the shim reads it back. `SetHostNameJob` later writes the same value, which makes this a
 harmless duplicate rather than a conflict — and it keeps the local module count at three, which
 `tests/test-installer.sh` hard-asserts.
+
+> **plan/21:** the trap is gone rather than avoided, because the ordering is now ours: the
+> `accountsetup` job writes `/etc/hostname` and *then* joins, in one function, in that order.
+> `imagedeploy` still writes it early and that write is still load-bearing — it is what makes
+> the hostname independent of which module ran first — so both remain.
 
 ### 7.4 The installer verifies; it does not enroll itself — and a failed join must not fail the install
 
@@ -694,7 +728,13 @@ machine's own credential, only the DC can issue it, and it takes domain credenti
 only while the operator is standing at the installer. Deferring means the installed machine boots
 unjoined and someone with domain rights has to come back to it.
 
-**Verification cannot be moved before the disk is written.** `Config` keeps the domain, the admin
+**Verification cannot be moved before the disk is written.**
+> **plan/21:** it can now, and it is — as an advisory `Check domain` button, because the page
+> is ours and publishes what it collects. It still does not *block*, for the reason the rest of
+> this section gives. The one place where blocking became correct is managed mode, which
+> creates no local account and therefore has no fallback: plan/21 §3.
+
+`Config` keeps the domain, the admin
 account and the password in plain members and hands them straight to the job — nothing writes them
 to GlobalStorage. So no module that runs earlier can see them: not a `shellprocess` step ahead of
 `partition`, not `contextualprocess`, not a fourth local module. `/usr/bin/realm` is the first
@@ -969,10 +1009,18 @@ it answers.
 
 Offline suite, `tests/test-domain.sh`: `--print-config` output diffed against golden files;
 nsswitch names `sss` and stage 40's module loop knows it; the preset disables `sssd*` and the
-`ConditionPathExists` drop-in exists; `users.conf.in` sets `allowActiveDirectory: true` and the
-shim accepts **exactly** `join <domain> -U <user> --install=<path> --verbose`, quoted from
-`ActiveDirectoryJob.cpp` so a Calamares bump that changes it fails loudly; `@domain` is named by
-every profile and its two atoms appear in every `expected-packages.*.txt`.
+`ConditionPathExists` drop-in exists; `@domain` is named by every profile and its two atoms
+appear in every `expected-packages.*.txt`.
+
+> **Amended by [plan/21](21-installer-accounts-page.md).** Two of these cases described the shim
+> and are gone with it: `users.conf.in` setting `allowActiveDirectory: true`, and the shim
+> accepting **exactly** `join <domain> -U <user> --install=<path> --verbose` quoted from
+> `ActiveDirectoryJob.cpp`. What replaced them asserts the same property one layer down and
+> against a caller we own: `accountsetup` invokes `<id>-domain join --domain … --user … --root …
+> --password-stdin`, with `--ou`/`--admin-group`/`--computer-name` appended only when non-empty,
+> and the argv is asserted for **adjacency** so a flag cannot drift onto the wrong value. The
+> Calamares-bump tripwire is not lost, it moved: stage 40 now dies if `/usr/bin/realm` exists at
+> all, which is what a reappearing stock AD page would need.
 
 Build-time: the stage 40, 50 and 60 assertions listed in §2, §5.1 and §5.2.
 

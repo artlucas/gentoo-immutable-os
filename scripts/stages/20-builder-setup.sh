@@ -41,7 +41,7 @@ render_template "$REPO/config/portage/make.conf.in" "$PC/make.conf"
 #
 # A file named "profile.<name>" belongs to that build profile alone and is skipped by every
 # other one; everything else is shared and always copied. The case that forced this: the
-# installer profile's <id>-calamares-managed is built out of tree against the installed
+# installer profile's <id>-calamares-accounts is built out of tree against the installed
 # Calamares, and CalamaresConfig.cmake hardcodes LinguistTools into the REQUIRED Qt6 component
 # list every consumer inherits — so dev-qt/qttools needs USE=linguist to build the installer
 # page, while the desktop and console images want neither that flag nor the Qt Linguist GUI it

@@ -1,0 +1,13 @@
+# Module metadata. `name` MUST equal this directory's name or ModuleManager silently skips it
+# (ModuleManager::doInit compares the two and only warns when the descriptor is otherwise valid).
+# A skipped module here is an install that runs to "finished" having created no account at all.
+---
+type:       "job"
+name:       "accountsetup"
+interface:  "python"
+script:     "main.py"
+# Bigger than managedenroll's 2, smaller than imagedeploy's 60. What happens here is a useradd
+# and a chpasswd in the target — fast — plus, in domain mode, one bounded network round trip to a
+# domain controller. In managed mode the network work already happened on the page, before the
+# disk was touched, and what is left is a directory copy and one offline apply.
+weight:     6

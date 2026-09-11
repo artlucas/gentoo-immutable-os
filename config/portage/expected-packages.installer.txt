@@ -228,7 +228,7 @@ gui-libs/egl-gbm
 gui-libs/egl-wayland
 gui-libs/egl-wayland2
 gui-libs/libdecor
-immos-base/immos-calamares-managed
+immos-base/immos-calamares-accounts
 kde-apps/baloo-widgets
 kde-apps/dolphin
 kde-apps/kio-extras

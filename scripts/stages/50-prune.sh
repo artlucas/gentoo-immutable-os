@@ -487,7 +487,7 @@ fi
 # INSTALLER profile. config/portage/package.use/profile.installer turns dev-qt/qttools' linguist
 # flag on for that profile alone, because Calamares' exported CalamaresConfig.cmake hardcodes
 # LinguistTools into the REQUIRED Qt6 component list that every consumer of the Calamares CMake
-# package must satisfy — and <id>-calamares-managed is such a consumer. The flag is needed for
+# package must satisfy — and <id>-calamares-accounts is such a consumer. The flag is needed for
 # /usr/lib64/cmake/Qt6LinguistTools to exist at BUILD time; the GUI it also builds is not
 # wanted at RUN time. On desktop and console the flag is off, nothing here exists, and both the
 # deletion and its assertions below are no-ops — which is itself worth keeping, since they would

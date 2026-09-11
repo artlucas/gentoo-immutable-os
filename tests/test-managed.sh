@@ -267,6 +267,80 @@ PYEOF
 
         R="$("$PY" "$TMP/verify.py" "$GOLDEN/bundle.json" "$GOLDEN/bundle-untrusted.sig" 2>/dev/null)"
         assert_eq "REFUSED" "$R" "a bundle signed by a key not in the image is refused"
+
+        # ---- 6b. `apply`: the offline half of sync (plan/21 §6) ---------------------------
+        # The installer's accounts page enrols before the disk is written, so by the time the
+        # target exists there is already a verified bundle in the state directory and asking the
+        # control plane again could only lose — a machine whose network dropped in between would
+        # get no accounts at all. `apply` is what renders that cached bundle into a root with no
+        # network, and it is the SAME code path `sync` uses: apply_bundle() is called by both.
+        #
+        # This is also the assertion that justifies the shape of the transplant. accountsetup
+        # copies the state directory and NOT /etc, because /etc/subuid is an append to a file the
+        # target already has — so the last check here is that the live user's range survives.
+        AR="$TMP/applyroot"
+        mkdir -p "$AR/etc" "$AR/var/lib/$DISTRO_ID/managed"
+        printf 'root:x:0:0::/root:/bin/bash\nlive:x:1000:1000::/home/live:/bin/bash\n' > "$AR/etc/passwd"
+        printf 'root:x:0:\nwheel:x:10:live\nshadow:x:42:\nlive:x:1000:\n' > "$AR/etc/group"
+        printf 'live:100000:65536\n' > "$AR/etc/subuid"
+        printf 'live:100000:65536\n' > "$AR/etc/subgid"
+        cp "$GOLDEN/bundle.json" "$AR/var/lib/$DISTRO_ID/managed/bundle.json"
+        cp "$GOLDEN/bundle.sig"  "$AR/var/lib/$DISTRO_ID/managed/bundle.sig"
+
+        mgd_apply() {
+            _MANAGED_TEST_SKIP_ROOT=1 _MANAGED_TEST_KEYRING="$KR" \
+                "$PY" "$CLI" apply --root "$AR" "$@" 2>&1
+        }
+
+        # Not enrolled: refused, and named as such. This is the one precondition `apply` has that
+        # `--print-config` does not — a root with a bundle and no enrolment is a root that has no
+        # business being managed.
+        OUT="$(mgd_apply)"; rc=$?
+        assert_true "apply refuses a root that is not enrolled" bash -c "[[ $rc -ne 0 ]]"
+        assert_contains "not enrolled" "$OUT" "...and says which precondition failed"
+
+        printf '{"device_id":"dev-1","device_secret":"s","org":{"name":"Test"},"api_base":"https://x"}\n' \
+            > "$AR/var/lib/$DISTRO_ID/managed/enrollment.json"
+        OUT="$(mgd_apply)"; rc=$?
+        assert_eq "0" "$rc" "apply succeeds on a cached, correctly signed bundle with no network"
+        assert_contains "applied bundle serial 412" "$OUT" "and reports the serial it applied"
+
+        # The records themselves, including the two symlinks and the membership FILE NAME that
+        # §2.3 measured as silent failures. The golden diff above proves render(); this proves the
+        # writes actually happen through this command.
+        assert_true "apply writes the user record" test -f "$AR/etc/userdb/alice.user"
+        assert_true "...the <uid>.user symlink getent needs" test -L "$AR/etc/userdb/5001.user"
+        assert_true "...and the membership file" \
+            test -f "$AR/etc/userdb/alice:${DISTRO_ID}-admins.membership"
+        # 0640 root:shadow, not 0600: at 0600 a managed user can log in at the greeter and cannot
+        # unlock their own screen, because unix_chkpwd runs as them (plan/19 §13.1, measured).
+        assert_eq "640" "$(stat -c '%a' "$AR/etc/userdb/alice.user-privileged")" \
+            "the privileged record is 0640, not 0600"
+
+        # THE PROPERTY THE WHOLE TRANSPLANT DESIGN RESTS ON: subuid is an APPEND. A copy of the
+        # scratch root's /etc/subuid would have clobbered this line, and rootless podman for the
+        # local user would have stopped working months later, for no visible reason.
+        assert_true "apply appends its own subuid range" \
+            grep -qE '^alice:' "$AR/etc/subuid"
+        assert_true "...and leaves the local user's range alone" \
+            grep -qx 'live:100000:65536' "$AR/etc/subuid"
+        assert_true "...same for subgid" \
+            bash -c "grep -qE '^alice:' '$AR/etc/subgid' && grep -qx 'live:100000:65536' '$AR/etc/subgid'"
+
+        # Anti-rollback, through the same code sync uses. An old, correctly signed bundle is a
+        # valid bundle, and replaying one is the cheapest attack on an offline policy system.
+        printf '999\n' > "$AR/var/lib/$DISTRO_ID/managed/serial"
+        OUT="$(mgd_apply)"; rc=$?
+        assert_true "apply refuses a bundle older than the high-water serial" bash -c "[[ $rc -ne 0 ]]"
+        assert_contains "REFUSED a bundle with serial 412" "$OUT" "...naming both serials"
+        printf '412\n' > "$AR/var/lib/$DISTRO_ID/managed/serial"
+
+        # And a tampered bundle, because the verify-before-parse discipline has to hold on this
+        # path too — it is the one path where the bytes came off local disk rather than the wire.
+        sed 's/"serial": 412/"serial": 413/' "$GOLDEN/bundle.json" \
+            > "$AR/var/lib/$DISTRO_ID/managed/bundle.json"
+        OUT="$(mgd_apply)"; rc=$?
+        assert_true "apply refuses a cached bundle whose bytes were edited" bash -c "[[ $rc -ne 0 ]]"
     else
         echo "  (gpg/gpgv absent — skipping the signature assertions)"
     fi
@@ -402,7 +476,7 @@ while IFS= read -r eb; do
     assert_false "$(basename "$eb") has no unrendered token left in it" \
         grep -q '@[A-Z][A-Z0-9_]*@' "$eb"
 done < <(find "$OVL_DST" -name '*.ebuild')
-assert_eq "2" "$EB_N" "the overlay renders exactly the two Phase D ebuilds"
+assert_eq "2" "$EB_N" "the overlay renders exactly its two ebuilds"
 # EAPI 8 and no SRC_URI: the sources are in files/, which is what makes these buildable with
 # --network none and what removes the need for a Manifest.
 while IFS= read -r eb; do
@@ -429,39 +503,368 @@ assert_file "$OVL/distro-base/distro-kcm-managed/files/kcm_managed.json" \
 assert_true "...including the parent category, without which it is kcmshell-only" \
     grep -q 'X-KDE-System-Settings-Parent-Category' \
     "$OVL/distro-base/distro-kcm-managed/files/kcm_managed.json"
-# The Calamares module: a view module, built out of tree against the installed Calamares.
+# The Calamares module: a view module, built out of tree against the installed Calamares. Since
+# plan/21 it is the accounts page — one page carrying all three identity modes — and enrolment is
+# the second of them rather than a screen of its own.
+PAGE="$OVL/distro-base/distro-calamares-accounts/files"
 assert_true "the installer page uses upstream's own calamares_add_plugin" \
-    grep -q 'calamares_add_plugin' "$OVL/distro-base/distro-calamares-managed/files/CMakeLists.txt"
+    grep -q 'calamares_add_plugin' "$PAGE/CMakeLists.txt"
 assert_true "...declared as a viewmodule (a job cannot draw a page)" \
-    grep -q 'TYPE viewmodule' "$OVL/distro-base/distro-calamares-managed/files/CMakeLists.txt"
+    grep -q 'TYPE viewmodule' "$PAGE/CMakeLists.txt"
 assert_true "...and found with find_package(Calamares), not a vendored copy" \
-    grep -q 'find_package(Calamares REQUIRED)' \
-    "$OVL/distro-base/distro-calamares-managed/files/CMakeLists.txt"
-# THE RULE THE INSTALLER PAGE EXISTS UNDER (plan/18 §7.4, T-MAN-4): it must not fail the install.
-assert_true "the installer page always allows Next" \
-    grep -q 'return true;' "$OVL/distro-base/distro-calamares-managed/files/ManagedViewStep.cpp"
-assert_true "the page publishes the code to GlobalStorage for the job to read" \
-    grep -q 'managedEnrollmentCode' \
-    "$OVL/distro-base/distro-calamares-managed/files/ManagedViewStep.cpp"
-JOB="$REPO_ROOT/config/calamares/local-modules/managedenroll/main.py.in"
-assert_file "$JOB" "the enrolment job is a python module, not more C++"
-assert_true "the job reads the same GlobalStorage key the page writes" grep -q 'managedEnrollmentCode' "$JOB"
+    grep -q 'find_package(Calamares REQUIRED)' "$PAGE/CMakeLists.txt"
+# The QML travels inside the .so. A second install path is a page that renders blank on a medium
+# nobody can fix, with nothing in the log (plan/21 §2).
+assert_true "the page's QML is compiled into the plugin as a Qt resource" \
+    grep -q 'qt6_add_resources' "$PAGE/CMakeLists.txt"
+assert_true "...and the C++ loads it from qrc:, not from a filesystem path" \
+    grep -q 'qrc:/accounts/qml/Accounts.qml' "$PAGE/AccountsViewStep.cpp"
+for q in Accounts ComputerNameField LocalForm ManagedForm DomainForm; do
+    assert_file "$PAGE/qml/$q.qml" "the page ships qml/$q.qml"
+    assert_true "...and CMakeLists lists it in the resource, or it is not in the .so" \
+        grep -qF "qml/$q.qml" "$PAGE/CMakeLists.txt"
+done
+
+# The PACKAGED FALLBACK config, and the one line that decides whether it exists on disk.
+# calamares_add_plugin() globs *.conf out of the plugin directory and then guards the install on
+# `if(INSTALL_CONFIG)` — an option Calamares' own top-level CMakeLists defines and
+# CalamaresConfig.cmake does not export, so out of tree it is undefined and the file is silently
+# not installed. Measured on a built target root: /usr/share/calamares/modules/ held no
+# accounts.conf until this was set. Nothing warned, because the glob DID find the file, so the
+# macro also skipped its "NO_CONFIG should be set." advice.
+assert_file "$PAGE/accounts.conf" "the plugin ships a fallback configuration"
+assert_true "...and turns on the option that actually installs it" \
+    grep -qE '^set\(INSTALL_CONFIG ON\)' "$PAGE/CMakeLists.txt"
+# NO_CONFIG is the other way to silence that glob, and it would be a disaster here: it stamps
+# `noconfig: true` into module.desc, and Calamares then never calls setConfigurationMap() at
+# all — no modes offered, no groups, an empty page.
+assert_false "...and does not claim to have no configuration" \
+    bash -c "grep -E '^[^#]*NO_CONFIG' '$PAGE/CMakeLists.txt' | grep -q NO_CONFIG"
+# qsTr, not i18n: the bare Qt Quick engine Calamares hosts installs no KLocalizedContext, and
+# i18n() there is a ReferenceError and an empty string (plan/19 §7.2, measured).
+# Comment lines excluded, because the file that explains why i18n() is wrong necessarily
+# contains the string. A grep that cannot tell the two apart is a grep that has to be relaxed
+# the first time somebody documents the rule.
+assert_true "the page's QML does not call i18n() (nothing installs a KLocalizedContext)" \
+    bash -c "python3 - <<'EOF'
+import pathlib, sys
+for f in pathlib.Path('$PAGE/qml').glob('*.qml'):
+    for n, line in enumerate(f.read_text().splitlines(), 1):
+        stripped = line.strip()
+        if stripped.startswith(('*', '/*', '//')):
+            continue
+        if 'i18n(' in stripped:
+            sys.exit('%s:%d calls i18n()' % (f.name, n))
+EOF"
+assert_true "...it uses qsTr() instead" bash -c "grep -rq 'qsTr(' '$PAGE/qml'"
+
+# THE STYLE, AND WHY THE GUARD IN FRONT OF IT IS PART OF THE CONTRACT.
+# Kirigami picks its platform integration plugin from the Qt Quick Controls style's name, and
+# that plugin is what initialises the icon theme — so the wrong style is not a cosmetic
+# difference on this page, it is Breeze colours, Breeze metrics AND every icon, all at once.
+# The guard cannot be `QQuickStyle::name().isEmpty()`: name() resolves a style and reports the
+# answer rather than reporting that nobody chose, and measured in the medium's own Qt under the
+# environment `pkexec calamares` gets, that answer is "Fusion". The environment variable is the
+# only thing here that expresses a choice, and pkexec strips the one Plasma exports.
+assert_true "the page asks for the desktop Qt Quick Controls style" \
+    grep -qF 'setStyle( QStringLiteral( "org.kde.desktop" ) )' "$PAGE/AccountsViewStep.cpp"
+assert_true "...gated on the environment, which is the only place a style can be chosen" \
+    grep -qF 'qEnvironmentVariableIsEmpty( "QT_QUICK_CONTROLS_STYLE" )' "$PAGE/AccountsViewStep.cpp"
+# Comment lines excluded: the comment that explains why this guard is wrong has to quote it.
+assert_false "...and not on QQuickStyle::name(), which is never empty" \
+    bash -c "grep -vE '^[[:space:]]*(//|/\*|\*)' '$PAGE/AccountsViewStep.cpp' | grep -q 'name().isEmpty()'"
+
+# THE CHOOSER'S ROWS DO NOT INHERIT THE INDICATOR'S SIDE FROM THE STYLE.
+# RadioDelegate draws its indicator at leftPadding in qqc2-desktop-style and at
+# `width - width - rightPadding` in Qt's Basic and Fusion — the far end of a row whose text is on
+# the left — and Fusion also fills every delegate with palette.base, an opaque white slab per
+# row. RadioButton is the control all three put at leftPadding, and Basic and Fusion decide that
+# by asking whether `text` is set, so the bullet lands in the middle of the row without it.
+# Comment lines excluded here too, for the same reason: the comment above the delegate names the
+# control it is deliberately not using.
+assert_false "the chooser does not use the control whose indicator changes sides" \
+    bash -c "grep -vE '^[[:space:]]*(//|/\*|\*)' '$PAGE/qml/Accounts.qml' | grep -q 'RadioDelegate'"
+assert_true "...it uses RadioButton" \
+    grep -qF 'QQC2.RadioButton' "$PAGE/qml/Accounts.qml"
+# On the CONTROL, not on the label inside it — the title is drawn by a Label in the contentItem
+# and binds the same expression, so a grep for the string alone passes with the control's own
+# text gone, which is the state that moves the bullet.
+assert_true "...with text set on the control, which is what Basic and Fusion place the indicator by" \
+    bash -c "python3 - <<'EOF'
+import pathlib, sys
+lines = pathlib.Path('$PAGE/qml/Accounts.qml').read_text().splitlines()
+try:
+    start = next(n for n, l in enumerate(lines) if 'delegate: QQC2.RadioButton' in l)
+except StopIteration:
+    sys.exit('the chooser delegate is not a RadioButton')
+for line in lines[start + 1:]:
+    stripped = line.strip()
+    if stripped.startswith('contentItem:'):
+        sys.exit('the RadioButton sets no text of its own before its contentItem')
+    if stripped.startswith('text:'):
+        break
+EOF"
+assert_true "...and a ground of its own, transparent until the row is hovered or chosen" \
+    bash -c "grep -A8 'background: Rectangle' '$PAGE/qml/Accounts.qml' | grep -q '\"transparent\"'"
+
+# ...AND EVERY Q_PROPERTY MUST BE ABLE TO CHANGE, or the page freezes silently. This page has no
+# OK button of its own: it drives Calamares' Next entirely through property notifications, so a
+# property declared with a NOTIFY signal that nothing ever emits is a field a person can type
+# into while Next stays grey forever. CONSTANT is the other legal answer, and the right one for
+# the three `<mode>Offered` flags and the organisation hint — they are read out of accounts.conf
+# before the QQuickWidget is constructed (widget() is lazy; setConfigurationMap has already run)
+# and cannot change afterwards.
+assert_true "every Q_PROPERTY is CONSTANT or has a NOTIFY signal that is actually emitted" \
+    bash -c "python3 - <<'EOF'
+import pathlib, re, sys
+
+hdr = pathlib.Path('$PAGE/AccountsConfig.h').read_text()
+cpp = pathlib.Path('$PAGE/AccountsConfig.cpp').read_text()
+emitted = set(re.findall(r'emit\s+(\w+)\s*\(', cpp))
+
+props = re.findall(r'Q_PROPERTY\(\s*[\w:<>\s\*]+?\s+(\w+)\s+READ\s+\w+(.*?)\)', hdr, re.S)
+if len(props) < 20:
+    sys.exit('parsed only %d Q_PROPERTYs — the extraction is broken' % len(props))
+dead = []
+for name, rest in props:
+    if 'CONSTANT' in rest:
+        continue
+    m = re.search(r'NOTIFY\s+(\w+)', rest)
+    if not m:
+        dead.append('%s has neither NOTIFY nor CONSTANT' % name)
+    elif m.group(1) not in emitted:
+        dead.append('%s notifies %s, which nothing emits' % (name, m.group(1)))
+if dead:
+    sys.exit('; '.join(dead))
+EOF"
+
+# EVERY `accounts.<x>` IN THE QML MUST EXIST ON THE C++ OBJECT, and nothing else checks this.
+# The config reaches QML as a context property, so a name that is not there is not a build
+# error and not a runtime error either: the engine logs one warning to a console nobody is
+# watching and evaluates the binding as undefined. A renamed Q_PROPERTY therefore produces a
+# page that draws correctly and does nothing — a disabled Next that no field can enable, or a
+# button whose onClicked calls a slot that is not there. The compile cannot catch it; this can.
+#
+# Resolvable means: a Q_PROPERTY, a member of `public Q_SLOTS:` (which is how the setters and
+# the three actions are exposed — Q_INVOKABLE would do as well and neither is used here), or an
+# enumerator of a Q_ENUM. Comment lines are stripped first, for the reason the i18n check above
+# strips them.
+assert_true "every accounts.* binding in the QML resolves to a property, slot or enum" \
+    bash -c "python3 - <<'EOF'
+import pathlib, re, sys
+
+hdr = pathlib.Path('$PAGE/AccountsConfig.h').read_text()
+known = set(re.findall(r'Q_PROPERTY\(\s*[\w:<>\s\*]+?\s+(\w+)\s', hdr))
+known |= set(re.findall(r'Q_INVOKABLE\s+[\w:<>\s\*&]+?\s+(\w+)\s*\(', hdr))
+# public Q_SLOTS: up to the next section marker. Only slots are callable from QML; a plain
+# public method compiles and then is not there at runtime, which is the trap this closes.
+m = re.search(r'public Q_SLOTS:(.*?)(?:^Q_SIGNALS:|^private:|^protected:)', hdr, re.S | re.M)
+if not m:
+    sys.exit('AccountsConfig.h has no public Q_SLOTS: section')
+known |= set(re.findall(r'\b(\w+)\s*\(', m.group(1)))
+for e in re.finditer(r'enum\s+\w+\s*\{([^}]*)\}', hdr):
+    known |= {t for t in re.findall(r'(\w+)', e.group(1)) if t[:1].isupper()}
+
+bad = []
+for f in sorted(pathlib.Path('$PAGE/qml').glob('*.qml')):
+    for n, line in enumerate(f.read_text().splitlines(), 1):
+        if line.strip().startswith(('*', '/*', '//')):
+            continue
+        for name in re.findall(r'\baccounts\.(\w+)', re.sub(r'//.*\$', '', line)):
+            if name not in known:
+                bad.append('%s:%d accounts.%s' % (f.name, n, name))
+if bad:
+    sys.exit('not on AccountsConfig: ' + ', '.join(bad))
+EOF"
+
+# THE RULE THIS PAGE PARTLY REVERSES (plan/18 §7.4, plan/21 §3). Its predecessor returned true
+# from isNextEnabled() unconditionally. This one asks the config, because managed mode creates no
+# local account and must not be left until the enrolment has actually happened — and the two other
+# modes still gate on nothing but their own fields.
+assert_true "Next is mode-dependent rather than unconditional" \
+    grep -q 'return m_config->nextEnabled();' "$PAGE/AccountsViewStep.cpp"
+assert_true "...local and domain mode gate on field validity only" \
+    grep -qF 'm_loginNameValid && m_passwordValid && passwordsMatch()' "$PAGE/AccountsConfig.cpp"
+assert_true "...and managed mode gates on a completed enrolment that granted somebody" \
+    grep -qF 'm_enrolState == Succeeded && !m_grantedUsers.isEmpty()' "$PAGE/AccountsConfig.cpp"
+# TWO SCREENS, ONE VIEW STEP, AND FOUR FUNCTIONS THAT HAVE TO AGREE (plan/21 §1a).
+# The choice is on the first screen and the chosen mode's fields on the second, and Calamares
+# drives that through ViewStep::isAtBeginning()/back() and isAtEnd()/next(): back() is only
+# called instead of leaving the module while isAtBeginning() is false, and next() only while
+# isAtEnd() is false (ViewManager.cpp). Both default to `return true` in the version this
+# replaced, and that is the failure worth catching — with isAtEnd() true on the chooser, Next
+# leaves the page from the first screen and publishes a mode whose fields nobody filled in.
+assert_true "the view step reports which of its two screens is showing" \
+    grep -qF 'return m_config->onChooser();' "$PAGE/AccountsViewStep.cpp"
+assert_true "...on both ends" \
+    grep -qF 'return m_config->onFields();' "$PAGE/AccountsViewStep.cpp"
+assert_true "...so the window's Back moves between them" \
+    grep -qF 'm_config->goToChooser();' "$PAGE/AccountsViewStep.cpp"
+assert_true "...and so does its Next" \
+    grep -qF 'm_config->goToFields();' "$PAGE/AccountsViewStep.cpp"
+# The page can change screens without going through ViewManager (the `Change` button), and
+# ViewManager only re-reads the navigation state after its own back()/next(). Without this
+# connection the window's Next keeps describing the screen you just left, which on the way back
+# to the chooser is an enabled Next that skips the form.
+assert_true "...and a screen change from inside the page re-asks the Next button" \
+    grep -qF 'AccountsConfig::stepChanged' "$PAGE/AccountsViewStep.cpp"
+# Next means something different on each screen. On the chooser it gates on the one question the
+# chooser asks; the hostname is deliberately not in it, because the field that holds it is on the
+# screen you have not reached yet.
+assert_true "Next on the chooser gates on a mode having been picked" \
+    bash -c "grep -A6 'm_step == ChooseMode' '$PAGE/AccountsConfig.cpp' | grep -q 'return modeChosen();'"
+# The same discipline the modes are under: a context property cannot spell
+# `AccountsConfig.FillFields`, so the QML reads named booleans and `accounts.step === 1` — a
+# binding that renumbering the enum breaks in silence — is not allowed to appear.
+assert_true "no QML binding compares the step to a number" \
+    bash -c "python3 - <<'EOF'
+import pathlib, sys
+bad = []
+for f in sorted(pathlib.Path('$PAGE/qml').glob('*.qml')):
+    for n, line in enumerate(f.read_text().splitlines(), 1):
+        stripped = line.strip()
+        if stripped.startswith(('*', '/*', '//')):
+            continue
+        if 'accounts.step' in stripped:
+            bad.append('%s:%d' % (f.name, n))
+if bad:
+    sys.exit('reads accounts.step directly: ' + ', '.join(bad))
+EOF"
+assert_true "the second screen offers a visible way back to the choice" \
+    bash -c "grep -q 'accounts.goToChooser()' '$PAGE/qml/Accounts.qml'"
+
+# The enrolment happens on the PAGE, into a scratch root, before the disk is written — which is
+# what makes the blocking safe: a failure there costs nothing.
+assert_true "the page enrols into a scratch root, not into the target" \
+    grep -qF 'm_scratchRoot' "$PAGE/AccountsConfig.cpp"
+assert_true "...seeding the empty machine-id the client refuses to enrol without" \
+    grep -qF 'etc/machine-id' "$PAGE/AccountsConfig.cpp"
+assert_true "...and releasing the device again if the mode or the code changes" \
+    grep -qF 'QStringLiteral( "leave" )' "$PAGE/AccountsConfig.cpp"
+
+# The page<->job contract. GlobalStorage, minus the two things that must never be in it.
+assert_true "the page publishes the mode for the job to read" \
+    grep -q 'accountsMode' "$PAGE/AccountsConfig.cpp"
+assert_true "...and the scratch root the job transplants from" \
+    grep -q 'managedEnrollmentScratchRoot' "$PAGE/AccountsConfig.cpp"
+# THE KEY THAT WENT AWAY. The page this replaced published the live enrolment code to
+# GlobalStorage, which Calamares can dump to its log. There is no reason for it to be there now:
+# by the time the job runs, the code has been spent (plan/21 §4).
+assert_false "no GlobalStorage key carries the enrolment code any more" \
+    grep -q 'managedEnrollmentCode' "$PAGE/AccountsConfig.cpp"
+assert_false "...and no password is inserted into GlobalStorage either" \
+    bash -c "grep -E 'gs->insert' '$PAGE/AccountsConfig.cpp' | grep -qi password"
+assert_true "the passwords go to a 0600 file on tmpfs whose path is published instead" \
+    bash -c "grep -q 'accountsSecretsPath' '$PAGE/AccountsConfig.cpp' &&
+             grep -q 'QFileDevice::ReadOwner | QFileDevice::WriteOwner' '$PAGE/AccountsConfig.cpp'"
+
+JOB="$REPO_ROOT/config/calamares/local-modules/accountsetup/main.py.in"
+assert_file "$JOB" "the work is a python module, not more C++"
+# ...and the two sides agree on what is IN that file. It is the only channel a password takes,
+# and it is untyped JSON: a key the page renames and the job does not means `secrets.get()`
+# returns None. That does not create a passwordless account — create_local_user refuses and
+# fails the install, which is the right answer and a terrible way to find out.
+assert_true "the page and the job spell the secrets-file keys the same way" \
+    bash -c "python3 - <<'EOF'
+import pathlib, re, sys
+cpp = pathlib.Path('$PAGE/AccountsConfig.cpp').read_text()
+job = pathlib.Path('$JOB').read_text()
+written = set(re.findall(r'secrets\.insert\(\s*QStringLiteral\(\s*\"([^\"]+)\"', cpp))
+read = set(re.findall(r'secrets\.get\(\s*\"([^\"]+)\"', job))
+if not written or not read:
+    sys.exit('parsed no secret keys at all (written=%s read=%s)' % (sorted(written), sorted(read)))
+if written != read:
+    sys.exit('page writes %s, job reads %s' % (sorted(written), sorted(read)))
+EOF"
+assert_true "the job reads the same GlobalStorage keys the page writes" \
+    bash -c "for k in accountsMode managedEnrollmentScratchRoot accountsSecretsPath; do
+                 grep -q \"\$k\" '$JOB' || exit 1; done"
+# ...and the whole list, mechanically, in both directions. The three greps above name the keys
+# somebody thought of; this one names the keys that are there. GlobalStorage is an untyped
+# string-keyed map on both sides, so a key the page renames and the job does not is not an error
+# anywhere: `gs.value()` returns None, the field the person typed is silently dropped, and the
+# install completes without it. That is how a typed DC address, or an OU, goes missing.
+#
+# Two exemptions, both stated rather than pattern-matched. `rootMountPoint` is Calamares' own
+# key, published by the mount module. `managedOrgName` has no reader on purpose (plan/21 §4) —
+# it is in the log for the operator, and asserting that keeps it from being quietly repurposed.
+assert_true "every key the job reads is published, and every key published is read or exempt" \
+    bash -c "python3 - <<'EOF'
+import pathlib, re, sys
+
+cpp = pathlib.Path('$PAGE/AccountsConfig.cpp').read_text()
+job = pathlib.Path('$JOB').read_text()
+
+published = set(re.findall(r'gs->insert\(\s*QStringLiteral\(\s*\"([^\"]+)\"', cpp))
+# gs.value(\"literal\") AND gs.value(key) where key comes from a (key, flag) table — the domain
+# Advanced options are forwarded through such a loop, so a literal-only scan calls them unread.
+read = set(re.findall(r'gs\.value\(\s*\"([^\"]+)\"', job))
+read |= set(re.findall(r'\(\s*\"(domain[A-Za-z]+)\"\s*,\s*\"--', job))
+
+CALAMARES_OWN = {'rootMountPoint'}
+WRITE_ONLY = {'managedOrgName'}
+
+missing = sorted(read - published - CALAMARES_OWN)
+if missing:
+    sys.exit('the job reads keys the page never publishes: ' + ', '.join(missing))
+orphans = sorted(published - read - WRITE_ONLY)
+if orphans:
+    sys.exit('the page publishes keys nothing reads: ' + ', '.join(orphans))
+if not published or not read:
+    sys.exit('parsed no keys at all — the extraction is broken, not the contract')
+EOF"
+# The one that went away with `managedenroll`: a boolean saying \"managed mode was chosen\" beside
+# a mode that already says so. Two keys for one fact matter only when they disagree. Matched
+# against the insert lines rather than the file, because the file explains the absence by name.
+assert_false "no boolean duplicates accountsMode" \
+    bash -c "grep -E '^[^/]*gs->insert' '$PAGE/AccountsConfig.cpp' |
+             grep -q managedEnrollmentRequested"
+assert_true "the job unlinks the secrets file whatever else happened" \
+    bash -c "grep -q 'finally:' '$JOB' && grep -q 'os.unlink(secrets_path)' '$JOB'"
 assert_true "the job records an enrolment that was asked for and did not happen (T-MAN-4)" \
     grep -q 'enrollment-pending.json' "$JOB"
-# The one property T-MAN-4 is: every path returns None. A Calamares python job fails the install
-# by returning a tuple, so a single `return (` in this file would be an installer that dies
-# because a household's router was being replaced.
-assert_false "the job never returns a failure tuple — it must not fail the install" \
-    grep -qE '^\s*return \(' "$JOB"
+# T-MAN-4's property, now stated per path rather than per file, because plan/21 gave this job one
+# path that SHOULD fail. A Calamares python job fails an install by returning a tuple: on the
+# network-facing paths that would be an installer that dies because a household's router was
+# being replaced, and on the useradd path it is the honest answer to a machine with no way in.
+assert_true "the network-facing paths return None" \
+    bash -c "python3 - <<'EOF'
+import re, sys
+src = open('$JOB').read()
+for fn in ('transplant_enrolment', 'join_domain'):
+    body = src.split('def %s(' % fn, 1)[1].split('\ndef ', 1)[0]
+    if re.search(r'^\s+return \(', body, re.M):
+        sys.exit('%s returns a failure tuple' % fn)
+EOF"
+assert_true "...and only create_local_user() may fail the install" \
+    bash -c "python3 - <<'EOF'
+import re, sys
+src = open('$JOB').read()
+body = src.split('def create_local_user(', 1)[1].split('\ndef ', 1)[0]
+if not re.search(r'^\s+return \(', body, re.M):
+    sys.exit('create_local_user cannot report failure at all')
+EOF"
 assert_true "the job passes --root so it writes into the TARGET, not the live medium" \
     grep -q -- '"--root"' "$JOB"
-# The sequence wiring. The page is conditional (it comes from the overlay); the job is not.
+# The transplant, and why it is a state-directory copy rather than an /etc copy (plan/21 §6).
+assert_true "the job copies the state directory the page's enrolment produced" \
+    grep -q 'shutil.copytree' "$JOB"
+assert_true "...and asks the client to render it into the target, offline" \
+    grep -qF '"apply", "--root", root' "$JOB"
+assert_true "...then enables the sync timer in the target, which the page could not" \
+    grep -qF 'systemctl' "$JOB"
+# The sequence wiring. Both halves are unconditional now: the page creates the account, so a
+# medium without it is not a medium with one screen missing.
 CALSET="$REPO_ROOT/config/calamares/settings.conf.in"
-assert_true "settings.conf carries the conditional page token" grep -qx '@CAL_MANAGED_PAGE@' "$CALSET"
-assert_true "settings.conf names the enrolment job unconditionally" \
-    grep -qE '^[[:space:]]*-[[:space:]]+managedenroll$' "$CALSET"
-assert_true "stage 40 computes the page token rather than hardcoding it" \
-    grep -q 'CAL_MANAGED_PAGE=' "$REPO_ROOT/scripts/stages/40-configure.sh"
+assert_false "settings.conf carries no conditional page token any more" \
+    grep -q '@CAL_MANAGED_PAGE@' "$CALSET"
+assert_true "settings.conf names the accounts page unconditionally" \
+    grep -qE '^[[:space:]]*-[[:space:]]+accounts$' "$CALSET"
+assert_true "settings.conf names the job unconditionally" \
+    grep -qE '^[[:space:]]*-[[:space:]]+accountsetup$' "$CALSET"
+assert_true "stage 40 refuses to build a medium whose lock did not carry the page" \
+    grep -qF "the installer's accounts page is not installed" \
+        "$REPO_ROOT/scripts/stages/40-configure.sh"
 # Stage 20 is what makes the repository exist at all.
 assert_true "stage 20 renders the overlay into the config root" \
     grep -q 'install_rootfs_overlay "\$OVERLAY_SRC"' "$REPO_ROOT/scripts/stages/20-builder-setup.sh"

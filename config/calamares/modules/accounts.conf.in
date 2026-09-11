@@ -1,0 +1,136 @@
+# The accounts page (plan/21).
+#
+# This replaces users.conf and managed.conf, and it is the same content: every key below was in
+# one of those two files, with the same value and — where the reasoning still holds, which is
+# almost everywhere — the same comment. What changed is the module reading it, not the policy.
+#
+# /etc/calamares/modules is the FIRST path Calamares searches, so this overrides the fallback copy
+# the <id>-calamares-accounts package installs into /usr/share/calamares/modules.
+---
+# Which of the three modes the page offers. All three, here: the installer profile ships
+# @DISTRO_ID@-managed and @DISTRO_ID@-domain and the packages behind both (config/portage/sets/
+# domain is named by every profile). A profile that dropped either one would list fewer, and the
+# page would draw fewer radio buttons rather than offering a mode that cannot work.
+modes: [ local, managed, domain ]
+
+# ---- the local account (modes `local` and `domain`) -----------------------------------------
+# The three supplementary groups the live user gets in stage 40, for the same three reasons, and
+# `audio` deliberately absent for the same reason as there:
+#
+#   wheel     sudo (/etc/sudoers.d/wheel) and polkit administrator (49-wheel.rules)
+#   video     DRM/KMS access
+#   pipewire  the REALTIME path. media-video/pipewire ships
+#             /etc/security/limits.d/25-pw-rlimits.conf granting rtprio 95 / nice -19 to @pipewire
+#             and nothing else, and this image has no rtkit-daemon to fall back to — a user
+#             outside the group gets a sound server with no RT scheduling at all.
+#
+#   NOT audio: device access comes from logind/uaccess ACLs on the active session, and static
+#              audio-group membership is what breaks device hand-off on fast user switching.
+#              That is media-video/pipewire's own pkg_postinst advice.
+#
+# must_exist: true on all three — they are shipped by baselayout and acct-group/pipewire in the
+# payload image, so a missing one means the payload is not what this installer thinks it is, and
+# failing loudly beats creating a group with a fresh GID that nothing else references. The
+# `accountsetup` job is what enforces it, with `getent group` inside the mounted target, because
+# the target is the only place the answer means anything.
+#
+# system: true is INERT here, and is kept only because this is the stock schema and dropping a
+# field from it invites the opposite mistake later. Stock Calamares read it in SetupGroupsJob to
+# choose `groupadd -r`; nothing in this module ever creates a group, because must_exist: true
+# above says a missing one is a broken payload rather than something to paper over. Setting it
+# false would therefore change nothing at all — which is exactly why it says so here.
+defaultGroups:
+    - name: wheel
+      must_exist: true
+      system: true
+    - name: video
+      must_exist: true
+      system: true
+    - name: pipewire
+      must_exist: true
+      system: true
+
+# The default username in `domain` mode, where the local account is the failsafe rather than the
+# account anyone signs in with. In `local` mode there is no default: the page guesses one from the
+# full name as it is typed, which is what stock users did.
+failsafeUserName: admin
+
+user:
+    # /bin/bash: app-shells/bash is in @base, and it is the only interactive shell in the image.
+    shell: /bin/bash
+    forbidden_names: [ root, "@LIVE_USER@" ]
+    home_permissions: "o700"
+
+# Four keys that were in users.conf and are NOT here, because they described behaviour that is now
+# simply what the job does — there is no configuration to get wrong:
+#
+#   setRootPassword / doReusePassword: root stays locked and administration goes through
+#       sudo/polkit as the wheel member the page creates. Stage 40 never sets a root password
+#       either, and the job never offers to; a root password field would have created a second,
+#       weaker way in.
+#   doAutologin / displayAutologin: the installed system must not autologin, and turning the live
+#       medium's autologin OFF is not a matter of leaving a key unset — that autologin lives in
+#       /etc/plasmalogin.conf.d/10-autologin.conf INSIDE the read-only image. `imageidentity`
+#       writes a later-sorting drop-in that overrides it (plan/16 §5.4).
+#   sudoersGroup / autologinGroup: the image ships /etc/sudoers.d/wheel with
+#       `%wheel ALL=(ALL:ALL) ALL`, so there is nothing for the installer to write, and there is
+#       no autologin group to join.
+#   allowActiveDirectory: domain join is a MODE now, not a checkbox on the local-account form.
+#       That is the whole point of plan/21: Calamares' own implementation appended an
+#       ActiveDirectoryJob and then still created the local account (Config.cpp:1088-1104), so
+#       "domain" could never be a choice, only an extra.
+
+# ---- passwords -------------------------------------------------------------------------------
+# Both keys, and the page enforces both: `minLength` in its own code and the `libpwquality` lines
+# through pwquality_check(), which is also where the 0..100 strength meter comes from. One
+# library, one policy, one message — the same arrangement Calamares' own users page had.
+#
+# NB libpwquality's dictionary check is compiled in and cannot be turned off from here. It needs
+# /usr/lib/cracklib_dict, which cracklib's pkg_postinst does not build under ROOT=$TARGET, so
+# stage 40 runs create-cracklib-dict itself. Without it EVERY password on this page is rejected
+# with "The password fails the dictionary check" — and the installer gets all the way through the
+# disk step before the person finds out.
+passwordRequirements:
+    minLength: 8
+    libpwquality:
+        - minlen=8
+        - minclass=2
+
+# ---- the computer's name ---------------------------------------------------------------------
+# The default offered in the field, not a fixed value — the person can type their own. One field
+# serves three purposes: the hostname, the device name managed mode sends to the control plane,
+# and the default for the domain computer account's name.
+#
+# NB the image ALSO has a first-boot hostname unit (@DISTRO_ID@-hostname-init.service) that sets
+# @DISTRO_ID@-<machine-id prefix> unless /var/lib/@DISTRO_ID@/hostname-init.done exists. Left
+# alone it would run on the installed system's first boot and overwrite whatever is typed here.
+# `imageidentity` creates that stamp file whenever GlobalStorage carries a hostname, which is why
+# it knows about this module at all.
+hostname:
+    template:        "@DISTRO_ID@"
+    forbidden_names: [ localhost ]
+    # /etc/hosts as well as /etc/hostname. `imagedeploy` writes the latter early — before the
+    # domain join, so the computer account is not created under the live medium's name — and this
+    # is what makes `accountsetup` write the former too.
+    writeHostsFile: true
+
+# ---- managed mode ----------------------------------------------------------------------------
+# Shown above the code field. A shop imaging six identical machines puts its own name here —
+# through the same branding it already customises — so the person in front of the screen
+# recognises what they are being asked to join. Empty for a household enrolling one laptop.
+organisationHint: ""
+
+# Where the page enrols BEFORE the disk is touched (plan/21 §3). On tmpfs, on the live medium, and
+# never on the installed system: `accountsetup` copies the state out of it into the target and the
+# medium is discarded. Changing this path changes nothing else — the page seeds it and publishes
+# it to GlobalStorage, and the job uses what it is given.
+enrolScratchRoot: "/run/@DISTRO_ID@-accounts/enroll"
+
+# The two passwords, out of GlobalStorage and into a 0600 file on the same tmpfs. Calamares can
+# dump GlobalStorage to its log; the page it replaces put a live enrolment code there. The job
+# reads this once and unlinks it whatever else happens (plan/21 §4).
+secretsPath: "/run/@DISTRO_ID@-accounts/secrets.json"
+
+# apiBase is deliberately ABSENT rather than empty-with-a-comment: unset means the page passes no
+# --api and @DISTRO_ID@-managed uses the MANAGED_API_BASE compiled into it from config/build.conf,
+# which is the single place that URL should be spelled. Setting it here would be a second one.

@@ -52,6 +52,17 @@ The local administrator account **stays**, for plan/18 §7.2's reason word for w
 filesystem with no rescue shell and no package manager it is the only way back in when the control
 plane is unreachable, unpaid for, or gone. Managed mode is **additive**, never a replacement.
 
+> **Amended by [plan/21](21-installer-accounts-page.md).** On a machine that is *already running*,
+> every word above still holds: `leave` turns managed accounts into local ones, the administrator
+> that enrolled the machine is untouched, and nothing here creates a system whose only accounts are
+> the org's. What changed is the **installer**: "Managed system" is one of three exclusive modes on
+> the accounts page, and choosing it creates no local account at all. That makes the enrolment
+> load-bearing rather than additive, which is why — uniquely on that page — it is performed *before*
+> the disk is written and Next stays disabled until it has succeeded and the bundle has granted at
+> least one user. The trade is deliberate: a household that chose "managed" and got a local `admin`
+> account as well would have a machine with an administrator nobody was told about and a password
+> nobody remembers. See plan/21 §3, and T-MAN-4 in §12, which this change rewrites.
+
 ## 2. The identity mechanism, measured
 
 ### 2.1 What a managed user is, on disk
@@ -660,6 +671,17 @@ Three ways to have enrolment at install time, and the plan takes all three in or
    is recoverable in one command; the alternative is a machine with no account, still autologging
    into the live user, presented as a failed install.
 
+   > **Superseded by [plan/21](21-installer-accounts-page.md), and the last sentence is why.**
+   > This shipped as written: a checkbox, a code field, `isNextEnabled()` returning `true`
+   > unconditionally, and a `managedenroll` job that returned `None` on every path. The page is now
+   > one of three modes on the `accounts` page and it creates **no local account**, so "recoverable
+   > in one command" has no audience — there is nobody to run the command. The mode therefore
+   > enrols when its button is pressed, into a scratch root on the live medium, *before* the disk
+   > is written; `accountsetup` moves the resulting state into the target and applies the cached
+   > bundle offline with the new `<id>-managed apply`. `enrollment-pending.json` still exists and
+   > is still written, for the much narrower case where the enrolment succeeded and the *copy*
+   > did not.
+
 Rejected: **overloading the existing Active Directory page** by teaching the `realm` shim to
 recognise a managed org. It costs nothing to build and it is the wrong thing to ship — a household
 would be typing their family's name into a box labelled *Active Directory*, and the two modes would
@@ -770,6 +792,13 @@ subscription, cancelled service, DNS — the device:
 
 The one thing it will not do is degrade into a machine nobody can log into. That is why identity
 never expires (§5.8 rule 3), and why the local administrator account exists (§1).
+
+> **[plan/21](21-installer-accounts-page.md) note.** Every line above is about a machine that has
+> already enrolled, and none of it changes. The one moment with no cached bundle to fall back on is
+> the install itself, and that is exactly why the accounts page's managed mode performs the
+> enrolment before the disk is written and refuses to continue until the bundle it fetched grants
+> somebody. "Will not degrade into a machine nobody can log into" is the same commitment; on that
+> page it is kept by blocking rather than by a local account.
 
 ### 8.7 One mode at a time
 
@@ -930,6 +959,14 @@ with the control plane unreachable.
 > locks name these two atoms, stage 30 emerges `@locked-image` and neither package is built. Both
 > surfaces degrade rather than break in the meantime — the QML app still ships and the installer
 > page's sequence line is substituted empty — and stage 40 warns by name, with the command.
+>
+> **Superseded in part, 2026-09-10, by [plan/21](21-installer-accounts-page.md).** The installer
+> half of what this note describes no longer exists: `<id>-base/<id>-calamares-managed` and
+> `managedenroll` were absorbed into `<id>-base/<id>-calamares-accounts` and `accountsetup`, and
+> the page is mandatory rather than substitutable, so "degrades rather than breaks" is no longer
+> the fallback — the installer refuses to be configured without it. The KCM half stands
+> unchanged. The **relock** this note is waiting on is still the same relock, for the same
+> reason, and it now names the renamed atom.
 
 **Phase E — parental controls.** Its own document (§10).
 
@@ -940,7 +977,7 @@ with the control plane unreachable.
 | **T-MAN-1** | **The round trip.** Enrol a running desktop image against the fixture; a managed user resolves through NSS with the org's UID, authenticates through PAM on a real `login(1)` console login, gets a home directory; then leave, and the local account still works. Also checks §2.3's group-merge duplication on the *daemon* path |
 | **T-MAN-2** | **Scoped records.** A user the bundle does not grant this device has no record, no `getent` entry and no hash anywhere on the disk — checked by grepping `/etc/userdb` and `/var` for the hash the fixture holds for them |
 | **T-MAN-3** | **Anti-rollback.** Replay an older signed bundle: refused, logged, reported; the newer policy stays in force. Tamper one byte of a current bundle: refused |
-| **T-MAN-4** | **The install that cannot reach the control plane.** Tick enrolment in the installer, point it at a dead API. The install *completes*: the chosen local account exists, `live` is gone, autologin is off, nothing managed was written, and `status` on the installed disk reports the requested enrolment and why it did not happen. plan/18 §7.4's lesson, applied before it can be learned again |
+| **T-MAN-4** | **The install that cannot reach the control plane**, in the two halves [plan/21](21-installer-accounts-page.md) split it into. **(a) The page, against a dead API:** `Check and continue` fails with the client's own message, `Next` stays disabled, nothing is written anywhere — and switching to "Local accounts only" installs a working machine. **(b) The exec phase, against an API killed *after* a good enrolment:** the install still completes and the disk boots with the transplanted bundle's users, because the bundle came with the enrolment rather than being fetched again. Together they are plan/18 §7.4's lesson kept in a mode that has no local account to fall back on: the irreversible step happens where failing is free. **Both halves are blocked** on unattended Calamares (plan/16 §10 q5), which is the same thing blocking T-DOM-1; what holds the property meanwhile is offline, per-function, and in plan/07's row |
 | **T-MAN-5** | **The unenrolled regression.** A managed-ready but never-enrolled image boots with `failed_units=0`, `/etc/userdb` does not exist, and `getent passwd <live user>` is unchanged |
 | **T-MAN-6** | **The offline machine.** Enrolled, then the API is taken away. Three reboots: logins work, policy holds, the queue grows and is capped, `failed_units=0` throughout, `status` says stale |
 | **T-MAN-7** | **Mode exclusivity.** `<id>-domain join` on a managed machine refuses and writes nothing; `<id>-managed enroll` on a joined machine refuses and writes nothing |
@@ -1042,8 +1079,8 @@ decision.
 | **Phase D: the overlay is one function call** | `install_rootfs_overlay()` already renders `.in` files and rebrands the `distro` token in both file and directory names, so stage 20 reuses it verbatim on `config/portage/overlay/`. The repository, its category and its packages all follow `DISTRO_ID` with no second mechanism |
 | **…and `filter_set_file` learned the same rule** | So a profile set names `distro-base/distro-kcm-managed` — the same literal token the filenames use. The alternative, `@DISTRO_ID@-base/…`, is not a well-formed atom and would fail the suite's own set lint |
 | **The KCM is what makes `i18n()` work** | Measured: the bare `qml6` runtime installs no `KLocalizedContext`, so every string in the standalone app had to be unwrapped (§7.2). The KCM is loaded by a C++ host that installs one, so its QML uses `i18n()` normally. Translation is a thing the compiled surface buys, not a thing the QML app lost by accident |
-| **The installer page is C++; the enrolment is not** | Calamares accepts only C++ view modules, so the page is an ebuild — but a *job* can be a script, so `managedenroll` is an ordinary python module beside the three this project already ships. The page publishes to GlobalStorage and the job reads it back, which is precisely what plan/18 §7.1 could not do with Calamares' own AD page and why that feature needed a `realm` shim |
-| **The page is conditional, the job is not** | `settings.conf` names a module that is installed nowhere by dropping the step silently, so the sequence line is a token stage 40 substitutes — empty, with a warning naming the relock command, when the overlay package is not installed. The job ships with the image on every installer build, which is also what makes a zero-touch enrolment work on a medium with no page |
+| **The installer page is C++; the enrolment is not** | Calamares accepts only C++ view modules, so the page is an ebuild — but a *job* can be a script, so the enrolment is an ordinary python module beside the three this project already ships. The page publishes to GlobalStorage and the job reads it back, which is precisely what plan/18 §7.1 could not do with Calamares' own AD page and why that feature needed a `realm` shim. Still true after [plan/21](21-installer-accounts-page.md), which only changed the names: the page is `accounts`, the job is `accountsetup`, and the C++ plugin renders QML |
+| ~~**The page is conditional, the job is not**~~ | **Reversed by [plan/21](21-installer-accounts-page.md).** This was true while managed mode was one optional page among others: `settings.conf` drops a module installed nowhere *silently*, so the sequence line was a token stage 40 substituted away, with a warning naming the relock command. `accounts` is the only place an installer asks who owns the machine, so substituting it away installs a machine with no accounts at all — the token is gone and a missing module is a stage-40 `die`. Zero-touch enrolment, which this row also justified, now has no job of its own to arrive in and belongs in a firstboot unit reading a systemd credential |
 | **`--restamp` had to learn about the overlay** | `portage_config_hash()` covers `config/portage` entirely, so the overlay is now part of it — and "the hash moved" can now mean "somebody added an ebuild", which re-stamping would hide. It warns, per profile and only for packages that profile's sets actually ask for, rather than refusing: the same hash also moves for a comment in a `.cpp` |
 
 The fixture's FastAPI stack is **not in the pinned tree** — no `dev-python/fastapi`, `uvicorn`,

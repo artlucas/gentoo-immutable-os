@@ -27,6 +27,9 @@ source "$REPO_ROOT/scripts/lib/common.sh"
 set +e
 
 CAL="$REPO_ROOT/config/calamares"
+# The accounts page is not in config/calamares at all: it is a compiled view module, so it
+# lives in the in-repo ebuild repository. Its configuration is in CAL and its code is here.
+OVL_ACCOUNTS="$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-accounts"
 
 # ---- 1. the profile ------------------------------------------------------------------------
 assert_file "$REPO_ROOT/config/profiles/installer.conf" "the installer profile exists"
@@ -106,10 +109,11 @@ assert_true "an installable image still gets its _empty slot B" grep -q '_empty'
 # render_template dies on a token whose variable is unset, so this is also the check that stage
 # 40 exports everything the templates ask for. It is run with the same exports stage 40 makes.
 RENDER="$TMP/rendered"; mkdir -p "$RENDER"
-# CAL_MANAGED_PAGE is the one token stage 40 computes rather than reads from build.conf: the
-# managed-enrolment page is a compiled Calamares module from the in-repo overlay, so settings.conf
-# names it only on an image that has it (plan/19 §7.3). Both values are rendered below, because
-# both ship — an installer built before the overlay lands must still produce a valid settings.conf.
+# There is no computed token here any more, and that is itself the property worth stating.
+# @CAL_MANAGED_PAGE@ used to be one: the managed-enrolment page was optional, so stage 40 decided
+# whether settings.conf named it and this function had to render both answers. plan/21 replaced
+# that page with the accounts page, which is MANDATORY — it is what creates the account — so
+# settings.conf names it unconditionally and stage 40 dies rather than substituting nothing.
 render_all() {
     ( set -e
       export REPO="$REPO_ROOT" WORK="$TMP/w" OUT="$TMP/o" STAGE_NAME=t BUILD_PROFILE_OVERRIDE=installer
@@ -118,15 +122,15 @@ render_all() {
       export DISTRO_ID DISTRO_NAME VERSION HOME_URL LIVE_USER UPDATE_URL UPDATE_CHANNEL
       export GPT_TYPE_ROOT_X64 GPT_TYPE_VAR GPT_TYPE_ESP ROOT_SLOT_SIZE_MIB ROOT_PARTLABEL \
              UKI_NAME PAYLOAD_DIR
-      export CAL_MANAGED_PAGE="${1-}"
       while IFS= read -r -d '' f; do
           rel="${f#"$CAL"/}"; out="$RENDER/${rel%.in}"
           mkdir -p -- "$(dirname -- "$out")"
           if [[ $f == *.in ]]; then render_template "$f" "$out"; else cp -- "$f" "$out"; fi
       done < <(find "$CAL" -type f -print0) )
 }
-assert_true "every Calamares template renders with the enrolment page absent" render_all ""
-assert_true "every Calamares template renders (no unset @TOKEN@)" render_all "  - managed"
+assert_true "every Calamares template renders (no unset @TOKEN@)" render_all
+assert_false "settings.conf.in carries no computed sequence token any more" \
+    grep -q '@CAL_MANAGED_PAGE@' "$CAL/settings.conf.in"
 # -I, GNU grep's own binary test, for the same reason run-tests.sh's CRLF scan grew one: this
 # tree now carries a PNG (the medium's one wallpaper, plan/20 §2.1), and 382 KB of DEFLATE output
 # contains "@Q@" and "@A@" by arithmetic rather than by anyone's mistake. A token scan is a
@@ -214,13 +218,15 @@ done
 SETTINGS="$RENDER/settings.conf"
 assert_file "$SETTINGS" "settings.conf rendered"
 mapfile -t OURS < <(find "$CAL/local-modules" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort)
-# Four since plan/19 Phase D: managedenroll joined imagedeploy, imagebootloader and imageidentity.
+# Still four after plan/21, by substitution rather than by coincidence: accountsetup replaced
+# managedenroll AND the stock `users` module's jobs, alongside imagedeploy, imagebootloader and
+# imageidentity.
 (( ${#OURS[@]} == 4 )) || _fail "expected four local modules, found ${#OURS[@]}: ${OURS[*]}"
 for m in "${OURS[@]}"; do
     d="$CAL/local-modules/$m"
     assert_file "$d/module.desc" "$m has a module descriptor"
-    # main.py or main.py.in — cal_install renders the second into the first, and managedenroll
-    # needs to be a template because it execs /usr/bin/<id>-managed by name.
+    # main.py or main.py.in — cal_install renders the second into the first, and accountsetup
+    # needs to be a template because it execs /usr/bin/<id>-managed and -domain by name.
     SCRIPT="$d/main.py"; [[ -f $SCRIPT ]] || SCRIPT="$d/main.py.in"
     assert_file "$SCRIPT"        "$m has a main.py"
     # The silent-skip failure: ModuleManager compares this against the directory name.
@@ -243,10 +249,12 @@ for m in "${OURS[@]}"; do
     assert_true "$m/main.py is valid python" python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$PYSRC"
     # ...and it has to be IN the sequence, or it is dead code on the medium.
     assert_true "$m appears in settings.conf's sequence" grep -qE "^[[:space:]]*-[[:space:]]+$m$" "$SETTINGS"
-    # ...with a config, since every one of them reads build-time facts out of one. managedenroll
-    # is the exception and says why: everything it needs arrives through GlobalStorage, written
-    # by the view module beside it, so a config file would be one that nothing reads.
-    [[ $m == managedenroll ]] \
+    # ...with a config, since every one of them reads build-time facts out of one. accountsetup
+    # is the exception, and for a reason worth stating: its configuration is accounts.conf,
+    # which belongs to the PAGE. Both read the same file — the page for the fields it draws and
+    # the validation it applies, the job for defaultGroups' must_exist and writeHostsFile — so a
+    # second accountsetup.conf would be a place for the two halves of one decision to disagree.
+    [[ $m == accountsetup ]] \
         || assert_file "$RENDER/modules/$m.conf" "$m has a rendered config"
 done
 
@@ -258,17 +266,63 @@ for f in "$RENDER"/modules/*.conf; do
     assert_true "modules/$n.conf is referenced by the sequence" \
         grep -qE "^[[:space:]]*-[[:space:]]+$n$" "$SETTINGS"
 done
+# accounts.conf passes the loop above because `accounts` IS in the sequence — but it is the only
+# config in this tree read by a module that is not in this tree, so its keys are checked here
+# rather than left to the page to fail on quietly. Each of these four is load-bearing: modes
+# decides which radio buttons exist at all, defaultGroups is what the job asserts against the
+# target, enrolScratchRoot is where the page enrols before the disk is written, and secretsPath is
+# the only channel a password travels on (plan/21 §3, §4).
+ACCOUNTS_CONF="$RENDER/modules/accounts.conf"
+assert_file "$ACCOUNTS_CONF" "accounts.conf rendered"
+for k in modes defaultGroups passwordRequirements enrolScratchRoot secretsPath failsafeUserName; do
+    assert_true "accounts.conf sets $k" grep -qE "^$k:" "$ACCOUNTS_CONF"
+done
+assert_true "accounts.conf offers all three modes" \
+    bash -c "grep -E '^modes:' '$ACCOUNTS_CONF' | grep -q 'local' &&
+             grep -E '^modes:' '$ACCOUNTS_CONF' | grep -q 'managed' &&
+             grep -E '^modes:' '$ACCOUNTS_CONF' | grep -q 'domain'"
+# The scratch root and the secrets file are both on tmpfs, and that is not cosmetic: /run is the
+# only writable path on the live medium that is guaranteed not to survive the reboot, and the
+# secrets file holds a plaintext password until the job unlinks it.
+for k in enrolScratchRoot secretsPath; do
+    assert_true "accounts.conf's $k is under /run" \
+        grep -qE "^$k:[[:space:]]+\"?/run/" "$ACCOUNTS_CONF"
+done
 
 # The sequence must not name the stock modules that cannot work here. Each of these would fail
 # or, worse, half-succeed: localecfg runs `locale-gen` in a target that has none; unpackfs looks
 # for a squashfs; bootloader/grubcfg generate a GRUB config for a machine that boots a UKI;
 # fstab writes a file that ships in the immutable image; machineid would give every machine
 # installed from this medium the same one.
+#
+# `users` is on this list since plan/21, and it is the only entry that would *work* — which is
+# what makes it worth asserting. It is still installed, because it comes with app-admin/calamares
+# and no USE flag removes it, so naming it costs nothing at build time and produces a second,
+# additive account-creation step at run time: its own Active Directory checkbox appends a job and
+# then creates the local account anyway (Config.cpp:1088-1104), which is precisely the shape the
+# accounts page exists to remove.
 for forbidden in localecfg unpackfs fstab bootloader grubcfg initcpio initcpiocfg dracut \
-                 initramfs machineid packages netinstall displaymanager mount; do
+                 initramfs machineid packages netinstall displaymanager mount users; do
     assert_false "the sequence does not name the stock '$forbidden' module" \
         grep -qE "^[[:space:]]*-[[:space:]]+$forbidden$" "$SETTINGS"
 done
+# ...and the pair that replaced it is there, in the right phase each. `accounts` in show: and
+# `accountsetup` in exec: is not interchangeable — a page in the exec list draws nothing and a job
+# in the show list is a step with no UI.
+assert_true "the show sequence names the accounts page" \
+    bash -c "sed -n '/^- show:/,/^- exec:/p' '$SETTINGS' | grep -qE '^[[:space:]]*-[[:space:]]+accounts\$'"
+assert_true "the exec sequence names accountsetup" \
+    bash -c "sed -n '/^- exec:/,/^- show:/p' '$SETTINGS' | grep -qE '^[[:space:]]*-[[:space:]]+accountsetup\$'"
+# Order, inside exec:. accountsetup must run AFTER imagedeploy (which mounts the target and its
+# /etc overlay — every write below depends on it) and BEFORE removeuser and imageidentity, which
+# delete the live user and read `username` out of GlobalStorage to allocate its subuid range.
+assert_true "accountsetup runs after imagedeploy and before removeuser and imageidentity" \
+    bash -c "
+      seq=\$(sed -n '/^- exec:/,/^- show:/p' '$SETTINGS' | sed -nE 's/^[[:space:]]*-[[:space:]]+([a-z][a-z0-9_-]*)\$/\\1/p')
+      idx() { printf '%s\\n' \"\$seq\" | grep -nxF \"\$1\" | cut -d: -f1; }
+      [[ \$(idx imagedeploy) -lt \$(idx accountsetup) ]] &&
+      [[ \$(idx accountsetup) -lt \$(idx removeuser) ]] &&
+      [[ \$(idx accountsetup) -lt \$(idx imageidentity) ]]"
 
 # ---- 7. YAML is YAML ------------------------------------------------------------------------
 # Calamares parses these with yaml-cpp and reports a parse error as a startup failure, so a
@@ -305,8 +359,8 @@ assert_eq "${#installer_users[@]}" "${#live_users[@]}" \
 # deps stops describing intent.
 assert_eq "2" "$(grep -cvE '^[[:space:]]*(#|$)' "$REPO_ROOT/config/portage/sets/installer")" \
     "@installer names exactly two atoms"
-assert_true "@installer names the managed-enrolment view module from the overlay" \
-    grep -qx 'distro-base/distro-calamares-managed' "$REPO_ROOT/config/portage/sets/installer"
+assert_true "@installer names the accounts view module from the overlay" \
+    grep -qx 'distro-base/distro-calamares-accounts' "$REPO_ROOT/config/portage/sets/installer"
 assert_true "@installer names app-admin/calamares" \
     grep -qx 'app-admin/calamares' "$REPO_ROOT/config/portage/sets/installer"
 
@@ -336,28 +390,33 @@ assert_true "the role gate precedes the release directory being created" \
     "$REPO_ROOT/scripts/stages/80-release.sh"
 
 # ---- 9. the password dictionary --------------------------------------------------------------
-# users.conf hands every password to libpwquality, and libpwquality's dictionary check is not
-# optional: dev-libs/libpwquality RDEPENDs on sys-libs/cracklib unconditionally, there is no USE
-# flag that drops it and no users.conf key that turns it off. cracklib compiles that dictionary
+# accounts.conf hands every password to libpwquality — the accounts page calls pwquality_check()
+# with these options itself (plan/21 §2), where Calamares' stock users page used to — and
+# libpwquality's dictionary check is not optional: dev-libs/libpwquality RDEPENDs on
+# sys-libs/cracklib unconditionally, there is no USE flag that drops it and no config key that
+# turns it off. cracklib compiles that dictionary
 # in pkg_postinst behind `if [[ -z ${ROOT} ]]` — so it runs for a merge into the live root and
 # never for the ROOT=$TARGET merges stage 30 does. Left alone the image carries the raw word list
 # at /usr/share/dict/cracklib-small and nothing at all at /usr/lib/cracklib_dict.
 #
-# What that ships is a medium that boots, autologins, starts Calamares with its branding and gets
-# through the disk step — and then rejects EVERY password on the users page with "The password
-# fails the dictionary check - error loading dictionary". No password is strong enough to pass a
-# dictionary that will not load, so Next never enables and the install stops with the disk
-# already partitioned. It is the fourth member of this file's family of failures and nothing else
+# What that ships is a medium that boots, autologins, starts Calamares with its branding, and
+# then rejects EVERY password on the accounts page with "The password fails the dictionary check -
+# error loading dictionary". No password is strong enough to pass a dictionary that will not load,
+# so Next never enables and the medium cannot install anything at all. (It is worse than it was
+# before plan/21 and also caught sooner: the page is now BEFORE the disk step rather than after
+# it.) It is the fourth member of this file's family of failures and nothing else
 # sees it: stage 70 reads a serial port, and the package audits are all satisfied (cracklib IS
 # installed — it is its postinst that did not run).
-USERS_CONF="$RENDER/modules/users.conf"
-assert_file "$USERS_CONF" "users.conf rendered"
-assert_true "users.conf routes passwords through libpwquality" \
-    grep -qE '^[[:space:]]*libpwquality:' "$USERS_CONF"
+assert_true "accounts.conf routes passwords through libpwquality" \
+    grep -qE '^[[:space:]]*libpwquality:' "$ACCOUNTS_CONF"
 # ...and names no dictpath of its own, which is what leaves cracklib's compiled-in default
 # (/usr/lib/cracklib_dict, from the ebuild's --with-default-dict) as the only path it will open.
-assert_false "users.conf sets no dictpath, so the compiled-in default is the one that matters" \
-    grep -q 'dictpath' "$USERS_CONF"
+assert_false "accounts.conf sets no dictpath, so the compiled-in default is the one that matters" \
+    grep -q 'dictpath' "$ACCOUNTS_CONF"
+# The page is what reads those options now, so the code that does it is part of this contract.
+assert_true "the accounts page calls pwquality_check() with accounts.conf's options" \
+    bash -c "grep -q 'pwquality_check' '$OVL_ACCOUNTS/files/PasswordCheck.cpp' &&
+             grep -q 'pwquality_set_option' '$OVL_ACCOUNTS/files/PasswordCheck.cpp'"
 assert_true "stage 40 builds the dictionary cracklib's pkg_postinst never got to build" \
     grep -q 'create-cracklib-dict -o /usr/lib/cracklib_dict' "$REPO_ROOT/scripts/stages/40-configure.sh"
 # All three files: cracklib opens .pwi (the index) and .hwm (the bucket high-water marks)
@@ -635,12 +694,25 @@ assert_true "stage 40 verifies the front end is gone from a live medium" \
 assert_true "stage 50 re-checks it after the prune, where nothing else would notice" \
     grep -qF 'the managed-mode front end survived onto a PROFILE_ROLE=$PROFILE_ROLE medium' "$STAGE50"
 # The line this whole section draws: the CLI is not the front end and must stay, or the
-# Calamares enrolment page has nothing to exec.
-assert_false "...but the CLI itself is never removed — managedenroll execs it" \
+# accounts page has nothing to exec — twice over, since plan/21. The PAGE runs it to enrol into a
+# scratch root before the disk is written, and the JOB runs it again to apply the cached bundle
+# into the target.
+assert_false "...but the CLI itself is never removed — the accounts page and its job exec it" \
     grep -qE 'rm .*\$\{TARGET:\?\}/usr/bin/\$\{DISTRO_ID\}-managed"' "$STAGE40"
-assert_true "...and the managedenroll module is what execs it from the live session" \
+assert_true "...and accountsetup is what execs it from the live session" \
     grep -qF '"/usr/bin/%s-managed" % ID' \
-        "$REPO_ROOT/config/calamares/local-modules/managedenroll/main.py.in"
+        "$REPO_ROOT/config/calamares/local-modules/accountsetup/main.py.in"
+assert_true "...as does the page, by the same path" \
+    grep -qF '/usr/bin/%1-%2' "$OVL_ACCOUNTS/files/AccountsConfig.cpp"
+# And the domain half, for the same reason: <id>-domain is what the job joins with now that the
+# realm shim is gone, so a prune that removed it would break domain mode with nothing to say.
+assert_true "the job joins through <id>-domain, not through a realm shim" \
+    grep -qF '"/usr/bin/%s-domain" % ID' \
+        "$REPO_ROOT/config/calamares/local-modules/accountsetup/main.py.in"
+assert_false "...and no realm shim is left anywhere in the tree" \
+    bash -c "[[ -e '$REPO_ROOT/config/calamares/system/realm.in' ]]"
+assert_true "stage 40 asserts /usr/bin/realm is absent from the medium" \
+    grep -qF 'usr/bin/realm is on the medium' "$STAGE40"
 
 # ---- GRUB: 68.4 MiB of a bootloader this medium never runs (plan/20 §2.3) -------------------
 # A file deletion, because sys-boot/grub is an unconditional RDEPEND of app-admin/calamares and

@@ -165,7 +165,7 @@ live session is never enrolled. Managed mode (plan/19) is about a machine an org
 and keeps talking to, and the KCM is the surface for the person sitting at that machine. On a
 stick that is discarded twenty minutes later it answers a question nobody can ask.
 
-**Not the whole of managed mode.** `<id>-base/<id>-calamares-managed` — the enrolment page — is
+**Not the whole of managed mode.** `<id>-base/<id>-calamares-accounts` — the enrolment page — is
 installer-only and stays exactly where it is. It is how the machine *being installed* gets
 enrolled, which is the one managed-mode job a live medium genuinely has. The split is the point:
 the two halves live in different sets precisely so they can differ.
@@ -193,9 +193,12 @@ not have. Stage 40 does it immediately after `install_rootfs_overlay`, and both 
 stage 50 then assert the *absence*, because a rename in `config/rootfs` would leave the removal
 silently matching nothing and put the entry straight back.
 
-**What stays, on purpose.** `/usr/bin/<id>-managed` — the CLI — is what the Calamares
-`managedenroll` module execs from the live session with `--root` pointed at the mounted target,
-so it is half of how the installed machine gets enrolled. The polkit action stays with it: it
+**What stays, on purpose.** `/usr/bin/<id>-managed` — the CLI — is what the Calamares identity
+module execs from the live session with `--root` pointed at a root that is not `/`, so it is half
+of how the installed machine gets enrolled. [plan/21](21-installer-accounts-page.md) gave it two
+callers rather than one and made the argument stronger: the `accounts` **page** runs `enroll`
+against a scratch root under `/run` before the disk is written, and the `accountsetup` **job**
+then runs `apply --root` against the mounted target. The polkit action stays with it: it
 authorises `pkexec <id>-managed`, which is still on the medium. The line is between *the front
 end a person opens* and *the tool the installer drives*, not between "managed mode" and "not".
 

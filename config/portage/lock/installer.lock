@@ -4,7 +4,7 @@
 # SNAPSHOT_SHA256: c61294000825031e58a38f60fadb603423c61430b841d73b87705f789d83944b
 # SNAPSHOT_DATE: 20260820
 # PROFILE: default/linux/amd64/23.0/desktop/plasma/systemd
-# PORTAGE_CONFIG_HASH: 1c38a8febbccdd27a6a120a959f288602654a7df54777eb43fed709069b0e3ff
+# PORTAGE_CONFIG_HASH: c3ef72d79cac725c561a1af16f1db5e0c74a797b2ac1b48410cb94b0c58c32e9
 # INCLUDE_CJK_FONTS: 1
 # INCLUDE_PRINTING: 1
 # INCLUDE_DISTROBOX: 0
@@ -251,7 +251,7 @@
 =gui-libs/egl-wayland-1.1.21
 =gui-libs/egl-wayland2-1.0.1
 =gui-libs/libdecor-0.2.5
-=immos-base/immos-calamares-managed-1.0
+=immos-base/immos-calamares-accounts-1.0
 =kde-apps/baloo-widgets-26.04.3
 =kde-apps/dolphin-26.04.3
 =kde-apps/kio-extras-26.04.3

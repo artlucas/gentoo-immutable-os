@@ -1,4 +1,4 @@
-# package.use for the INSTALLER profile only (plan/16, plan/19 §7.3).
+# package.use for the INSTALLER profile only (plan/16, plan/21).
 #
 # Files named profile.<name> in this directory are copied into the config root by stage 20 only
 # when that profile is the one being built; every other file here is shared by all of them. USE
@@ -8,18 +8,20 @@
 # ---------------------------------------------------------------------------------------------
 # dev-qt/qttools[linguist] — required to BUILD the installer page, not to run it.
 #
-# <id>-calamares-managed (config/portage/overlay) is a Calamares view module built out of tree
-# against the installed Calamares, because Calamares accepts only C++ QtPlugin view modules.
-# Building out of tree means find_package(Calamares), and the exported CalamaresConfig.cmake
-# opens with:
+# <id>-calamares-accounts (config/portage/overlay) is a Calamares view module built out of
+# tree against the installed Calamares, because Calamares accepts only C++ QtPlugin view
+# modules (plan/21 §2). Building out of tree means find_package(Calamares), and the exported
+# CalamaresConfig.cmake opens with:
 #
 #     set(qt_required Core Widgets LinguistTools)
 #     find_package(${qtname} CONFIG REQUIRED ${qt_required})
 #
 # LinguistTools is hardcoded into the REQUIRED component list every consumer of the Calamares
-# CMake package inherits, whether or not that consumer has a single translatable string — and
-# this one does not. The cmake package /usr/lib64/cmake/Qt6LinguistTools is gated on this USE
-# flag, so with it off the module fails at configure time with
+# CMake package inherits, whether or not that consumer ships a translation. This one has
+# translatable strings — tr() in the C++, qsTr() in the QML — but no .ts files and no catalog,
+# so it needs the CMake package and never invokes lrelease. The cmake package
+# /usr/lib64/cmake/Qt6LinguistTools is gated on this USE flag, so with it off the module
+# fails at configure time with
 #
 #     Failed to find required Qt component "LinguistTools"
 #

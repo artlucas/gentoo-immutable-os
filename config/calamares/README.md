@@ -3,7 +3,8 @@
 Everything the `installer` build profile needs to turn a live Plasma session into an installer.
 None of it ships in the product: [stage 40](../../scripts/stages/40-configure.sh) installs this
 tree only when the profile's sets include `installer`, and asserts its absence from every other
-profile. Designed in [plan/16](../../plan/16-installer.md).
+profile. Designed in [plan/16](../../plan/16-installer.md); the accounts page that replaced the
+stock `users` module is [plan/21](../../plan/21-installer-accounts-page.md).
 
 ## Where it goes
 
@@ -18,7 +19,6 @@ profile. Designed in [plan/16](../../plan/16-installer.md).
 | `system/kscreenlockerrc.in` | `/etc/xdg/kscreenlockerrc` | drops the lock screen's password prompt — the live account's password is public — and gives the greeter the wallpaper below |
 | `system/lookandfeel/contents/layouts/**` | `/usr/share/plasma/look-and-feel/<id>/contents/layouts/` | the Plasma layout script that pins Calamares — and nothing else — to the task manager, and points the desktop at the wallpaper below; added to the image's own Look-and-Feel package |
 | `system/wallpaper/**` | `/usr/share/wallpapers/<id>/` | the medium's only wallpaper — see below |
-| `system/realm.in` | `/usr/bin/realm` (**mode 0755**) | the Active Directory front door — see below |
 
 `branding/installer/logo.png` is **not in this directory**. It is composed at build time by
 `config/branding/make-splash-assets.py --logo`, from the same `build_block()` that produces the
@@ -135,9 +135,10 @@ are ours.
 
 | stock module | disposition |
 |---|---|
-| `welcome`, `locale`, `keyboard`, `users`, `summary`, `finished`, `umount` | **kept**, unmodified |
+| `welcome`, `locale`, `keyboard`, `summary`, `finished`, `umount` | **kept**, unmodified |
 | `removeuser` | **kept** — and it works only because of the overlay; see below |
 | `partition` | **kept, reconfigured into a disk picker**: `allowManualPartitioning: false` plus a fixed `partitionLayout` leaves a device combo box and an Erase radio button |
+| `users` | **replaced** by `accounts` + `accountsetup` — one module where the mechanism is a choice, because upstream's could only offer domain join as an *addition* to a local account ([plan/21](../../plan/21-installer-accounts-page.md)) |
 | `unpackfs`, `mount` | **replaced** by `imagedeploy` |
 | `bootloader`, `grubcfg` | **replaced** by `imagebootloader` — four file copies and a three-line `loader.conf` |
 | `localecfg` | **dropped** — it runs `locale-gen` in the target, and this image has none (stage 40 drives `localedef` at build time). `imageidentity` writes `/etc/locale.conf` instead |
@@ -152,9 +153,10 @@ are ours.
 does** — including mounting the overlay onto its own lowerdir, the same incantation as
 `config/rootfs/usr/lib/dracut/modules.d/90etc-overlay/etc-overlay.sh`.
 
-With that in place, Calamares' stock `locale`, `keyboard`, `users` and `removeuser` modules write
-to `/etc/...` exactly as they would on a mutable distro, and the writes land in the upper on
-`/var` because that is what the mount does. **No patched modules anywhere in this installer.**
+With that in place, Calamares' stock `locale`, `keyboard` and `removeuser` modules write to
+`/etc/...` exactly as they would on a mutable distro, and the writes land in the upper on `/var`
+because that is what the mount does. Our own `accountsetup` runs `useradd` and `chpasswd` under
+the same chroot for the same reason. **No patched modules anywhere in this installer.**
 
 It is also what makes `removeuser` work at all. The live user is baked into `/etc/passwd` inside
 the read-only EROFS *that the installed system also uses*, so the account cannot be deleted — it
@@ -169,9 +171,11 @@ custom step to do this by hand; the overlay does it for free.
 | `imagedeploy` | `unpackfs` + `mount` | verifies the payload against `manifest.json`, writes the root EROFS into the `root_<version>` partition, mounts root/var/**the /etc overlay**/ESP and the API filesystems, unpacks the `/var` template, sets `rootMountPoint` |
 | `imagebootloader` | `bootloader` | systemd-boot (taken from the **payload's** `/usr`, not the live system's) and the UKI onto the ESP, plus a best-effort `efibootmgr` entry |
 | `imageidentity` | — | autologin off, subuid/subgid, the first-boot hostname stamp, `/etc/locale.conf` |
+| `accounts` | `users` (the page) | the mode choice and its fields — a compiled view module from the overlay, not here; its config is `modules/accounts.conf.in` |
+| `accountsetup` | `users` (the jobs) + `managedenroll` | the local administrator, `/etc/hostname` and `/etc/hosts`, and then the domain join or the enrolment transplant |
 
-They are Python job modules — a directory, a `module.desc` and a `main.py`. `module.desc`'s
-`name` **must** equal the directory name: `ModuleManager` compares the two and silently skips the
+All but `accounts` are Python job modules — a directory, a `module.desc` and a `main.py`.
+`module.desc`'s `name` **must** equal the directory name: `ModuleManager` compares the two and silently skips the
 module when they differ, which produces an install that runs to "finished" having never written
 the bootloader. Both stage 40 and `tests/test-installer.sh` assert it.
 
@@ -211,45 +215,63 @@ an installed system with no preinstalled apps until someone installs them.
   profile-suffixed. With both attached, `/dev/disk/by-partlabel/` resolves each name to whichever
   udev saw first. The `finished` page says so, and leaves the reboot box unticked.
 
-## `realm`, and why a file with that name is here
+## The accounts page, and the three things it owns
 
-The users page offers domain join because `modules/users.conf.in` sets `allowActiveDirectory:
-true`. Calamares' implementation of that checkbox is, in full, one command
-(`src/modules/users/ActiveDirectoryJob.cpp` in 3.4.2):
+The one question anybody using this installer has to answer, and the only one where the answer
+cannot be changed afterwards without reinstalling: **local accounts only**, **managed system**, or
+**join an enterprise domain**. It asks it across two screens — the choice, then that choice's
+fields — driven by the window's own Back and Next, because Calamares calls `ViewStep::back()`
+instead of leaving a module while `isAtBeginning()` is false and `next()` instead of advancing
+while `isAtEnd()` is false. One view step, one sidebar entry, two screens. It is a compiled view
+module in
+[`config/portage/overlay`](../portage/overlay/README.md) rather than a file in this directory,
+because Calamares accepts only C++ `QtPlugin` views (`ModuleFactory.cpp:53`); what lives here is
+its configuration, `modules/accounts.conf.in`, and the job it hands its answer to.
 
-```c++
-Calamares::System::instance()->runCommand(
-    RunLocation::RunInHost,
-    { "realm", "join", m_domain, "-U", m_adminLogin, "--install=" + installPath, "--verbose" },
-    QString(), m_adminPassword, std::chrono::seconds( 30 ) );
-```
+The full design is [plan/21](../../plan/21-installer-accounts-page.md). Three things about it
+belong here, next to the configuration:
 
-`realm` is realmd, which **is not in the Gentoo tree at all** — and realmd is itself only a d-bus
-wrapper around `adcli` plus sssd configuration generation, which is precisely what
-`/usr/bin/<id>-domain` already is ([plan/18](../../plan/18-active-directory.md) §4). So rather
-than patch Calamares or write a C++ view module, `system/realm.in` answers to the name it calls
-and forwards. One join implementation, two callers: this shim on the medium, and the CLI on the
-installed system.
+- **The mode is a choice, and upstream's could not be.** Stock `users` offered domain join as a
+  checkbox whose `ActiveDirectoryJob` was appended *and then* `SetupGroupsJob`, `CreateUserJob`
+  and `SetPasswordJob` still ran (`Config.cpp:1088-1104`). Domain was an addition, never an
+  alternative — and managed enrolment was a second page with a second checkbox asking about the
+  same decision. All three mechanisms are mutually exclusive in fact: `<id>-managed` refuses to
+  enrol a domain-joined machine and `<id>-domain` carries the mirror check
+  ([plan/19](../../plan/19-managed-mode.md) §8.7).
 
-Four things about that snippet are constraints rather than trivia, and all four are in the
-shim's comments:
+- **Managed mode blocks Next, and it is the only thing in this installer that does.** Everything
+  else here obeys plan/18 §7.4: a service that is unreachable while somebody installs a machine
+  is a Tuesday, and the install must finish anyway. That rule assumed a local account existed
+  regardless — and managed mode creates none, so an install that reached `finished` with a failed
+  enrolment would be a disk with nothing to log into. The page therefore runs the real enrolment
+  when its button is pressed, into a scratch root on the live medium, *before* the disk is
+  touched; a failure there costs nothing and can be retried or abandoned. Domain mode keeps the
+  old rule exactly, because its local administrator is created either way.
 
-- **`RunInHost`.** The command runs on the live medium, not in the chroot, with `--install=`
-  naming the mounted target. Every write therefore has to go through `--root`, and the medium
-  itself is never enrolled in anything.
-- **30 seconds, hard.** The shim does no work that is not the join, and every preflight check is
-  bounded with `timeout` rather than left to a DNS resolver's own patience.
-- **That argv is a contract.** `tests/test-domain.sh` drives the rendered shim with those exact
-  tokens, so a Calamares bump that changes them fails the offline suite instead of failing a
-  stranger's install.
-- **The exit code is a loaded gun.** A non-zero exit becomes `JobResult::error` and stops the
-  installation — and this job runs *before* `CreateUserJob`, `removeuser` and `imageidentity`, so
-  stopping there leaves a fully deployed disk with no chosen account, the live user still in
-  `/etc/passwd`, and autologin still on. The shim verifies the domain first, writes nothing if
-  that fails, records the attempt in the target for `<id>-domain status` to report, and **exits 0
-  either way**. See [plan/18](../../plan/18-active-directory.md) §7.4.
+- **`/usr/bin/realm` is gone, and stage 40 asserts its absence.** It existed for one caller:
+  Calamares' `ActiveDirectoryJob` hardcodes the command name `realm`, and realmd is not in the
+  Gentoo tree at all — while `/usr/bin/<id>-domain` is already exactly what realmd is a d-bus
+  wrapper around, `adcli` plus sssd configuration ([plan/18](../../plan/18-active-directory.md)
+  §4). With the stock users module out of the sequence there is nothing left to answer to that
+  name, and a file called `realm` that is not realmd is worse than no file: `accountsetup` calls
+  `<id>-domain join --root <target> --password-stdin` directly, on the host, and inherits the
+  shim's exit-code mapping (2 unreachable, 3 credentials rejected, 4 clock skew) and its
+  `domain-pending.json` writer verbatim. `tests/test-domain.sh` drives the job where it used to
+  drive the shim.
+
+Two properties of the old shim survive the move because they were never about `realm`:
+
+- **The join runs on the HOST, not in the chroot**, with `--root` naming the mounted target. Every
+  write goes through `--root`, and the medium itself is never enrolled in anything. Same for the
+  managed apply.
+- **A failed join never fails the install.** `<id>-domain join` preflights through `verify` before
+  it writes anything; `accountsetup` records what was asked for where `<id>-domain status` will
+  report it and returns `None`. Stopping instead would leave a fully deployed disk with no chosen
+  account, the live user still in `/etc/passwd` and autologin still on — the outcome plan/18 §7.4
+  exists to prevent.
 
 `imagedeploy` has one job that belongs to this feature too: it writes `/etc/hostname` from global
-storage as soon as the /etc overlay is mounted. `ActiveDirectoryJob` is appended *before*
-`SetHostNameJob` (`Config.cpp:1088` vs `:1109`), so without that the computer account would be
-created in AD under the live medium's own hostname — silently, and permanently.
+storage as soon as the /etc overlay is mounted, *before* the join, so the computer account is not
+created in AD under the live medium's own hostname — silently, and permanently. `accountsetup`
+writes it again, along with `/etc/hosts`, so the hostname does not depend on which module ran
+first.

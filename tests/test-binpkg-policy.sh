@@ -73,4 +73,19 @@ assert_true "stage 30 guards the effective target FEATURES" \
 assert_true "stage 30 guards the effective target PORTAGE_BINHOST" \
     grep -q 'portageq envvar PORTAGE_BINHOST' "$S30"
 
+# ---- stage 30: this repo's own packages are never answered by a cached build ---------------
+# The overlay's sources — the KCM's and the installer page's C++ and QML — are invisible to
+# portage: a binpkg is judged by the ebuild, the CPV and the USE flags, and an installed copy by
+# the same three, none of which move when files/ changes. Without both flags below, stage 30
+# merges the previous build of our own code and says so only as "Emerging binary", which is how
+# an image was once assembled around a day-old plugin with every assertion passing.
+assert_true "stage 30 reinstalls the overlay packages rather than trusting an installed copy" \
+    grep -q -- '--reinstall-atoms "${OVERLAY_CP\[\*\]}"' "$S30"
+assert_true "...and excludes them from binpkg reuse, so the reinstall is from source" \
+    grep -q -- '--usepkg-exclude "${OVERLAY_CP\[\*\]}"' "$S30"
+assert_true "...for every package the rendered overlay carries, not a hand-kept list" \
+    grep -q "find \"\$CONFIG_ROOT/overlay\" -mindepth 3 -maxdepth 3 -name '\*.ebuild'" "$S30"
+assert_true "...and both flags reach the emerge that builds the image" \
+    bash -c "grep -A3 'emerge --verbose --usepkg --with-bdeps=n' '$S30' | grep -q '\"\\\${OWN_CODE\[@\]}\"'"
+
 finish

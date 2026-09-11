@@ -41,12 +41,18 @@
 # have. Installing here is `dd` (plan/16 §5.1), and the modules that do it are ours.
 app-admin/calamares
 
-# ---- managed mode (plan/19 §7.3, Phase D) ---------------------------------------------------
-# The enrolment page. Calamares accepts ONLY C++ QtPlugin view modules (ModuleFactory.cpp:53),
-# so a page cannot be a script — which is why this is an ebuild in config/portage/overlay and
-# why the JOB beside it is an ordinary python module in config/calamares/local-modules.
+# ---- the accounts page (plan/21) ------------------------------------------------------------
+# The installer's only account-creation page: local accounts, a managed system, or an enterprise
+# domain, as one choice. Calamares accepts ONLY C++ QtPlugin view modules (ModuleFactory.cpp:53),
+# so a page cannot be a script — which is why this is an ebuild in config/portage/overlay and why
+# the JOB beside it is an ordinary python module in config/calamares/local-modules. Its UI is QML
+# with Kirigami, hosted in a QQuickWidget inside that plugin; the compiled part is thin.
+#
+# MANDATORY, unlike the enrolment page it replaces. That one was optional and settings.conf
+# carried a substituted token so a medium without it still built; this one is what creates the
+# account, so stage 40 refuses to build an installer medium whose lock did not carry it.
 #
 # Named only by this profile: on a desktop image it would install a Calamares plugin into a
 # system with no Calamares. Harmless, and still wrong — the package audit would then have to
 # explain why an installer plugin is on a machine that cannot run the installer.
-distro-base/distro-calamares-managed
+distro-base/distro-calamares-accounts

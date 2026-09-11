@@ -9,8 +9,9 @@
 # package manager to run, no bootloader to generate and no fstab to write — the root filesystem
 # is an EROFS image that gets written to a partition byte-for-byte, and everything else was
 # decided at build time and is already inside it. So the stock modules that make sense here are
-# the ones that ASK THE USER SOMETHING (welcome, locale, keyboard, users) plus the ones that
-# write per-machine identity into /etc, and the ones that do disk work are ours.
+# the ones that ASK THE USER SOMETHING (welcome, locale, keyboard) plus the ones that write
+# per-machine identity into /etc; the ones that do disk work are ours, and so — since
+# plan/21 — is the one that asks about accounts.
 ---
 
 # `local` is <libdir>/calamares/modules — upstream's own modules, exactly as the ebuild installed
@@ -29,17 +30,14 @@ sequence:
   # Whole-disk erase only, and the page is therefore a DISK PICKER rather than a partition
   # editor — see modules/partition.conf for how a fixed partitionLayout does that.
   - partition
-  - users
-  # Managed enrolment (plan/19 §7.3). AFTER users, so the person has already made the local
-  # administrator account this machine keeps whatever happens to the control plane, and before
-  # summary, so the enrolment is one of the things summarised.
-  #
-  # This line is EMPTY unless <id>-calamares-managed is installed. The page is a compiled
-  # Calamares view module and comes from the in-repo Portage overlay (Phase D), which reaches an
-  # image only through a re-resolved lock — and settings.conf naming a module that is installed
-  # nowhere is a step Calamares silently drops. Stage 40 substitutes this token and warns, by
-  # name, when it substitutes nothing.
-@CAL_MANAGED_PAGE@
+  # Who will use this computer, as ONE choice: local accounts only, a managed system, or an
+  # enterprise domain (plan/21). A compiled Calamares view module from the in-repo Portage
+  # overlay, because Calamares accepts only C++ QtPlugin views — but MANDATORY, unlike the
+  # enrolment page it replaces: it is the installer's only account-creation step, so it is named
+  # unconditionally here and stage 40 refuses to build a medium whose lock did not carry it.
+  # settings.conf naming a module that is installed nowhere is a step Calamares silently drops,
+  # and dropping this one produces an install that reaches "finished" with no account on it.
+  - accounts
   - summary
 - exec:
   # 1. The disk. Writes the GPT and creates the filesystems, from the fixed layout in
@@ -51,26 +49,28 @@ sequence:
   #    /var, and put systemd-boot and the UKI on the ESP.
   - imagedeploy
   - imagebootloader
-  # 3. Identity, into the mounted target's /etc. These are stock modules doing exactly what they
-  #    do on a mutable distro, and they work unmodified because imagedeploy mounted an overlay
-  #    on /etc: their writes land in the upper on /var (§5.2). No patching required.
+  # 3. Identity, into the mounted target's /etc. Both of these are stock modules doing exactly
+  #    what they do on a mutable distro, and they work unmodified because imagedeploy mounted
+  #    an overlay on /etc: their writes land in the upper on /var (§5.2). No patching required.
   - locale
   - keyboard
-  - users
+  # 3b. The accounts page's decision, applied: the local administrator (useradd/chpasswd under
+  #     chroot, which works for the same overlay reason), /etc/hostname and /etc/hosts, and then
+  #     whichever of the two central-identity paths was chosen — the domain join, or moving the
+  #     enrolment the PAGE already made into the target and applying its bundle offline.
+  #     Replaces the stock `users` module and our own `managedenroll`, which were two jobs for
+  #     one decision (plan/21 §5).
+  - accountsetup
   # 4. The live user goes away. `removeuser` runs userdel in the target, which rewrites
   #    /etc/{passwd,shadow,group,gshadow} — and because those are lower files under an overlay,
   #    the rewrite is a copy-up. The upper's copy then shadows the image's entirely, which is
   #    exactly what §5.4 asks for, at no cost.
   - removeuser
   # 5. What no stock module covers: subordinate UID/GID ranges, the autologin drop-in that turns
-  #    the live medium's autologin OFF, and the locale/machine-id fixups this image needs.
+  #    the live medium's autologin OFF, and the locale/machine-id fixups this image needs. In
+  #    managed mode there is no local username in GlobalStorage, so it skips the subuid range and
+  #    says so — correct, because the managed client owns those ranges for managed users.
   - imageidentity
-  # 6. Managed enrolment, if one was asked for. ALWAYS in the sequence, unlike the page above:
-  #    this is a python job that ships with the image, and it is also how a zero-touch enrolment
-  #    (plan/19 §7.3 route 2) works on a medium with no page at all. It does nothing when nothing
-  #    was requested, and it NEVER fails the install — plan/18 §7.4's lesson, and T-MAN-4's
-  #    subject.
-  - managedenroll
   - umount
 - show:
   - finished
@@ -82,7 +82,9 @@ branding: installer
 prompt-install: true
 
 # false: the target is a real root filesystem mounted at rootMountPoint, and target commands run
-# under chroot. `users` and `removeuser` need that — they run useradd/userdel.
+# under chroot. `accountsetup` and `removeuser` need that — they run useradd/chpasswd and
+# userdel. (The domain join and the managed apply deliberately run on the HOST instead, with
+# --root naming the target, which is what keeps the live medium itself unenrolled.)
 dont-chroot: false
 oem-setup: false
 

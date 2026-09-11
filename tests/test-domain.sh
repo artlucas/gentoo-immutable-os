@@ -7,9 +7,11 @@
 #      observable until someone joins. sssd enabled on an unjoined machine is not a warning —
 #      systemd-boot-check-no-failures gates boot-complete.target, so it is a failed boot and, on
 #      the third one, a rollback to the previous image.
-#   2. THE CALAMARES CONTRACT. The installer's domain-join path is Calamares executing a command
-#      called `realm` with a fixed argv. That argv lives in someone else's C++, and a version
-#      bump that changed it would be discovered by a stranger, mid-install, on their own disk.
+#   2. THE INSTALLER CONTRACT. The installer's domain-join path is one command with a fixed argv
+#      and an exit-code mapping. It used to be Calamares executing `realm` — someone else's C++
+#      choosing the tokens — and since plan/21 it is our own `accountsetup` job, which means the
+#      argv is ours but the failure is the same: a wrong flag is discovered by a stranger,
+#      mid-install, on their own disk. So the job is DRIVEN here, not grepped.
 #   3. THE KERBEROS INCLUDEDIR RULE. MIT Kerberos parses only those files in an includedir whose
 #      names are alphanumerics, dashes and underscores, and treats a MISSING includedir as a hard
 #      error. Both halves are silent: the wrong filename is ignored, and the missing directory
@@ -206,50 +208,98 @@ assert_eq "1" "$rc" "a 16-character hostname is refused before any join is attem
 assert_contains "Active Directory allows 15" "$LONG" "and the error says why"
 echo "lab-01" > "$FAKE/etc/hostname"
 
-# ---- 5. the Calamares contract --------------------------------------------------------------
-# Quoted from src/modules/users/ActiveDirectoryJob.cpp in calamares 3.4.2:
+# ---- 5. the installer contract ---------------------------------------------------------------
+# THE SHIM IS GONE (plan/21 §5). It existed for one caller — Calamares' stock users module, whose
+# ActiveDirectoryJob hardcodes the command name `realm`:
 #
 #   { "realm", "join", m_domain, "-U", m_adminLogin, "--install=" + installPath, "--verbose" }
 #
-# ...run with RunLocation::RunInHost, the admin password on stdin, and a 30-second timeout. If a
-# calamares bump changes any of that, this is where it should be found.
-SHIM_SRC="$REPO_ROOT/config/calamares/system/realm.in"
-assert_file "$SHIM_SRC" "the realm shim exists"
-assert_true "the realm shim is valid bash" bash -n "$SHIM_SRC"
-SHIM="$TMP/realm"
-render_template "$SHIM_SRC" "$SHIM"; chmod +x "$SHIM"
-assert_false "no unresolved tokens in the rendered shim" grep -qE '@[A-Z][A-Z0-9_]*@' "$SHIM"
+# ...run with RunLocation::RunInHost, the admin password on stdin and a 30-second timeout. With
+# that module out of the sequence there is nothing left to answer to that name, so the argv under
+# test is now our own `accountsetup` job's. Everything the shim was asserted on is asserted here,
+# on the job, and driven the same way: a stub in place of $DISTRO_ID-domain, reporting the argv it
+# was handed.
+assert_false "the realm shim is gone" bash -c "[[ -e '$REPO_ROOT/config/calamares/system/realm.in' ]]"
 
-# Drive it with Calamares' exact argv, with a stub on PATH standing in for the join CLI.
+JOB_SRC="$REPO_ROOT/config/calamares/local-modules/accountsetup/main.py.in"
+assert_file "$JOB_SRC" "the accountsetup job exists"
+JOB="$TMP/accountsetup.py"
+render_template "$JOB_SRC" "$JOB"
+assert_false "no unresolved tokens in the rendered job" grep -qE '@[A-Z][A-Z0-9_]*@' "$JOB"
+DRIVER="$TESTS_DIR/lib-accountsetup-driver.py"
+assert_file "$DRIVER" "the job driver exists"
+
+# The stub stands in for $DISTRO_ID-domain and prints the argv it was called with, plus whatever
+# arrived on stdin — which is how "the password is on stdin and never in an argument" is checked
+# rather than assumed.
 mkdir -p "$TMP/bin"
-cat > "$TMP/bin/${DISTRO_ID}-domain" <<STUB
+cat > "$TMP/bin/domain-stub" <<'STUB'
 #!/usr/bin/env bash
-printf '%s\n' "\$@"
+printf 'ARG %s\n' "$@"
+IFS= read -r pw || true
+printf 'STDIN %s\n' "$pw"
+exit "${STUB_RC:-0}"
 STUB
-chmod +x "$TMP/bin/${DISTRO_ID}-domain"
-ARGV="$(PATH="$TMP/bin:$PATH" "$SHIM" join corp.example.com -U Administrator \
-        --install=/tmp/target/ --verbose </dev/null 2>&1)"
-assert_contains "join" "$ARGV" "the shim forwards a join"
-assert_contains "--domain
-corp.example.com" "$ARGV" "the positional domain becomes --domain"
-assert_contains "--user
-Administrator" "$ARGV" "-U becomes --user"
-assert_contains "--root
-/tmp/target/" "$ARGV" "--install= becomes --root, so writes go to the TARGET not the medium"
-assert_contains "--password-stdin" "$ARGV" "the password is forwarded on stdin"
+chmod +x "$TMP/bin/domain-stub"
+
+JROOT="$TMP/jroot"; mkdir -p "$JROOT/etc" "$JROOT/var/lib"
+# The job routes the tool's output through libcalamares' debug(), one line at a time, so every
+# line comes back prefixed. Stripping it here keeps the argv assertions below able to check
+# ADJACENCY — that --domain is followed by the domain and not by something else — which is the
+# half of an argv contract a per-token grep cannot see.
+drive_join() {
+    GS_JSON="$1" JOIN_PASSWORD="${2:-secret}" TOOL="$TMP/bin/domain-stub" CONF_JSON='{}' \
+        python3 "$DRIVER" "$JOB" join_domain "$JROOT" 2>&1 \
+        | sed -E 's/^(debug|warning): accountsetup: //'
+}
+ARGV="$(drive_join '{"domainName":"corp.example.com","domainJoinUser":"Administrator"}')"
+assert_contains "ARG join" "$ARGV" "the job runs a join"
+assert_contains "ARG --domain
+ARG corp.example.com" "$ARGV" "with the domain the page collected"
+assert_contains "ARG --user
+ARG Administrator" "$ARGV" "and the join account"
+assert_contains "ARG --root
+ARG $JROOT" "$ARGV" "--root names the TARGET, so no write lands on the live medium"
+assert_contains "ARG --password-stdin" "$ARGV" "the password is passed on stdin, never as an argument"
+assert_contains "STDIN secret" "$ARGV" "...and it arrives there"
+
+# The three options plan/18 §7.1 recorded as "only the page cannot express them". It can now, so
+# the job has to forward them — and only when they were given, because $DISTRO_ID-domain treats an
+# empty --ou as a request to create the computer account in an OU called "".
+ARGV="$(drive_join '{"domainName":"corp.example.com","domainJoinUser":"Administrator",
+                     "domainOu":"OU=Laptops,DC=corp,DC=example,DC=com",
+                     "domainAdminGroup":"Domain Admins","domainComputerName":"lab-01"}')"
+assert_contains "ARG --ou
+ARG OU=Laptops,DC=corp,DC=example,DC=com" "$ARGV" "an OU reaches the join"
+assert_contains "ARG --admin-group
+ARG Domain Admins" "$ARGV" "so does the admin group"
+assert_contains "ARG --computer-name
+ARG lab-01" "$ARGV" "so does the computer account name"
+ARGV="$(drive_join '{"domainName":"corp.example.com","domainJoinUser":"Administrator","domainOu":""}')"
+assert_false "an empty Advanced field is not forwarded at all" \
+    grep -q -- '--ou' <<<"$ARGV"
+
+# The DC address: Calamares' own IP field appended "<ip> <domain>" to the target's /etc/hosts
+# before the join, for a controller that is reachable when DNS is not yet. Same behaviour.
+: > "$JROOT/etc/hosts"
+drive_join '{"domainName":"corp.example.com","domainJoinUser":"Administrator","domainDcAddress":"10.0.0.5"}' >/dev/null
+assert_true "a domain controller address is added to the target's /etc/hosts" \
+    grep -qx '10.0.0.5  corp.example.com' "$JROOT/etc/hosts"
 
 # ---- 5b. verify, and why a failed join must not fail the install ----------------------------
-# The installer cannot ask "is this domain real?" before it writes the disk. Calamares' users
-# module keeps the domain and credentials in Config members and never publishes them to
-# GlobalStorage (3.4.2 Config.cpp), so the realm shim is the first code in the whole install that
-# learns a domain was asked for — by which point `partition` and `imagedeploy` have run.
+# The rule this section pins survived plan/21 unchanged, and the reason it needed changing at all
+# was only ever the plumbing. A Calamares python job fails an install by returning a tuple, and
+# `accountsetup` runs BEFORE `removeuser` and `imageidentity` in the exec list — so a join that
+# returned one on an unreachable DC would leave an installed disk with no chosen account,
+# @LIVE_USER@ still present, and autologin still on: a failed install that boots into the live
+# medium's throwaway session. join_domain() therefore returns None on every path, and
+# $DISTRO_ID-domain verifies before it writes anything.
 #
-# What follows from that is the rule this section pins. ActiveDirectoryJob turns a non-zero exit
-# from the shim into JobResult::error, and it is appended BEFORE CreateUserJob, and before
-# `removeuser` and `imageidentity` in the exec list. So a shim that exits non-zero on an
-# unreachable DC leaves an installed disk with no chosen account, @LIVE_USER@ still present, and
-# autologin still on — a failed install that boots into the live medium's session. The shim
-# therefore verifies first, writes nothing if the check fails, and exits 0 regardless.
+# What plan/21 DID change is that the domain can now be checked before the disk is written, as an
+# advisory button on the page — Calamares' own users module kept the domain and credentials in
+# Config members and published nothing to GlobalStorage (3.4.2 Config.cpp), which is why that was
+# impossible before. It is still advisory: it does not block Next, because domain mode creates the
+# local administrator either way.
 VBIN="$TMP/vbin"; mkdir -p "$VBIN"
 cat > "$VBIN/adcli" <<'STUB'
 #!/usr/bin/env bash
@@ -302,29 +352,65 @@ rc=$?
 assert_eq "2" "$rc" "join hands verify's exit code back, so the shim can tell the operator which"
 assert_eq "$BEFORE" "$(find "$VROOT" | sort)" "a failed preflight writes nothing to the target"
 
-# The shim: exit 0, and a record the installed system can report.
-SOUT="$(PATH="$VBIN:$DST/usr/bin:$PATH" ADCLI_MODE=down printf 'secret\n' | \
-        PATH="$VBIN:$DST/usr/bin:$PATH" ADCLI_MODE=down "$SHIM" join corp.example.com \
-        -U Administrator "--install=$VROOT/" --verbose 2>&1)"; rc=$?
-assert_eq "0" "$rc" "the shim exits 0 on an unreachable domain, so Calamares does not abort the
-  install between deploying the filesystem and creating the local user"
-assert_contains "NOT JOINED" "$SOUT" "while saying plainly that it did not join"
-assert_contains "domain-pending" "$(find "$VROOT" -type f)" \
-    "and records the asked-for join in the target"
+# The job: None on every path, and a record the installed system can report. Driven once per
+# exit code, because the four messages are the only thing the operator will ever see about it and
+# each one names a different fix.
+JOUT="$(STUB_RC=2 drive_join '{"domainName":"corp.example.com","domainJoinUser":"Administrator"}')"
+assert_contains "None" "$JOUT" "an unreachable domain does not fail the install: join_domain
+  returns None, and a Calamares python job fails an install by returning a tuple"
+assert_contains "NOT JOINED" "$JOUT" "while saying plainly that it did not join"
+assert_contains "could not be reached" "$JOUT" "exit 2 is reported as unreachable"
+assert_true "and the asked-for join is recorded in the target" \
+    test -f "$JROOT/var/lib/$DISTRO_ID/domain-pending.json"
+assert_true "the record names the domain and the reason, and no password" \
+    bash -c "python3 -c \"
+import json,sys
+d = json.load(open('$JROOT/var/lib/$DISTRO_ID/domain-pending.json'))
+assert d['domain'] == 'corp.example.com', d
+assert d['status'] == 2, d
+assert 'reached' in d['reason'], d
+assert not any('secret' in str(v) for v in d.values()), d
+\""
+JOUT="$(STUB_RC=3 drive_join '{"domainName":"corp.example.com","domainJoinUser":"Administrator"}')"
+assert_contains "rejected the account" "$JOUT" "exit 3 is reported as rejected credentials"
+JOUT="$(STUB_RC=4 drive_join '{"domainName":"corp.example.com","domainJoinUser":"Administrator"}')"
+assert_contains "clock is too far" "$JOUT" "exit 4 is reported as clock skew"
+JOUT="$(STUB_RC=9 drive_join '{"domainName":"corp.example.com","domainJoinUser":"Administrator"}')"
+assert_contains "status 9" "$JOUT" "an unmapped status says so rather than guessing at a cause"
+# The successful case writes no pending record, which is what makes `status` able to distinguish
+# "joined" from "asked for and did not happen".
+rm -f "$JROOT/var/lib/$DISTRO_ID/domain-pending.json"
+drive_join '{"domainName":"corp.example.com","domainJoinUser":"Administrator"}' >/dev/null
+assert_false "a successful join writes no pending record" \
+    test -f "$JROOT/var/lib/$DISTRO_ID/domain-pending.json"
 assert_true "status reports a join that was requested and did not happen" \
     grep -q 'A domain join was requested during installation' "$CLI"
 assert_true "leave removes the pending record too" grep -q 'p_pending "$root"' "$CLI"
 
 # ---- 6. the installer wiring ----------------------------------------------------------------
-USERS_CONF="$REPO_ROOT/config/calamares/modules/users.conf.in"
-assert_true "the users page offers Active Directory" \
-    grep -qx 'allowActiveDirectory: true' "$USERS_CONF"
-assert_true "stage 40 installs the shim as an executable" \
+ACCOUNTS_CONF="$REPO_ROOT/config/calamares/modules/accounts.conf.in"
+assert_true "the accounts page offers domain mode" \
+    grep -qE '^modes:.*\bdomain\b' "$ACCOUNTS_CONF"
+# The page's own domain fields, which are what makes the mode more than the checkbox it replaced.
+PAGE="$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-accounts/files"
+assert_file "$PAGE/qml/DomainForm.qml" "the page has a domain form"
+for prop in domainName joinUser joinPassword dcAddress computerOu adminGroup computerName; do
+    assert_true "the domain form binds $prop" grep -q "accounts\.$prop" "$PAGE/qml/DomainForm.qml"
+done
+# ...and the advisory check, which is the thing plan/18 §7.4 said could not exist.
+assert_true "the page can verify the domain before the disk is written" \
+    grep -qF 'QStringLiteral( "verify" )' "$PAGE/AccountsConfig.cpp"
+assert_true "...and it maps verify's exit codes to the same causes the job does" \
+    bash -c 'for c in 2 3 4; do grep -qF "case $c:" "$1" || exit 1; done' _ "$PAGE/AccountsConfig.cpp"
+# No realm shim anywhere, and stage 40 says so rather than merely not installing one: a
+# /usr/bin/realm that is not realmd is worse than no file at all.
+assert_false "stage 40 no longer installs a realm shim" \
     grep -q 'chmod 0755 -- "$TARGET/usr/bin/realm"' "$REPO_ROOT/scripts/stages/40-configure.sh"
-# ...and it must not reach a product image. The shim only makes sense on the medium, and a
-# /usr/bin/realm on an installed system is a realmd that is not realmd.
-assert_true "stage 40 fails if /usr/bin/realm leaks into a non-installer profile" \
-    grep -q 'usr/bin/realm' "$REPO_ROOT/scripts/stages/40-configure.sh"
+assert_true "stage 40 fails if /usr/bin/realm is present on the medium" \
+    grep -q 'usr/bin/realm is on the medium' "$REPO_ROOT/scripts/stages/40-configure.sh"
+assert_true "stage 40 asserts the join tool is there instead" \
+    grep -qF 'DISTRO_ID-domain is missing, but accounts.conf offers domain mode' \
+        "$REPO_ROOT/scripts/stages/40-configure.sh"
 
 # The hostname ordering trap (plan/18 §7.3): ActiveDirectoryJob runs BEFORE SetHostNameJob, so
 # without this the computer account is created under the live medium's own name.

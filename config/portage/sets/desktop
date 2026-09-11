@@ -136,8 +136,8 @@ net-print/cups                   #printing
 # nobody can ask: the live session enrols nothing, so the KCM would report "not enrolled" for
 # twenty minutes and then cease to exist.
 #
-# NOT the whole of managed mode, and the distinction matters. The Calamares enrolment page
-# (distro-base/distro-calamares-managed, in config/portage/sets/installer) is installer-ONLY
+# NOT the whole of managed mode, and the distinction matters. The installer's accounts page
+# (distro-base/distro-calamares-accounts, in config/portage/sets/installer) is installer-ONLY
 # and stays exactly where it is: it is how the machine being INSTALLED gets enrolled, which is
 # the one managed-mode job a live medium does have.
 distro-base/distro-kcm-managed  #not-live

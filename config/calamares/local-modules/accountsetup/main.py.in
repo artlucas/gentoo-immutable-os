@@ -1,0 +1,568 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+#
+# accountsetup — everything the accounts page decided, applied to the mounted target (plan/21 §5).
+#
+# This replaces Calamares' stock `users` module and our own `managedenroll`. It is one job because
+# the page is one choice: `accountsMode` selects between three paths that are mutually exclusive
+# in fact — @DISTRO_ID@-managed refuses to run on a domain-joined machine and @DISTRO_ID@-domain
+# carries the mirror check (plan/19 §8.7) — and two jobs would mean two places that could disagree
+# about which one ran.
+#
+# WHAT IT DOES, per mode:
+#
+#   local     the local administrator (useradd, chpasswd, the groups), and the hostname
+#   domain    the same, plus `@DISTRO_ID@-domain join` against the mounted target
+#   managed   the hostname, plus the enrolment the PAGE already performed, moved into the target
+#
+# THE FAILURE DISCIPLINE IS NOT UNIFORM, AND THAT IS THE ONE THING TO UNDERSTAND HERE.
+#
+# plan/18 §7.4 established the rule the whole installer obeys: a network service that is
+# unreachable while somebody installs a machine is a Tuesday, and an installer that treats it as
+# fatal hands them a disk with the whole OS on it, no account they chose, `@LIVE_USER@` still in
+# /etc/passwd and autologin still on — presented as a failed install. So the domain join and the
+# managed transplant below NEVER fail: they record what was asked for, where the installed system
+# will report it, and return None.
+#
+# Creating the local account is different, and it fails loudly. A useradd that does not work
+# leaves a machine with no way in and nothing to fix it with, so there is no "record it and carry
+# on" available — the honest outcome is to say so while somebody is still standing in front of the
+# installer. That is also why the page validates the username and the password before Next is
+# enabled: by the time this job runs, everything that can be checked has been.
+
+import json
+import os
+import shutil
+import subprocess
+
+import libcalamares
+
+# See the note in imagedeploy/main.py: this is the idiom every stock module uses.
+debug = libcalamares.utils.debug
+warning = libcalamares.utils.warning
+
+import gettext
+
+_ = gettext.translation(
+    "calamares-python",
+    localedir=libcalamares.utils.gettext_path(),
+    languages=libcalamares.utils.gettext_languages(),
+    fallback=True,
+).gettext
+
+ID = "@DISTRO_ID@"
+
+# Absolute, and named rather than spelled inline at the two call sites. Absolute because these
+# run on the HOST as root and a PATH lookup is not something to leave to the environment
+# Calamares was started in; named because the offline suite drives join_domain() and
+# transplant_enrolment() for real, with a stub in place of the tool, which is how the
+# exit-code mapping below is tested at all.
+MANAGED_CLI = "/usr/bin/%s-managed" % ID
+DOMAIN_CLI = "/usr/bin/%s-domain" % ID
+
+# The domain join's own bound. Calamares' stock ActiveDirectoryJob gave `realm` 30 seconds;
+# @DISTRO_ID@-domain preflights through `verify` before it writes anything and each of its own
+# probes is bounded with `timeout`, so this is the outer wall rather than the working budget.
+JOIN_TIMEOUT_S = 120
+# The offline apply: signature verification with gpgv, a render, and writes into the target's
+# /etc. No network at all, so this only ever trips on a target that is not there.
+APPLY_TIMEOUT_S = 120
+
+
+def pretty_name():
+    return _("Setting up accounts.")
+
+
+def target_path(root, path):
+    return os.path.join(root, path.lstrip("/"))
+
+
+def state_dir(root):
+    return os.path.join(root, "var/lib", ID, "managed")
+
+
+def in_target(root, argv, stdin=None, timeout=None):
+    """Run a command inside the mounted target.
+
+    `chroot` rather than libcalamares.utils.target_env_call, for the same reason imageidentity
+    calls `chroot root locale -a` directly: this job needs the exit status, the output and a
+    timeout on the same call, and doing it here means the command that runs is the command that
+    is written. settings.conf sets dont-chroot: false, and imagedeploy has already mounted the
+    API filesystems, so a chroot here is a working environment for shadow's tools.
+    """
+    return subprocess.run(
+        ["chroot", root] + argv,
+        input=stdin,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        timeout=timeout,
+        check=False,
+        text=True,
+    )
+
+
+def read_secrets(path):
+    """The passwords, from the 0600 file on the live medium's tmpfs.
+
+    They are not in GlobalStorage on purpose: Calamares can dump it to the log, and the page this
+    job replaces put a live enrolment code there (plan/21 §4).
+    """
+    if not path:
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f) or {}
+    except (OSError, ValueError) as e:
+        warning("accountsetup: could not read the secrets file: %s" % e)
+        return {}
+
+
+def home_mode(spec):
+    """Calamares' own home_permissions spelling: a leading `o` means the rest is octal."""
+    spec = (spec or "").strip()
+    if not spec:
+        return None
+    if spec[0] in "oO":
+        spec = spec[1:]
+    try:
+        return int(spec, 8)
+    except ValueError:
+        warning("accountsetup: home_permissions %r is not octal; leaving the default" % spec)
+        return None
+
+
+# ---------------------------------------------------------------------------------------------
+# the local administrator
+# ---------------------------------------------------------------------------------------------
+
+
+def create_local_user(root, gs, password, conf):
+    """Stock users' SetupGroupsJob + CreateUserJob + SetPasswordJob, in that order.
+
+    It works unmodified on an immutable distro for one reason: imagedeploy mounted an overlay on
+    the target's /etc before this ran, so every write to /etc/{passwd,shadow,group,gshadow}
+    copies the file up into the upper on /var and the upper's copy shadows the read-only image's
+    entirely (plan/16 §5.2). The home directory lands on /var too, through the /home -> var/home
+    symlink the image ships.
+
+    Returns None on success, or a (title, message) tuple, which fails the install.
+    """
+    username = (gs.value("username") or "").strip()
+    if not username:
+        return (
+            _("Installation failed"),
+            _("No account name reached this step. The installer cannot create an account, and "
+              "the installed system would have no way to log in."),
+        )
+    if not password:
+        return (
+            _("Installation failed"),
+            _("No password reached this step for {!s}.").format(username),
+        )
+
+    groups = [g for g in (gs.value("userGroups") or []) if g]
+    shell = gs.value("userShell") or "/bin/bash"
+
+    # must_exist, checked where the answer means something: inside the target. A group that is
+    # missing there means the payload is not what this installer thinks it is, and failing beats
+    # creating a group with a fresh GID that nothing else in the image references.
+    required = {
+        g.get("name"): bool(g.get("must_exist"))
+        for g in (conf.get("defaultGroups") or [])
+        if isinstance(g, dict) and g.get("name")
+    }
+    for group in groups:
+        if in_target(root, ["getent", "group", group]).returncode == 0:
+            continue
+        if required.get(group):
+            return (
+                _("Installation failed"),
+                _("The group {!s} does not exist in the system being installed. The image is not "
+                  "the one this installer expects.").format(group),
+            )
+        warning("accountsetup: group %s is missing from the target; leaving it out" % group)
+        groups = [g for g in groups if g != group]
+
+    argv = ["useradd", "-m", "-U", "-s", shell]
+    if groups:
+        argv += ["-G", ",".join(groups)]
+    full_name = (gs.value("userFullName") or "").strip()
+    if full_name:
+        argv += ["-c", full_name]
+    argv.append(username)
+
+    proc = in_target(root, argv)
+    if proc.returncode != 0:
+        return (
+            _("Installation failed"),
+            _("Could not create the account {!s}:\n<pre>{!s}</pre>").format(
+                username, (proc.stdout or "").strip()
+            ),
+        )
+    debug("accountsetup: created %s in %s" % (username, ",".join(groups) or "no extra groups"))
+
+    mode = home_mode(gs.value("homePermissions"))
+    if mode is not None:
+        home = target_path(root, os.path.join("/home", username))
+        try:
+            os.chmod(home, mode)
+        except OSError as e:
+            # Not fatal: the account exists and works, and useradd already applied HOME_MODE from
+            # the target's own login.defs. Only the tightening did not happen.
+            warning("accountsetup: could not chmod %s to %o: %s" % (home, mode, e))
+
+    # chpasswd on stdin, never a command line: an argument is visible in /proc to every process
+    # on the live medium for as long as the call takes.
+    proc = in_target(root, ["chpasswd"], stdin="%s:%s\n" % (username, password))
+    if proc.returncode != 0:
+        return (
+            _("Installation failed"),
+            _("Could not set the password for {!s}:\n<pre>{!s}</pre>").format(
+                username, (proc.stdout or "").strip()
+            ),
+        )
+    debug("accountsetup: password set for %s" % username)
+    return None
+
+
+# ---------------------------------------------------------------------------------------------
+# the hostname
+# ---------------------------------------------------------------------------------------------
+
+
+def write_hostname(root, gs, conf):
+    """/etc/hostname, and /etc/hosts, which is the half of stock `users` nothing else covered.
+
+    /etc/hostname is written for the second time here and that is deliberate: imagedeploy writes
+    it as soon as the /etc overlay is mounted, because a domain join that ran before it would
+    create the computer account under the live medium's own name — silently, and permanently
+    (plan/18, config/calamares/README.md). This is the write that would have happened anyway;
+    keeping it means the hostname does not depend on which other module ran first.
+    """
+    hostname = (gs.value("hostname") or "").strip()
+    if not hostname:
+        warning("accountsetup: no hostname in GlobalStorage; leaving the image's default")
+        return
+
+    try:
+        path = target_path(root, "/etc/hostname")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(hostname + "\n")
+        os.chmod(path, 0o644)
+    except OSError as e:
+        warning("accountsetup: could not write /etc/hostname: %s" % e)
+
+    if not (conf.get("hostname") or {}).get("writeHostsFile"):
+        return
+    try:
+        path = target_path(root, "/etc/hosts")
+        with open(path, "w", encoding="utf-8") as f:
+            # The same shape Calamares' SetHostNameJob writes, because anything that reads this
+            # file on a desktop expects it: localhost on both families, and the hostname on
+            # 127.0.1.1 rather than 127.0.0.1 so a lookup of it does not shadow localhost.
+            f.write("# Host addresses\n")
+            f.write("127.0.0.1  localhost\n")
+            f.write("::1        localhost\n")
+            f.write("127.0.1.1  %s %s.localdomain\n" % (hostname, hostname))
+        os.chmod(path, 0o644)
+        debug("accountsetup: wrote /etc/hosts for %s" % hostname)
+    except OSError as e:
+        warning("accountsetup: could not write /etc/hosts: %s" % e)
+
+
+# ---------------------------------------------------------------------------------------------
+# managed mode: the transplant
+# ---------------------------------------------------------------------------------------------
+
+
+def write_managed_pending(root, name, reason):
+    """Record an enrolment that HAPPENED ON THE PAGE and did not reach the target.
+
+    Rarer than the state this file's predecessor recorded — the enrolment itself already
+    succeeded, against the real control plane, before the disk was written — which makes it worth
+    recording all the more: a device that the organisation believes exists and that cannot say so
+    is the one failure here nobody would otherwise be able to explain.
+
+    No code is written. It was single-use and is already spent (plan/19 §5.2).
+    """
+    try:
+        os.makedirs(state_dir(root), mode=0o755, exist_ok=True)
+        path = os.path.join(state_dir(root), "enrollment-pending.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "requested": True,
+                    "device_name": name,
+                    "reason": reason,
+                    "hint": "sudo %s-managed enroll --code CODE" % ID,
+                },
+                f,
+                indent=2,
+                sort_keys=True,
+            )
+            f.write("\n")
+        os.chmod(path, 0o644)
+        warning("accountsetup: recorded a pending enrolment: %s" % reason)
+    except OSError as e:
+        # Even this is not worth failing an install over.
+        warning("accountsetup: could not record the pending enrolment: %s" % e)
+
+
+def transplant_enrolment(root, gs):
+    """Move the enrolment the page made into the target, and apply its bundle there.
+
+    THE STATE DIRECTORY IS COPIED AND /etc IS NOT, and the reason is /etc/subuid. Everything the
+    managed client writes into /etc is a file it owns and could be copied — userdb records, their
+    <uid>.user symlinks, .membership files, sudoers.d and polkit drop-ins — but subuid and subgid
+    are APPENDS to files the target already has, carrying the live user's range and, in the other
+    two modes, the local administrator's. Only the client knows how to add its own lines without
+    disturbing them (plan/19 §8.2). So the bundle travels and the client renders it again, into
+    the target, with its own code.
+
+    Returns None always. See the header.
+    """
+    scratch = (gs.value("managedEnrollmentScratchRoot") or "").strip()
+    name = (gs.value("managedDeviceName") or "").strip()
+    if not scratch:
+        write_managed_pending(root, name, "the installer recorded no enrolment to move")
+        return None
+
+    src = state_dir(scratch)
+    if not os.path.exists(os.path.join(src, "enrollment.json")):
+        write_managed_pending(
+            root, name, "the enrolment made during installation could not be found in %s" % src
+        )
+        return None
+
+    dst = state_dir(root)
+    try:
+        os.makedirs(os.path.dirname(dst), mode=0o755, exist_ok=True)
+        shutil.copytree(src, dst, dirs_exist_ok=True, symlinks=True)
+        # enrollment.json holds the device secret and copytree preserves whatever mode it had;
+        # restating it here means a future change to the client's own mode cannot loosen this copy.
+        os.chmod(os.path.join(dst, "enrollment.json"), 0o600)
+    except (OSError, shutil.Error) as e:
+        write_managed_pending(root, name, "the enrolment could not be copied into the target: %s" % e)
+        return None
+
+    # `apply`, not `sync`: offline, from the bundle that came with the state directory. A sync
+    # here would need the control plane a second time, minutes after the page already had it, and
+    # would leave a machine with no accounts if the network had dropped in between — which is the
+    # whole failure this design moved the enrolment forward to avoid.
+    argv = [MANAGED_CLI, "apply", "--root", root]
+    try:
+        proc = subprocess.run(
+            argv,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=APPLY_TIMEOUT_S,
+            check=False,
+            text=True,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        write_managed_pending(root, name, "the policy could not be applied: %s" % e)
+        return None
+
+    for line in (proc.stdout or "").splitlines():
+        debug("accountsetup: %s" % line)
+    if proc.returncode != 0:
+        write_managed_pending(
+            root,
+            name,
+            "the policy bundle could not be applied to the installed system"
+            + (": %s" % (proc.stdout or "").strip().splitlines()[-1] if proc.stdout else ""),
+        )
+        return None
+
+    # The timer, in the TARGET. The page's enrolment tried to enable it against the scratch root,
+    # which has no unit files, and @DISTRO_ID@-managed ignores a systemctl failure — so this is
+    # where it actually happens. Offline --root mode: no /proc, no running systemd needed.
+    unit = "%s-managed-sync.timer" % ID
+    rc = subprocess.run(
+        ["systemctl", "--root=%s" % root, "enable", unit],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+        text=True,
+    )
+    if rc.returncode != 0:
+        # Not pending-worthy: the machine is managed and its policy is in force. It just will not
+        # pull a new bundle until something starts the timer, and the NetworkManager dispatcher
+        # (50-<id>-managed) still syncs on connect.
+        warning("accountsetup: could not enable %s: %s" % (unit, (rc.stdout or "").strip()))
+
+    debug("accountsetup: enrolment moved into the target and applied")
+    return None
+
+
+# ---------------------------------------------------------------------------------------------
+# domain mode: the join
+# ---------------------------------------------------------------------------------------------
+
+
+def write_domain_pending(root, domain, user, status, reason):
+    """Record a join that did not happen, where `@DISTRO_ID@-domain status` reports it.
+
+    Moved here verbatim from config/calamares/system/realm.in, which existed only because
+    Calamares' ActiveDirectoryJob hardcodes the command name `realm`. With the stock users module
+    gone there is no such caller, and the shim is deleted (plan/21 §5).
+    """
+    try:
+        os.makedirs(os.path.join(root, "var/lib", ID), mode=0o755, exist_ok=True)
+        path = os.path.join(root, "var/lib", ID, "domain-pending.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(
+                {"domain": domain, "user": user, "status": status, "reason": reason},
+                f,
+                indent=2,
+                sort_keys=True,
+            )
+            f.write("\n")
+        os.chmod(path, 0o644)
+        warning("accountsetup: NOT JOINED — %s" % reason)
+    except OSError as e:
+        warning("accountsetup: could not record the pending join: %s" % e)
+
+
+def add_dc_host_entry(root, address, domain):
+    """`<address> <domain>` in the target's /etc/hosts, for a DC that is reachable when DNS is
+    not yet. The same small specific thing Calamares' own IP field did."""
+    try:
+        with open(target_path(root, "/etc/hosts"), "a", encoding="utf-8") as f:
+            f.write("%s  %s\n" % (address, domain))
+        debug("accountsetup: added %s %s to the target's /etc/hosts" % (address, domain))
+    except OSError as e:
+        warning("accountsetup: could not add the domain controller to /etc/hosts: %s" % e)
+
+
+def join_domain(root, gs, password):
+    """One command, on the HOST, with the password on stdin.
+
+    On the host and not in the chroot: the join writes into the target through --root, and the
+    live medium itself is never enrolled in anything. That was true when Calamares ran `realm`
+    with RunLocation::RunInHost and it is true here.
+
+    Returns None always. `@DISTRO_ID@-domain join` preflights through `verify` before it writes,
+    and hands verify's exit code back: 2 unreachable, 3 credentials rejected, 4 clock skew.
+    """
+    domain = (gs.value("domainName") or "").strip()
+    user = (gs.value("domainJoinUser") or "").strip()
+    if not domain or not user:
+        warning("accountsetup: domain mode with no domain or no join account; skipping the join")
+        return None
+
+    address = (gs.value("domainDcAddress") or "").strip()
+    if address:
+        add_dc_host_entry(root, address, domain)
+
+    argv = [
+        DOMAIN_CLI,
+        "join",
+        "--domain",
+        domain,
+        "--user",
+        user,
+        "--root",
+        root,
+        "--password-stdin",
+    ]
+    # The three options plan/18 §7.1 recorded as "already options on <id>-domain; only the page
+    # cannot express them". The page can now.
+    for key, flag in (
+        ("domainOu", "--ou"),
+        ("domainAdminGroup", "--admin-group"),
+        ("domainComputerName", "--computer-name"),
+    ):
+        value = (gs.value(key) or "").strip()
+        if value:
+            argv += [flag, value]
+
+    debug("accountsetup: %s-domain join --domain %s --user %s" % (ID, domain, user))
+    try:
+        proc = subprocess.run(
+            argv,
+            input=(password or "") + "\n",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=JOIN_TIMEOUT_S,
+            check=False,
+            text=True,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        write_domain_pending(root, domain, user, 1, "the join command could not be run: %s" % e)
+        return None
+
+    for line in (proc.stdout or "").splitlines():
+        debug("accountsetup: %s" % line)
+    if proc.returncode == 0:
+        debug("accountsetup: joined %s" % domain)
+        return None
+
+    reasons = {
+        2: "the domain '%s' could not be reached from the installer" % domain,
+        3: "the domain controller rejected the account '%s'" % user,
+        4: "this machine's clock is too far from the domain controller's for Kerberos",
+    }
+    reason = reasons.get(
+        proc.returncode,
+        "the domain answered and authenticated '%s', but enrolling failed (status %d)"
+        % (user, proc.returncode),
+    )
+    write_domain_pending(root, domain, user, proc.returncode, reason)
+    warning("accountsetup: the installation continues; join afterwards with")
+    warning("accountsetup:   sudo %s-domain join --domain %s --user %s" % (ID, domain, user))
+    return None
+
+
+# ---------------------------------------------------------------------------------------------
+
+
+def run():
+    conf = libcalamares.job.configuration
+    gs = libcalamares.globalstorage
+
+    root = gs.value("rootMountPoint")
+    if not root:
+        return (
+            _("Configuration Error"),
+            _("No rootMountPoint is set — <pre>{!s}</pre> did not run.").format("imagedeploy"),
+        )
+
+    mode = (gs.value("accountsMode") or "none").strip()
+    secrets_path = gs.value("accountsSecretsPath") or ""
+    secrets = read_secrets(secrets_path)
+
+    try:
+        if mode not in ("local", "managed", "domain"):
+            # The page cannot be left without choosing, so reaching this means the page did not
+            # run at all — a settings.conf that lists the job and not the module. Say so rather
+            # than finishing an install with no accounts on it.
+            return (
+                _("Configuration Error"),
+                _("No account mode was chosen. The <pre>{!s}</pre> page did not run, and the "
+                  "installed system would have no way to log in.").format("accounts"),
+            )
+
+        if mode in ("local", "domain"):
+            failure = create_local_user(root, gs, secrets.get("userPassword"), conf)
+            if failure:
+                return failure
+
+        write_hostname(root, gs, conf)
+
+        if mode == "managed":
+            transplant_enrolment(root, gs)
+        elif mode == "domain":
+            join_domain(root, gs, secrets.get("domainJoinPassword"))
+
+        os.sync()
+    finally:
+        # Whatever happened, the passwords do not outlive this job. The file is on the live
+        # medium's tmpfs and would go with the reboot anyway; not relying on that is free.
+        if secrets_path:
+            try:
+                os.unlink(secrets_path)
+            except OSError:
+                pass
+
+    return None

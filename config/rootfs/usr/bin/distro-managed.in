@@ -1117,6 +1117,99 @@ def clamp_poll(v):
     return max(POLL_MIN, min(POLL_MAX, v))
 
 
+class BundleRefused(Exception):
+    """A correctly delivered bundle this device will not apply.
+
+    Separate from Fatal because the two callers want different things from it: `sync` records the
+    reason in last-sync.json and returns an exit code the timer treats as "keep the cached policy
+    in force", while `apply` has no cache to fall back to and prints it. The reason strings are
+    the ones already in last-sync.json — changing one changes what `status` reports.
+    """
+
+    def __init__(self, reason, message, rc=5, event=None):
+        super().__init__(message)
+        self.reason = reason
+        self.rc = rc
+        # (name, kwargs) for queue_event, when the refusal is worth telling the org about.
+        self.event = event
+
+
+def apply_bundle(paths, bundle_bytes, signature):
+    """Verify a signed bundle, gate it, render it and write it. Returns (serial, provisioned,
+    removed); raises BundleRefused.
+
+    THIS IS THE SECOND HALF OF `sync`, FACTORED OUT SO `apply` CAN HAVE IT WITHOUT THE NETWORK.
+    The installer needs exactly this and nothing else (plan/21 §6): the accounts page enrols
+    before the disk is written, so by the time the target exists there is already a verified
+    bundle in the state directory, and asking the control plane a second time — minutes later,
+    with the disk committed — could only lose. A machine whose network dropped in between would
+    get no accounts at all.
+
+    It is useful on a running system too: re-applying the cached policy with no network is what
+    somebody whose /etc overlay was rolled back actually wants, and it gives the offline test
+    suite an *apply* to diff against tests/managed-golden/ beside the existing --print-config
+    render.
+
+    The order below is the order of the risk, and none of it may be reordered:
+      1. VERIFY THE SIGNATURE OVER THE BYTES, BEFORE PARSING THEM. json.loads on unverified
+         input is the one thing this design must never do.
+      2. Anti-rollback. An OLD, CORRECTLY SIGNED BUNDLE IS A VALID BUNDLE — replaying
+         yesterday's, before a user was revoked or a limit was tightened, is the cheapest attack
+         on any offline policy system (§8.5).
+      3. Completeness. Absence removes a record, so a truncated or filtered bundle must never
+         silently delete accounts (§5.4).
+    """
+    verify_signature(bundle_bytes, signature)
+    bundle = json.loads(bundle_bytes.decode("utf-8"))
+
+    serial = int(bundle.get("serial", 0))
+    high = 0
+    try:
+        with open(paths.serial, "r", encoding="utf-8") as f:
+            high = int(f.read().strip() or 0)
+    except (OSError, ValueError):
+        pass
+    if serial < high:
+        raise BundleRefused(
+            "rollback-refused",
+            "REFUSED a bundle with serial %d; this device has already accepted %d. "
+            "The newer policy stays in force." % (serial, high),
+            event=("device.state", {"bundle_serial": high, "rollback_refused": serial}),
+        )
+    minver = int(bundle.get("min_client_version", 1))
+    if minver > CLIENT_VERSION:
+        raise BundleRefused(
+            "client-too-old",
+            "this bundle needs client version %d and this image has %d. Keeping the previous "
+            "bundle in force; a system update will bring a newer client."
+            % (minver, CLIENT_VERSION),
+        )
+    for required in ("users", "access"):
+        if required not in bundle:
+            raise BundleRefused(
+                "incomplete-bundle",
+                "the bundle has no %r key; refusing to apply a partial view of the org"
+                % required,
+            )
+
+    priv_gid = shadow_gid()
+    entries, provisioned = render(bundle, paths, priv_gid)
+    for name in bundle.get("revoked_users") or []:
+        for suffix in (".user", ".user-privileged", ".group"):
+            entries.pop(os.path.join(paths.userdb, name + suffix), None)
+    removed = apply_entries(paths, entries, priv_gid)
+    apply_policy(paths, bundle, provisioned, priv_gid)
+
+    atomic_write(paths.bundle, bundle_bytes, mode=0o644)
+    atomic_write(paths.bundle_sig, signature, mode=0o644)
+    atomic_write(paths.serial, "%d\n" % max(serial, high), mode=0o644)
+
+    note("applied bundle serial %d: %d user%s provisioned%s"
+         % (serial, len(provisioned), "" if len(provisioned) == 1 else "s",
+            ", %d record(s) removed" % len(removed) if removed else ""))
+    return serial, provisioned, removed
+
+
 def do_sync(paths, force=False):
     """The body of `sync`. Returns 0 on a completed sync and non-zero for the CALLER's
     information only — the process exit status is decided in cmd_sync, and it is always 0."""
@@ -1157,63 +1250,22 @@ def do_sync(paths, force=False):
         persist_secret(paths, enrollment, api)
         return 0
 
-    # 2. VERIFY THE SIGNATURE OVER THE BYTES RECEIVED, BEFORE PARSING THEM.
+    # 2./3./4./5. Verify, gate, render, apply — all of it in apply_bundle(), which `apply` calls
+    #    with a cached bundle instead of a fetched one. See that function for why it is one.
     bundle_text = payload.get("bundle")
     signature = payload.get("signature")
     if not isinstance(bundle_text, str) or not isinstance(signature, str):
         record_sync(paths, ok=False, reason="malformed-response")
         note("the control plane returned something that is not a signed bundle")
         return 5
-    bundle_bytes = bundle_text.encode("utf-8")
-    verify_signature(bundle_bytes, signature)
-    bundle = json.loads(bundle_text)
-
-    # 3. Anti-rollback, and the version gate. An OLD, CORRECTLY SIGNED BUNDLE IS A VALID BUNDLE
-    #    — replaying yesterday's, before a user was revoked or a limit was tightened, is the
-    #    cheapest attack on any offline policy system (§8.5).
-    serial = int(bundle.get("serial", 0))
-    high = 0
     try:
-        with open(paths.serial, "r", encoding="utf-8") as f:
-            high = int(f.read().strip() or 0)
-    except (OSError, ValueError):
-        pass
-    if serial < high:
-        record_sync(paths, ok=False, reason="rollback-refused")
-        queue_event(paths, "device.state", bundle_serial=high, rollback_refused=serial)
-        note("REFUSED a bundle with serial %d; this device has already accepted %d. "
-             "The newer policy stays in force." % (serial, high))
-        return 5
-    minver = int(bundle.get("min_client_version", 1))
-    if minver > CLIENT_VERSION:
-        record_sync(paths, ok=False, reason="client-too-old")
-        note("this bundle needs client version %d and this image has %d. Keeping the previous "
-             "bundle in force; a system update will bring a newer client." % (minver, CLIENT_VERSION))
-        return 5
-    # §5.4: absence removes a record, but only after the client has verified the bundle covers
-    # the whole org. A truncated or filtered bundle must never silently delete accounts.
-    for required in ("users", "access"):
-        if required not in bundle:
-            record_sync(paths, ok=False, reason="incomplete-bundle")
-            note("the bundle has no %r key; refusing to apply a partial view of the org" % required)
-            return 5
-
-    # 4./5. Render and apply.
-    priv_gid = shadow_gid()
-    entries, provisioned = render(bundle, paths, priv_gid)
-    for name in bundle.get("revoked_users") or []:
-        for suffix in (".user", ".user-privileged", ".group"):
-            entries.pop(os.path.join(paths.userdb, name + suffix), None)
-    removed = apply_entries(paths, entries, priv_gid)
-    apply_policy(paths, bundle, provisioned, priv_gid)
-
-    atomic_write(paths.bundle, bundle_bytes, mode=0o644)
-    atomic_write(paths.bundle_sig, signature, mode=0o644)
-    atomic_write(paths.serial, "%d\n" % max(serial, high), mode=0o644)
-
-    note("applied bundle serial %d: %d user%s provisioned%s"
-         % (serial, len(provisioned), "" if len(provisioned) == 1 else "s",
-            ", %d record(s) removed" % len(removed) if removed else ""))
+        serial, provisioned, removed = apply_bundle(paths, bundle_text.encode("utf-8"), signature)
+    except BundleRefused as refusal:
+        record_sync(paths, ok=False, reason=refusal.reason)
+        if refusal.event:
+            queue_event(paths, refusal.event[0], **refusal.event[1])
+        note(str(refusal))
+        return refusal.rc
 
     # 6./7. Drain the queue, heartbeat, apply commands.
     drained = safe_drain(paths, api, device_id)
@@ -1361,6 +1413,44 @@ def cmd_sync(argv):
         note("sync: %s" % e)
     except Exception as e:  # noqa: BLE001 — see the docstring; nothing may escape this frame
         note("sync: unexpected error: %s: %s" % (type(e).__name__, e))
+    return 0
+
+
+def cmd_apply(argv):
+    """Apply the bundle this root already holds, with no network at all.
+
+    The installer's second half (plan/21 §6): the accounts page enrolled into a scratch root
+    before the disk was touched, `accountsetup` copied the state directory into the target, and
+    this renders it into the target's own /etc — subuid and subgid included, which is the reason
+    the job copies state and not /etc. It is the client, not the installer, that knows how to
+    append its own lines to a file the target already has (§8.2).
+
+    Unlike `sync` this reports failure through its exit status, because there is no cached policy
+    to fall back to and no timer coming along behind it. The CALLER decides what that means: the
+    installer's job treats it as "record it as pending and finish the install", which is
+    plan/18 §7.4's rule, and a person at a shell wants to see it.
+    """
+    global QUIET
+    opts = parse_opts(argv, {"--root": str}, flags={"--quiet"})
+    QUIET = "--quiet" in opts
+    paths = Paths(opts.get("--root", "/"))
+    need_root()
+    if not os.path.isdir(paths._p("etc")):
+        raise Fatal("--root %s does not look like a root filesystem" % paths.root)
+    if not os.path.exists(paths.enrollment):
+        raise Fatal("%s is not enrolled; there is no policy to apply" % (paths.root or "/"))
+    try:
+        with open(paths.bundle, "rb") as f:
+            bundle_bytes = f.read()
+        with open(paths.bundle_sig, "r", encoding="utf-8") as f:
+            signature = f.read()
+    except OSError as e:
+        raise Fatal("no cached policy bundle to apply: %s" % e)
+
+    try:
+        apply_bundle(paths, bundle_bytes, signature)
+    except BundleRefused as refusal:
+        raise Fatal(str(refusal))
     return 0
 
 
@@ -1996,6 +2086,7 @@ def usage():
 
   enroll   join this machine to an organisation with a one-time code
   sync     fetch and apply the current policy bundle (what the timer runs)
+  apply    re-apply the bundle already cached here, with no network
   status   what is in force on this machine, from cached state, without the network
   policy   the policy this machine is enforcing
   passwd   change a managed user's password (needs the control plane)
@@ -2012,6 +2103,10 @@ sync options:
   --now                ignore the cached ETag and re-fetch
   --quiet              say nothing unless something changed
 
+apply options:
+  --root PATH          operate on a mounted target instead of /
+  --quiet              say nothing unless something changed
+
 leave options:
   --purge              remove the managed accounts instead of making them local
   --force              do not ask, and do not tell the control plane
@@ -2024,6 +2119,7 @@ leave options:
 COMMANDS = {
     "enroll": cmd_enroll,
     "sync": cmd_sync,
+    "apply": cmd_apply,
     "status": cmd_status,
     "policy": cmd_policy,
     "passwd": cmd_passwd,

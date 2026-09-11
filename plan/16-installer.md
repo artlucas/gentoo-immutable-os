@@ -348,10 +348,12 @@ mount        "$ESP_PART"  /tmp/target/efi
 
 That overlay line is not invented here — it is the same incantation `90etc-overlay` already
 performs in the initrd, including the mount-onto-its-own-lowerdir trick (plan/01, "/etc
-overlay"). With it in place, `rootMountPoint=/tmp/target` and Calamares' stock `locale`,
-`keyboard` and `users` modules write to `/etc/...` exactly as they would on a mutable distro,
-and the writes land in the upper on `/var` because that is what the mount does. **No module
-patching required for the identity steps.**
+overlay"). With it in place, `rootMountPoint=/tmp/target` and Calamares' stock `locale` and
+`keyboard` modules write to `/etc/...` exactly as they would on a mutable distro, and the
+writes land in the upper on `/var` because that is what the mount does. **No module patching
+required for the identity steps.** Account creation moved to our own `accountsetup` job in
+[plan/21](21-installer-accounts-page.md), and it runs `useradd`/`chpasswd` under the same
+chroot for the same reason — the mechanism this section describes is what makes both work.
 
 ### 5.3 Module map
 
@@ -367,7 +369,7 @@ patching required for the identity steps.**
 | `welcome` | **Keep** — language picker + requirements (disk size, power, network) |
 | `locale` | **Keep** — timezone + locale, into the overlay |
 | `keyboard` | **Keep** |
-| `users` | **Keep** — writes passwd/shadow/group into the overlay (see 5.4). Also carries the Active Directory page as of [plan/18](18-active-directory.md) §7: `allowActiveDirectory: true` adds a domain-join checkbox whose job runs `realm join … --install=<root>`, which the installer profile answers with a shim onto `<id>-domain` |
+| `users` | ~~**Keep**~~ → **Replaced** by `accounts` + `accountsetup` in [plan/21](21-installer-accounts-page.md). It was kept through plan/18 and plan/19, and both of those bolted a *checkbox* onto it — `allowActiveDirectory: true` for the domain, a second page for managed enrolment — because upstream's `Config::createJobs` appends `ActiveDirectoryJob` and then still runs `CreateUserJob` (`Config.cpp:1088-1104`), so domain join could only ever be an addition to a local account and never an alternative. plan/21 makes the mechanism a choice, which needs our own page and our own jobs. The `realm` shim goes with it |
 | `summary`, `finished` | **Keep** |
 | `shellprocess`, `contextualprocess` | **Keep** — the workhorses for every step in 5.1 |
 | `umount` | **Keep** |
@@ -382,8 +384,10 @@ patching required for the identity steps.**
 | `removeuser` | **Replace** — see 5.4 |
 | `displaymanager` | **Replace** — see 5.4 |
 | `luks*` | **Drop** — no encryption in v1 |
-| `managed` | **Add (plan/19 Phase D)** — the enrolment page. A C++ view module from `config/portage/overlay`, because Calamares accepts nothing else. Named in the sequence only on an image that has it: stage 40 substitutes the line, and warns by name when it substitutes nothing |
-| `managedenroll` | **Add** — the enrolment itself, as an ordinary python job beside the other three. Runs after `imageidentity`, and **never fails the install** ([plan/19](19-managed-mode.md) §7.3) |
+| ~~`managed`~~ | **Absorbed** by `accounts` in [plan/21](21-installer-accounts-page.md). It was a separate page asking, with a checkbox, half of one question — and stage 40 substituted it into the sequence only on an image that had it, which is why the token existed. The page is now mandatory and the token is gone: an absent module is a `die` |
+| ~~`managedenroll`~~ | **Absorbed** by `accountsetup`, same change. Note what did *not* survive the merge: this job ran after `imageidentity` and never failed the install, and `accountsetup` runs *before* it and can — but only on its local-account path, and for the reason plan/21 §3 argues |
+| `accounts` | **Add (plan/21)** — one module for the whole identity question, asked across two screens (the choice, then its fields), replacing `users` and `managed`. A C++ view module from `config/portage/overlay` with a QML/Kirigami face, because Calamares accepts nothing but a compiled `QtPlugin` for a view (`ModuleFactory.cpp:53`) and says nothing about what that plugin renders |
+| `accountsetup` | **Add (plan/21)** — the local administrator, the hostname, and then either the domain join or the managed transplant, as one python job. It sits where `users` sat rather than at the tail, because a `useradd` failing is worth stopping for and a network service failing is not |
 
 **Managed enrolment, and why it is not here yet.** [plan/19](19-managed-mode.md) §7.3 takes three
 routes to enrolling at install time, in order, and only the third touches this document. Unlike an
@@ -415,8 +419,10 @@ recoverable machine and an install presented as failed.
 `/etc/shadow`, which live in the read-only EROFS *that the installed system also uses*. It
 cannot be deleted. It must be **shadowed**: copy `passwd`, `shadow`, `group`, `gshadow` up into
 the overlay upper with the live user removed and the real user added. Overlay upper wins
-file-wise (plan/01), so the upper's copy replaces the lower's entirely. Calamares' `users`
-module does the adding; a `shellprocess` step before it does the copy-up and the removal.
+file-wise (plan/01), so the upper's copy replaces the lower's entirely. Our `accountsetup` job
+does the adding (Calamares' `users` module did until [plan/21](21-installer-accounts-page.md));
+the copy-up and the removal turned out to need no step at all — `removeuser`'s `userdel`
+rewriting a lower file *is* a copy-up. See `config/calamares/README.md`.
 
 **Disabling autologin.** `/etc/plasmalogin.conf.d/10-autologin.conf` is likewise in the
 immutable lower. Deleting a lower file through an overlay needs a whiteout device; do not.
@@ -431,8 +437,11 @@ later file wins. Clean, inspectable, and reversible by the user.
 
 **subuid/subgid.** [plan/13](13-distrobox.md) flags this: rootless podman needs subordinate ID
 ranges, stage 40 allocates them for `LIVE_USER`, and a real user created by the installer needs
-its own. Calamares' `users` module does not do subuid. One more `shellprocess` step writing
-`/etc/subuid` and `/etc/subgid` into the overlay.
+its own. Nothing in Calamares does subuid, and `accountsetup` deliberately does not either:
+`imageidentity` writes `/etc/subuid` and `/etc/subgid` from GlobalStorage's `username`, which
+is also why that key kept its stock name across plan/21. In managed mode there is no local
+user and the key is empty — correct, because the managed client owns those ranges for managed
+users (plan/19 §8.2).
 
 ## 6. Disk layout: swap and hibernation
 
@@ -861,7 +870,8 @@ Nothing else could have caught it. The package audits are *satisfied*: `sys-libs
 `expected-packages.installer.txt` — it is the postinst that did not run, and a VDB this pipeline
 deletes in stage 50 is not where that would show. Stage 70 reads a serial port. And the check is
 not optional from Calamares' side either: libpwquality RDEPENDs on cracklib unconditionally, with
-no USE flag and no `users.conf` key that turns the dictionary check off.
+no USE flag and no `accounts.conf` key (nor, before plan/21, a `users.conf` one) that turns
+the dictionary check off.
 
 Fixed by running the postinst's own line as a stage-40 chroot finalizer, alongside `ldconfig`,
 `systemd-hwdb` and `fc-cache` — which are there for exactly the same reason, and which is what
@@ -877,8 +887,8 @@ empty word list and exits 0) and then all three files — `.pwd`, `.pwi`, `.hwm`
 is built; stage 50 asserts they survived the prune, since they land in `/usr/lib` at maxdepth 1,
 which is the exact directory and depth §3d's multilib sweep walks (it deletes by *file content*,
 so they are safe today — the assertion is what makes a future rewrite of that sweep fail loudly);
-and `tests/test-installer.sh` asserts the pipeline still contains all of it, plus that `users.conf`
-names no `dictpath` of its own, which is what leaves the compiled-in default the only path that
+and `tests/test-installer.sh` asserts the pipeline still contains all of it, plus that
+`accounts.conf` names no `dictpath` of its own, which is what leaves the compiled-in default the only path that
 matters.
 
 **Phase B — Swap, hibernation, ISO.** The 5-partition layout, the dracut `resume` change, the
@@ -957,7 +967,8 @@ rather than replacing it:
 
 | Document | Change |
 |---|---|
-| [18-active-directory](18-active-directory.md) | Adds the domain-join option to this installer's users page, and the `realm` shim that makes the stock module's one command work here |
+| [18-active-directory](18-active-directory.md) | Adds the domain-join option to this installer's users page, and the `realm` shim that makes the stock module's one command work here. **Superseded by [21](21-installer-accounts-page.md)**: domain join is a mode on our own page, and the shim is deleted |
+| [21-installer-accounts-page](21-installer-accounts-page.md) | Replaces the stock `users` module and the plan/19 enrolment page with one `accounts` page and one `accountsetup` job. Amends §5.3's module map and §5.4's two identity notes above |
 | [00-overview](00-overview.md) | Non-goals: "Graphical installer / installer ISO" and "Hibernation" both move out. M5 becomes concrete |
 | [01-architecture](01-architecture.md) | Disk layout gains swap for installed systems; the "swap: zram only, no hibernation" line points here; "First boot & default user" points at §5.4 for how the live user actually goes away |
 | [04-image-and-boot](04-image-and-boot.md) | "The future installer ISO (roadmap) automates exactly this" → §5.1 and §7 |

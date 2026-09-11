@@ -30,6 +30,7 @@ been run yet. The full design lives in [`plan/`](plan/00-overview.md):
 | [17-animated-splash](plan/17-animated-splash.md) | The layer-pulse animation, and carrying the same mark through the login into a Plasma splash |
 | [18-active-directory](plan/18-active-directory.md) | Joining a Windows AD domain: sssd + adcli, what ships versus what a join writes, and the installer's domain page |
 | [19-managed-mode](plan/19-managed-mode.md) | Managed mode: centrally managed users for a household or small business, as systemd userdb records from a signed bundle a hosted API serves |
+| [21-installer-accounts-page](plan/21-installer-accounts-page.md) | The installer's accounts page: local, managed or domain as one choice, replacing Calamares' `users` module |
 
 ## Building
 
@@ -49,11 +50,13 @@ bash scripts/run-vm.sh out/immos-0.1.0.img   # boot the result in QEMU/OVMF
 ```
 
 Two packages are built from an **in-repo ebuild repository**, `config/portage/overlay`: the
-System Settings module and the Calamares page for managed mode ([plan/19](plan/19-managed-mode.md)
-Phase D). Both are compiled C++ plugins that must match the target's own Qt6/KF6 ABI, so Portage
-builds them like every other package rather than a build stage hand-compiling them against
-whatever headers are around. Adding one there needs a lock re-resolve to take effect —
-`scripts/relock.sh <atom>` — because a locked build emerges `@locked-image` and nothing else.
+System Settings module for managed mode ([plan/19](plan/19-managed-mode.md) Phase D) and the
+installer's accounts page ([plan/21](plan/21-installer-accounts-page.md)). Both are compiled C++
+plugins that must match the target's own Qt6/KF6 ABI, so Portage builds them like every other
+package rather than a build stage hand-compiling them against whatever headers are around — a Qt
+plugin whose ABI does not match its host does not fail to build, it fails to *load*, silently.
+Adding one there needs a lock re-resolve to take effect — `scripts/relock.sh <atom>` — because a
+locked build emerges `@locked-image` and nothing else.
 
 The build inputs are pinned: the stage3 base by digest, the Portage tree by commit, and every
 package version by `config/portage/lock/*.lock` ([plan/15](plan/15-version-pinning.md)). A

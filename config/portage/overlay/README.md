@@ -6,14 +6,21 @@ therefore cannot be built the way everything else in `config/rootfs/` is:
 | | |
 |---|---|
 | `<id>-kcm-managed` | The System Settings module for managed mode ([plan/19](../../../plan/19-managed-mode.md) §7.2). A Plasma KCM is a C++ plugin; there is no QML-only path into System Settings |
-| `<id>-calamares-managed` | The installer page for managed enrolment (plan/19 §7.3). Calamares accepts **only** C++ `QtPlugin` view modules — `ModuleFactory.cpp:53` — so a page cannot be a script |
+| `<id>-calamares-accounts` | The installer's accounts page ([plan/21](../../../plan/21-installer-accounts-page.md)). Calamares accepts **only** C++ `QtPlugin` view modules — `ModuleFactory.cpp:53` — so a page cannot be a script. Its UI is QML with Kirigami, compiled into the plugin as a Qt resource; the C++ is a thin host |
 
 They go to different images, and the split is deliberate rather than incidental. The KCM is in
 `@desktop` marked `#not-live`, so it reaches the product and **not** the installer medium — a live
 session is never enrolled, so a "which policy is applied?" page there answers a question nobody
 can ask ([plan/20](../../../plan/20-installer-slimming.md) §2.2). The Calamares page is in
 `@installer` and is therefore the exact opposite: installer-only, because it is how the machine
-*being installed* gets enrolled. Neither package is ever on both images.
+*being installed* gets its accounts. Neither package is ever on both images.
+
+One difference between them is worth knowing before a relock: **the accounts page is mandatory**.
+The KCM's absence costs a System Settings entry, and the enrolment page that preceded the accounts
+page was optional too — `settings.conf` carried a substituted token so a medium built from a lock
+that did not yet have it still worked. This one creates the account, so stage 40 refuses to build
+an installer medium without it rather than shipping a stick that installs a machine nobody can log
+into.
 
 **Why an ebuild repository rather than a hand-compile in stage 40.** plan/18 §7.2 rejected
 compiling a Calamares module by hand, and the reason was never "C++ is hard": it was that a
@@ -29,7 +36,7 @@ Each package is **installed** into the target root like every other package (`RO
 it lands in `config/portage/lock/<profile>.lock` and the package audit where the existing
 assertions can already see it. But it is **compiled** against the BUILDER root, not the target:
 this pipeline never sets `SYSROOT`, so `portageq envvar ESYSROOT` answers `/`, and a `DEPEND` is
-therefore resolved and installed there. That is why releasing `<id>-calamares-managed` in a
+therefore resolved and installed there. That is why releasing `<id>-calamares-accounts` in a
 relock builds `app-admin/calamares` and its `dev-libs/boost` tail into the builder — the target
 already has them, and the builder is where the headers have to be.
 
@@ -52,8 +59,9 @@ config/portage/overlay/
     distro-kcm-managed/
       distro-kcm-managed-N.ebuild.in
       files/                    the entire source tree, copied by src_unpack
-    distro-calamares-managed/
-      ...
+    distro-calamares-accounts/
+      distro-calamares-accounts-N.ebuild.in
+      files/                    C++, the QML under files/qml/, and the fallback module .conf
 ```
 
 **Everything is rendered and rebranded on the way in.** Stage 20 runs the same

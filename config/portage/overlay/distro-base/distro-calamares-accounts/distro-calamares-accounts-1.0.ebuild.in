@@ -1,0 +1,117 @@
+# Copyright 2026 @DISTRO_NAME@
+# Distributed under the terms of the GNU General Public License v3
+
+EAPI=8
+
+inherit cmake
+
+DESCRIPTION="Calamares view module: the @DISTRO_NAME@ installer's accounts page"
+HOMEPAGE="@HOME_URL@"
+# No SRC_URI — see the sibling ebuild and ../../README.md.
+S="${WORKDIR}/${P}"
+
+# GPL-3 rather than the KCM's GPL-2+: this links against libcalamares, which is GPL-3-or-later,
+# so the combined work cannot be distributed under anything weaker.
+LICENSE="GPL-3"
+SLOT="0"
+KEYWORDS="amd64"
+
+# app-admin/calamares is a DEPEND, not merely an RDEPEND, and that is the interesting part of
+# this file. DEPEND is what portage installs into ESYSROOT, and ESYSROOT is where cmake looks for
+# headers and CalamaresConfig.cmake.
+#
+# ESYSROOT here is "/" — the BUILDER root — not the target. This pipeline emerges with ROOT set
+# and SYSROOT unset, and portage defaults SYSROOT to "/" rather than to ROOT, which is worth
+# knowing before reading a relock's output: releasing this package builds calamares and its
+# dev-libs/boost tail from source INTO THE BUILDER, because the target already has them and the
+# builder is where this module's compiler needs them. Confirmed with
+# `ROOT=$TARGET portageq envvar ESYSROOT`, which answers "/".
+#
+# The versions still match the image's, because stage 20 mirrors the target's package.use onto
+# the builder and both resolve against the same pinned tree — but that is a property of the
+# configuration, not something anything checks. See ../../README.md.
+#
+# Most of this list is not "what the code includes" but "what CalamaresConfig.cmake resolves when
+# find_package(Calamares) runs". That file re-finds Qt6 with the components accumulated from
+# Calamares' own imported targets plus a hardcoded "Core Widgets LinguistTools", and then
+# find_package(YAMLCPP REQUIRED) — so qtsvg (Qt6::Svg), qttools[linguist] (Qt6LinguistTools) and
+# yaml-cpp are configure-time requirements even though not one of them appears in a #include here.
+#
+# qtdeclarative IS in the code's own right, unlike in the module this replaces: Qt6::Qml,
+# Qt6::Quick, Qt6::QuickWidgets and Qt6::QuickControls2 all come from it, because this page's UI
+# is QML hosted in a QQuickWidget (plan/21 §2). It was already required at configure time, so no
+# atom moves.
+#
+# kcoreaddons is the KF6::CoreAddons in Calamares::calamares' link interface — see the long note
+# in files/CMakeLists.txt about why the Calamares config file does not find it itself.
+#
+# libpwquality backs the password meter, and it is the same library Calamares' own users page
+# used: dev-libs/libpwquality[python] is in package.use/image for that reason and stage 40 builds
+# the cracklib dictionary it needs. There is no LibPWQualityConfig.cmake, so the CMakeLists finds
+# it through pkg-config, which is what makes dev-util/pkgconf a BDEPEND below.
+DEPEND="
+	>=app-admin/calamares-3.4.0
+	>=dev-qt/qtbase-6.7.0:6[gui,network,widgets]
+	>=dev-qt/qtdeclarative-6.7.0:6
+	>=dev-qt/qtsvg-6.7.0:6
+	>=dev-qt/qttools-6.7.0:6[linguist]
+	>=kde-frameworks/kcoreaddons-6.9.0:6
+	>=dev-libs/libpwquality-1.4.0
+	dev-cpp/yaml-cpp:0=
+"
+# NOT ${DEPEND}, for two reasons.
+#
+# qttools is a CONFIGURE-time requirement only. Nothing here links against it — it is in DEPEND
+# solely because CalamaresConfig.cmake asks find_package for Qt6LinguistTools, and a plugin that
+# has already been built has no more use for a translation compiler than the image does.
+#
+# kirigami is the opposite: it appears in no #include and no link line, and the page does not
+# render without it. `import org.kde.kirigami` is resolved by the QML engine at runtime, from
+# /usr/lib64/qt6/qml. It is already on the installer medium as a dependency of Plasma, so naming
+# it costs no atom — and it means a future prune that decides Plasma's QML modules are not needed
+# on a medium that boots once fails on this package's dependencies instead of on a blank page.
+# qqc2-desktop-style is here for the same reason: AccountsViewStep asks QQuickStyle for
+# org.kde.desktop, and without the package the controls silently fall back to the Basic style.
+RDEPEND="
+	>=app-admin/calamares-3.4.0
+	>=dev-qt/qtbase-6.7.0:6[gui,network,widgets]
+	>=dev-qt/qtdeclarative-6.7.0:6
+	>=dev-qt/qtsvg-6.7.0:6
+	>=kde-frameworks/kcoreaddons-6.9.0:6
+	>=kde-frameworks/kirigami-6.9.0:6
+	>=kde-frameworks/qqc2-desktop-style-6.9.0:6
+	>=dev-libs/libpwquality-1.4.0
+	dev-cpp/yaml-cpp:0=
+"
+BDEPEND="
+	>=dev-qt/qtbase-6.7.0:6
+	virtual/pkgconfig
+"
+
+# This package is ONLY for the installer profile. On a target image it would install a Calamares
+# module into a system that has no Calamares — harmless, and still wrong, because the package
+# audit would then have to explain why an installer plugin is on a desktop.
+src_unpack() {
+	mkdir -p "${S}" || die
+	cp -r "${FILESDIR}"/. "${S}"/ || die
+}
+
+src_configure() {
+	local mycmakeargs=(
+		# Calamares' own build sets this; out of tree it has to be asked for by name, or
+		# calamares_add_plugin installs into ${CMAKE_INSTALL_LIBDIR}/calamares/modules relative
+		# to a prefix that is not the one Calamares itself used.
+		-DCMAKE_INSTALL_LIBDIR="$(get_libdir)"
+		# The page execs /usr/bin/${DISTRO_ID}-managed and /usr/bin/${DISTRO_ID}-domain, so it
+		# needs the distro's id — as a compile definition rather than a token substituted into
+		# the source, which keeps every file under files/ compilable on its own.
+		-DDISTRO_ID="@DISTRO_ID@"
+	)
+	cmake_src_configure
+}
+
+pkg_postinst() {
+	elog "This module is MANDATORY, unlike the enrolment page it replaces: it is the installer's"
+	elog "only account-creation step, so settings.conf names it unconditionally and stage 40"
+	elog "refuses to build an installer medium without it (plan/21 §7)."
+}

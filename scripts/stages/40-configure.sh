@@ -77,11 +77,13 @@ fi
 # opens on "not enrolled" and is discarded with the stick twenty minutes later.
 #
 # THE CLI STAYS, and that split is the whole point. /usr/bin/<id>-managed is what the Calamares
-# managedenroll module execs — from this session, with --root pointed at the mounted target — so
-# it is how the machine BEING INSTALLED gets enrolled, the one managed-mode job a live medium
-# genuinely has. What goes is the front end a person would open; what stays is the tool the
-# installer drives. The polkit action stays with it for the same reason: it authorises
-# `pkexec <id>-managed`, and that binary is still here.
+# accounts page execs — from this session, first with --root pointed at a scratch tree to enrol
+# before the disk is written and then, through the accountsetup job, with --root pointed at the
+# mounted target to apply the bundle there (plan/21 §3, §6) — so it is how the machine BEING
+# INSTALLED gets enrolled, the one managed-mode job a live medium genuinely has. What goes is
+# the front end a person would open; what stays is the tool the installer drives. The polkit
+# action stays with it for the same reason: it authorises `pkexec <id>-managed`, and that
+# binary is still here.
 if [[ $PROFILE_ROLE == live ]]; then
   rm -f  -- "${TARGET:?}/usr/bin/${DISTRO_ID}-managed-ui" \
             "${TARGET:?}/usr/share/applications/${DISTRO_ID}-managed-ui.desktop"
@@ -503,10 +505,12 @@ chroot_target "$TARGET" "command -v update-mime-database >/dev/null && update-mi
 #
 # The symptom is entirely the installer's, and it is fatal to an install: FascistCheck cannot
 # open the dictionary, dev-libs/libpwquality turns that into PWQ_ERROR_CRACKLIB_CHECK, and
-# Calamares' users page rejects EVERY password with "The password fails the dictionary check -
-# error loading dictionary". No password is strong enough to pass a dictionary that will not
-# load, so Next never enables and the medium cannot install anything. Reproduced against the
-# 0.3.0 installer target through libpwquality directly, and fixed by exactly this command.
+# the installer's accounts page rejects EVERY password with "The password fails the dictionary
+# check - error loading dictionary". (It was Calamares' own users page that hit this first;
+# plan/21 replaced that page with one that calls pwquality_check() itself, which is the same
+# library and therefore the same trap.) No password is strong enough to pass a dictionary that
+# will not load, so Next never enables and the medium cannot install anything. Reproduced
+# against the 0.3.0 installer target through libpwquality directly, and fixed by this command.
 #
 # Guarded on the tool rather than on the profile: cracklib is @installer tail
 # (config/portage/sets/installer), so desktop and console images have no dictionary to build and
@@ -522,8 +526,8 @@ if [[ -x $TARGET/usr/bin/create-cracklib-dict ]]; then
   log "building the cracklib dictionary (cracklib's pkg_postinst skips ROOT=\$TARGET merges)"
   CRACKLIB_OUT="$(chroot_target "$TARGET" \
     "create-cracklib-dict -o /usr/lib/cracklib_dict /usr/share/dict/*")" \
-    || die "create-cracklib-dict failed — Calamares' users page would reject every password with
-  'The password fails the dictionary check - error loading dictionary'"
+    || die "create-cracklib-dict failed — the installer's accounts page would reject every
+  password with 'The password fails the dictionary check - error loading dictionary'"
   # cracklib-packer prints "<words read> <words written>" and nothing else.
   CRACKLIB_WORDS="${CRACKLIB_OUT##*[[:space:]]}"
   [[ $CRACKLIB_WORDS =~ ^[1-9][0-9]*$ ]] \
@@ -873,28 +877,23 @@ if profile_has_set installer; then
   #   ROOT_PARTLABEL     the label the UKI cmdline's root=PARTLABEL= looks for
   #   UKI_NAME           the filename sysupdate's 60-uki.transfer matches
   #   PAYLOAD_DIR        where this section stages the payload, below
-  # The managed-enrolment PAGE is a compiled Calamares view module from the in-repo overlay
-  # (plan/19 §7.3, Phase D), and it reaches an image only through a re-resolved lock. Naming it
-  # in settings.conf when it is not installed is worse than leaving it out: the verify pass below
-  # would fail the build, and Calamares itself would silently drop the step.
+  # The ACCOUNTS PAGE is a compiled Calamares view module from the in-repo overlay (plan/21), and
+  # it reaches an image only through a re-resolved lock. Its predecessor — the managed-enrolment
+  # page — was OPTIONAL, and settings.conf carried a substituted token so a medium without it
+  # still built. This one is not optional: it is the installer's only account-creation step, so a
+  # medium without it produces an install that runs all the way to "finished" and leaves a disk
+  # with no account anyone can log into. Calamares would not even complain — a settings.conf that
+  # names a module installed nowhere is a step it silently drops.
   #
-  # So the sequence line is substituted, not hardcoded — and its absence is WARNED about by name,
-  # because "the installer has no enrolment page" is otherwise indistinguishable from "nobody
-  # wanted one". The JOB is unconditional: it ships with the image and is what a zero-touch
-  # enrolment uses on a medium with no page at all.
-  if compgen -G "$TARGET/usr/lib*/calamares/modules/managed/module.desc" >/dev/null; then
-    CAL_MANAGED_PAGE="  - managed"
-    log "installer: the managed-enrolment page is installed; adding it to the sequence"
-  else
-    CAL_MANAGED_PAGE=""
-    warn "the managed-enrolment installer page is NOT installed, so the medium will have no
-  enrolment screen (the managedenroll job still runs, so a systemd-credential enrolment works).
-  It comes from ${DISTRO_ID}-base/${DISTRO_ID}-calamares-managed in config/portage/overlay, which
-  reaches an image only through a re-resolved lock:
-      scripts/relock.sh ${DISTRO_ID}-base/${DISTRO_ID}-calamares-managed --profile installer"
-  fi
+  # So this is a die, here, before anything is rendered, rather than a warn and an empty line.
+  compgen -G "$TARGET/usr/lib*/calamares/modules/accounts/module.desc" >/dev/null \
+    || die "verify: the installer's accounts page is not installed, so this medium would boot an
+  installer that creates no accounts (plan/21). It comes from
+  ${DISTRO_ID}-base/${DISTRO_ID}-calamares-accounts in config/portage/overlay, which reaches an
+  image only through a re-resolved lock:
+      scripts/relock.sh ${DISTRO_ID}-base/${DISTRO_ID}-calamares-accounts --profile installer"
+  log "installer: the accounts page is installed"
   export GPT_TYPE_ROOT_X64 GPT_TYPE_VAR ROOT_SLOT_SIZE_MIB ROOT_PARTLABEL UKI_NAME PAYLOAD_DIR
-  export CAL_MANAGED_PAGE
 
   # Renders *.in through render_template and copies everything else verbatim. Deliberately NOT
   # install_rootfs_overlay: that walks config/rootfs and rebrands "distro" in basenames, and this
@@ -965,14 +964,12 @@ if profile_has_set installer; then
               "$TARGET/etc/xdg/autostart/$DISTRO_ID-installer.desktop"
   cal_install "$CAL_SRC/system/kscreenlockerrc.in" "$TARGET/etc/xdg/kscreenlockerrc"
 
-  # The Active Directory front door (plan/18 §7.1). Calamares' stock users module implements
-  # "join a domain" as literally one command — `realm join <domain> -U <user> --install=<root>
-  # --verbose`, on the HOST, with the password on stdin and a 30-second cap — and realmd is not
-  # in the Gentoo tree. This shim answers to that name and forwards to $DISTRO_ID-domain, which
-  # is the same implementation an installed system runs. Executable, unlike everything else
-  # cal_install places, because it is the only one of them that Calamares EXECUTES.
-  cal_install "$CAL_SRC/system/realm.in" "$TARGET/usr/bin/realm"
-  chmod 0755 -- "$TARGET/usr/bin/realm"
+  # NO /usr/bin/realm HERE ANY MORE, and its absence is asserted below. The shim existed for one
+  # caller: Calamares' stock users module, whose ActiveDirectoryJob hardcodes the command name
+  # `realm` and which realmd — not in the Gentoo tree — would otherwise have had to provide. With
+  # the accounts page owning domain join (plan/21), the `accountsetup` job runs
+  # $DISTRO_ID-domain directly, and a /usr/bin/realm on the medium would be a command with no
+  # caller that answers to a name people expect to mean realmd.
 
   # The live session's panel. Same argument one step further out: the medium exists to run one
   # application, so the task manager pins that application and nothing else. Left alone, the
@@ -1724,27 +1721,33 @@ if profile_has_set installer; then
   done < <(sed -nE '/^sequence:/,/^[a-z]/ s/^[[:space:]]*-[[:space:]]+([a-z][a-z0-9_@-]*)[[:space:]]*$/\1/p' \
              "$CAL_SETTINGS" | grep -vxE 'show|exec')
 
-  # The managed-enrolment page (plan/19 §7.3, Phase D). The sequence check above already dies if
-  # settings.conf names a module that is installed nowhere; this is the converse, and it is the
-  # one that would otherwise be silent — a page that is installed and NOT in the sequence is a
-  # compiled plugin sitting on the medium that nobody will ever see.
-  if compgen -G "$TARGET/usr/lib*/calamares/modules/managed/module.desc" >/dev/null; then
-    grep -qE '^[[:space:]]*-[[:space:]]+managed$' "$CAL_SETTINGS" \
-      || die "verify: the managed-enrolment view module is installed but settings.conf's sequence
-  does not name it, so the installer would never show the page. Stage 40 substitutes that line
-  into settings.conf.in as @CAL_MANAGED_PAGE@ — check that it computed a value."
-    grep -qE '^type:[[:space:]]+"?viewmodule"?' \
-      "$(compgen -G "$TARGET/usr/lib*/calamares/modules/managed/module.desc" | head -1)" \
-      || die "verify: the managed module's descriptor does not declare type: viewmodule. A job
+  # The accounts page (plan/21). The sequence check above already dies if settings.conf names a
+  # module that is installed nowhere; these are the other three ways this pair can be wrong, and
+  # every one of them is silent at runtime.
+  grep -qE '^[[:space:]]*-[[:space:]]+accounts$' "$CAL_SETTINGS" \
+    || die "verify: settings.conf's show sequence does not name the accounts page, so the
+  installer would ask nobody about accounts and create none (plan/21)"
+  grep -qE '^type:[[:space:]]+"?viewmodule"?' \
+    "$(compgen -G "$TARGET/usr/lib*/calamares/modules/accounts/module.desc" | head -1)" \
+    || die "verify: the accounts module's descriptor does not declare type: viewmodule. A job
   cannot draw a page, and Calamares would run it as a step with no UI."
-  fi
-  # ...and the JOB, which unlike the page ships with the image on every installer build. It is
-  # also what a zero-touch enrolment uses on a medium with no page at all (plan/19 §7.3).
-  [[ -f $TARGET/usr/share/calamares/local-modules/managedenroll/main.py ]] \
-    || die "verify: the managedenroll job is missing. Without it a ticked enrolment box on the
-  installer page does nothing at all, and the install reports success."
-  grep -qE '^[[:space:]]*-[[:space:]]+managedenroll$' "$CAL_SETTINGS" \
-    || die "verify: settings.conf's exec sequence does not name managedenroll"
+  # ...and the JOB that applies what the page decided. Nothing else creates an account: the stock
+  # `users` module is gone from this installer, so a missing accountsetup is an install that
+  # finishes with an empty /etc/passwd upper and no way in.
+  [[ -f $TARGET/usr/share/calamares/local-modules/accountsetup/main.py ]] \
+    || die "verify: the accountsetup job is missing. It is the only thing in this installer that
+  creates an account, joins a domain or applies an enrolment; without it the install reports
+  success and the disk has nothing to log into."
+  grep -qE '^[[:space:]]*-[[:space:]]+accountsetup$' "$CAL_SETTINGS" \
+    || die "verify: settings.conf's exec sequence does not name accountsetup"
+  # The stock users module must NOT be in the sequence. It is still installed — it comes with
+  # app-admin/calamares and there is no USE flag that removes it — and naming it would create a
+  # second, additive account-creation step whose own AD checkbox contradicts the page's modes.
+  grep -qE '^[[:space:]]*-[[:space:]]+users$' "$CAL_SETTINGS" \
+    && die "verify: settings.conf names the stock 'users' module, which plan/21 replaced. Two
+  account-creation steps would both run, and the stock one's Active Directory checkbox is
+  additive by construction (Config.cpp:1088-1104) — exactly the shape the accounts page exists
+  to remove."
 
   # The payload, and the one string that ties it to the boot: partition.conf creates a partition
   # with this label and the UKI cmdline looks for it. They are rendered from the same variable,
@@ -1765,15 +1768,27 @@ if profile_has_set installer; then
     || die "verify: the installer autostart entry is missing — nothing would launch Calamares"
   [[ -f $TARGET/etc/polkit-1/rules.d/49-$DISTRO_ID-installer.rules ]] \
     || die "verify: the installer polkit rule is missing — pkexec would prompt for a password"
-  # The domain-join path is Calamares calling `realm`, by that exact name, on the host. Without
-  # this file the users page offers the checkbox and the install then fails at the job with
-  # "Failed to join realm: " and no output, because the command does not exist (plan/18 §7.1).
-  [[ -x $TARGET/usr/bin/realm ]] \
-    || die "verify: /usr/bin/realm is missing or not executable, but users.conf enables Active
-  Directory — ticking that box would fail the install at a command that is not there"
-  grep -qx 'allowActiveDirectory: true' "$TARGET/etc/calamares/modules/users.conf" \
-    || die "verify: users.conf does not set allowActiveDirectory: true — the users page would
-  have no domain-join option at all (plan/18 §7.1)"
+  # The domain-join path is now the accounts page's third mode, executed by `accountsetup`
+  # calling $DISTRO_ID-domain directly (plan/21 §5). Two assertions, both inverses of what stood
+  # here while Calamares' own users page owned the feature:
+  #
+  #   - accounts.conf must OFFER the mode, or the page draws two radio buttons and a machine
+  #     nobody can join;
+  #   - /usr/bin/realm must be ABSENT, because a file with that name is realmd to everyone who
+  #     reads a support answer, and this medium's only implementation is $DISTRO_ID-domain.
+  grep -qE '^modes:.*\bdomain\b' "$TARGET/etc/calamares/modules/accounts.conf" \
+    || die "verify: accounts.conf's modes: does not offer 'domain', so the installer would have
+  no domain-join option at all (plan/18 §7.1, plan/21 §1)"
+  [[ ! -e $TARGET/usr/bin/realm ]] \
+    || die "verify: /usr/bin/realm is on the medium, but nothing calls it any more — the stock
+  users module that hardcoded that name is not in the sequence (plan/21 §5). Leaving a
+  realmd-shaped file that is not realmd is worse than having neither."
+  [[ -x $TARGET/usr/bin/$DISTRO_ID-domain ]] \
+    || die "verify: /usr/bin/$DISTRO_ID-domain is missing, but accounts.conf offers domain mode —
+  the join would fail at a command that is not there"
+  [[ -x $TARGET/usr/bin/$DISTRO_ID-managed ]] \
+    || die "verify: /usr/bin/$DISTRO_ID-managed is missing, but accounts.conf offers managed
+  mode — the page could not enrol and Next would never enable (plan/21 §3)"
   grep -qx 'RequirePassword=false' "$TARGET/etc/xdg/kscreenlockerrc" 2>/dev/null \
     || die "verify: /etc/xdg/kscreenlockerrc does not set RequirePassword=false — the live
   session would lock itself after five idle minutes and ask for a password nobody was told to
@@ -1815,18 +1830,20 @@ if profile_has_set installer; then
   # cannot (see there). Read back here rather than trusted, because this is the one installer
   # failure that survives every other check in this file AND stage 70: the medium boots, the
   # greeter autologins, Calamares starts with its branding, the disk step completes — and then
-  # the users page rejects every password typed with "The password fails the dictionary check -
-  # error loading dictionary", with the install already half-committed.
+  # the accounts page rejects every password typed with "The password fails the dictionary check
+  # - error loading dictionary", and Next never enables.
   #
   # All three files, not just the dictionary: .pwd is the packed word data, .pwi its index and
   # .hwm the hash-bucket high-water marks, and cracklib opens .pwi and .hwm alongside .pwd.
-  # /usr/lib/cracklib_dict is libcrack.so's --with-default-dict path; users.conf names no
-  # dictpath, so this is the only place libpwquality will look.
+  # /usr/lib/cracklib_dict is libcrack.so's --with-default-dict path; accounts.conf names no
+  # dictpath, so this is the only place libpwquality will look. The page calls pwquality_check()
+  # itself now instead of leaving it to Calamares' own users module (plan/21 §2) — same library,
+  # same compiled-in dictionary path, same trap.
   for cl_ext in pwd pwi hwm; do
     [[ -s $TARGET/usr/lib/cracklib_dict.$cl_ext ]] \
       || die "verify: /usr/lib/cracklib_dict.$cl_ext is missing or empty — libpwquality would
-  reject every password on Calamares' users page with 'error loading dictionary', and the
-  install could never get past it"
+  reject every password on the installer's accounts page with 'error loading dictionary', and
+  Next would never enable"
   done
 fi
 
@@ -1837,7 +1854,7 @@ if ! profile_has_set installer; then
   for leak in etc/calamares "usr/share/calamares/local-modules" \
               "etc/xdg/autostart/$DISTRO_ID-installer.desktop" \
               "etc/polkit-1/rules.d/49-$DISTRO_ID-installer.rules" \
-              "etc/xdg/kscreenlockerrc" usr/bin/realm \
+              "etc/xdg/kscreenlockerrc" \
               "usr/share/plasma/look-and-feel/$DISTRO_ID/contents/layouts" \
               "usr/share/wallpapers/$DISTRO_ID" \
               "${PAYLOAD_DIR#/}"; do
