@@ -702,10 +702,11 @@ assert_true "...so the window's Back moves between them" \
     grep -qF 'm_config->goToChooser();' "$PAGE/AccountsViewStep.cpp"
 assert_true "...and so does its Next" \
     grep -qF 'm_config->goToFields();' "$PAGE/AccountsViewStep.cpp"
-# The page can change screens without going through ViewManager (the `Change` button), and
-# ViewManager only re-reads the navigation state after its own back()/next(). Without this
-# connection the window's Next keeps describing the screen you just left, which on the way back
-# to the chooser is an enabled Next that skips the form.
+# The page can still change screens without going through ViewManager — setMode() sends the page
+# back to the chooser if the mode ever changes while the fields are showing — and ViewManager only
+# re-reads the navigation state after its own back()/next(). Without this connection the window's
+# Next keeps describing the screen you just left, which on the way back to the chooser is an
+# enabled Next that skips the form.
 assert_true "...and a screen change from inside the page re-asks the Next button" \
     grep -qF 'AccountsConfig::stepChanged' "$PAGE/AccountsViewStep.cpp"
 # Next means something different on each screen. On the chooser it gates on the one question the
@@ -730,8 +731,11 @@ for f in sorted(pathlib.Path('$PAGE/qml').glob('*.qml')):
 if bad:
     sys.exit('reads accounts.step directly: ' + ', '.join(bad))
 EOF"
-assert_true "the second screen offers a visible way back to the choice" \
-    bash -c "grep -q 'accounts.goToChooser()' '$PAGE/qml/Accounts.qml'"
+# The window's own Back is the ONE way back to the chooser. The second screen's header used to
+# carry a `Change` button that did the same thing; two controls for one movement is two things to
+# keep in agreement, and the one in the corner is the one every other page in the installer has.
+assert_true "the page draws no navigation of its own" \
+    bash -c "! grep -qE 'accounts\.goTo(Chooser|Fields)\(\)' '$PAGE/qml/Accounts.qml'"
 
 # The enrolment happens on the PAGE, into a scratch root, before the disk is written — which is
 # what makes the blocking safe: a failure there costs nothing.

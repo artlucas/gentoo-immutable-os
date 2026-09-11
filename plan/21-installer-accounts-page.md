@@ -30,7 +30,7 @@ are the whole of the second.
  ┌────────────────────────────────────┐      ┌────────────────────────────────────┐
  │ How should people sign in to this  │      │ [icon] Join an enterprise domain   │
  │ computer?                          │      │        accounts come from AD       │
- │                                    │      │                         [ Change ] │
+ │                                    │      │                                    │
  │  ( ) 👤  Local accounts only       │      │ ────────────────────────────────── │
  │         one account, on this …     │      │ The domain        Local admin      │
  │         works with no network      │      │  Domain:   [   ]   Username: [   ] │
@@ -81,9 +81,10 @@ returned `true`. Reporting `AccountsConfig::step` from them is the entire change
 - the sidebar still shows one entry, and there is still one module, one `onLeave()`, one
   `setConfigurationMap()`.
 
-The `Change` button in screen 2's header does what Back does. It is there because Back is a
-button in the far corner of the window and the header is where somebody is looking when they
-realise they picked wrong.
+**Screen 2's header is a label, not a control.** It says which choice the fields belong to,
+because on that screen the choice itself is off-screen. It draws no button of its own: the
+window's Back is the one way back to the chooser, which is where every other page in the
+installer puts it, and one movement with one control is one thing to keep working.
 
 **Selecting a mode does not advance.** A radio button that navigates punishes a mis-click by
 throwing away the screen you were reading, and the three options are meant to be compared with

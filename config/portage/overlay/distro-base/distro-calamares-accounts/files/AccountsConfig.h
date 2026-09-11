@@ -214,10 +214,10 @@ public:
     void publish( Calamares::GlobalStorage* gs ) const;
 
 public Q_SLOTS:
-    /*! Move between the page's two screens. Called from three places that must agree: the
-     *  window's Back and Next buttons, through AccountsViewStep::back()/next(); the `Change`
-     *  button in the second screen's header; and setMode(), which cannot leave somebody looking
-     *  at a form for a mode they are no longer in. */
+    /*! Move between the page's two screens. Called from two places that must agree: the window's
+     *  Back and Next buttons, through AccountsViewStep::back()/next() — the only navigation the
+     *  page offers — and setMode(), which cannot leave somebody looking at a form for a mode they
+     *  are no longer in. */
     void goToChooser();
     void goToFields();
 

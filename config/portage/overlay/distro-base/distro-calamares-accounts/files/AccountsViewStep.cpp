@@ -60,10 +60,11 @@ AccountsViewStep::AccountsViewStep( QObject* parent )
         emit nextStatusChanged( m_config->nextEnabled() );
     } );
 
-    // The page can move between its two screens on its own — the `Change` button in the second
-    // screen's header — and ViewManager only re-reads the navigation state after ITS own back()
-    // and next(). Without this, changing screens from inside the page leaves the window's Back
-    // and Next buttons describing the screen you just left.
+    // The page can still move between its two screens on its own — setMode() sends it back to
+    // the chooser rather than leave a form disagreeing with the choice above it — and ViewManager
+    // only re-reads the navigation state after ITS own back() and next(). Without this, a screen
+    // change from inside the page leaves the window's Back and Next describing the screen you
+    // just left.
     connect( m_config, &AccountsConfig::stepChanged, this, [ this ] {
         emit nextStatusChanged( m_config->nextEnabled() );
     } );

@@ -34,8 +34,8 @@
  *
  * `accounts.step` is held in C++ rather than here, because AccountsViewStep has to answer
  * isAtBeginning() and isAtEnd() with it — that is what makes the window's Back and Next move
- * between these two screens instead of leaving the page (see AccountsViewStep.cpp). The `Change`
- * button below is a second, visible way to do what Back already does.
+ * between these two screens instead of leaving the page (see AccountsViewStep.cpp). Those two
+ * buttons are the only way between the screens; the page draws no navigation of its own.
  */
 
 // Delegates in the Repeater below reach modeGroup, an id in this file's scope. Without this
@@ -280,9 +280,9 @@ Item {
                     spacing: Kirigami.Units.largeSpacing
 
                     // The header says which choice these fields belong to, because on this screen
-                    // the choice itself is off-screen. `Change` does what the window's Back does;
-                    // it is here because Back is a button in the far corner of the window and
-                    // this is where somebody is looking when they realise they picked wrong.
+                    // the choice itself is off-screen. It is a label, not a control: the window's
+                    // own Back is the one way back to the chooser, so there is exactly one thing
+                    // to press and no second button that has to be kept doing the same thing.
                     RowLayout {
                         Layout.fillWidth: true
                         spacing: Kirigami.Units.largeSpacing
@@ -311,12 +311,6 @@ Item {
                                 font: Kirigami.Theme.smallFont
                                 text: root.chosen ? root.chosen.subtitle : ""
                             }
-                        }
-
-                        QQC2.Button {
-                            text: qsTr("Change")
-                            icon.name: "go-previous"
-                            onClicked: accounts.goToChooser()
                         }
                     }
 

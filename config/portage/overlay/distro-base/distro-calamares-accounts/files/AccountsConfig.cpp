@@ -236,8 +236,8 @@ AccountsConfig::setStep( Step step )
     emit stepChanged();
     // Next means something different on each screen — "a mode is picked" on the first, "the
     // fields are good" on the second — so the window's button has to be re-asked. ViewManager
-    // does ask after its own back()/next(), but not after the `Change` button in the page, and
-    // a stale enabled Next is a click that skips the form.
+    // does ask after its own back()/next(), but not after a step change that starts here (see
+    // setMode below), and a stale enabled Next is a click that skips the form.
     refreshNextEnabled();
 }
 
