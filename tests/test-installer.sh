@@ -295,14 +295,25 @@ done
 # fstab writes a file that ships in the immutable image; machineid would give every machine
 # installed from this medium the same one.
 #
-# `users` is on this list since plan/21, and it is the only entry that would *work* — which is
-# what makes it worth asserting. It is still installed, because it comes with app-admin/calamares
-# and no USE flag removes it, so naming it costs nothing at build time and produces a second,
-# additive account-creation step at run time: its own Active Directory checkbox appends a job and
-# then creates the local account anyway (Config.cpp:1088-1104), which is precisely the shape the
+# TWO ENTRIES ON THIS LIST WOULD ACTUALLY WORK, and that is what makes them worth asserting: the
+# rest fail loudly on a medium like this one, while these two would run and produce a second page
+# each.
+#
+# `users` since plan/21. It is still installed, because it comes with app-admin/calamares and no
+# USE flag removes it, so naming it costs nothing at build time and produces a second, additive
+# account-creation step at run time: its own Active Directory checkbox appends a job and then
+# creates the local account anyway (Config.cpp:1088-1104), which is precisely the shape the
 # accounts page exists to remove.
+#
+# `welcome` since plan/22, for the same shape of reason. It would draw its own language combo box
+# under its own requirements list — two pickers, and the second one writing GS LANG after the
+# first. Worse, it would re-add the `storage` requirement and then delete it again: the ebuild's
+# -DCMAKE_DISABLE_FIND_PACKAGE_LIBPARTED=ON makes GeneralRequirements.cpp:357 drop storage from
+# both the check list and the required list with only a cWarning, which is the bug plan/22 §3a
+# exists to close and this line keeps closed. Our `greeting` module (plan/23) borrows that page's
+# requirements BOX and none of its checker, which is the whole of the difference.
 for forbidden in localecfg unpackfs fstab bootloader grubcfg initcpio initcpiocfg dracut \
-                 initramfs machineid packages netinstall displaymanager mount users; do
+                 initramfs machineid packages netinstall displaymanager mount users welcome; do
     assert_false "the sequence does not name the stock '$forbidden' module" \
         grep -qE "^[[:space:]]*-[[:space:]]+$forbidden$" "$SETTINGS"
 done
@@ -323,6 +334,261 @@ assert_true "accountsetup runs after imagedeploy and before removeuser and image
       [[ \$(idx imagedeploy) -lt \$(idx accountsetup) ]] &&
       [[ \$(idx accountsetup) -lt \$(idx removeuser) ]] &&
       [[ \$(idx accountsetup) -lt \$(idx imageidentity) ]]"
+
+# ---- 6b. the language page (plan/22) --------------------------------------------------------
+#
+# FIRST, not merely present, and that is the one assertion here with no visible symptom on the
+# page it protects. ModuleManager::loadModules() walks the sequence in order, and this module is
+# where QQuickStyle::setStyle("org.kde.desktop") happens for the whole installer —
+# a call Qt ignores, with one line on stderr, once anything has imported QtQuick.Controls. Put any
+# other QML view step ahead of it and the ACCOUNTS page loses Breeze's colours, Breeze's metrics
+# and every icon (plan/21 §1b measured all three in a VM).
+FIRST_SHOW="$(sed -nE '/^sequence:/,$ { /^- show:/,/^- / { s/^[[:space:]]*-[[:space:]]+([a-z][a-z0-9_@-]*)[[:space:]]*$/\1/p } }' \
+                "$SETTINGS" | head -1)"
+assert_eq "language" "$FIRST_SHOW" "the language page is the FIRST module in the show sequence"
+
+# ...AND THE GREETING IS SECOND (plan/23). Not for QQuickStyle's reason — this one draws no QML —
+# but because everything on it is drawn in the language the page before it chose: the verdict, the
+# product name and the sentence about erasing the disk.
+SECOND_SHOW="$(sed -nE '/^sequence:/,$ { /^- show:/,/^- / { s/^[[:space:]]*-[[:space:]]+([a-z][a-z0-9_@-]*)[[:space:]]*$/\1/p } }' \
+                 "$SETTINGS" | sed -n 2p)"
+assert_eq "greeting" "$SECOND_SHOW" "the greeting page is the SECOND module in the show sequence"
+
+LANGUAGE_CONF="$RENDER/modules/language.conf"
+GREETING_CONF="$RENDER/modules/greeting.conf"
+assert_file "$LANGUAGE_CONF" "language.conf rendered"
+assert_file "$GREETING_CONF" "greeting.conf rendered"
+assert_false "welcome.conf is gone — the stock module it configured is out of the sequence" \
+    test -e "$RENDER/modules/welcome.conf"
+
+# The requirement block, and `storage` in BOTH lists. Upstream's module accepted the same two keys
+# and then discarded them (GeneralRequirements.cpp:357 under -DWITHOUT_LIBPARTED), so asserting
+# that they are configured is not enough on its own — hence the source check further down.
+#
+# IN greeting.conf SINCE plan/23, and not in language.conf: a requirement is contributed by
+# whichever module is in the sequence, so the keys live beside the module that reads them. The
+# negative half matters as much as the positive one — a copy left in language.conf would be a
+# second, ignored source of truth for the one number this page exists to enforce.
+for k in requiredStorage requiredRam internetCheckUrl; do
+    assert_true "greeting.conf sets $k" grep -qE "^[[:space:]]+$k:" "$GREETING_CONF"
+done
+assert_false "language.conf carries no requirements: block any more" \
+    grep -qE "^[[:space:]]*requirements:" "$LANGUAGE_CONF"
+if python3 -c 'import yaml' 2>/dev/null; then
+    assert_true "greeting.conf checks AND requires storage, ram and root" \
+        python3 -c '
+import sys, yaml
+r = yaml.safe_load(open(sys.argv[1]))["requirements"]
+need = {"storage", "ram", "root"}
+assert need <= set(r["check"]), "check: is missing %s" % (need - set(r["check"]))
+assert need <= set(r["required"]), "required: is missing %s" % (need - set(r["required"]))
+assert "internet" not in r["required"], "internet must not block: the payload is on the stick"
+assert "power" not in r["required"], "power must not block: installing on battery is fine"
+' "$GREETING_CONF"
+
+    # The rendered list against the table it came from. A render that produced no rows leaves the
+    # installer's first screen blank and logs an error nobody is watching for.
+    assert_true "language.conf's list matches config/languages.conf row for row" \
+        python3 -c '
+import sys, yaml
+rows = [[f.strip() for f in l.split("|")]
+        for l in open(sys.argv[2], encoding="utf-8").read().splitlines()
+        if l.strip() and not l.lstrip().startswith("#")]
+got = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))["languages"]
+assert len(got) == len(rows), "%d rendered, %d in the table" % (len(got), len(rows))
+for g, r in zip(got, rows):
+    assert [g["id"], g["locale"], g["label"], g["english"]] == r, "%r != %r" % (g, r)
+' "$LANGUAGE_CONF" "$REPO_ROOT/config/languages.conf"
+fi
+
+# THE PROPERTY THE WHOLE PAGE EXISTS FOR, expressed as one: nothing the user reads is a code, and
+# no two rows are indistinguishable. The second half is what upstream's model could not give us —
+# measured against Qt 6.11.1, `ja`/`ja-Hira` and `zh`/`zh_CN` render identically in BOTH of the
+# roles it exposes (plan/22 §2a) — so it is asserted here on the table we control instead.
+assert_true "no label or locale is a code, and no two rows collide" \
+    python3 -c '
+import sys
+rows = [[f.strip() for f in l.split("|")]
+        for l in open(sys.argv[1], encoding="utf-8").read().splitlines()
+        if l.strip() and not l.lstrip().startswith("#")]
+assert rows, "the table names no languages"
+for r in rows:
+    assert len(r) == 4, "not four fields: %r" % (r,)
+    assert not any(c in r[2] for c in "_@"), "the label %r looks like a locale code" % r[2]
+    assert ".UTF-8" not in r[2], "the label %r contains a charset" % r[2]
+seen = {}
+for kind, i in (("id", 0), ("locale", 1), ("label", 2), ("english", 3)):
+    vals = [r[i] for r in rows]
+    dup = {v for v in vals if vals.count(v) > 1}
+    assert not dup, "duplicate %s: %s" % (kind, ", ".join(sorted(dup)))
+assert any(r[0] == "en" for r in rows), "en is the fallback both Qt and imageidentity use"
+' "$REPO_ROOT/config/languages.conf"
+
+# The translations, through the same checker stage 40 runs — one implementation, two callers, so
+# the build and the test cannot disagree about what a valid .ts file is. The failure it catches has
+# no runtime symptom at all: a <source> that does not match the code byte for byte is a string Qt
+# never looks up, which renders in English on one screen in one language.
+assert_true "the branding translations match the table and the module sources" \
+    python3 "$REPO_ROOT/scripts/lib/check-translations.py" \
+        --table "$REPO_ROOT/config/languages.conf" \
+        --lang-dir "$REPO_ROOT/config/calamares/branding/installer/lang" \
+        --source-dir "$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-language/files" \
+        --source-dir "$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-greeting/files" \
+        --source-dir "$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-accounts/files"
+
+# ---- 6c. the language page's source (plan/22) ----------------------------------------------
+LANG_SRC="$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-language/files"
+QML="$LANG_SRC/qml/Language.qml"
+
+# THE SELECTION CROSSES THE QML/C++ BOUNDARY, AND BOTH DIRECTIONS ARE LOAD-BEARING. Both of the
+# page's selection bugs were one property handled in one direction, and both of them COMPILE, RUN
+# and look like a working page:
+#
+#   - the highlight is `ListView.isCurrentItem`, so it follows the VIEW's currentIndex. A delegate
+#     whose onClicked wrote straight to `language.currentIndex` changed the language — the window
+#     really did retranslate — and left the highlight where the keyboard had put it. The first row
+#     therefore looked selected no matter which one you clicked.
+#   - QQuickItemView::componentComplete() selects row 0 for itself unless currentIndex was
+#     explicitly cleared, and `onCurrentIndexChanged` then pushed that 0 into C++ — throwing away
+#     the English that setConfigurationMap() had chosen. The installer opened in German, because
+#     German is what config/languages.conf lists first.
+assert_true "a click moves the VIEW's currentIndex, which is what draws the highlight" \
+    grep -qE '^\s*onClicked: list\.currentIndex = row\.index$' "$QML"
+assert_false "no delegate writes the C++ index directly — that is the bug that froze the highlight" \
+    grep -qE 'onClicked:.*language\.currentIndex' "$QML"
+assert_true "the ListView clears its currentIndex so componentComplete() cannot select row 0" \
+    grep -qE '^\s*currentIndex: -1$' "$QML"
+assert_true "the view is seeded from C++ once the component is complete" \
+    grep -qE '^\s*Component\.onCompleted: list\.currentIndex = language\.currentIndex$' "$QML"
+assert_true "a view-driven change is pushed back to C++" \
+    grep -qE '^\s*onCurrentIndexChanged: language\.currentIndex = list\.currentIndex$' "$QML"
+assert_true "and C++ can drive the view back, for the indexes setCurrentIndex() refuses" \
+    bash -c "sed -n '/Connections {/,/^                }/p' '$QML' |
+             grep -q 'list.currentIndex = language.currentIndex'"
+# The C++ half of the default. bestIndexFor() answers -1 on the C locale this medium boots with, so
+# `en` is what the page must fall back to — never row 0, which is whatever the table lists first.
+assert_true "English is the fallback, not the first row of the table" \
+    grep -q 'indexOfId( QStringLiteral( "en" ) )' "$LANG_SRC/LanguageConfig.cpp"
+
+# ONE SCREEN, ONE QUESTION (plan/23). The greeting was this module's second screen, reached through
+# isAtBeginning()/isAtEnd(); a step that still reported a screen there would move the window's Back
+# and Next inside itself and never reach the module that now owns the greeting.
+assert_false "the language step no longer reports a screen from isAtBeginning()/isAtEnd()" \
+    grep -qE 'onLanguages\(\)|onWelcome\(\)|goToWelcome\(\)' "$LANG_SRC/LanguageViewStep.cpp"
+assert_false "and it no longer contributes requirements — those moved with the page" \
+    grep -q 'checkRequirements' "$LANG_SRC/LanguageViewStep.cpp"
+assert_false "no Requirements source is left behind in the language module" \
+    bash -c "ls '$LANG_SRC'/Requirements.* >/dev/null 2>&1"
+
+# EVERY `language.<name>` IN THE QML RESOLVES TO SOMETHING C++ DECLARES. A typo'd binding in QML is
+# not an error and not a warning: the expression evaluates to undefined and the control renders
+# empty or invisible, so this is the check that turns a silent blank into a failed build.
+assert_true "every QML binding resolves to a LanguageConfig property or method" \
+    python3 -c '
+import re, sys, pathlib
+d = pathlib.Path(sys.argv[1])
+qml = (d / "qml" / "Language.qml").read_text(encoding="utf-8")
+hdr = (d / "LanguageConfig.h").read_text(encoding="utf-8")
+used = sorted(set(re.findall(r"\blanguage\.([A-Za-z_][A-Za-z0-9_]*)", qml)))
+assert used, "the QML binds to nothing at all — is the context property still called language?"
+known = set(re.findall(r"Q_PROPERTY\(\s*\S+\s+(\w+)\s+READ", hdr))
+known |= set(re.findall(r"\b(\w+)\s*\([^)]*\)\s*(?:const)?\s*;", hdr))
+missing = [u for u in used if u not in known]
+assert not missing, "QML binds to %s, which LanguageConfig does not declare" % ", ".join(missing)
+' "$LANG_SRC"
+# ...and every property either is CONSTANT or notifies a signal that something actually emits. A
+# NOTIFY naming a signal nobody emits is a binding that is evaluated once and then never again —
+# the page simply stops updating, which is indistinguishable from "the value did not change".
+assert_true "every Q_PROPERTY is CONSTANT or notifies an emitted signal" \
+    python3 -c '
+import re, sys, pathlib
+d = pathlib.Path(sys.argv[1])
+hdr = (d / "LanguageConfig.h").read_text(encoding="utf-8")
+cpp = (d / "LanguageConfig.cpp").read_text(encoding="utf-8")
+bad = []
+for decl in re.findall(r"Q_PROPERTY\((.*?)\)", hdr, re.S):
+    flat = " ".join(decl.split()); name = flat.split()[1]
+    if "CONSTANT" in flat:
+        continue
+    m = re.search(r"NOTIFY\s+(\w+)", flat)
+    if not m:
+        bad.append("%s is neither CONSTANT nor NOTIFY" % name)
+    elif not re.search(r"void\s+%s\s*\(" % m.group(1), hdr):
+        bad.append("%s notifies %s, which is not declared" % (name, m.group(1)))
+    elif not re.search(r"emit\s+%s\s*\(" % m.group(1), cpp):
+        bad.append("%s notifies %s, which nothing emits" % (name, m.group(1)))
+assert not bad, "; ".join(bad)
+' "$LANG_SRC"
+# The engine retranslate, which is the line whose absence leaves every qsTr() in the language the
+# installer started in. Slideshow.cpp:57 is the only other place in the tree that needs it.
+assert_true "the view step retranslates its QML engine on a language change" \
+    grep -q 'engine()->retranslate()' "$LANG_SRC/LanguageViewStep.cpp"
+# And the style call stays in the FIRST module, which is this one.
+assert_true "the language module sets the Qt Quick Controls style" \
+    grep -q 'QQuickStyle::setStyle' "$LANG_SRC/LanguageViewStep.cpp"
+
+# ---- 6d. the greeting page's source (plan/23) ------------------------------------------------
+GREET_SRC="$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-greeting/files"
+
+# INHERITING UPSTREAM'S ESCAPE HATCH WOULD RE-OPEN THE HOLE IN SILENCE. GeneralRequirements guards
+# its storage check with `#ifdef WITHOUT_LIBPARTED` and, when that is defined, removes the entry
+# from both lists rather than failing. Our checker measures /sys/block instead and must never grow
+# the same conditional — a build with it would pass every assertion above and still never check a
+# disk (plan/22 §3a).
+#
+# The PREPROCESSOR use, not the token: Requirements.h quotes upstream's #ifdef at length, because
+# an escape hatch you cannot find is how this stayed broken. What must never appear is a
+# conditional that compiles the check out.
+assert_false "the requirement checker carries no WITHOUT_LIBPARTED escape hatch" \
+    grep -rqE '^[[:space:]]*#[[:space:]]*(if|ifdef|ifndef|elif).*LIBPARTED' "$GREET_SRC"
+assert_true "the requirement checker reads /sys/block itself" \
+    grep -q '/sys/block' "$GREET_SRC/Requirements.cpp"
+assert_true "the greeting module is the one that contributes the checks" \
+    grep -q 'm_requirements->checkRequirements()' "$GREET_SRC/GreetingViewStep.cpp"
+
+# Next is the installer's first real gate, and it gates on the MANDATORY list only — `internet` is
+# checked and deliberately not required, because the payload travels on the stick.
+assert_true "Next is gated on the mandatory requirements" \
+    bash -c "sed -n '/^GreetingViewStep::isNextEnabled/,/^}/p' '$GREET_SRC/GreetingViewStep.cpp' |
+             grep -q 'satisfiedMandatory()'"
+assert_true "and the verdict moving re-asks the button, or a bigger disk clears nothing" \
+    grep -q 'satisfiedMandatoryChanged' "$GREET_SRC/GreetingViewStep.cpp"
+# isBackEnabled(), which stock WelcomeViewStep answers false because it has nowhere to go. This
+# page has the language list behind it, and copying upstream's answer strands anyone who picked the
+# wrong language on a page they cannot read.
+assert_true "isBackEnabled() returns true, not stock welcome's false" \
+    bash -c "sed -n '/^GreetingViewStep::isBackEnabled/,/^}/p' '$GREET_SRC/GreetingViewStep.cpp' |
+             grep -q 'return true;'"
+# The style call belongs to whichever module loads FIRST and is ignored everywhere else. A second
+# one here would look harmless and be dead. `^[^/*]*` so that the comment in GreetingViewStep.cpp
+# explaining the absence does not read as the thing it is explaining.
+assert_false "the greeting module does not set the Qt Quick Controls style" \
+    grep -rqE '^[^/*]*QQuickStyle::setStyle' "$GREET_SRC"
+
+# THE VENDORED BOX IS VENDORED, not adopted. checker/ is three files copied from Calamares' welcome
+# module; the value of that is that the diff against a future release is a header and one rename,
+# so each file has to say where it came from, and none of them may still refer to upstream's own
+# config class.
+for f in CheckerContainer ResultsListWidget ResultDelegate; do
+    assert_true "checker/$f records where it was vendored from" \
+        bash -c "grep -q 'VENDORED FROM CALAMARES' '$GREET_SRC/checker/$f.h' &&
+                 grep -q 'VENDORED FROM CALAMARES' '$GREET_SRC/checker/$f.cpp'"
+done
+assert_false "nothing in checker/ still includes upstream's Config.h" \
+    grep -rqE '#include "Config\.h"' "$GREET_SRC/checker"
+# The three things ResultsListWidget calls on the object it is handed. Renaming one of them in
+# GreetingConfig compiles here and fails only at link time in a container an hour into a build.
+for m in warningMessage requirementsModel unsatisfiedRequirements; do
+    assert_true "GreetingConfig still answers $m(), which the vendored box calls" \
+        grep -qE "^\s*(QString|Calamares::RequirementsModel\*|QAbstractItemModel\*) $m\(\) const" \
+            "$GREET_SRC/GreetingConfig.h"
+done
+
+# NO SECOND LOGO. ResultsListWidget puts the branding's productWelcome image into the box, expanding,
+# as soon as every requirement passes — so a logo in the page header above it is the "logo sized to
+# fill whatever space is left over" that plan/22 opened by complaining about.
+assert_false "the greeting page draws no logo of its own" \
+    grep -qE 'ProductLogo|ProductWelcome|imagePath' "$GREET_SRC/GreetingPage.cpp"
 
 # ---- 7. YAML is YAML ------------------------------------------------------------------------
 # Calamares parses these with yaml-cpp and reports a parse error as a startup failure, so a
@@ -354,11 +620,23 @@ assert_eq "1" "${#installer_users[@]}" "exactly one profile emerges @installer"
 assert_eq "${#installer_users[@]}" "${#live_users[@]}" \
     "every profile that emerges @installer is a live profile"
 
-# The set names two atoms: Calamares, and the enrolment page that plugs into it (plan/19 Phase D).
-# Everything else in the ~25-package tail is resolved, and a set that starts listing transitive
-# deps stops describing intent.
-assert_eq "2" "$(grep -cvE '^[[:space:]]*(#|$)' "$REPO_ROOT/config/portage/sets/installer")" \
-    "@installer names exactly two atoms"
+# The set names four atoms: Calamares, and the three view modules this project plugs into it — the
+# accounts page (plan/21), the language page (plan/22) and the greeting page (plan/23). Everything
+# else in the ~25-package tail is resolved, and a set that starts listing transitive deps stops
+# describing intent.
+#
+# The count is asserted rather than the names, and it is a NUMBER on purpose: adding an atom here is
+# exactly the change that should have to be argued for in a diff, because @installer is the one set
+# whose contents the product image is forbidden to contain. The fourth was argued in plan/23 and is
+# a SPLIT of the third rather than new weight: a Calamares view step is one entry in the sidebar, so
+# a page with two screens had to become two modules.
+assert_eq "4" "$(grep -cvE '^[[:space:]]*(#|$)' "$REPO_ROOT/config/portage/sets/installer")" \
+    "@installer names exactly four atoms"
+for atom in app-admin/calamares distro-base/distro-calamares-accounts \
+            distro-base/distro-calamares-greeting distro-base/distro-calamares-language; do
+    assert_true "@installer names $atom" \
+        grep -qxF "$atom" "$REPO_ROOT/config/portage/sets/installer"
+done
 assert_true "@installer names the accounts view module from the overlay" \
     grep -qx 'distro-base/distro-calamares-accounts' "$REPO_ROOT/config/portage/sets/installer"
 assert_true "@installer names app-admin/calamares" \

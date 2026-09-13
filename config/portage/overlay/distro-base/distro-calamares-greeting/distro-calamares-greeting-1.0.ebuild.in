@@ -1,0 +1,80 @@
+# Copyright 2026 @DISTRO_NAME@
+# Distributed under the terms of the GNU General Public License v3
+
+EAPI=8
+
+inherit cmake
+
+DESCRIPTION="Calamares view module: the @DISTRO_NAME@ installer's greeting and requirements page"
+HOMEPAGE="@HOME_URL@"
+# No SRC_URI — see the sibling ebuilds and ../../README.md.
+S="${WORKDIR}/${P}"
+
+# GPL-3 rather than GPL-2+, twice over: this links against libcalamares, which is GPL-3-or-later,
+# and files/checker/ is three source files vendored from Calamares itself under that same licence
+# (plan/23 §2). Both halves of the combined work are GPL-3.
+LICENSE="GPL-3"
+SLOT="0"
+KEYWORDS="amd64"
+
+# Everything the long note in distro-calamares-accounts' ebuild says about DEPEND applies here
+# unchanged, and is not repeated: app-admin/calamares is a DEPEND because DEPEND is what portage
+# installs into ESYSROOT, ESYSROOT here is the BUILDER root rather than the target, and most of
+# this list is not "what the code includes" but "what CalamaresConfig.cmake re-finds when
+# find_package(Calamares) runs" — qtsvg, qttools[linguist], qtdeclarative and yaml-cpp among them.
+#
+# WHAT IS DIFFERENT ABOUT THIS ONE, and it is the whole of the difference: THERE IS NO QML HERE.
+# The page is Qt Widgets (GreetingPage.h says why), so kirigami and qqc2-desktop-style are absent
+# from RDEPEND — the two entries the sibling modules have to name because `import org.kde.kirigami`
+# is resolved by the QML engine at runtime out of /usr/lib64/qt6/qml and appears in no link line.
+# qtdeclarative stays in DEPEND only, where it is a find_package(Calamares) input rather than
+# anything this module compiles against.
+DEPEND="
+	>=app-admin/calamares-3.4.0
+	>=dev-qt/qtbase-6.7.0:6[gui,network,widgets]
+	>=dev-qt/qtdeclarative-6.7.0:6
+	>=dev-qt/qtsvg-6.7.0:6
+	>=dev-qt/qttools-6.7.0:6[linguist]
+	>=kde-frameworks/kcoreaddons-6.9.0:6
+	dev-cpp/yaml-cpp:0=
+"
+RDEPEND="
+	>=app-admin/calamares-3.4.0
+	>=dev-qt/qtbase-6.7.0:6[gui,network,widgets]
+	>=dev-qt/qtsvg-6.7.0:6
+	>=kde-frameworks/kcoreaddons-6.9.0:6
+	dev-cpp/yaml-cpp:0=
+"
+BDEPEND="
+	>=dev-qt/qtbase-6.7.0:6
+	virtual/pkgconfig
+"
+
+# This package is ONLY for the installer profile. On a target image it would install a Calamares
+# module into a system that has no Calamares — harmless, and still wrong, because the package audit
+# would then have to explain why an installer plugin is on a desktop.
+src_unpack() {
+	mkdir -p "${S}" || die
+	cp -r "${FILESDIR}"/. "${S}"/ || die
+}
+
+src_configure() {
+	local mycmakeargs=(
+		# Calamares' own build sets this; out of tree it has to be asked for by name, or
+		# calamares_add_plugin installs into ${CMAKE_INSTALL_LIBDIR}/calamares/modules relative
+		# to a prefix that is not the one Calamares itself used.
+		-DCMAKE_INSTALL_LIBDIR="$(get_libdir)"
+	)
+	cmake_src_configure
+}
+
+pkg_postinst() {
+	elog "This module is MANDATORY: it is the installer's second page and it owns the six"
+	elog "requirement checks — including the disk check that upstream's welcome module silently"
+	elog "drops on a Calamares built without libparted (plan/22 §3a). Without it nothing gates"
+	elog "Next on the target having enough disk. settings.conf names it unconditionally and"
+	elog "stage 40 refuses to build a medium without it (plan/23 §5)."
+	elog
+	elog "It is called 'greeting' and not 'welcome' because a viewmodule of that name would"
+	elog "collide file-for-file with app-admin/calamares' own. The sidebar still says Welcome."
+}

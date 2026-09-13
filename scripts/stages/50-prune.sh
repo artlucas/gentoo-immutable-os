@@ -142,6 +142,13 @@ rm -rf -- "${T:?}/boot"/* 2>/dev/null || true  # UKI lives on the ESP; image /bo
 find "$T" -xdev -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true
 
 # locale trim: keep LOCALES_KEEP prefixes (en also keeps en_GB etc.)
+#
+# LOCALES_KEEP IS NO LONGER A STRING IN build.conf. load_config() derives it from
+# config/languages.conf — the same table that produced /etc/locale.gen, so the catalogs kept here
+# and the locales compiled there are one list by construction rather than two that agreed for as
+# long as nobody edited one of them (plan/22 §2b). The matching below is unchanged, including its
+# deliberate looseness: keeping "pt" for a pt_BR row also keeps pt_PT, which is what the comment
+# above has always meant by "prefixes".
 if [[ -d $T/usr/share/locale ]]; then
   for d in "$T/usr/share/locale"/*/; do
     base="$(basename -- "$d")"
@@ -646,6 +653,33 @@ if [[ $PROFILE_ROLE == live ]]; then
   fi
 fi
 
+# ---- 3m. /usr/share/i18n/SUPPORTED, on the installer medium only (plan/22 §6) --------------
+#
+# THIS IS A DELETION THAT CHANGES A UI, not one that saves bytes — 22 KiB, which is nothing.
+# Calamares' locale module reads /usr/share/i18n/SUPPORTED FIRST and only falls back to
+# localeGenPath (modules/locale/Config.cpp:51). That file is glibc's list of every locale glibc
+# CAN build — roughly five hundred of them — while this image has compiled exactly the nine in
+# config/languages.conf. So the installer's locale dialog offered `en_CA.UTF-8` and hundreds of
+# others, of which the machine being installed could load nine; picking any of the rest got a
+# warning from `imageidentity` and LANG=en_US.UTF-8 anyway.
+#
+# With the file gone, loadLocales() falls through to /etc/locale.gen — which stage 40 writes from
+# the same table — and the dialog lists exactly what the target can load. modules/locale.conf names
+# localeGenPath explicitly so the connection is greppable from the config rather than implied by a
+# default.
+#
+# LIVE PROFILES ONLY, and the distinction is not cosmetic: on an installed system this file is
+# glibc's own data and nothing here is entitled to an opinion about it. Only the medium running
+# Calamares has a page whose contents it changes.
+if [[ $PROFILE_ROLE == live ]]; then
+  if [[ -e $T/usr/share/i18n/SUPPORTED ]]; then
+    log "live profile ($BUILD_PROFILE): removing /usr/share/i18n/SUPPORTED so the installer's
+  locale dialog lists the nine locales this image compiled instead of the five hundred glibc
+  could (plan/22 §6)"
+    rm -f -- "$T/usr/share/i18n/SUPPORTED"
+  fi
+fi
+
 # ---- 4. THE ASSERTIONS (build fails if any trips) ------------------------------------
 fail=0
 violation() { warn "PRUNE VIOLATION: $*"; fail=1; }
@@ -712,6 +746,30 @@ if profile_has_set desktop; then
   # naming it. Either half alone is worse than neither — the collection deleted with nothing named
   # is an empty desktop, and a name that resolves while 255 MiB is still on the stick is the cost
   # without the saving.
+  # Section 3m (plan/22 §6), and it is asserted rather than trusted for the same reason the
+  # wallpaper is: the symptom of getting it wrong is a page that draws fine and lists the wrong
+  # things, which no serial-console test can see.
+  if [[ $PROFILE_ROLE == live ]]; then
+    [[ -e $T/usr/share/i18n/SUPPORTED ]] \
+      && violation "/usr/share/i18n/SUPPORTED survived the prune on a live medium. Calamares'
+  locale module reads it BEFORE localeGenPath, so its language dialog will offer the ~500 locales
+  glibc could build instead of the nine this image compiled — and choosing any of the others gives
+  the installed system LANG=en_US.UTF-8 and a warning nobody reads (plan/22 §6)"
+    # The other half, and it has to be the other half: the fallback is only reached if the file
+    # above is gone, and it is only USEFUL if what it falls back to exists.
+    [[ -s $T/etc/locale.gen ]] \
+      || violation "/etc/locale.gen is missing or empty on a live medium. With
+  /usr/share/i18n/SUPPORTED deleted it is the installer's ONLY source of available locales, so the
+  locale page would come up with an empty list and a warning in the log"
+    while IFS='|' read -r li _ _ _; do
+      [[ -n $li && $li != en ]] || continue
+      [[ -s $T/etc/calamares/branding/installer/lang/calamares-installer_${li}.qm ]] \
+        || violation "the compiled translation for '$li' is missing from the branding component.
+  Stage 40 built it from config/calamares/branding/installer/lang/; without it every page this
+  project wrote is English for a user who picked that language (plan/22 §4)"
+    done <<<"$LANGUAGES_TABLE"
+  fi
+
   if [[ $PROFILE_ROLE == live ]]; then
     [[ -d $T/usr/share/wallpapers/$DISTRO_ID ]] \
       || violation "/usr/share/wallpapers/$DISTRO_ID is missing from a live medium. Stage 40

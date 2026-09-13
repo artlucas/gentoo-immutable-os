@@ -50,8 +50,15 @@ REC_CFG_HASH="$(cat "$CONFIG_ROOT/.inputs-hash" 2>/dev/null || echo none)"
 #    That is the intended behaviour for a first build, and the case is covered anyway: the
 #    bidirectional lock verify below catches a VDB carrying a package the lock does not name,
 #    which is precisely the failure this guard is a cheap proxy for.
+#    THE FINGERPRINT IS NARROWER THAN GUARD 1's, and the difference is the overlay's files/
+#    trees — see target_closure_hash() in lib/common.sh. Guard 1 asks whether stage 20 ran after
+#    your edits, which a source edit genuinely does invalidate; this one asks whether a package
+#    could have been dropped from the graph, which a .cpp cannot do and which the
+#    --reinstall-atoms below covers from the other side. Using the wide hash here refused a stage
+#    30 over one const qualifier on 2026-09-13 and demanded a full wipe for it.
+TGT_CFG_HASH="$(target_closure_hash)"
 PREV_TGT_HASH="$(cat "$TARGET_HASH_FILE" 2>/dev/null || echo none)"
-if [[ -d $TARGET/var/db/pkg && $PREV_TGT_HASH != none && $PREV_TGT_HASH != "$CUR_CFG_HASH" ]]; then
+if [[ -d $TARGET/var/db/pkg && $PREV_TGT_HASH != none && $PREV_TGT_HASH != "$TGT_CFG_HASH" ]]; then
   die "config changed since $TARGET was populated, and --changed-use cannot remove packages
   from an existing root — anything a USE flag was meant to DELETE would still ship.
   Wipe the target and rebuild:  ${RUNTIME:-docker} volume rm -f ${DISTRO_ID}-work
@@ -168,7 +175,7 @@ ensure_dir "$REPORT_DIR"
 # the target now matches this config; record it for the staleness guard above. Through
 # $TARGET_HASH_FILE, not a second spelling of the path — the read above and this write are the
 # two halves of one guard, and they were literal strings that happened to agree.
-printf '%s' "$CUR_CFG_HASH" > "$TARGET_HASH_FILE"
+printf '%s' "$TGT_CFG_HASH" > "$TARGET_HASH_FILE"
 
 ( cd "$TARGET/var/db/pkg" && printf '%s\n' */* | sort ) > "$REPORT_DIR/target-packages-cpv.txt"
 log "target has $(wc -l < "$REPORT_DIR/target-packages-cpv.txt") packages"

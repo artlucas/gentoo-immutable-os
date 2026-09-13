@@ -1,0 +1,58 @@
+# The second page: the greeting, and whether this computer can install at all (plan/23).
+#
+# GENERATED from config/calamares/modules/greeting.conf.in by stage 40.
+#
+# WHAT THIS FILE REPLACED, TWICE. It began as modules/welcome.conf.in, configuring the stock
+# `welcome` module; plan/22 folded it into modules/language.conf when that module took the checks
+# over; plan/23 split it out again, because the page that reports a verdict and the page that asks
+# for a language are two steps in the sidebar and should be two modules. The numbers and the
+# reasoning below have not changed through any of it — they were never about which module read
+# them.
+#
+# The one thing that did change, and it is why the block exists at all: `requiredStorage: 32.0` was
+# DISCARDED AT STARTUP for the whole life of the stock module. The ebuild builds Calamares with
+# -DCMAKE_DISABLE_FIND_PACKAGE_LIBPARTED=ON, and GeneralRequirements.cpp:357 responds to
+# -DWITHOUT_LIBPARTED by removing "storage" from both the check list and the required list with
+# nothing but a cWarning. There was no disk row on the page and nothing blocked Next; a 16 GiB
+# target reached the partition step before anything noticed. The module reading this file does the
+# check itself, over /sys/block, excluding the disk the medium booted from.
+---
+requirements:
+    # GiB, and it is the layout in modules/partition.conf added up rather than a round number:
+    # 1 GiB ESP + two @ROOT_SLOT_SIZE_MIB@ MiB root slots + enough var to hold the seeded
+    # Flatpak store and a home directory. The second root slot is not optional — it is the
+    # inactive half of the A/B pair systemd-sysupdate writes into (plan/01), so a disk that
+    # cannot hold it produces a machine that installs and then can never update.
+    #
+    # NOW ACTUALLY ENFORCED, which it was not for the whole life of the stock module. The check
+    # measures the largest block device that is NOT the one this medium booted from — the same
+    # exclusion PartUtils::getDevices( WritableOnly ) applies to the disk picker, so the page and
+    # the picker cannot disagree about which disks exist.
+    requiredStorage:    32.0
+    # Plasma 6 Wayland. Under this the session runs but swaps.
+    requiredRam:        4.0
+    internetCheckUrl:   "@HOME_URL@"
+    check:
+        - storage
+        - ram
+        - power
+        - internet
+        - root
+        - screen
+    # REQUIRED is the short list, and internet is deliberately not on it. This installer writes a
+    # payload that already travels on the stick — root image, UKI and the Flatpak store — so an
+    # install with no network at all is a supported, first-class path (build.conf's
+    # INSTALLER_PAYLOAD_FLATPAKS, and stage 90's whole reason for existing). The check still
+    # RUNS, so the page shows the state; it just does not block.
+    #
+    # It is also why GreetingConfig's verdict has two states and not upstream's four: the box this
+    # page borrows from the stock module says "can continue, but some features might be disabled"
+    # for any unsatisfied recommendation, and nothing whatsoever is disabled by installing this
+    # image offline. The rows below the verdict are what distinguish a blocker from a note.
+    #
+    # `power` is likewise informational: a laptop on battery can install fine, and refusing is
+    # patronising. `storage` and `ram` block, because below them the result does not work.
+    required:
+        - storage
+        - ram
+        - root

@@ -4,7 +4,10 @@ Everything the `installer` build profile needs to turn a live Plasma session int
 None of it ships in the product: [stage 40](../../scripts/stages/40-configure.sh) installs this
 tree only when the profile's sets include `installer`, and asserts its absence from every other
 profile. Designed in [plan/16](../../plan/16-installer.md); the accounts page that replaced the
-stock `users` module is [plan/21](../../plan/21-installer-accounts-page.md).
+stock `users` module is [plan/21](../../plan/21-installer-accounts-page.md), the language page
+that replaced the stock `welcome` module is [plan/22](../../plan/22-installer-language-page.md), and
+the greeting page that took the second half of that replacement is
+[plan/23](../../plan/23-installer-greeting-page.md).
 
 ## Where it goes
 
@@ -19,6 +22,7 @@ stock `users` module is [plan/21](../../plan/21-installer-accounts-page.md).
 | `system/kscreenlockerrc.in` | `/etc/xdg/kscreenlockerrc` | drops the lock screen's password prompt — the live account's password is public — and gives the greeter the wallpaper below |
 | `system/lookandfeel/contents/layouts/**` | `/usr/share/plasma/look-and-feel/<id>/contents/layouts/` | the Plasma layout script that pins Calamares — and nothing else — to the task manager, and points the desktop at the wallpaper below; added to the image's own Look-and-Feel package |
 | `system/wallpaper/**` | `/usr/share/wallpapers/<id>/` | the medium's only wallpaper — see below |
+| `branding/installer/lang/*.ts` | `/etc/calamares/branding/installer/lang/*.qm` | compiled by stage 40 with `lrelease`; Calamares loads them as its **branding** translator, which is how our own pages get translated with no mechanism of our own ([plan/22](../../plan/22-installer-language-page.md) §4) |
 
 `branding/installer/logo.png` is **not in this directory**. It is composed at build time by
 `config/branding/make-splash-assets.py --logo`, from the same `build_block()` that produces the
@@ -135,7 +139,8 @@ are ours.
 
 | stock module | disposition |
 |---|---|
-| `welcome`, `locale`, `keyboard`, `summary`, `finished`, `umount` | **kept**, unmodified |
+| `locale`, `keyboard`, `summary`, `finished`, `umount` | **kept**, unmodified |
+| `welcome` | **replaced** by `language` + `greeting` — the language list first and the requirements verdict second, because the stock page's order is in `WelcomePage.cpp` and no config key reaches it ([plan/22](../../plan/22-installer-language-page.md), split in [plan/23](../../plan/23-installer-greeting-page.md)). Its requirements **box** is borrowed rather than rewritten: `checker/` is vendored into the `greeting` module, because those three classes are private to the stock module and no header of theirs is installed |
 | `removeuser` | **kept** — and it works only because of the overlay; see below |
 | `partition` | **kept, reconfigured into a disk picker**: `allowManualPartitioning: false` plus a fixed `partitionLayout` leaves a device combo box and an Erase radio button |
 | `users` | **replaced** by `accounts` + `accountsetup` — one module where the mechanism is a choice, because upstream's could only offer domain join as an *addition* to a local account ([plan/21](../../plan/21-installer-accounts-page.md)) |
@@ -171,6 +176,8 @@ custom step to do this by hand; the overlay does it for free.
 | `imagedeploy` | `unpackfs` + `mount` | verifies the payload against `manifest.json`, writes the root EROFS into the `root_<version>` partition, mounts root/var/**the /etc overlay**/ESP and the API filesystems, unpacks the `/var` template, sets `rootMountPoint` |
 | `imagebootloader` | `bootloader` | systemd-boot (taken from the **payload's** `/usr`, not the live system's) and the UKI onto the ESP, plus a best-effort `efibootmgr` entry |
 | `imageidentity` | — | autologin off, subuid/subgid, the first-boot hostname stamp, `/etc/locale.conf` |
+| `language` | `welcome` (the page) | the language list, and nothing else. A compiled view module from the overlay, not here; its config is `modules/language.conf.in`, whose `languages:` list stage 40 renders from `config/languages.conf` |
+| `greeting` | `welcome` (the greeting **and** the checker) | the product, the sentence about erasing the disk, and the requirements verdict — in the language the page before it chose. A compiled view module from the overlay, not here; its config is `modules/greeting.conf.in`, which carries the `requirements:` block. Not called `welcome`: a viewmodule of that name would collide with `app-admin/calamares`' own, and `ModuleManager` resolves a duplicate name by search order without saying so |
 | `accounts` | `users` (the page) | the mode choice and its fields — a compiled view module from the overlay, not here; its config is `modules/accounts.conf.in` |
 | `accountsetup` | `users` (the jobs) + `managedenroll` | the local administrator, `/etc/hostname` and `/etc/hosts`, and then the domain join or the enrolment transplant |
 
@@ -199,12 +206,14 @@ an installed system with no preinstalled apps until someone installs them.
 
 ## Known limits (Phase A)
 
-- **Locales.** The image compiles only what `LOCALE_GEN` names (by default `en_US.UTF-8`) into a
-  locale archive on the **read-only** root, and nothing on the installed system can add to it.
-  `imageidentity` therefore writes `/etc/locale.conf` only for a locale the target can actually
-  load, and warns otherwise — writing an uncompiled locale would silently give the user `C`.
-  `LOCALES_KEEP` (translated UI) is a much longer list, which is why choosing German mostly works
-  while the number and date formats stay American.
+- ~~**Locales.**~~ **Closed by [plan/22](../../plan/22-installer-language-page.md) §2.** This used
+  to read: the image compiles only what `LOCALE_GEN` names (by default `en_US.UTF-8`), so choosing
+  German mostly worked while the numbers and dates stayed American. Both halves now come out of one
+  table — `config/languages.conf` — so every language the picker offers has a compiled locale and a
+  message catalogue, and `imageidentity`'s `target_has_locale()` guard has nothing left to refuse.
+  The cost was measured rather than estimated: the locale archive goes from 2.9 MiB to 9.8 MiB.
+  What remains is the *reverse* limit, and it is now the interesting one — a language absent from
+  that table cannot be chosen at all, which is a deliberate trade and not an oversight.
 - **The medium is excluded from the disk picker by Calamares, not by us.**
   `PartUtils::getDevices(WritableOnly)` drops any device holding a partition mounted at `/`
   (`core/DeviceList.cpp:178`). The live root is mounted at `/`, so the USB device disappears

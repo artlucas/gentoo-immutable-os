@@ -73,7 +73,8 @@ defaultFileSystemType: "ext4"
 lvm:
     enable: false
 
-# GiB. Must agree with welcome.conf's requirements.requiredStorage.
+# GiB. Must agree with language.conf's requirements.requiredStorage — and since plan/22 that
+# number is enforced rather than merely configured, so the two now actually meet.
 requiredStorage: 20.0
 
 # See the note above: these four are emit_sfdisk_script()'s four, in the same order.

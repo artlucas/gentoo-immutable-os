@@ -301,10 +301,17 @@ usable Plasma session, which is what someone whose install just failed actually 
 
 ### 4.2 Keep CJK fonts in the installer profile
 
-`INCLUDE_CJK_FONTS=0` would save 294 MiB and break the thing Calamares is best at. The welcome
-page's first control is a **language picker** across ~80 languages; choosing Chinese, Japanese
-or Korean on an image with no CJK glyphs renders the entire installer as tofu. The `installer`
-profile is the one profile that most needs those fonts. Keep them.
+`INCLUDE_CJK_FONTS=0` would save 294 MiB and break the thing Calamares is best at. The first
+**screen** is a language list ([plan/22](22-installer-language-page.md)), and on an image with no
+CJK glyphs the rows that need them render as tofu. The `installer` profile is the one profile that
+most needs those fonts. Keep them.
+
+> **The number is smaller and sharper than it was, and it still points the same way.** This
+> section was written when the picker held ~80 languages, on the reasoning that *some* of them
+> would be CJK. The list is now nine, from `config/languages.conf`, and **two of the nine** are
+> CJK — 日本語 and 简体中文. So the fonts no longer protect a long tail; they protect 22% of the
+> rows on the one screen that exists to be read, and the failure is not "some entries look wrong"
+> but "two of the nine choices are unreadable boxes". A stronger argument for the same answer.
 
 ## 5. What "install" means here
 
@@ -366,7 +373,7 @@ chroot for the same reason — the mechanism this section describes is what make
 
 | Calamares module | Disposition |
 |---|---|
-| `welcome` | **Keep** — language picker + requirements (disk size, power, network) |
+| `welcome` | ~~**Keep**~~ → **Replaced** by `language` in [plan/22](22-installer-language-page.md). It was kept correctly for its time, and what broke it was a requirement it could not express: the page's order is in `WelcomePage.cpp` — the requirements checker is inserted *above* the language row, and on a machine that passes everything `ResultsListWidget` swaps that list for an expanding logo — so the one control a non-English speaker needs ended up last, smallest and under two sentences of English. No configuration key reaches any of it. Its **checker** goes with it, which turned out to be the more urgent half: `-DCMAKE_DISABLE_FIND_PACKAGE_LIBPARTED=ON` makes `GeneralRequirements.cpp:357` delete `storage` from both the check list and the required list with only a `cWarning`, so `requiredStorage: 32.0` had never once been enforced on this medium. Split again in [plan/23](23-installer-greeting-page.md): `language` is the list and `greeting` is the greeting, the verdict and the checker, because a view step is one entry in the sidebar. `greeting` draws the requirements verdict with this module's own `ResultsListWidget`, vendored — the box was never the problem |
 | `locale` | **Keep** — timezone + locale, into the overlay |
 | `keyboard` | **Keep** |
 | `users` | ~~**Keep**~~ → **Replaced** by `accounts` + `accountsetup` in [plan/21](21-installer-accounts-page.md). It was kept through plan/18 and plan/19, and both of those bolted a *checkbox* onto it — `allowActiveDirectory: true` for the domain, a second page for managed enrolment — because upstream's `Config::createJobs` appends `ActiveDirectoryJob` and then still runs `CreateUserJob` (`Config.cpp:1088-1104`), so domain join could only ever be an addition to a local account and never an alternative. plan/21 makes the mechanism a choice, which needs our own page and our own jobs. The `realm` shim goes with it |

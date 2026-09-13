@@ -1,26 +1,33 @@
 # The in-repo ebuild repository
 
-Two things this project ships have to be **compiled against the target's own Qt6/KF6**, and
+Four things this project ships have to be **compiled against the target's own Qt6/KF6**, and
 therefore cannot be built the way everything else in `config/rootfs/` is:
 
 | | |
 |---|---|
 | `<id>-kcm-managed` | The System Settings module for managed mode ([plan/19](../../../plan/19-managed-mode.md) §7.2). A Plasma KCM is a C++ plugin; there is no QML-only path into System Settings |
 | `<id>-calamares-accounts` | The installer's accounts page ([plan/21](../../../plan/21-installer-accounts-page.md)). Calamares accepts **only** C++ `QtPlugin` view modules — `ModuleFactory.cpp:53` — so a page cannot be a script. Its UI is QML with Kirigami, compiled into the plugin as a Qt resource; the C++ is a thin host |
+| `<id>-calamares-language` | The installer's language page ([plan/22](../../../plan/22-installer-language-page.md)), replacing the first half of the stock `welcome` module. Same wall, and one thing of its own: being **first in the sequence**, it is where `QQuickStyle::setStyle()` has to happen for every later QML page to have icons |
+| `<id>-calamares-greeting` | The installer's greeting page ([plan/23](../../../plan/23-installer-greeting-page.md)), replacing the other half. It owns the six requirement checks — including the disk check `-DCMAKE_DISABLE_FIND_PACKAGE_LIBPARTED=ON` silently deletes from upstream's — because a requirement is contributed by whichever module is in the sequence. Unlike its siblings it is **Qt Widgets, not QML**: the requirements box it draws is three classes vendored from the stock module, which are private to it and installed nowhere |
 
 They go to different images, and the split is deliberate rather than incidental. The KCM is in
 `@desktop` marked `#not-live`, so it reaches the product and **not** the installer medium — a live
 session is never enrolled, so a "which policy is applied?" page there answers a question nobody
-can ask ([plan/20](../../../plan/20-installer-slimming.md) §2.2). The Calamares page is in
-`@installer` and is therefore the exact opposite: installer-only, because it is how the machine
-*being installed* gets its accounts. Neither package is ever on both images.
+can ask ([plan/20](../../../plan/20-installer-slimming.md) §2.2). All three Calamares pages are in
+`@installer` and are therefore the exact opposite: installer-only, because they are how the machine
+*being installed* gets its language and its accounts. No package here is ever on both images, and
+`config/portage/expected-packages.desktop.txt` is what says so.
 
-One difference between them is worth knowing before a relock: **the accounts page is mandatory**.
-The KCM's absence costs a System Settings entry, and the enrolment page that preceded the accounts
-page was optional too — `settings.conf` carried a substituted token so a medium built from a lock
-that did not yet have it still worked. This one creates the account, so stage 40 refuses to build
-an installer medium without it rather than shipping a stick that installs a machine nobody can log
-into.
+One difference is worth knowing before a relock: **all three Calamares pages are mandatory, and
+the KCM is not**. The KCM's absence costs a System Settings entry, and the enrolment page that
+preceded the accounts page was optional too — `settings.conf` carried a substituted token so a
+medium built from a lock that did not yet have it still worked. None of the three is like that. The
+accounts page creates the account; the language page is the first step in the sequence and makes the
+`QQuickStyle::setStyle()` call the accounts page depends on; the greeting page contributes the
+requirement checks that decide whether `Next` may be pressed at all. So stage 40 refuses to build an
+installer medium without any of them, rather than shipping a stick that installs a machine nobody
+can log into, one that never asks which language to install in, or one that will start writing a
+3 GiB payload onto a 16 GiB disk.
 
 **Why an ebuild repository rather than a hand-compile in stage 40.** plan/18 §7.2 rejected
 compiling a Calamares module by hand, and the reason was never "C++ is hard": it was that a
@@ -62,6 +69,12 @@ config/portage/overlay/
     distro-calamares-accounts/
       distro-calamares-accounts-N.ebuild.in
       files/                    C++, the QML under files/qml/, and the fallback module .conf
+    distro-calamares-language/
+      distro-calamares-language-N.ebuild.in
+      files/                    same shape; no -DDISTRO_ID, because this page execs nothing
+    distro-calamares-greeting/
+      distro-calamares-greeting-N.ebuild.in
+      files/                    C++ only — no qml/ — plus files/checker/, vendored from Calamares
 ```
 
 **Everything is rendered and rebranded on the way in.** Stage 20 runs the same

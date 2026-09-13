@@ -1,0 +1,23 @@
+# The first page: the language list, and nothing else (plan/22).
+#
+# GENERATED from config/calamares/modules/language.conf.in by stage 40. The `languages:` block
+# below is rendered from config/languages.conf — the one table that also produces /etc/locale.gen,
+# the message catalogs stage 50 keeps and flatpak's xa.languages. Do not edit the list here; edit
+# the table.
+#
+# ONE KEY, BECAUSE THE PAGE ASKS ONE QUESTION. This file carried a `requirements:` block between
+# plan/22 and plan/23, while the language module also owned the six checks. Both moved to
+# modules/greeting.conf when the greeting became a module of its own: a requirement is contributed
+# by whichever module is in the sequence, so the checks belong with the page that reports them.
+#
+# WHAT THIS FILE REPLACED. modules/welcome.conf.in configured the stock `welcome` module, whose
+# language picker was the LAST control on the page, under two sentences of English and a logo sized
+# to fill the window. That order is in WelcomePage.cpp, not in any config key, which is why the
+# page had to be rewritten rather than reconfigured.
+#
+# No geoip, and now there is not even a key for it. The stock module offered one and this one does
+# not implement it: it is a network call, made before the user has agreed to anything, that guesses
+# a country from an IP address in order to preselect a language. The list is nine rows and fits on
+# one screen without scrolling — a guess saves nobody a scroll, and it cannot be wrong quietly.
+---
+@INSTALLER_LANGUAGES@

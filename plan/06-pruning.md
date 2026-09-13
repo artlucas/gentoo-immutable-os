@@ -34,10 +34,25 @@ Plasma image loads one, and stage 50 now deletes the directory as a guard agains
 `introspection` back globally *and* take the directory out of the deletion list.
 
 Locale note: `/usr/share/locale` is deliberately **not** in INSTALL_MASK (masking it wholesale
-breaks the desktop UI-language story). Instead, v1 keeps message catalogs for a `build.conf` list
-(`LOCALES_KEEP="en de fr es pt_BR it ja zh_CN ru"` default) and stage 50 deletes the rest —
-measured savings vs. usability. GNOME/GTK translations follow the same list via `L10N` in the
-target make.conf. `REVISIT` markers are resolved during M2 by the size report.
+breaks the desktop UI-language story). Instead, v1 keeps message catalogs for a list of languages
+and stage 50 deletes the rest — measured savings vs. usability. GNOME/GTK translations follow the
+same list via `L10N` in the target make.conf. `REVISIT` markers are resolved during M2 by the size
+report.
+
+> **That list is no longer a string in `build.conf`.** Since
+> [plan/22](22-installer-language-page.md) §2b it is derived, with `LOCALE_GEN`, from
+> `config/languages.conf` — one row per language, naming both the message catalog to keep and the
+> glibc locale to compile. The two used to be independent (`LOCALES_KEEP` named nine languages,
+> `LOCALE_GEN` named one locale) and nothing compared them, which is how the product shipped nine
+> translated desktops that could load exactly one locale. Deriving both from one row makes that
+> disagreement unrepresentable rather than merely fixed.
+>
+> **Two size changes follow, and both are small enough to state and forget.** Compiling all nine
+> locales takes `/usr/lib/locale/locale-archive` from **2.9 MiB to 9.8 MiB** — measured with
+> `localedef --prefix` in the builder image, not estimated — on every profile. And on **live
+> profiles only**, stage 50 section 3m deletes `/usr/share/i18n/SUPPORTED` (22 KiB, so not a size
+> decision at all): Calamares' locale module reads it *before* `localeGenPath`, and it lists every
+> locale glibc could build rather than the nine this image did.
 
 ## Layer 3 — stage 50 prune script
 

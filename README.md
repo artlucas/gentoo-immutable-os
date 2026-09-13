@@ -31,6 +31,7 @@ been run yet. The full design lives in [`plan/`](plan/00-overview.md):
 | [18-active-directory](plan/18-active-directory.md) | Joining a Windows AD domain: sssd + adcli, what ships versus what a join writes, and the installer's domain page |
 | [19-managed-mode](plan/19-managed-mode.md) | Managed mode: centrally managed users for a household or small business, as systemd userdb records from a signed bundle a hosted API serves |
 | [21-installer-accounts-page](plan/21-installer-accounts-page.md) | The installer's accounts page: local, managed or domain as one choice, replacing Calamares' `users` module |
+| [22-installer-language-page](plan/22-installer-language-page.md) | The installer's language page: the list first and the requirements second, and offering only the languages the installed machine can speak |
 
 ## Building
 

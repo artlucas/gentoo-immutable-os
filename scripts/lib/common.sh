@@ -98,12 +98,137 @@ profile_emerge_sets() {
   for s in ${PROFILE_SETS:-}; do printf '@%s\n' "$s"; done
 }
 
+# ---- languages (plan/22) -----------------------------------------------------
+# config/languages.conf is the single source for FOUR things that used to disagree: the
+# installer's language page, /etc/locale.gen, the message catalogs stage 50 keeps, and flatpak's
+# xa.languages. This parses it once, validates it, and derives the two build.conf keys the rest of
+# the pipeline already reads.
+#
+# LANGUAGES_TABLE is the NORMALISED table — one row per language, '|'-separated, no padding and no
+# comments — and every consumer re-splits that rather than re-reading the file. One parser, one
+# set of rules about what a row may contain, and a stage that wants the list cannot quietly
+# disagree with the stage next to it about how to read it.
+load_languages() {
+  local f="${1:-$REPO/config/languages.conf}"
+  [[ -f $f ]] || die "config/languages.conf not found: $f
+  It is the source of the installer's language page, /etc/locale.gen and the message catalogs
+  stage 50 keeps (plan/22 §2b). Without it there is no list to render and no locale to compile."
+
+  local line id loc label english rows="" gens="" ids=""
+  local -a fields=()
+  local -i lineno=0
+  while IFS= read -r line || [[ -n $line ]]; do
+    lineno=$(( lineno + 1 ))
+    line="${line%$'\r'}"
+    [[ $line =~ ^[[:space:]]*(#|$) ]] && continue
+
+    # Four fields, checked as four. `read -r a b c d` would silently fold a fifth column into the
+    # fourth, and the fourth is a translation source string — a typo'd extra '|' would then ship
+    # as a label nobody could find in any .ts file.
+    IFS='|' read -r -a fields <<<"$line"
+    (( ${#fields[@]} == 4 )) \
+      || die "config/languages.conf:$lineno: expected 4 '|'-separated fields, got ${#fields[@]}
+  $line"
+
+    id="$(     printf '%s' "${fields[0]}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' )"
+    loc="$(    printf '%s' "${fields[1]}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' )"
+    label="$(  printf '%s' "${fields[2]}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' )"
+    english="$(printf '%s' "${fields[3]}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' )"
+
+    [[ $id =~ ^[a-z]{2,3}(_[A-Z]{2})?$ ]] \
+      || die "config/languages.conf:$lineno: '$id' is not a Calamares translation id (ll or ll_TT)"
+    # Strict, and deliberately stricter than glibc. '@'-modified locales (sr_RS@latin) name the
+    # charset in a different position — sr_RS.UTF-8@latin — and every consumer here splits on '.'
+    # to find the base. Supporting one would be a considered change to four call sites, not a
+    # regex that silently half-works.
+    [[ $loc =~ ^[a-z]{2,3}_[A-Z]{2}\.UTF-8$ ]] \
+      || die "config/languages.conf:$lineno: '$loc' must be a UTF-8 glibc locale (ll_TT.UTF-8)"
+    [[ -n $label && -n $english ]] \
+      || die "config/languages.conf:$lineno: the label and the English name are both required"
+    # No quote and no backslash, so stage 40 can render these into double-quoted YAML with no
+    # escaping at all. A language's name needs neither, and a validator that forbids them is
+    # shorter and more obviously correct than an escaper nobody tests.
+    [[ $label != *'"'* && $label != *'\'* && $english != *'"'* && $english != *'\'* ]] \
+      || die "config/languages.conf:$lineno: a quote or a backslash in a name. Neither belongs in
+  a language's name, and both would have to be escaped into the YAML stage 40 renders."
+    # THE PROPERTY THE WHOLE PAGE EXISTS FOR: what the user sees is a language's name, never a
+    # code. An id or a locale pasted into column 3 is the one typo that produces a page which
+    # looks fine to whoever made it and shows 'pt_BR' to everybody else.
+    [[ $label != *_* && $label != *@* && $label != *.UTF-8* ]] \
+      || die "config/languages.conf:$lineno: the label '$label' looks like a locale code.
+  Column 3 is what the user reads; codes never reach the screen (plan/22 §1c)."
+
+    # RTL is a layout, not a row. Arabic, Hebrew, Persian and Urdu flip the entire window through
+    # QApplication::setLayoutDirection — sidebar on the right, Back and Next reversed, every page
+    # in the installer affected. Nothing else in this pipeline would notice, so the refusal is
+    # here. Delete this when the mirrored layout exists and has been rendered, not before
+    # (plan/22 §8).
+    case "${id%%_*}" in
+      ar|he|fa|ur|ps|yi|dv|ckb|sd|ug)
+        die "config/languages.conf:$lineno: '$id' is a right-to-left language, and this
+  installer has no mirrored layout yet (plan/22 §8). Adding it needs the design, not this row." ;;
+    esac
+
+    # Against the delimited accumulators, not against $rows: a label ending in the next row's id
+    # would match a bare substring test, and "duplicate id" is a confusing way to report a label.
+    [[ " $ids" != *" $id "*      ]] || die "config/languages.conf:$lineno: duplicate id '$id'"
+    [[ ";$gens" != *";$loc UTF-8;"* ]] || die "config/languages.conf:$lineno: duplicate locale '$loc'"
+
+    rows+="${id}|${loc}|${label}|${english}"$'\n'
+    gens+="$loc UTF-8;"
+    ids+="$id "
+  done < "$f"
+
+  [[ -n $rows ]] || die "config/languages.conf names no languages at all"
+  # `en` is not merely the default — it is what every layer below falls back TO. Calamares' own
+  # BrandingLoader loads calamares-installer_en when a translation is missing, and
+  # imageidentity keeps the image's en_US.UTF-8 when the chosen locale is not compiled. A table
+  # without it makes both of those fall back to something that is not in the picker.
+  [[ $ids == *"en "* ]] || die "config/languages.conf must include the 'en' row: it is the
+  fallback both Calamares' translator and imageidentity use when anything else is unavailable"
+
+  LANGUAGES_TABLE="${rows%$'\n'}"
+  # `${x=y}`, not `${x:=y}` and not a plain assignment: a build.conf that deliberately sets either
+  # key still wins, and an EMPTY one still fails validate_config's required-key check rather than
+  # being silently replaced. Same rule as every other defaulted knob in this file.
+  : "${LOCALE_GEN=${gens%;}}"
+  : "${LOCALES_KEEP=${ids% }}"
+
+  # The `languages:` block for config/calamares/modules/language.conf.in, built HERE rather than
+  # in stage 40 because stage 40 is not the only thing that renders that template: tests render
+  # the whole Calamares tree offline, and a token only the build stage defines makes every one of
+  # them die on "variable INSTALLER_LANGUAGES is unset" — which is how this ended up here.
+  #
+  # Double-quoted with no escaping, and that is safe by construction rather than by hope: the loop
+  # above refuses a label containing a quote or a backslash.
+  # printf -v rather than string concatenation, so the double quotes the YAML needs live in a
+  # FORMAT STRING instead of in an assignment. The value is a document, not a command line: its
+  # only consumer is render_template's `${!name}` substitution, which never re-evaluates it as
+  # shell. shellcheck still flags the pair below on its quote heuristic; the two directives say
+  # which way that heuristic is wrong rather than turning it off for the file.
+  local yaml="languages:" row=""
+  while IFS='|' read -r id loc label english; do
+    [[ -n $id ]] || continue
+    # shellcheck disable=SC2089  # the quotes are the YAML's, in a format string, not shell syntax
+    printf -v row '    - id:       %s\n      locale:   %s\n      label:    "%s"\n      english:  "%s"' \
+      "$id" "$loc" "$label" "$english"
+    yaml+=$'\n'"$row"
+  done <<<"$LANGUAGES_TABLE"
+  # ...and they are meant to survive into the rendered file verbatim, which is what SC2090 warns
+  # about and what this value is for.
+  # shellcheck disable=SC2090
+  export INSTALLER_LANGUAGES="$yaml"
+}
+
 # ---- config ------------------------------------------------------------------
 load_config() {
   local f="${1:-$REPO/config/build.conf}"
   [[ -f $f ]] || die "config not found: $f"
   # shellcheck source=/dev/null
   source "$f"
+  # Before load_profile, so a profile can still override LOCALE_GEN or LOCALES_KEEP, and before
+  # validate_config, whose required-key check still applies to the derived values (plan/22 §2b).
+  load_languages
   # The build profile (plan/16). Sourced AFTER build.conf so a profile can override its knobs,
   # and BEFORE the command-line overrides below so those still win over both.
   #
@@ -582,6 +707,42 @@ portage_config_hash() {
     {
       find config/portage -type f ! -name 'expected-packages*' \
            ! -path 'config/portage/lock/*' -print0 \
+        | LC_ALL=C sort -z | xargs -0 -r sha256sum
+      sha256sum config/build.conf
+    } | sha256sum | cut -d' ' -f1
+  )
+}
+
+# target_closure_hash — portage_config_hash minus the overlay's source trees.
+#
+# THE TWO QUESTIONS ARE NOT THE SAME QUESTION, and stage 30 asks both.
+#
+#   "did stage 20 run after my edits?"        -> portage_config_hash, against $CONFIG_ROOT
+#   "could this target root be carrying a     -> THIS, against $TARGET_HASH_FILE
+#    package the current config would drop?"
+#
+# The second one is about package MEMBERSHIP, and membership comes from the sets, the profile,
+# package.use/mask/keywords and the ebuilds. It cannot come from config/portage/overlay/*/*/files/**
+# — the C++, QML and CMake this repo compiles INTO two of those packages — and stage 30 already
+# re-emerges every overlay package from the checkout on every run (--reinstall-atoms
+# --usepkg-exclude, and the comment there records what it cost to learn that). So a hash that moves
+# for a source edit tells the staleness guard nothing, while costing a full wipe and re-merge of the
+# whole target root.
+#
+# Measured 2026-09-13 (plan/23): three edits — a CMakeLists, a .qml and one const qualifier in a
+# .cpp — moved portage_config_hash and refused a stage 30 whose package closure was provably
+# identical, one added atom aside. The narrow answer is the same fingerprint over the files that can
+# actually answer the question.
+#
+# NOT used for the lock headers. Those record portage_config_hash deliberately: a lock is a claim
+# about a whole config, and "the .cpp changed" is a real reason for a build to be a different build.
+target_closure_hash() {
+  (
+    cd "$REPO" || return 1
+    {
+      find config/portage -type f ! -name 'expected-packages*' \
+           ! -path 'config/portage/lock/*' \
+           ! -path 'config/portage/overlay/*/*/files/*' -print0 \
         | LC_ALL=C sort -z | xargs -0 -r sha256sum
       sha256sum config/build.conf
     } | sha256sum | cut -d' ' -f1

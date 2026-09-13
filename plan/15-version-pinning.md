@@ -415,6 +415,57 @@ The wider lesson for this document: a lock layer that can only *detect* drift, n
 the locked state, is half a mechanism. Layer 5's reproduce half is the vendored archive, and it
 only works if nothing downstream is allowed to "helpfully" re-resolve on top of it.
 
+## Pinning a runtime drags its extensions, so one pass was never enough
+
+**Found 2026-09-13, on the first fully ONLINE rebuild since the fix above** — the desktop profile,
+rebuilt to give the nine installer languages nine compiled locales. Stage 40 failed its own
+readback on `runtime/org.kde.Platform.Locale/x86_64/6.10`, at Flathub's current `3bd0cc910140`
+rather than the locked `fd8f2b9352c2`.
+
+The commit had not aged out; the loop moved it. `flatpak update --commit=<c> <ref>` applies the
+commit to the ref that was NAMED and re-resolves that ref's RELATIONS against the remote's current
+summary, and a runtime's relations are its extensions. `apps.lock` is sorted, `.` sorts before `/`,
+so `org.kde.Platform.Locale` is always reached before `org.kde.Platform` — the loop pinned the
+extension and then undid it one row later. Three lines of the log, in order:
+
+```
+Updating runtime/org.kde.Platform.Locale/x86_64/6.10    <- row 12, deploys the locked fd8f2b9352c2
+Updating runtime/org.kde.Platform.Locale/x86_64/6.10    <- dragged by row 13, to 3bd0cc910140
+Updating runtime/org.kde.Platform/x86_64/6.10           <- row 13
+```
+
+It is the same flatpak behaviour as the restore bug above — the 2026-09-07 fix covered the restored
+tree and left the ordinary install exposed, and the gap stayed hidden only because every build in
+between restored from the archive. **A guard written for one caller of a misbehaving primitive does
+not fix the primitive.**
+
+Stage 40 now deploys in **passes**: ask what is deployed, deploy whatever disagrees with the lock,
+repeat (bounded at four). It converges because the drag runs one way only — pinning an extension
+never moves its parent — and it needs no model of which ref extends which, which is the part that
+would go stale. A prefix rule would already be wrong: the `KStyle.Adwaita` row extends
+`org.kde.Platform` through an extension point whose name appears nowhere in the lock.
+
+Two things fell out of the same build:
+
+- **The install drags in runtimes the lock does not name.** `flatpak install` resolves against
+  today's Flathub, and `org.kde.ark` had moved to `org.kde.Platform` **6.11** while every locked
+  app still runs on 6.10. Pinning the apps back left both KDE runtimes in the tree: ~1 GiB of a
+  second Platform, its Locale and its KStyle that nothing referenced, that `apps.lock` does not
+  name, and that would have shipped as the only unpinned bytes in the image. Stage 40 now removes
+  what the lock does not name, by name.
+- **`--unused` is not that set.** It was the first attempt, and it means "no installed app
+  *requires* this" — a different question from "the lock does not name this", and the gap between
+  them is the optional extensions. It removed `org.freedesktop.Platform.codecs-extra`, 145 MiB of
+  ffmpeg the image ships on purpose, which nothing requires precisely because it is optional. The
+  unconditional readback caught it and stopped the build. `relock.sh --flatpak` writes the lock
+  from the deployed refs, so "deployed" and "locked" are the same set by construction, and the
+  complement of the lock is the right thing to delete.
+
+The loop also installs a locked ref the target does not have, rather than trying to `update` it
+into existence: the five apps are what `FLATPAK_PREINSTALL` names, everything else arrives as a
+dependency of whatever build Flathub is serving today, and the lock — not today's dependency
+resolution — is the specification of what ships.
+
 ## What is verified, and what is not
 
 **A complete locked build ran green end to end on 2026-08-28** — stages 10 through 90, from a

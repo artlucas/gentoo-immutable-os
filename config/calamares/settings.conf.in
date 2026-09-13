@@ -21,10 +21,28 @@ modules-search: [ local, /usr/share/calamares/local-modules ]
 
 sequence:
 - show:
-  # The language picker is the first control on this page, across ~80 translations. It is also
-  # why config/profiles/installer.conf keeps INCLUDE_CJK_FONTS=1: without the CJK fonts,
-  # choosing Chinese, Japanese or Korean here renders the rest of the installer as tofu.
-  - welcome
+  # THE LANGUAGE IS THE FIRST SCREEN, and this module is ours (plan/22). It replaces the stock
+  # `welcome` module, which put the requirements check and an expanding logo above its language
+  # combo box and offered no configuration key that changed either.
+  #
+  # It is the module that calls QQuickStyle::setStyle(), because that call is ignored once any QML
+  # has imported Qt Quick Controls and this entry is the one that loads first. Nothing may be
+  # inserted above it without moving that call: the accounts page would come up in Fusion with no
+  # icons, and the only symptom is a page that looks wrong.
+  #
+  # It is why config/profiles/installer.conf keeps INCLUDE_CJK_FONTS=1: two of the nine rows in
+  # config/languages.conf are CJK, and without those fonts they render as tofu on the one page
+  # that exists to be read.
+  - language
+  # THEN THE GREETING, in the language just chosen (plan/23). Ours too, and it is the module that
+  # owns the six requirement checks — a requirement is contributed by whichever module is in the
+  # sequence, so they belong to the page that reports the verdict. Its Next is the installer's
+  # first real gate: it stays disabled until the mandatory checks pass.
+  #
+  # `greeting` and not `welcome`: a compiled viewmodule of that name would collide file-for-file
+  # with app-admin/calamares' own, and ModuleManager resolves a duplicate name by taking whichever
+  # modules-search entry it reached first. The sidebar still says "Welcome".
+  - greeting
   - locale
   - keyboard
   # Whole-disk erase only, and the page is therefore a DISK PICKER rather than a partition

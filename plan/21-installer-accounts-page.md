@@ -139,6 +139,14 @@ far right of each row (Fusion's `RadioDelegate` puts it at `width - width - righ
 opaque white slab behind every row (Fusion fills delegate backgrounds with `palette.base`), and no
 icons anywhere.
 
+> **The call itself moved in [plan/22](22-installer-language-page.md) §3b, and the guard did not.**
+> `QQuickStyle::setStyle()` is ignored once anything has imported Qt Quick Controls, and
+> `ModuleManager::loadModules()` walks the sequence in order — so the right owner of that call is
+> whichever module is *first*, which is now the language page rather than this one. This
+> constructor keeps its guard and its warning unchanged, and their reason changes from "in case
+> another module ever loads QML before this one" to "one now does, and this line is how you find
+> out if a third is inserted ahead of it".
+
 The guard is the **environment variable** instead, because it is the only thing in reach that
 expresses a choice — a resolved default is not one:
 
@@ -440,7 +448,8 @@ file-level grep could no longer tell them apart.
 
 - A hard quit of Calamares between a successful managed enrolment and the install leaves a device
   record in the org with no machine behind it. The web UI deletes it; nothing here can.
-- Managed mode needs a network at page time. `welcome.conf` lists `internet` under `checks:` but not
+- Managed mode needs a network at page time. `language.conf` (`welcome.conf` until plan/22)
+  lists `internet` under `checks:` but not
   `required:`, so the installer still starts offline and this mode explains itself.
 - The enrolment's `hw_fingerprint` is empty, exactly as it is today: the machine-id that will
   identify the installed machine does not exist until its first boot.

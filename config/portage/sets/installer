@@ -56,3 +56,43 @@ app-admin/calamares
 # system with no Calamares. Harmless, and still wrong — the package audit would then have to
 # explain why an installer plugin is on a machine that cannot run the installer.
 distro-base/distro-calamares-accounts
+
+# ---- the language page (plan/22) ------------------------------------------------------------
+# The installer's FIRST page, and the module that owns the six requirement checks. It replaces the
+# stock `welcome` module, whose order is in its C++ — WelcomePage.cpp inserts the requirements
+# checker above the language row, and ResultsListWidget swaps that list for an expanding logo when
+# everything passes, so on a healthy machine the language picker is a closed combo box at the
+# bottom of a page of English. No configuration key reaches any of that.
+#
+# It is NOT called `welcome`: calamares_add_plugin installs a viewmodule into
+# <libdir>/calamares/modules/<name>/, so a plugin of that name would collide file-for-file with
+# app-admin/calamares' own and be blocked by portage.
+#
+# MANDATORY for two reasons rather than one: it is the first entry in settings.conf's sequence, and
+# it is where QQuickStyle::setStyle() happens. That second one is why its absence would not merely
+# remove a page: setStyle is ignored once anything has imported Qt Quick Controls, so the accounts
+# page would come up in Fusion with no icons.
+#
+# Named only by this profile, like the accounts page: on a desktop image it would install a
+# Calamares plugin into a system with no Calamares.
+distro-base/distro-calamares-language
+
+# ---- the greeting page (plan/23) ------------------------------------------------------------
+# The installer's SECOND page — the greeting, and the verdict on whether this computer can install
+# at all — and the module that owns the six requirement checks. It was the language page's second
+# screen until plan/23; a view step is one entry in the sidebar, so the installer's first two
+# questions appeared as a single step and the greeting could not be reached from the sidebar at all.
+#
+# Its requirements box is three source files VENDORED from Calamares' own welcome module
+# (files/checker/). They are not in libcalamaresui and no header of theirs is installed, so a module
+# that wants the box has to carry the source; the alternative was a fourth drawing of a widget every
+# Calamares installer already shows.
+#
+# It is NOT called `welcome`, for the same file-collision reason as its sibling — and because
+# ModuleManager takes the first module.desc it finds for a name across modules-search, so two
+# modules called `welcome` would resolve by list order rather than by intent.
+#
+# MANDATORY: it contributes the checks that decide whether Next may be pressed at all, including
+# the disk check that upstream silently drops on a Calamares built without libparted (plan/22 §3a).
+# A medium without it would offer to install onto a 16 GiB disk and fail at the partition step.
+distro-base/distro-calamares-greeting

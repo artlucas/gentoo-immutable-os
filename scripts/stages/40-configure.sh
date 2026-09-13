@@ -149,8 +149,20 @@ if [[ $MANAGED_KEY_UIDS == *"TEST KEY"* ]]; then
   policy for this image. Fine for a dev build and for the stage-70 fixture; never ship it."
 fi
 
-# locale.gen from build.conf (';'-separated entries)
+# locale.gen from LOCALE_GEN, which load_config() derives from config/languages.conf — one row per
+# language the installer offers, so the locales this compiles below are exactly the locales the
+# language page can promise (plan/22 §2b).
+#
+# DATA LINES ONLY. No header, no provenance comment, however much one belongs here: Calamares' own
+# locale module reads this file as its list of available locales (modules/locale.conf names it as
+# localeGenPath), and loadLocales() strips a leading '#' and keeps the REST of the line as a locale
+# name. A comment mentioning "UTF-8" would survive its filter and arrive in the installer's locale
+# dialog as an entry. The provenance is recorded in config/languages.conf and in modules/locale.conf
+# instead, where nothing parses it.
 printf '%s\n' "${LOCALE_GEN//;/$'\n'}" > "$TARGET/etc/locale.gen"
+# The image's DEFAULT, deliberately still en_US regardless of how long the table above is: this is
+# what the medium itself boots with and what imageidentity keeps when the chosen locale turns out
+# not to be compiled. The installed system's value is written by imageidentity from the choice.
 echo 'LANG=en_US.UTF-8'   > "$TARGET/etc/locale.conf"
 echo 'KEYMAP=us'          > "$TARGET/etc/vconsole.conf"
 ln -sfn ../usr/share/zoneinfo/UTC "$TARGET/etc/localtime"
@@ -189,6 +201,34 @@ else
     chroot_target "$TARGET" "localedef -i '$base' -f '$charset' '$loc'"
   done < "$TARGET/etc/locale.gen"
 fi
+
+# READ THE ARCHIVE BACK, which is the assertion that matters and the one nothing used to make.
+# Every locale in the table is a row the installer offers and a promise imageidentity has to be
+# able to keep: target_has_locale() checks `locale -a` on the installed system before writing
+# /etc/locale.conf, and answers by keeping en_US and warning. So a localedef that produced nothing
+# turns into an installed desktop in English, three stages and one reboot away from the cause.
+#
+# Here, rather than in stage 70, because here is where the target is mounted and the archive was
+# just written — stage 70 boots a finished image and would be asserting the same fact one layer
+# further from anything it could fix. The normalisation is imageidentity's own, character for
+# character, so the two cannot disagree about what "the target has this locale" means.
+TARGET_LOCALES="$(chroot_target "$TARGET" "locale -a" 2>/dev/null | tr -d ' ' | tr '[:upper:]' '[:lower:]' || true)"
+# Distinguished from "the locale is missing", because the two have different fixes and the
+# per-locale message below would blame the table for a missing binary.
+[[ -n $TARGET_LOCALES ]] \
+  || die "\`locale -a\` produced nothing in the target, so the compiled locales cannot be checked.
+  /usr/bin/locale comes with sys-libs/glibc; a target without it has a package-set problem, not a
+  config/languages.conf problem."
+while IFS='|' read -r lang_id lang_locale lang_label _; do
+  [[ -n $lang_id ]] || continue
+  want_locale="$(printf '%s' "$lang_locale" | sed 's/UTF-8/utf8/' | tr -d '-' | tr '[:upper:]' '[:lower:]')"
+  grep -qx -- "$want_locale" <<<"$TARGET_LOCALES" \
+    || die "the target cannot load $lang_locale, which config/languages.conf offers as
+  $lang_label ($lang_id). localedef ran over /etc/locale.gen a few lines above; a locale missing
+  from \`locale -a\` now means it failed there. Choosing that language in the installer would
+  give the installed system LANG=en_US.UTF-8 and a warning nobody reads (plan/22 §2b)."
+done <<<"$LANGUAGES_TABLE"
+log "locales: $(grep -c . <<<"$LANGUAGES_TABLE") compiled and readable in the target"
 
 # live user (v1 live-style images; the future installer replaces this)
 #
@@ -396,29 +436,145 @@ if [[ $FLATPAK_PREINSTALL_MODE == build && -n ${FLATPAK_PREINSTALL// /} ]]; then
   # Runtimes are in the lock too, and they arrive as dependencies rather than being named in
   # FLATPAK_PREINSTALL, so this loop is what pins most of the shipped bytes.
   #
-  # NOT after a restore, and this is a real failure rather than an optimisation. A restored tree
-  # is already at the locked commits; running the loop over it re-contacts Flathub, and for
-  # EXTENSIONS — the .Locale and GL.default refs, which are most of the shipped bytes — flatpak
-  # re-resolves them against the remote's current summary while updating the runtime they hang
-  # off. The result is that pinning UNDOES the restore: measured 2026-09-07, a tree restored with
-  # org.kde.Platform.Locale at the locked fd8f2b9352c2 came back out of this loop at Flathub's
-  # current 3bd0cc910140, and the readback below then failed the build on a pin the archive had
-  # supplied correctly. The guard used to be `OFFLINE != 1`, which covered the fully-offline
-  # build and missed `--vendor-dir` on its own — the mode that rebuilds a release's Flatpak
-  # state while still emerging packages normally.
+  # IT TAKES MORE THAN ONE PASS, because pinning a PARENT DRAGS ITS EXTENSIONS FORWARD.
+  # `flatpak update --commit=<c> org.kde.Platform` updates the runtime and everything hanging off
+  # it in one transaction, and the extensions in that transaction are re-resolved against the
+  # remote's CURRENT summary — the commit argument applies to the ref that was named, not to its
+  # relations. A single pass in lock order therefore pins an extension correctly and then undoes
+  # it a moment later, because the lock is sorted and '.' sorts before '/', so
+  # org.kde.Platform.Locale is ALWAYS reached before org.kde.Platform. From the 2026-09-13
+  # desktop build, three lines apart in the log:
+  #
+  #     Updating runtime/org.kde.Platform.Locale/x86_64/6.10   <- row 12, deploys fd8f2b9352c2
+  #     Updating runtime/org.kde.Platform.Locale/x86_64/6.10   <- dragged by row 13, to 3bd0cc910140
+  #     Updating runtime/org.kde.Platform/x86_64/6.10          <- row 13
+  #
+  # and the readback below then failed the build on a ref this loop had itself moved. It is the
+  # same flatpak behaviour the restore guard below was written for on 2026-09-07; that fix
+  # covered the RESTORED tree and left the ordinary online install exposed, and the gap stayed
+  # hidden only because every build in between restored from the archive.
+  #
+  # So: deploy, ask what is deployed, deploy whatever is still wrong, repeat. It converges
+  # because the drag only runs one way — pinning an extension never moves its parent — and it
+  # needs no model of which ref extends which, which is the part that would go stale. (A prefix
+  # rule would already be wrong: the KStyle.Adwaita row extends org.kde.Platform through an
+  # extension point whose name appears nowhere in this lock.)
   APPS_LOCK="$REPO/config/flatpak/apps.lock"
   if [[ -f $APPS_LOCK ]]; then
+    # What the target has deployed right now, as "<ref> <12-char commit>" lines, with the ref
+    # FULLY QUALIFIED — "app/org.kde.ark/x86_64/stable", the form apps.lock uses.
+    #
+    # `flatpak list` prints the ref without that prefix, and the prefix is what distinguishes an
+    # app from a runtime of the same name, so it is put back by asking twice rather than by
+    # stripping it off the lock. --app and --runtime are the filters that make the two halves
+    # separable; --all is what includes EXTENSIONS in the runtime half (.Locale, GL.default),
+    # and those are in the lock precisely because they are most of the bytes. Measured in this
+    # target: 12 refs listed by default, 17 with --all.
+    fp_deployed() {
+      local kind
+      for kind in app runtime; do
+        chroot_target "$TARGET" \
+          "flatpak list --system --all --$kind --columns=ref,active" 2>/dev/null \
+          | tr -d '\r' | awk -v k="$kind" 'NF >= 2 { print k "/" $1, $2 }'
+      done
+    }
+    # The locked refs the target does NOT have at their locked commit, one per line as
+    # "<ref> <locked commit> <deployed commit>". Empty output means the tree matches the lock,
+    # so this is both the loop's work list and the readback's verdict — the two cannot drift
+    # apart into disagreeing about what "pinned" means.
+    fp_drift() {
+      local active ref commit got
+      active="$(fp_deployed)"
+      while read -r ref commit; do
+        [[ -n $ref && $ref != \#* ]] || continue
+        got="$(printf '%s\n' "$active" | awk -v r="$ref" '$1 == r {print $2}')"
+        # `flatpak list` abbreviates the commit to 12 chars; compare on the prefix it prints.
+        [[ -n $got && $commit == "$got"* ]] \
+          || printf '%s %s %s\n' "$ref" "$commit" "${got:-<not-installed>}"
+      done < <(grep -v '^[[:space:]]*#' "$APPS_LOCK" | sed '/^[[:space:]]*$/d')
+    }
+
+  # NOT after a restore, and this is a real failure rather than an optimisation. A restored tree
+  # is already at the locked commits; running the loop over it re-contacts Flathub and drags the
+  # extensions exactly as described above. The result is that pinning UNDOES the restore:
+  # measured 2026-09-07, a tree restored with org.kde.Platform.Locale at the locked fd8f2b9352c2
+  # came back out of this loop at Flathub's current 3bd0cc910140, and the readback below then
+  # failed the build on a pin the archive had supplied correctly. The guard used to be
+  # `OFFLINE != 1`, which covered the fully-offline build and missed `--vendor-dir` on its own —
+  # the mode that rebuilds a release's Flatpak state while still emerging packages normally.
    if [[ ${OFFLINE:-0} != 1 && ${FLATPAK_RESTORED:-0} != 1 ]]; then
-    while read -r ref commit; do
-      [[ -n $ref && $ref != \#* ]] || continue
-      chroot_target "$TARGET" \
-        "flatpak update -y --system --noninteractive --commit='$commit' '$ref'" \
-        || die "could not deploy $ref at $commit.
+    # Four is a bound, not an expectation: one pass to deploy, one to undo the drag, one to find
+    # nothing left to do. A lock still disagreeing after four is not a drag but a ref that cannot
+    # be deployed at all, and the readback below is what says so, with the refs named.
+    for fp_pass in 1 2 3 4; do
+      mapfile -t FP_DRIFT < <(fp_drift)
+      (( ${#FP_DRIFT[@]} )) || break
+      log "flatpak: pin pass $fp_pass — ${#FP_DRIFT[@]} ref(s) not at their locked commit"
+      for fp_row in "${FP_DRIFT[@]}"; do
+        read -r ref commit got <<<"$fp_row"
+        # A ref the lock names and the target does not have at all cannot be `update`d into
+        # existence — `flatpak update` on an uninstalled ref is an error, not an install. It
+        # happens: FLATPAK_PREINSTALL names the five APPS, and everything else in the lock
+        # arrives as a dependency of whatever build of those apps Flathub is serving today, so a
+        # runtime or extension that today's build no longer pulls in is simply absent. The lock
+        # is the specification of what ships, so fetch it by name and let the pin below place it.
+        if [[ $got == '<not-installed>' ]]; then
+          log "flatpak: installing $ref — named by apps.lock, absent from the target"
+          chroot_target "$TARGET" \
+            "flatpak install -y --system --noninteractive flathub '$ref'" \
+            || die "could not install $ref, which config/flatpak/apps.lock names.
+  If Flathub has withdrawn the ref entirely, the lock is what has to change — re-resolve it with
+  scripts/relock.sh --flatpak, or rebuild from the vendored archive with --vendor-dir."
+        fi
+        chroot_target "$TARGET" \
+          "flatpak update -y --system --noninteractive --commit='$commit' '$ref'" \
+          || die "could not deploy $ref at $commit.
   Flathub garbage-collects old commits, so a pin that has aged out is the expected cause.
   Re-resolve the flatpak lock:  scripts/relock.sh --flatpak
   (or rebuild from the vendored archive, which still has the objects — pass --vendor-dir and
   stage 40 restores its tree instead of installing)"
-    done < <(grep -v '^[[:space:]]*#' "$APPS_LOCK" | sed '/^[[:space:]]*$/d')
+      done
+    done
+
+    # Then drop whatever the install dragged in that the lock does not name.
+    #
+    # `flatpak install` resolves an app's dependencies against TODAY's Flathub, so it pulls the
+    # runtime today's build of that app wants. The pin above puts the app back to the commit the
+    # lock names, which may want a different runtime — and nothing removes the first. On
+    # 2026-09-13 org.kde.ark had moved to org.kde.Platform 6.11 while every locked app still runs
+    # on 6.10, so the tree held BOTH KDE runtimes: ~1 GiB of a second Platform, its Locale and
+    # its KStyle that no installed app referenced, that apps.lock does not name, and that would
+    # therefore have shipped as the only unpinned bytes in an image whose whole design is that
+    # there are none.
+    #
+    # BY NAME, not `--unused`. That was the first attempt and it is wrong: --unused means "no
+    # installed app REQUIRES this", which is a different question from "the lock does not name
+    # this", and the gap between them is the optional extensions. It removed
+    # org.freedesktop.Platform.codecs-extra — 145 MiB of ffmpeg the image ships ON PURPOSE, which
+    # nothing "requires" precisely because it is optional — and the readback below caught it.
+    # The lock is the specification; "deployed but unlocked" is the exact complement of it, and
+    # `scripts/relock.sh --flatpak` writes the lock from the deployed refs, so the two are the
+    # same set by construction.
+    #
+    # One invocation for all of them: uninstalling a runtime takes its extensions with it, and a
+    # second call naming an extension already removed that way would fail on nothing being wrong.
+    LOCK_REFS="$(grep -v '^[[:space:]]*#' "$APPS_LOCK" | sed '/^[[:space:]]*$/d' | awk '{print $1}')"
+    FP_EXTRA=()
+    while read -r dref _; do
+      [[ -n $dref ]] || continue
+      grep -qxF -- "$dref" <<<"$LOCK_REFS" || FP_EXTRA+=("$dref")
+    done < <(fp_deployed)
+    if (( ${#FP_EXTRA[@]} )); then
+      log "flatpak: removing ${#FP_EXTRA[@]} ref(s) deployed but not named by apps.lock: ${FP_EXTRA[*]}"
+      # No die on failure: flatpak refuses to remove a runtime an installed app still needs, and
+      # that refusal is information rather than a build failure — it means the lock is missing a
+      # ref the apps genuinely use, which `relock.sh --flatpak` is what fixes. The image ships
+      # the extra bytes in the meantime instead of shipping a broken app.
+      chroot_target "$TARGET" \
+        "flatpak uninstall -y --system --noninteractive ${FP_EXTRA[*]@Q}" \
+        || warn "could not remove ${FP_EXTRA[*]} — the image will carry unpinned refs.
+  If an app needs one of them, apps.lock is out of date: scripts/relock.sh --flatpak"
+    fi
    else
     log "flatpak: tree restored from the archive; not re-pinning it (see the note above)"
    fi
@@ -428,29 +584,16 @@ if [[ $FLATPAK_PREINSTALL_MODE == build && -n ${FLATPAK_PREINSTALL// /} ]]; then
     # This used to sit inside the pinning branch, so the offline/restore path skipped it
     # entirely while a comment above claimed that path "is verified exactly as the online one is
     # rather than being taken on trust". It was not: an archive that had been packed wrong, or an
-    # rsync that dropped a ref, would have shipped unnoticed. It is the check either way. `flatpak update --commit=` on an already-current ref exits 0 and says
-    # "Nothing to do", which is indistinguishable from success — so ask what is actually
-    # deployed rather than trusting that the loop above did anything.
-    #
-    # --all, not the default listing: bare `flatpak list` omits extensions (.Locale,
-    # GL.default), and those are in the lock precisely because they are most of the bytes.
-    # Checked against flatpak on this host: 12 refs listed by default, 17 with --all.
-    FP_ACTIVE="$(chroot_target "$TARGET" \
-      "flatpak list --system --all --columns=ref,active" 2>/dev/null | tr -d '\r')"
+    # rsync that dropped a ref, would have shipped unnoticed. It is the check either way.
+    # `flatpak update --commit=` on an already-current ref exits 0 and says "Nothing to do",
+    # which is indistinguishable from success — so ask what is actually deployed rather than
+    # trusting that the loop above did anything.
     fp_bad=0
-    while read -r ref commit; do
-      [[ -n $ref && $ref != \#* ]] || continue
-      # `flatpak list` prints the ref WITHOUT its app/ or runtime/ prefix
-      # ("org.kde.ark/x86_64/stable"), while the lock keeps the prefix because that is what
-      # distinguishes an app from a runtime of the same name. Compare on the stripped form.
-      short="${ref#*/}"
-      got="$(printf '%s\n' "$FP_ACTIVE" | awk -v r="$short" '$1 == r {print $2}')"
-      # `flatpak list` abbreviates the commit to 12 chars; compare on the prefix it prints.
-      [[ -n $got && $commit == "$got"* ]] || {
-        warn "flatpak $ref is at '${got:-<not installed>}', lock says ${commit:0:12}"
-        fp_bad=1
-      }
-    done < <(grep -v '^[[:space:]]*#' "$APPS_LOCK" | sed '/^[[:space:]]*$/d')
+    while read -r ref commit got; do
+      [[ -n $ref ]] || continue
+      warn "flatpak $ref is at '$got', lock says ${commit:0:12}"
+      fp_bad=1
+    done < <(fp_drift)
     (( fp_bad == 0 )) || die "the deployed flatpak commits do not match config/flatpak/apps.lock
   (see the warnings above). The image would ship different application versions than the lock
   claims, which is the whole failure this lock exists to prevent."
@@ -893,6 +1036,41 @@ if profile_has_set installer; then
   image only through a re-resolved lock:
       scripts/relock.sh ${DISTRO_ID}-base/${DISTRO_ID}-calamares-accounts --profile installer"
   log "installer: the accounts page is installed"
+
+  # THE LANGUAGE PAGE, and its absence is worse than a missing page (plan/22). It is the FIRST
+  # entry in settings.conf's sequence, and it is where QQuickStyle::setStyle() happens — a call
+  # that is silently ignored once any QML has imported Qt Quick Controls. So a medium without it
+  # would open on the greeting with no language ever chosen, and would draw the accounts page in
+  # Fusion with no icons. Same die, same reason, same relock as the accounts page above.
+  compgen -G "$TARGET/usr/lib*/calamares/modules/language/module.desc" >/dev/null \
+    || die "verify: the installer's language page is not installed, so this medium would never ask
+  which language to install in, and would draw every later QML page in the wrong Qt Quick Controls
+  style (plan/22 §3). It comes from
+  ${DISTRO_ID}-base/${DISTRO_ID}-calamares-language in config/portage/overlay, which reaches an
+  image only through a re-resolved lock:
+      scripts/relock.sh ${DISTRO_ID}-base/${DISTRO_ID}-calamares-language --profile installer"
+  log "installer: the language page is installed"
+
+  # THE GREETING PAGE (plan/23), and this is the one whose absence has no visible symptom worth
+  # trusting. It contributes the six requirement checks that decide whether Next may be pressed at
+  # all — including the disk check upstream's welcome module drops in silence on a Calamares built
+  # without libparted (plan/22 §3a) — so a medium without it does not show an error, it shows a
+  # working installer that will happily start writing a 3 GiB payload onto a 16 GiB disk.
+  compgen -G "$TARGET/usr/lib*/calamares/modules/greeting/module.desc" >/dev/null \
+    || die "verify: the installer's greeting page is not installed, so this medium would run no
+  requirement checks at all and would let an install begin on a disk too small to hold it
+  (plan/23 §5). It comes from
+  ${DISTRO_ID}-base/${DISTRO_ID}-calamares-greeting in config/portage/overlay, which reaches an
+  image only through a re-resolved lock:
+      scripts/relock.sh ${DISTRO_ID}-base/${DISTRO_ID}-calamares-greeting --profile installer"
+  log "installer: the greeting page is installed"
+
+  # INSTALLER_LANGUAGES — the `languages:` block for modules/language.conf — is built by
+  # load_languages() in lib/common.sh, not here, because this stage is not the only thing that
+  # renders that template: tests/test-installer.sh renders the whole Calamares tree offline, and a
+  # token only this stage defined made every one of those renders die.
+  log "installer: language page offers $(grep -c '^    - id:' <<<"$INSTALLER_LANGUAGES") languages"
+
   export GPT_TYPE_ROOT_X64 GPT_TYPE_VAR ROOT_SLOT_SIZE_MIB ROOT_PARTLABEL UKI_NAME PAYLOAD_DIR
 
   # Renders *.in through render_template and copies everything else verbatim. Deliberately NOT
@@ -909,6 +1087,20 @@ if profile_has_set installer; then
   # /etc/calamares is the FIRST path Calamares searches for all three of these
   # (libcalamares/Settings.cpp, modulesystem/Module.cpp, CalamaresApplication.cpp), which is why
   # the configuration lives there rather than in /usr/share/calamares.
+  # WIPE FIRST. This tree is rendered, never merged: every file under /etc/calamares comes from
+  # config/calamares and nothing in the package set owns a path here. Without the removal the
+  # target root — which persists in the work volume across runs — keeps whatever an EARLIER build
+  # rendered, so deleting a module's .conf.in from the repository leaves its .conf on the medium
+  # forever.
+  #
+  # Found by building plan/22: welcome.conf.in was deleted, `welcome` left the sequence, and
+  # /etc/calamares/modules/welcome.conf was still on the finished image. It was inert — Calamares
+  # only reads configs for modules the sequence names — but "inert" is a property of today's
+  # settings.conf, and a stale config for a module that later comes back under the same name is
+  # not inert at all. tests/test-installer.sh did not catch it either: it asserts against the
+  # freshly rendered tree, where the file legitimately does not exist.
+  rm -rf -- "$TARGET/etc/calamares"
+
   log "installer: rendering the Calamares configuration into /etc/calamares"
   cal_install "$CAL_SRC/settings.conf.in" "$TARGET/etc/calamares/settings.conf"
   for f in "$CAL_SRC"/modules/*; do
@@ -919,6 +1111,74 @@ if profile_has_set installer; then
     [[ -f $f ]] || continue
     b="$(basename -- "$f")"; cal_install "$f" "$TARGET/etc/calamares/branding/installer/${b%.in}"
   done
+
+  # ---- our own pages, in the user's language (plan/22 §4) ------------------------------------
+  #
+  # Calamares installs a BRANDING translator on QCoreApplication and reloads it on every language
+  # change, from a path the branding component already owns: Branding.cpp:296 builds the prefix as
+  # <componentDir>/lang/calamares-<componentName>_, and BrandingLoader::tryLoad() appends the
+  # locale. So a .qm at .../branding/installer/lang/calamares-installer_de.qm is loaded for the
+  # `de` row and NOTHING ELSE HAS TO BE WIRED — a QTranslator installed on the application
+  # resolves by (context, sourceText) whichever library the context lives in, so our modules'
+  # tr() and qsTr() strings come out of this one file. No QTranslator of our own, no fourth
+  # mechanism, no retranslation plumbing.
+  #
+  # The loop is over the TABLE and not over the directory, in both directions: a language offered
+  # with no .ts is a page that quietly falls back to English on one screen in nine, and a .ts for
+  # a language nobody offers is dead weight. check-translations.py refuses both, plus the failure
+  # that has no symptom at all — a <source> that does not match the code byte for byte, which Qt
+  # reports by leaving the string in English.
+  CAL_LANG_SRC="$CAL_SRC/branding/installer/lang"
+  CAL_LANG_DST="$TARGET/etc/calamares/branding/installer/lang"
+  [[ -d $CAL_LANG_SRC ]] \
+    || die "installer: $CAL_LANG_SRC is missing — every page this project wrote would be English
+  in all nine languages the picker offers (plan/22 §4)"
+
+  python3 "$REPO/scripts/lib/check-translations.py" \
+    --table "$REPO/config/languages.conf" \
+    --lang-dir "$CAL_LANG_SRC" \
+    --source-dir "$REPO/config/portage/overlay/distro-base/distro-calamares-language/files" \
+    --source-dir "$REPO/config/portage/overlay/distro-base/distro-calamares-greeting/files" \
+    --source-dir "$REPO/config/portage/overlay/distro-base/distro-calamares-accounts/files" \
+    || die "installer: the branding translations do not match config/languages.conf or the module
+  sources (plan/22 §4). Nothing above this line is a runtime error in Qt — a mismatched source
+  string is a page that stays English — which is why it is a build failure here."
+
+  # lrelease is on the BUILDER, not in the image: dev-qt/qttools:6[linguist] is a DEPEND of the
+  # overlay's Calamares modules and DEPEND is installed into ESYSROOT, which this pipeline leaves
+  # at "/" (config/portage/overlay/README.md). Gentoo puts the Qt6 tools in a versioned libdir
+  # rather than on PATH, so both are tried.
+  LRELEASE=""
+  for c in lrelease-qt6 lrelease; do
+    command -v "$c" >/dev/null 2>&1 && { LRELEASE="$c"; break; }
+  done
+  if [[ -z $LRELEASE ]]; then
+    for c in /usr/lib64/qt6/bin/lrelease /usr/lib/qt6/bin/lrelease; do
+      [[ -x $c ]] && { LRELEASE="$c"; break; }
+    done
+  fi
+  [[ -n $LRELEASE ]] \
+    || die "installer: no lrelease on the builder, so the branding translations cannot be
+  compiled. It arrives as dev-qt/qttools:6[linguist], a DEPEND of the overlay's Calamares
+  modules — a builder without it has not emerged them."
+
+  ensure_dir "$CAL_LANG_DST"
+  while IFS='|' read -r lang_id _ lang_label _; do
+    [[ -n $lang_id ]] || continue
+    # `en` has no file and needs none: it is the source language, so tr() already answers in it.
+    [[ $lang_id == en ]] && continue
+    ts="$CAL_LANG_SRC/calamares-installer_${lang_id}.ts"
+    qm="$CAL_LANG_DST/calamares-installer_${lang_id}.qm"
+    "$LRELEASE" -silent "$ts" -qm "$qm" \
+      || die "installer: lrelease failed on $ts"
+    # lrelease exits 0 having written nothing when every message is unfinished, and an empty .qm
+    # loads without complaint — a translated language that is entirely English.
+    [[ -s $qm ]] \
+      || die "installer: $qm is empty. lrelease drops unfinished messages, so a .ts file with no
+  finished translation compiles to nothing and $lang_label ($lang_id) would render in English."
+    chmod 0644 -- "$qm"
+  done <<<"$LANGUAGES_TABLE"
+  log "installer: compiled $(find "$CAL_LANG_DST" -name '*.qm' | wc -l) branding translations"
 
   # Our modules go in a directory of their own rather than in among upstream's, so "which of
   # these did we write?" is answered by the path. settings.conf's modules-search names it.
@@ -1721,6 +1981,108 @@ if profile_has_set installer; then
   done < <(sed -nE '/^sequence:/,/^[a-z]/ s/^[[:space:]]*-[[:space:]]+([a-z][a-z0-9_@-]*)[[:space:]]*$/\1/p' \
              "$CAL_SETTINGS" | grep -vxE 'show|exec')
 
+  # The language page (plan/22). Four ways this can be wrong, and the first is the one with no
+  # symptom on the page it breaks.
+  #
+  # IT HAS TO BE THE FIRST `show:` ENTRY, not merely present. ModuleManager::loadModules() walks
+  # the sequence in order, and QQuickStyle::setStyle() — which this module makes on behalf of every
+  # QML page in the installer — is silently ignored once anything has imported Qt Quick Controls.
+  # Put another QML view step ahead of it and the accounts page loses Breeze's colours, Breeze's
+  # metrics and every icon, with one warning on stderr.
+  CAL_FIRST_SHOW="$(sed -nE '/^sequence:/,$ { /^- show:/,/^- / { s/^[[:space:]]*-[[:space:]]+([a-z][a-z0-9_@-]*)[[:space:]]*$/\1/p } }' \
+                      "$CAL_SETTINGS" | head -1)"
+  [[ $CAL_FIRST_SHOW == language ]] \
+    || die "verify: the first module in settings.conf's show sequence is '${CAL_FIRST_SHOW:-<none>}',
+  not 'language'. That module is where QQuickStyle::setStyle() happens for the whole installer, and
+  the call is ignored once any QML has imported Qt Quick Controls — so anything ahead of it costs
+  every later page its icons, colours and metrics (plan/22 §3b)."
+  grep -qE '^type:[[:space:]]+"?viewmodule"?' \
+    "$(compgen -G "$TARGET/usr/lib*/calamares/modules/language/module.desc" | head -1)" \
+    || die "verify: the language module's descriptor does not declare type: viewmodule."
+
+  # ...AND THE GREETING IS THE SECOND (plan/23). Order matters here for a reason that is not
+  # QQuickStyle's: the greeting's verdict, its logo and the sentence about erasing the disk are all
+  # drawn in the language the previous page just chose. Behind the language page it reads in a
+  # language somebody picked; ahead of it, in whatever the medium booted with.
+  CAL_SECOND_SHOW="$(sed -nE '/^sequence:/,$ { /^- show:/,/^- / { s/^[[:space:]]*-[[:space:]]+([a-z][a-z0-9_@-]*)[[:space:]]*$/\1/p } }' \
+                       "$CAL_SETTINGS" | sed -n 2p)"
+  [[ $CAL_SECOND_SHOW == greeting ]] \
+    || die "verify: the second module in settings.conf's show sequence is '${CAL_SECOND_SHOW:-<none>}',
+  not 'greeting'. The greeting states the verdict in the language the page before it chose, and it
+  is the step whose Next is gated on the requirement checks (plan/23 §5)."
+  grep -qE '^type:[[:space:]]+"?viewmodule"?' \
+    "$(compgen -G "$TARGET/usr/lib*/calamares/modules/greeting/module.desc" | head -1)" \
+    || die "verify: the greeting module's descriptor does not declare type: viewmodule."
+
+  # The stock welcome module must NOT be in the sequence. Like `users`, it is still installed and
+  # cannot be removed — and like `users`, it is the entry on the forbidden list that would actually
+  # WORK, which is what makes it worth asserting: a third first page with its own language picker,
+  # and its requirements check would re-add the storage entry it then drops.
+  grep -qE '^[[:space:]]*-[[:space:]]+welcome$' "$CAL_SETTINGS" \
+    && die "verify: settings.conf names the stock 'welcome' module, which plan/22 replaced and
+  plan/23 replaced the rest of. It would draw a second language picker below its own requirements
+  list, and its storage check is the one -DWITHOUT_LIBPARTED silently deletes
+  (GeneralRequirements.cpp:357)."
+
+  # The rendered list, against the table it came from. A render that produced no rows leaves the
+  # installer's first screen blank, and the module logs an error nobody is watching for.
+  # ...and nothing else survived from an older build. The wipe above is what makes this true; this
+  # is the assertion that says so, because the wipe is one line that a future edit could drop
+  # while every other check in this stage kept passing.
+  while IFS= read -r leftover; do
+    [[ -f $CAL_SRC/modules/$(basename -- "$leftover") || -f $CAL_SRC/modules/$(basename -- "$leftover").in ]] \
+      || die "verify: $TARGET/etc/calamares/modules/$(basename -- "$leftover") is on the medium but
+  config/calamares/modules ships no such file. /etc/calamares is rendered rather than merged, so a
+  file with no source is residue from an earlier build — see the rm above."
+  done < <(find "$TARGET/etc/calamares/modules" -maxdepth 1 -type f -printf '%f\n' 2>/dev/null)
+
+  CAL_LANG_CONF="$TARGET/etc/calamares/modules/language.conf"
+  LANG_ROWS_TABLE="$(grep -c . <<<"$LANGUAGES_TABLE")"
+  LANG_ROWS_CONF="$(grep -cE '^[[:space:]]+- id:' "$CAL_LANG_CONF" || true)"
+  [[ $LANG_ROWS_CONF == "$LANG_ROWS_TABLE" ]] \
+    || die "verify: language.conf offers $LANG_ROWS_CONF languages and config/languages.conf names
+  $LANG_ROWS_TABLE. The list is rendered from the table by this stage, so they can only differ if
+  the rendering is broken."
+  LANG_ROWS_GEN="$(grep -c . "$TARGET/etc/locale.gen" || true)"
+  [[ $LANG_ROWS_GEN == "$LANG_ROWS_TABLE" ]] \
+    || die "verify: /etc/locale.gen has $LANG_ROWS_GEN lines and config/languages.conf names
+  $LANG_ROWS_TABLE languages. Every offered language needs a compiled locale, or imageidentity
+  refuses the choice and the installed system comes up in English (plan/22 §2b)."
+  while IFS='|' read -r lang_id lang_locale lang_label _; do
+    [[ -n $lang_id ]] || continue
+    grep -qxF "$lang_locale UTF-8" "$TARGET/etc/locale.gen" \
+      || die "verify: /etc/locale.gen does not name $lang_locale, which the language page offers
+  as $lang_label — so choosing it would give the installed system LANG=en_US.UTF-8 and a warning"
+  done <<<"$LANGUAGES_TABLE"
+  # That the locales were actually COMPILED — `locale -a` against the built root — is stage 70's
+  # assertion rather than this one's. It is the same fact checked one layer further out, where the
+  # image is a finished artefact instead of a mount this stage still owns.
+  log "installer: $LANG_ROWS_TABLE languages offered, compiled and translated"
+
+  # The disk requirement, in the file that now carries it (plan/23 §3). This is the number whose
+  # absence has no symptom until an install is already under way, and it has been silently absent
+  # before: it spent the life of the stock welcome module being deleted at startup by
+  # -DWITHOUT_LIBPARTED. Both halves are asserted, because `check` without `required` reports a
+  # failure and lets Next be pressed anyway.
+  CAL_GREET_CONF="$TARGET/etc/calamares/modules/greeting.conf"
+  [[ -f $CAL_GREET_CONF ]] \
+    || die "verify: /etc/calamares/modules/greeting.conf was not rendered, so the greeting module
+  gets no configuration, runs no checks, and its page sits on a spinner for ever (plan/23 §3)."
+  for k in requiredStorage requiredRam internetCheckUrl; do
+    grep -qE "^[[:space:]]+$k:" "$CAL_GREET_CONF" \
+      || die "verify: greeting.conf does not set $k."
+  done
+  for k in storage ram root; do
+    [[ $(grep -cE "^[[:space:]]+-[[:space:]]+$k\$" "$CAL_GREET_CONF") == 2 ]] \
+      || die "verify: greeting.conf does not both check AND require '$k'. A requirement that is
+  checked and not required is reported on the page and does not block Next, which for storage is
+  the exact shape of the bug plan/22 §3a closed."
+  done
+  grep -qE '^[[:space:]]+requirements:' "$CAL_LANG_CONF" \
+    && die "verify: language.conf still carries a requirements: block. Those keys moved to
+  greeting.conf with the module that reads them (plan/23 §3); a copy left behind is a second
+  source of truth for the disk size, and the module that reads language.conf ignores it."
+
   # The accounts page (plan/21). The sequence check above already dies if settings.conf names a
   # module that is installed nowhere; these are the other three ways this pair can be wrong, and
   # every one of them is silent at runtime.
@@ -2174,8 +2536,14 @@ log "configure complete; UKI at $UKI_DIR/$UKI_NAME"
 # would skip the stage that installs it and leave the previous configuration on the medium while
 # the log reported success. find|sort so the list is stable across filesystems.
 mapfile -t CAL_INPUTS < <(find "$REPO/config/calamares" -type f | LC_ALL=C sort)
+# config/languages.conf is in this list for the same argument one layer up: it is the source of
+# /etc/locale.gen, of language.conf's rendered list and of which .ts files get compiled, and a row
+# added to it leaves no other trace stage 40 could notice. Without it, adding a language would
+# report success and produce a medium that still offers the old list (plan/22 §2b).
 stamp_write "$STAGE_NAME" "$(inputs_hash "$REPO/config/build.conf" \
+  "$REPO/config/languages.conf" \
   "$REPO/config/prune-firmware.txt" "$REPO/config/prune-microcode.txt" \
   "$REPO/config/dracut-omit-drivers.txt" \
   "$REPO/config/splash/splash.c" "$REPO/config/branding/make-splash-assets.py" \
+  "$REPO/scripts/lib/check-translations.py" \
   "${CAL_INPUTS[@]}")"
