@@ -16,6 +16,7 @@
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QLocale>
+#include <QMetaType>
 #include <QScreen>
 #include <QStorageInfo>
 #include <QUrl>
@@ -25,15 +26,77 @@
 
 #include <unistd.h>  // geteuid
 
-static constexpr qint64 GiB = 1024LL * 1024LL * 1024LL;
-
-/// @brief Human bytes, in the units disk tools show: "443.2 GiB", not "476 GB".
-static QString
-humanBytes( qint64 bytes )
+/*! @brief A number from the configuration map, whatever shape YAML left it in.
+ *
+ * NOT Calamares::getDouble(), AND THIS IS AN UPSTREAM BUG, not a preference. utils/Yaml.cpp
+ * turns every unquoted integer scalar into a QVariant holding a *qlonglong*, and
+ * utils/Variant.cpp's getDouble() accepts only Int and Double — LongLong is neither, so it
+ * falls through and returns the caller's default. The effect is that whether a number in a
+ * configuration file is read at all depends on whether somebody wrote ".0" after it:
+ *
+ *     requiredStorage: 32.0   ->  Double    ->  32.0
+ *     requiredStorage: 32     ->  LongLong  ->  the default, silently
+ *
+ * That is exactly how this installer lost its disk check. The value moved from a hand-written
+ * "32.0" to build.conf's MIN_INSTALL_DISK_GB, which is an integer count of GB and renders as
+ * "32", and every guard below went on reading zero — so the page announced that a machine with
+ * no disk at all could install (plan/24 §11). Nothing in the build could have caught it: the
+ * file was correct, the template was correct, and the number was simply never delivered.
+ *
+ * QVariant::toDouble() accepts every numeric type there is, so this reads both spellings and any
+ * future one. Bool is refused rather than converted: YAML reads `on` and `true` as booleans, and
+ * a page that quietly treats "requiredStorage: true" as a one-gigabyte minimum is worse than one
+ * that falls back to its default and says so.
+ */
+static double
+configNumber( const QVariantMap& map, const QString& key, double dflt )
 {
-    // IEC rather than SI, and the whole reason is the configuration file: requiredStorage is
-    // written in GiB, so a page reporting "34.4 GB needed" for a config that says 32.0 would send
-    // whoever set it looking for a bug that is not there.
+    if ( !map.contains( key ) )
+    {
+        return dflt;
+    }
+    const QVariant v = map.value( key );
+    if ( v.typeId() == QMetaType::Bool )
+    {
+        return dflt;
+    }
+    bool ok = false;
+    const double d = v.toDouble( &ok );
+    return ok ? d : dflt;
+}
+
+static constexpr qint64 GiB = 1024LL * 1024LL * 1024LL;
+static constexpr qint64 GB = 1000LL * 1000LL * 1000LL;
+
+/*! @brief A disk size, in the unit printed on the disk: "1.0 TB", never "931.5 GiB".
+ *
+ * SI, AND IT USED TO BE IEC (plan/24 §3). The old reason was the configuration file —
+ * requiredStorage was written in GiB, so reporting "34.4 GB needed" for a config that said 32.0
+ * would send whoever set it looking for a bug that is not there. That reason is gone: the key is
+ * decimal GB now, rendered from build.conf's MIN_INSTALL_DISK_GB, so the number in the file and
+ * the number on the page are the same number.
+ *
+ * What replaced it is the DISK PAGE. It lists the machine's disks by the size their vendor prints
+ * on them, because that is how somebody recognises their own disk in a list of three; a greeting
+ * page saying "34.4 GiB needed" two screens earlier would be the only IEC number in the
+ * installer, and the one the user is asked to compare against a label on a box.
+ */
+static QString
+diskBytes( qint64 bytes )
+{
+    return QLocale().formattedDataSize( bytes, 1, QLocale::DataSizeSIFormat );
+}
+
+/*! @brief A memory size, which is NOT the same question and keeps IEC.
+ *
+ * RAM really is sold in binary multiples — a 4 GB module is 4 GiB — so SI here would report a
+ * machine with exactly 4 GiB as having "4.3 GB" and read as a rounding error. Disks are decimal
+ * and memory is binary because that is what the two industries do, and an installer that picked
+ * one unit for both would be wrong about one of them.
+ */
+static QString
+memoryBytes( qint64 bytes )
+{
     return QLocale().formattedDataSize( bytes, 1, QLocale::DataSizeIecFormat );
 }
 
@@ -45,26 +108,58 @@ Requirements::Requirements( QObject* parent )
 void
 Requirements::setConfigurationMap( const QVariantMap& configurationMap )
 {
-    m_toCheck = Calamares::getStringList( configurationMap, QStringLiteral( "check" ) );
-    m_toRequire = Calamares::getStringList( configurationMap, QStringLiteral( "required" ) );
-    m_requiredStorageGiB = Calamares::getDouble( configurationMap, QStringLiteral( "requiredStorage" ), 0.0 );
-    m_requiredRamGiB = Calamares::getDouble( configurationMap, QStringLiteral( "requiredRam" ), 0.0 );
+    // EVERY KEY THIS PAGE READS LIVES UNDER `requirements:`, one level down, and until now this
+    // function read them at the top level — where there is nothing at all. greeting.conf keeps the
+    // shape of the stock welcome module's file it replaced, because that is the shape its readers
+    // expect and GeneralRequirements takes the same submap; both the rendered file and the module's
+    // packaged fallback have always had the block, and the comments inside it describe it. What was
+    // missing was the descent into it. `check` and `required` came back empty, both thresholds came
+    // back zero, checkRequirements() returned nothing — and RequirementsModel::satisfiedMandatory()
+    // is std::none_of over that empty list, which is true. The page then announced that a machine
+    // with no disk in it could install this system, having run not one of its six checks (plan/23 §8).
+    bool haveBlock = false;
+    const QVariantMap requirements
+        = Calamares::getSubMap( configurationMap, QStringLiteral( "requirements" ), haveBlock );
 
-    // Loud, because both of these are numbers whose absence produces a page that says yes to
-    // everything. Upstream defaults them to 3 GiB and 1 GiB and warns; defaulting to a value that
-    // every machine satisfies is the same thing as not checking, so this refuses instead.
-    if ( m_requiredStorageGiB <= 0.0 )
+    m_toCheck = Calamares::getStringList( requirements, QStringLiteral( "check" ) );
+    m_toRequire = Calamares::getStringList( requirements, QStringLiteral( "required" ) );
+    // DECIMAL GB since plan/24 §3, and the key keeps upstream's name because nothing of
+    // upstream's reads it — GeneralRequirements is not in this medium's sequence at all. The
+    // value is rendered from build.conf's MIN_INSTALL_DISK_GB, which the disk page's
+    // minimumDiskSize is rendered from as well, so the page that blocks Next and the page that
+    // lists the disks cannot disagree about how big a disk has to be.
+    m_requiredStorageGB = configNumber( requirements, QStringLiteral( "requiredStorage" ), 0.0 );
+    m_requiredRamGiB = configNumber( requirements, QStringLiteral( "requiredRam" ), 0.0 );
+
+    // A PAGE THAT CHECKS NOTHING MUST NOT SAY YES, and this is the second half of the same bug.
+    // What this function used to do with a threshold it could not read was delete the check —
+    // m_toCheck.removeAll( "storage" ) — which is verbatim the upstream escape hatch quoted in
+    // Requirements.h as the reason this file exists. Inheriting it re-opened the hole in silence:
+    // a page with no configuration removed all of its checks, passed, and said so cheerfully. A
+    // requirement this medium cannot evaluate is a broken medium, not a satisfied requirement, so
+    // nothing is removed below. The rows stay, and they fail.
+    m_configBroken = false;
+    if ( !haveBlock )
     {
-        cWarning() << "greeting: requiredStorage is missing or zero — the disk check will be "
-                      "skipped, which is what plan/22 §3a exists to stop happening.";
-        m_toCheck.removeAll( QStringLiteral( "storage" ) );
-        m_toRequire.removeAll( QStringLiteral( "storage" ) );
+        cError() << "greeting: this module's configuration has no 'requirements:' block, so there "
+                    "is nothing to check and no verdict to give. Keys written at the top level of "
+                    "greeting.conf are not read at all.";
+        m_configBroken = true;
     }
-    if ( m_requiredRamGiB <= 0.0 )
+    else if ( m_toCheck.isEmpty() )
     {
-        cWarning() << "greeting: requiredRam is missing or zero — the memory check will be skipped.";
-        m_toCheck.removeAll( QStringLiteral( "ram" ) );
-        m_toRequire.removeAll( QStringLiteral( "ram" ) );
+        cError() << "greeting: 'requirements:' asks for no checks at all, so this page has nothing "
+                    "to report a verdict on.";
+        m_configBroken = true;
+    }
+    if ( m_toCheck.contains( QStringLiteral( "storage" ) ) && m_requiredStorageGB <= 0.0 )
+    {
+        cError() << "greeting: requiredStorage is missing or zero — the disk row will FAIL rather "
+                    "than be skipped, which is what plan/22 §3a exists to stop happening.";
+    }
+    if ( m_toCheck.contains( QStringLiteral( "ram" ) ) && m_requiredRamGiB <= 0.0 )
+    {
+        cError() << "greeting: requiredRam is missing or zero — the memory row will FAIL.";
     }
 
     for ( const auto& r : std::as_const( m_toRequire ) )
@@ -78,7 +173,7 @@ Requirements::setConfigurationMap( const QVariantMap& configurationMap )
     // The URLs the internet check pings. Static on the Manager, exactly as GeneralRequirements
     // set them, so nothing else in Calamares that asks Network::Manager about connectivity gets a
     // different answer from this page.
-    const QStringList urlStrings = Calamares::getStringList( configurationMap, QStringLiteral( "internetCheckUrl" ) );
+    const QStringList urlStrings = Calamares::getStringList( requirements, QStringLiteral( "internetCheckUrl" ) );
     QVector< QUrl > urls;
     for ( const auto& s : urlStrings )
     {
@@ -214,7 +309,7 @@ Requirements::onMainsPower()
 /*! One row, flattened for Calamares' own model.
  *
  *  The LABEL AND THE DETAIL ARE KEPT APART UNTIL HERE, and then joined with an em dash: "Disk" is
- *  what a reader scans the column for and "12.0 GiB available, 32.0 GiB needed" is the evidence
+ *  what a reader scans the column for and "12.9 GB available, 32.0 GB needed" is the evidence
  *  under it, and a translator handed one pre-joined sentence per state would have to take it apart
  *  again in a language whose word order does not allow it.
  *
@@ -242,23 +337,47 @@ Requirements::checkRequirements()
 {
     Calamares::RequirementsList out;
 
+    // FIRST, because a medium that cannot check is worse news than any single failed check, and
+    // because with no configuration at all there are no other rows for the reader to look at.
+    if ( m_configBroken )
+    {
+        out.append( entry( QStringLiteral( "configuration" ),
+                           [] { return tr( "Installer configuration" ); },
+                           []
+                           {
+                               return tr( "this installer cannot tell whether this computer meets "
+                                          "its requirements — see the installer log" );
+                           },
+                           false,
+                           true ) );
+    }
+
     const auto want = [ this ]( const char* name ) { return m_toCheck.contains( QLatin1String( name ) ); };
     const auto need = [ this ]( const char* name ) { return m_toRequire.contains( QLatin1String( name ) ); };
 
     if ( want( "storage" ) )
     {
-        const qint64 required = static_cast< qint64 >( m_requiredStorageGiB * GiB );
+        const qint64 required = static_cast< qint64 >( m_requiredStorageGB * GB );
         const qint64 found = largestInstallableDiskB();
+        // Without a threshold there is no sentence to write: "0 bytes needed" is how the disk page
+        // reported the same missing number, and it reads as a satisfied requirement rather than an
+        // unreadable one. `found >= required` would be true for the same reason, which is why the
+        // threshold is part of the verdict and not just of the text.
+        const bool haveThreshold = m_requiredStorageGB > 0.0;
         out.append( entry( QStringLiteral( "storage" ),
                            [] { return tr( "Disk" ); },
-                           [ found, required ]
+                           [ found, required, haveThreshold ]
                            {
+                               if ( !haveThreshold )
+                               {
+                                   return tr( "this installer was not told how large a disk it needs" );
+                               }
                                return found > 0 ? tr( "%1 available, %2 needed" )
-                                                      .arg( humanBytes( found ), humanBytes( required ) )
+                                                      .arg( diskBytes( found ), diskBytes( required ) )
                                                 : tr( "no disk to install onto, %1 needed" )
-                                                      .arg( humanBytes( required ) );
+                                                      .arg( diskBytes( required ) );
                            },
-                           found >= required,
+                           haveThreshold && found >= required,
                            need( "storage" ) ) );
     }
     if ( want( "ram" ) )
@@ -269,11 +388,18 @@ Requirements::checkRequirements()
         // always a little under the nominal fitting, because the firmware and the video aperture
         // took their share before Linux counted. Without it a machine sold as 4 GB fails a 4 GiB
         // requirement, which is true and useless.
+        const bool haveThreshold = m_requiredRamGiB > 0.0;
         out.append( entry( QStringLiteral( "ram" ),
                            [] { return tr( "Memory" ); },
-                           [ found, required ]
-                           { return tr( "%1 available, %2 needed" ).arg( humanBytes( found ), humanBytes( required ) ); },
-                           double( found ) >= double( required ) * 0.95,
+                           [ found, required, haveThreshold ]
+                           {
+                               if ( !haveThreshold )
+                               {
+                                   return tr( "this installer was not told how much memory it needs" );
+                               }
+                               return tr( "%1 available, %2 needed" ).arg( memoryBytes( found ), memoryBytes( required ) );
+                           },
+                           haveThreshold && double( found ) >= double( required ) * 0.95,
                            need( "ram" ) ) );
     }
     if ( want( "root" ) )

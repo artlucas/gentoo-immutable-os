@@ -476,13 +476,14 @@ while IFS= read -r eb; do
     assert_false "$(basename "$eb") has no unrendered token left in it" \
         grep -q '@[A-Z][A-Z0-9_]*@' "$eb"
 done < <(find "$OVL_DST" -name '*.ebuild')
-# Four since plan/23: the managed-mode KCM, the accounts page, the language page and the greeting
-# page. A count rather than a set, so adding a fifth has to be argued for in a diff — this
-# repository's ebuild repository exists for the handful of things that must be compiled against the
-# target's own Qt6/KF6, and it is not a place to keep packages that could be files in
-# config/rootfs. (The fourth is a SPLIT of the third rather than a new capability: a Calamares view
-# step is one entry in the sidebar, so the language page's two screens had to become two modules.)
-assert_eq "4" "$EB_N" "the overlay renders exactly its four ebuilds"
+# Five since plan/24: the managed-mode KCM, the accounts page, the language page, the greeting page
+# and the disk page. A count rather than a set, so adding a sixth has to be argued for in a diff —
+# this repository's ebuild repository exists for the handful of things that must be compiled against
+# the target's own Qt6/KF6, and it is not a place to keep packages that could be files in
+# config/rootfs. (The fourth was a SPLIT of the third rather than a new capability: a Calamares view
+# step is one entry in the sidebar, so the language page's two screens had to become two modules.
+# The fifth is a REPLACEMENT: it takes the stock partition module out of both sequences.)
+assert_eq "5" "$EB_N" "the overlay renders exactly its five ebuilds"
 # EAPI 8 and no SRC_URI: the sources are in files/, which is what makes these buildable with
 # --network none and what removes the need for a Manifest.
 while IFS= read -r eb; do

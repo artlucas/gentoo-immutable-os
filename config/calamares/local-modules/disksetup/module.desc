@@ -1,0 +1,11 @@
+# Module metadata. `name` MUST equal this directory's name or ModuleManager silently skips it
+# (ModuleManager::doInit compares the two and only warns when the descriptor is otherwise valid).
+---
+type:       "job"
+name:       "disksetup"
+interface:  "python"
+script:     "main.py"
+# Seconds, not minutes: one GPT, one FAT32 ESP and one ext4 /var on an empty partition. The two
+# root slots are not formatted at all — what goes in them is an image, written by `imagedeploy`,
+# which is the step that carries the weight in this sequence.
+weight:     2

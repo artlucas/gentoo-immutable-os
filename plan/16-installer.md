@@ -364,8 +364,10 @@ chroot for the same reason — the mechanism this section describes is what make
 
 ### 5.3 Module map
 
-> **Implemented 2026-08-30, with three departures — see Phase A in §8.** `partition` is *kept and
-> reconfigured* rather than replaced (a fixed `partitionLayout` turns it into a disk picker);
+> **Implemented 2026-08-30, with three departures — see Phase A in §8.** `partition` was *kept and
+> reconfigured* rather than replaced (a fixed `partitionLayout` turns it into a disk picker) — a
+> departure [plan/24](24-installer-disk-page.md) closed, and the row below now describes what
+> replaced it;
 > the replacement steps are *Python job modules* rather than `shellprocess`, because replacing
 > `mount` means writing `rootMountPoint` into global storage and a shell command cannot; and
 > `removeuser` is *kept unmodified*, because the /etc overlay turns `userdel` into the copy-up
@@ -380,7 +382,7 @@ chroot for the same reason — the mechanism this section describes is what make
 | `summary`, `finished` | **Keep** |
 | `shellprocess`, `contextualprocess` | **Keep** — the workhorses for every step in 5.1 |
 | `umount` | **Keep** |
-| `partition` | **Replace** — a small disk-select module. Whole-disk erase only, so the UI is a disk picker, not a partition editor. The layout is fixed by design and users may not choose filesystems or mountpoints |
+| `partition` | **Replaced by `disk` + `disksetup`** ([plan/24](24-installer-disk-page.md)) — a disk-select module and the job that writes the GPT. Whole-disk erase only; the layout is fixed by design and users may not choose filesystems or mountpoints. It was *kept and reconfigured* for the whole of Phase A, which got the constraints right and left upstream's partition-editor vocabulary on screen; replacing the page replaced the partitioner too, because a view step owns its `jobs()` |
 | `mount` | **Replace** — the overlay stack in 5.2 |
 | `unpackfs` | **Replace** — `dd` an EROFS; there is no squashfs and no rsync-onto-target |
 | `bootloader` / `grubcfg` | **Drop** — the UKI is already built and signed-shaped; the ESP gets systemd-boot and a file copy |

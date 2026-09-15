@@ -14,7 +14,8 @@ manifest:      "manifest.json"
 # Which partition receives the root image, by PARTLABEL. This string is the installed system's
 # identity: the UKI cmdline says root=PARTLABEL=root_@VERSION@, baked in at build time and
 # identical on every machine, so the label the partitioner writes and the label the initrd looks
-# for have to be the same string. modules/partition.conf creates it; this finds it.
+# for have to be the same string. The `disksetup` job creates it, out of the layout in
+# scripts/lib/layout.sh (plan/24); this finds it.
 rootPartLabel: "@ROOT_PARTLABEL@"
 
 # sha256 the root image against the manifest before writing it. ~10 seconds off a good USB stick

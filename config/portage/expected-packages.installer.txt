@@ -229,6 +229,7 @@ gui-libs/egl-wayland
 gui-libs/egl-wayland2
 gui-libs/libdecor
 immos-base/immos-calamares-accounts
+immos-base/immos-calamares-disk
 immos-base/immos-calamares-greeting
 immos-base/immos-calamares-language
 kde-apps/baloo-widgets

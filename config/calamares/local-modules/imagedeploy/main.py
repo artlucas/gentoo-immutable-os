@@ -86,9 +86,11 @@ def sh(cmd, **kwargs):
 def find_partitions(root_label):
     """Pick the three partitions this install needs out of GlobalStorage.
 
-    BY LABEL AND MOUNT POINT, never by index. The partition module reports every partition on
-    every touched device in on-disk order, and an index would silently follow whatever the
-    layout in partition.conf happens to be today.
+    BY LABEL AND MOUNT POINT, never by index. The partitioner reports every partition on every
+    touched device in on-disk order, and an index would silently follow whatever the layout in
+    scripts/lib/layout.sh happens to be today. (Before plan/24 the partitioner was Calamares'
+    stock `partition` module and the layout was a YAML block; neither line below changed when
+    `disksetup` replaced it, which is the test of whether the replacement was honest.)
 
     The root slot is found by its PARTLABEL because that label IS the system's identity: the UKI
     cmdline says root=PARTLABEL=root_<version>, baked in at build time. If the label the

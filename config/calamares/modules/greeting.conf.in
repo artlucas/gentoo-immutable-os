@@ -18,17 +18,26 @@
 # check itself, over /sys/block, excluding the disk the medium booted from.
 ---
 requirements:
-    # GiB, and it is the layout in modules/partition.conf added up rather than a round number:
-    # 1 GiB ESP + two @ROOT_SLOT_SIZE_MIB@ MiB root slots + enough var to hold the seeded
-    # Flatpak store and a home directory. The second root slot is not optional — it is the
-    # inactive half of the A/B pair systemd-sysupdate writes into (plan/01), so a disk that
-    # cannot hold it produces a machine that installs and then can never update.
+    # DECIMAL GB since plan/24 §3 — the unit printed on the disk, not GiB — and NOT A NUMBER
+    # WRITTEN HERE. It is build.conf's MIN_INSTALL_DISK_GB, which modules/disk.conf renders into
+    # `minimumDiskSize` as well, so the page that decides whether Next may be pressed and the page
+    # that decides which disks are selectable are reading one value. They used to be two numbers
+    # in two units, and the failure that pairing produces has no error message: an installer that
+    # says this computer can install and then offers no disk to install onto.
     #
-    # NOW ACTUALLY ENFORCED, which it was not for the whole life of the stock module. The check
-    # measures the largest block device that is NOT the one this medium booted from — the same
-    # exclusion PartUtils::getDevices( WritableOnly ) applies to the disk picker, so the page and
-    # the picker cannot disagree about which disks exist.
-    requiredStorage:    32.0
+    # What the number has to cover is the layout, not a round figure: a 1 GiB ESP, two
+    # @ROOT_SLOT_SIZE_MIB@ MiB root slots and enough /var for the seeded Flatpak store and a home
+    # directory. The second root slot is not optional — it is the inactive half of the A/B pair
+    # systemd-sysupdate writes into (plan/01), so a disk that cannot hold it produces a machine
+    # that installs and then can never update. validate_config() in scripts/lib/common.sh does
+    # that arithmetic rather than leaving it to this comment.
+    #
+    # ENFORCED, which it was not for the whole life of the stock module. The check measures the
+    # largest block device that is NOT the one this medium booted from. Until plan/24 that
+    # exclusion was also `PartUtils::getDevices( WritableOnly )`'s, applied by a stock module we
+    # no longer run; the `disk` page implements its own and states the reason on screen, and the
+    # two are now the same rule written twice on purpose — see plan/24 §6.
+    requiredStorage:    @MIN_INSTALL_DISK_GB@
     # Plasma 6 Wayland. Under this the session runs but swaps.
     requiredRam:        4.0
     internetCheckUrl:   "@HOME_URL@"

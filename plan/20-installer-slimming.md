@@ -357,8 +357,10 @@ anyone actually downloads — and root-slot headroom. Measured on the closing bu
 unchanged at 12290 MiB, exactly as the geometry says it must be.
 
 The obvious follow-on is to shrink `ROOT_SLOT_SIZE_MIB` for this profile, and it does not work:
-the same key is substituted into `config/calamares/modules/partition.conf.in`, so it sizes the
-A/B slots Calamares creates **on the installed machine** as well as the medium's own. Reducing it
+the same key is substituted into `config/calamares/modules/disk.conf.in` and
+`modules/disksetup.conf.in` (it was `modules/partition.conf.in` until
+[plan/24](24-installer-disk-page.md)), so it sizes the A/B slots created **on the installed
+machine** as well as the medium's own. Reducing it
 for the medium would reduce every installed system's slots with it. Breaking that coupling —
 a separate `MEDIUM_ROOT_SLOT_SIZE_MIB`, or letting the partition module read the payload's own
 size — is a prerequisite for turning any of this into a smaller stick, and it is a real change,

@@ -5,10 +5,12 @@
 # that succeeds, a medium that boots, and an installer that goes wrong on a stranger's hardware
 # with their disk already partitioned.
 #
-#   1. THE CALAMARES CONFIG AND THE PIPELINE DISAGREE. modules/partition.conf creates the
-#      partitions and scripts/lib/common.sh's emit_sfdisk_script() creates the factory image's.
-#      They are 300 lines apart in two languages, and if the labels or GPT types drift the
-#      installed machine boots (the initrd finds root by PARTLABEL) right up until it does not.
+#   1. THE INSTALLER AND THE PIPELINE DISAGREE ABOUT THE DISK. They cannot any more — since
+#      plan/24 both partition from scripts/lib/layout.sh, and stage 40 puts that same file on the
+#      medium — so what section 5 asserts is that the arrangement is still that arrangement. The
+#      way it comes apart is somebody re-introducing a second copy of the layout, which looks like
+#      a perfectly reasonable patch; if the labels or GPT types then drift, the installed machine
+#      boots (the initrd finds root by PARTLABEL) right up until it does not.
 #   2. A MODULE IS SILENTLY ABSENT. ModuleManager matches module.desc's `name` against its
 #      DIRECTORY name and skips the module when they differ — no error, no log line at the level
 #      anyone reads. The install then runs to "finished" having never written the bootloader.
@@ -39,7 +41,8 @@ eval "$( BUILD_PROFILE_OVERRIDE=installer; load_config
          declare -p PROFILE_ROLE PROFILE_SETS PROFILE_ROOT_SLOTS PAYLOAD_PROFILE \
                     ROOT_PARTLABEL UKI_NAME PAYLOAD_DIR IMG_NAME \
                     PAYLOAD_ROOT_EROFS PAYLOAD_UKI PAYLOAD_VAR_TAR VERSION \
-                    ROOT_SLOT_SIZE_MIB DISTRO_ID DISTRO_NAME LIVE_USER HOME_URL \
+                    ROOT_SLOT_SIZE_MIB ESP_SIZE_MIB MIN_INSTALL_DISK_GB \
+                    DISTRO_ID DISTRO_NAME LIVE_USER HOME_URL \
            | sed 's/^declare -[-x]* /I_/; s/^I_/declare -g I_/' )"
 
 assert_eq "live"    "$I_PROFILE_ROLE"       "the installer profile is a LIVE profile"
@@ -138,39 +141,169 @@ assert_false "settings.conf.in carries no computed sequence token any more" \
 assert_false "no unrendered @TOKEN@ survives in the rendered tree" \
     bash -c "grep -rIlE '@[A-Z][A-Z0-9_]*@' '$RENDER' | grep -q ."
 
-# ---- 5. the config and the pipeline agree on the disk ---------------------------------------
-# THE check this file exists for. emit_sfdisk_script() writes the factory image's partitions;
-# partition.conf writes the installed machine's. plan/16 §3.4: they have to be the same, or a
-# machine installed from the medium is not the same system as one dd'd from the .img and
-# systemd-sysupdate stops recognising it.
-PART_CONF="$RENDER/modules/partition.conf"
-assert_file "$PART_CONF" "partition.conf rendered"
+# ---- 5. ONE description of the disk layout, and the medium carries it ------------------------
+# THE check this file exists for, and plan/24 changed its shape rather than its subject.
+#
+# It used to compare two descriptions of one layout: emit_sfdisk_script() in lib/common.sh built
+# the factory .img, a `partitionLayout:` block in modules/partition.conf told Calamares' stock
+# partition module to build the same thing, and this section checked them against each other label
+# by label and GUID by GUID. That can only ever catch the drift it was taught to look for.
+#
+# There is one description now. lib/layout.sh holds it, common.sh sources it, and stage 40 puts
+# the same file on the installer medium for the `disksetup` job to run. So what is asserted here
+# is that the arrangement is still that arrangement — because the way it would come apart is
+# somebody re-introducing a second copy, which would look like a perfectly reasonable patch.
+LAYOUT_SH="$REPO_ROOT/scripts/lib/layout.sh"
+assert_file "$LAYOUT_SH" "lib/layout.sh, the one description of the partition layout"
+assert_true "common.sh sources it rather than defining the layout itself" \
+    grep -qE '^source "\$\(dirname -- "\$\{BASH_SOURCE\[0\]\}"\)/layout\.sh"' \
+        "$REPO_ROOT/scripts/lib/common.sh"
+for fn in compute_layout emit_sfdisk_script emit_install_sfdisk_script; do
+    assert_true "layout.sh defines $fn" grep -qE "^$fn\(\) \{" "$LAYOUT_SH"
+    assert_false "...and common.sh does not define $fn a second time" \
+        grep -qE "^$fn\(\) \{" "$REPO_ROOT/scripts/lib/common.sh"
+done
+# Self-contained, because the copy on the medium has no $REPO, no load_config and no build.conf.
+# Comments stripped first: the file's own header explains at length why it must not reach for any
+# of these, and a scan that read the explanation as the thing would fail on the documentation.
+assert_false "layout.sh reaches for nothing the installer medium does not have" \
+    bash -c "grep -vE '^[[:space:]]*#' '$LAYOUT_SH' | grep -qE '\\\$REPO|load_config|BUILD_PROFILE'"
+# Library when sourced, CLI when run. The guard is what keeps sourcing it from parsing arguments.
+assert_true "layout.sh runs its CLI only when executed" \
+    grep -qF 'if [[ ${BASH_SOURCE[0]} == "${0}" ]]; then' "$LAYOUT_SH"
+
+# The factory image's layout, unchanged by the move.
 factory="$(compute_layout 1024 6144 4096 2; emit_sfdisk_script "$I_VERSION")"
 for token in "$I_ROOT_PARTLABEL" '_empty' 'esp' 'var'; do
     assert_true "the factory layout names '$token'" grep -q -- "\"$token\"" <<<"$factory"
 done
-# ...and the installer creates the same three it is responsible for (the ESP is created by the
-# partition module itself, from the `efi:` block, not from partitionLayout).
-assert_true "partition.conf creates $I_ROOT_PARTLABEL"  grep -q "\"$I_ROOT_PARTLABEL\"" "$PART_CONF"
-assert_true "partition.conf creates the _empty slot B"  grep -q '"_empty"' "$PART_CONF"
-assert_true "partition.conf creates var"                grep -q '"var"' "$PART_CONF"
-assert_true "partition.conf labels the ESP 'esp'"       grep -qE 'label:[[:space:]]+"esp"' "$PART_CONF"
-# The GPT type GUIDs, which are what systemd-repart and systemd-sysupdate actually match on.
-assert_true "partition.conf uses the pipeline's root GPT type" \
-    grep -qi "$GPT_TYPE_ROOT_X64" "$PART_CONF"
-assert_true "partition.conf uses the pipeline's var GPT type" \
-    grep -qi "$GPT_TYPE_VAR" "$PART_CONF"
-assert_true "partition.conf sizes the root slots from ROOT_SLOT_SIZE_MIB" \
-    grep -q "\"${I_ROOT_SLOT_SIZE_MIB}M\"" "$PART_CONF"
-# Two root slots, because an installed machine that cannot be updated is the failure profiles
-# and A/B exist to prevent — and the live medium having one slot must not become the target's.
-assert_eq "2" "$(grep -c "$GPT_TYPE_ROOT_X64" "$PART_CONF")" \
-    "the INSTALLED system gets both A/B root slots, even though the medium has one"
 
-# The label that ties the disk to the boot: partition.conf writes it, imagedeploy looks for it,
+# ...and the INSTALLER's layout, from the same file, for a disk somebody owns. This is the
+# assertion the old partition.conf comparison was standing in for, and it is now a real one: the
+# same four names, the same two GPT types, the same slot size, computed by the same function.
+installed="$(emit_install_sfdisk_script 65536 "$I_ESP_SIZE_MIB" "$I_ROOT_SLOT_SIZE_MIB" "$I_VERSION")"
+assert_eq "4" "$(grep -c '^start=' <<<"$installed")" "an installed machine gets four partitions"
+for token in "$I_ROOT_PARTLABEL" '_empty' 'esp' 'var'; do
+    assert_true "the installed layout names '$token'" grep -q -- "\"$token\"" <<<"$installed"
+done
+assert_eq "2" "$(grep -c "$GPT_TYPE_ROOT_X64" <<<"$installed")" \
+    "the INSTALLED system gets both A/B root slots, even though the medium has one"
+assert_true "the installed layout uses the pipeline's var GPT type" \
+    grep -qi "$GPT_TYPE_VAR" <<<"$installed"
+assert_true "the installed layout sizes the root slots from ROOT_SLOT_SIZE_MIB" \
+    grep -q "size=${I_ROOT_SLOT_SIZE_MIB}MiB" <<<"$installed"
+# var takes the REMAINDER, which is what makes the first-boot repart grow a no-op on an installed
+# machine — and what makes the layout fit a disk of any size at all.
+assert_true "var is sized to what is left of the disk" \
+    bash -c 'grep -q "name=\"var\"" <<<"$1" &&
+             [[ $(sed -nE "s/.*start=([0-9]+)MiB, size=([0-9]+)MiB.*var.*/\\1 \\2/p" <<<"$1") ]]' _ "$installed"
+assert_true "the whole layout adds up to exactly the disk it was given" \
+    bash -c 'read -r st sz < <(sed -nE "s/^start=([0-9]+)MiB, size=([0-9]+)MiB.*var\".*/\\1 \\2/p" <<<"$1")
+             (( st + sz + 1 == 65536 ))' _ "$installed"
+# A disk too small for the layout is refused rather than truncated. The page is supposed to have
+# refused it first; this is the second of the two checks that stand between a bad number and a
+# half-written GPT.
+assert_false "a disk too small for the layout is refused" \
+    bash -c "source '$LAYOUT_SH'; emit_install_sfdisk_script 8192 1024 6144 9.9.9 2>/dev/null"
+
+# partition.conf is GONE, and the stale-config hazard is why this is asserted rather than assumed:
+# stage 40 wipes /etc/calamares before rendering precisely because a deleted .conf.in otherwise
+# leaves its .conf on the medium forever (the welcome.conf finding, plan/22).
+assert_false "modules/partition.conf.in is gone with the module it configured" \
+    test -e "$CAL/modules/partition.conf.in"
+assert_false "...and nothing renders a partition.conf" test -e "$RENDER/modules/partition.conf"
+
+# The medium's copy of the layout, and the one path that names it. A job that cannot find its
+# helper fails after the user has been told their disk is about to be erased.
+STAGE40="$REPO_ROOT/scripts/stages/40-configure.sh"
+assert_true "stage 40 installs layout.sh onto the medium" \
+    grep -qF 'DISK_LAYOUT_SRC="$REPO/scripts/lib/layout.sh"' "$STAGE40"
+assert_true "...verbatim, and asserts it" grep -qF 'cmp -s "$DISK_LAYOUT_SRC" "$DISK_LAYOUT_DST"' "$STAGE40"
+assert_true "...executable" grep -qF 'chmod 0755 -- "$DISK_LAYOUT_DST"' "$STAGE40"
+DISKSETUP_CONF="$RENDER/modules/disksetup.conf"
+assert_file "$DISKSETUP_CONF" "disksetup.conf rendered"
+assert_true "disksetup.conf names the helper stage 40 installs" \
+    grep -qE "^layoutHelper:[[:space:]]+\"/usr/libexec/${I_DISTRO_ID}-disk-layout\"" "$DISKSETUP_CONF"
+assert_true "...and stage 40 installs it under exactly that name" \
+    grep -qF 'DISK_LAYOUT_DST="$TARGET/usr/libexec/$DISTRO_ID-disk-layout"' "$STAGE40"
+# The job must not grow a layout of its own. A GPT type GUID in main.py would be the second
+# description coming back by another door.
+assert_false "the disksetup job carries no partition layout of its own" \
+    grep -qiE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' \
+        "$CAL/local-modules/disksetup/main.py"
+
+# ONE NUMBER FOR THE MINIMUM DISK, rendered into both pages that use it (plan/24, Q1). The greeting
+# page decides whether Next may be pressed; the disk page decides which rows are selectable. Two
+# numbers would eventually be two answers, and the symptom is an installer that says this computer
+# can install and then offers nothing to install onto.
+DISK_CONF="$RENDER/modules/disk.conf"
+assert_file "$DISK_CONF" "disk.conf rendered"
+min_greeting="$(sed -nE 's/^[[:space:]]*requiredStorage:[[:space:]]+([0-9.]+).*/\1/p' "$RENDER/modules/greeting.conf")"
+min_disk="$(sed -nE 's/^minimumDiskSize:[[:space:]]+([0-9.]+).*/\1/p' "$DISK_CONF")"
+min_job="$(sed -nE 's/^minimumDiskSize:[[:space:]]+([0-9.]+).*/\1/p' "$DISKSETUP_CONF")"
+assert_eq "$I_MIN_INSTALL_DISK_GB" "$min_greeting" "greeting.conf's requiredStorage is build.conf's number"
+assert_eq "$I_MIN_INSTALL_DISK_GB" "$min_disk"     "disk.conf's minimumDiskSize is the same number"
+assert_eq "$I_MIN_INSTALL_DISK_GB" "$min_job"      "and so is the job's re-check"
+# ...and the page draws the same geometry the job creates.
+assert_eq "$I_ESP_SIZE_MIB" "$(sed -nE 's/^espSizeMiB:[[:space:]]+([0-9]+).*/\1/p' "$DISK_CONF")" \
+    "disk.conf's bar is drawn from the build's ESP size"
+assert_eq "$I_ROOT_SLOT_SIZE_MIB" "$(sed -nE 's/^rootSlotSizeMiB:[[:space:]]+([0-9]+).*/\1/p' "$DISK_CONF")" \
+    "disk.conf's bar is drawn from the build's root slot size"
+
+# DECIMAL, on both pages (plan/24 §3). This is invisible at build time and obvious to a user: the
+# greeting page used to say "34.4 GiB needed" for a config that said 32.0, and the disk page lists
+# disks by the size printed on them. The two have to agree, and the only thing that makes them
+# agree is the formatter each one uses.
+GREET_SRC="$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-greeting/files"
+DISK_SRC="$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-disk/files"
+assert_true "the greeting page reports disk sizes in decimal GB" \
+    bash -c "sed -n '/^diskBytes( qint64 bytes )/,/^}/p' '$GREET_SRC/Requirements.cpp' |
+             grep -q 'DataSizeSIFormat'"
+assert_true "...and its storage requirement is read as GB, not GiB" \
+    grep -q 'm_requiredStorageGB \* GB' "$GREET_SRC/Requirements.cpp"
+assert_true "memory stays IEC, because RAM really is sold in binary multiples" \
+    bash -c "sed -n '/^memoryBytes( qint64 bytes )/,/^}/p' '$GREET_SRC/Requirements.cpp' |
+             grep -q 'DataSizeIecFormat'"
+assert_true "the disk page uses the same decimal formatter" \
+    bash -c "sed -n '/^DiskModel::formatSize( qint64 bytes )/,/^}/p' '$DISK_SRC/DiskModel.cpp' |
+             grep -q 'DataSizeSIFormat'"
+
+# AND THE NUMBERS HAVE TO ARRIVE AT ALL, which for one build they did not. Calamares'
+# utils/Yaml.cpp reads every unquoted integer scalar into a QVariant holding a qlonglong, and
+# utils/Variant.cpp's getDouble() accepts only Int and Double — so `requiredStorage: 32` returned
+# the caller's default and `requiredStorage: 32.0` returned 32. Moving these keys onto
+# build.conf's integers therefore turned four of the five numbers on these two pages into zero:
+# the greeting dropped its disk check and announced that a machine with NO DISK ATTACHED could
+# install, the disk page offered "a disk of at least 0 bytes", and the plan bar drew nothing.
+#
+# Nothing else in this file could have caught that — the template was right, the rendered file was
+# right, and the value was simply never delivered. So the assertion is on the READER: both pages
+# parse their own numbers, and neither may call the upstream function that drops them.
+for f in "$GREET_SRC/Requirements.cpp" "$DISK_SRC/DiskConfig.cpp"; do
+    n="$(basename "$f")"
+    assert_true "$n reads its configuration numbers with configNumber()" \
+        grep -q '^configNumber( const QVariantMap& map' "$f"
+    assert_false "...and not with Calamares::getDouble(), which drops YAML integers" \
+        bash -c "grep -vE '^[[:space:]]*\*|^[[:space:]]*//' '$f' | grep -q 'Calamares::getDouble'"
+    assert_true "...refusing booleans rather than converting them" \
+        bash -c "sed -n '/^configNumber( const QVariantMap& map/,/^}/p' '$f' |
+                 grep -q 'QMetaType::Bool'"
+done
+# Every numeric key on either page goes through it, so a sixth one cannot quietly go back.
+# Two map names, because the greeting's numbers sit under a nested `requirements:` block while
+# the disk page's are top-level keys: three call sites hand configNumber() the configurationMap
+# and two hand it the requirements sub-map, and a grep for either spelling alone undercounts.
+assert_eq "5" \
+    "$(cat "$GREET_SRC/Requirements.cpp" "$DISK_SRC/DiskConfig.cpp" |
+       grep -cE 'configNumber\( (configurationMap|requirements),')" \
+    "all five numeric keys on the two pages are read that way"
+
+# The label that ties the disk to the boot: the layout helper writes it, imagedeploy looks for it,
 # and the UKI cmdline (stage 40) and sysupdate's transfer both hardcode the same shape.
-assert_true "imagedeploy.conf looks for the partition partition.conf creates" \
+assert_true "imagedeploy.conf looks for the partition the layout creates" \
     grep -q "\"$I_ROOT_PARTLABEL\"" "$RENDER/modules/imagedeploy.conf"
+assert_true "disksetup.conf checks the layout produced that same label" \
+    grep -q "^rootPartLabel:[[:space:]]*\"$I_ROOT_PARTLABEL\"" "$DISKSETUP_CONF"
 assert_true "imagebootloader.conf installs the UKI under its identity name" \
     grep -q "\"$I_UKI_NAME\"" "$RENDER/modules/imagebootloader.conf"
 assert_false "no Calamares config carries the profile name in an identity string" \
@@ -218,10 +351,11 @@ done
 SETTINGS="$RENDER/settings.conf"
 assert_file "$SETTINGS" "settings.conf rendered"
 mapfile -t OURS < <(find "$CAL/local-modules" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort)
-# Still four after plan/21, by substitution rather than by coincidence: accountsetup replaced
-# managedenroll AND the stock `users` module's jobs, alongside imagedeploy, imagebootloader and
-# imageidentity.
-(( ${#OURS[@]} == 4 )) || _fail "expected four local modules, found ${#OURS[@]}: ${OURS[*]}"
+# FIVE since plan/24, and the fifth is a substitution like the fourth was: `disksetup` took over
+# the exec half of the stock `partition` module, which could not be kept when its page was replaced
+# — a Calamares view step owns its jobs(). The others are accountsetup (which replaced managedenroll
+# AND the stock `users` module's jobs, plan/21), imagedeploy, imagebootloader and imageidentity.
+(( ${#OURS[@]} == 5 )) || _fail "expected five local modules, found ${#OURS[@]}: ${OURS[*]}"
 for m in "${OURS[@]}"; do
     d="$CAL/local-modules/$m"
     assert_file "$d/module.desc" "$m has a module descriptor"
@@ -312,8 +446,14 @@ done
 # both the check list and the required list with only a cWarning, which is the bug plan/22 §3a
 # exists to close and this line keeps closed. Our `greeting` module (plan/23) borrows that page's
 # requirements BOX and none of its checker, which is the whole of the difference.
+#
+# `partition` since plan/24, and it is the third of that kind: it WOULD work. Configured as it was
+# — allowManualPartitioning off, a fixed partitionLayout — it produced a usable disk picker for the
+# whole of Phase A. Naming it now would produce a second disk page, with upstream's words, whose
+# jobs would rewrite the disk a second time from a layout that lives nowhere any more.
 for forbidden in localecfg unpackfs fstab bootloader grubcfg initcpio initcpiocfg dracut \
-                 initramfs machineid packages netinstall displaymanager mount users welcome; do
+                 initramfs machineid packages netinstall displaymanager mount users welcome \
+                 partition; do
     assert_false "the sequence does not name the stock '$forbidden' module" \
         grep -qE "^[[:space:]]*-[[:space:]]+$forbidden$" "$SETTINGS"
 done
@@ -324,6 +464,31 @@ assert_true "the show sequence names the accounts page" \
     bash -c "sed -n '/^- show:/,/^- exec:/p' '$SETTINGS' | grep -qE '^[[:space:]]*-[[:space:]]+accounts\$'"
 assert_true "the exec sequence names accountsetup" \
     bash -c "sed -n '/^- exec:/,/^- show:/p' '$SETTINGS' | grep -qE '^[[:space:]]*-[[:space:]]+accountsetup\$'"
+# ...and the disk pair, the same way (plan/24). `disk` draws the page and `disksetup` writes the
+# GPT; they are two modules for the same reason `accounts` and `accountsetup` are, plus one this
+# pair has on its own — a Calamares view step owns its jobs(), so the partitioner had to leave with
+# the page it belonged to.
+assert_true "the show sequence names the disk page" \
+    bash -c "sed -n '/^- show:/,/^- exec:/p' '$SETTINGS' | grep -qE '^[[:space:]]*-[[:space:]]+disk\$'"
+assert_true "the exec sequence names disksetup" \
+    bash -c "sed -n '/^- exec:/,/^- show:/p' '$SETTINGS' | grep -qE '^[[:space:]]*-[[:space:]]+disksetup\$'"
+# The disk page must come BEFORE the accounts page, and not because either depends on the other:
+# the accounts page can spend minutes enrolling a managed machine against a real service (plan/21
+# §3), and asking somebody to do that before they know whether the installer can even use their
+# disk is the wrong order to waste their time in.
+assert_true "the disk page comes before the accounts page" \
+    bash -c "
+      seq=\$(sed -n '/^- show:/,/^- exec:/p' '$SETTINGS' | sed -nE 's/^[[:space:]]*-[[:space:]]+([a-z][a-z0-9_-]*)\$/\\1/p')
+      idx() { printf '%s\\n' \"\$seq\" | grep -nxF \"\$1\" | cut -d: -f1; }
+      [[ \$(idx disk) -lt \$(idx accounts) ]]"
+# FIRST in exec:, and that is the one ordering in this file with no recovery. imagedeploy writes
+# the root image into a partition by PARTLABEL; if it ran before the partitioner there would be no
+# such partition, and if anything ran between them it would be operating on a disk that is about to
+# be rewritten.
+assert_true "disksetup is the FIRST exec step" \
+    bash -c "sed -n '/^- exec:/,/^- show:/p' '$SETTINGS' |
+             sed -nE 's/^[[:space:]]*-[[:space:]]+([a-z][a-z0-9_-]*)\$/\\1/p' | head -1 | grep -qx disksetup"
+
 # Order, inside exec:. accountsetup must run AFTER imagedeploy (which mounts the target and its
 # /etc overlay — every write below depends on it) and BEFORE removeuser and imageidentity, which
 # delete the live user and read `username` out of GlobalStorage to allocate its subuid range.
@@ -434,7 +599,8 @@ assert_true "the branding translations match the table and the module sources" \
         --lang-dir "$REPO_ROOT/config/calamares/branding/installer/lang" \
         --source-dir "$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-language/files" \
         --source-dir "$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-greeting/files" \
-        --source-dir "$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-accounts/files"
+        --source-dir "$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-accounts/files" \
+        --source-dir "$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-disk/files"
 
 # ---- 6c. the language page's source (plan/22) ----------------------------------------------
 LANG_SRC="$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-language/files"
@@ -590,6 +756,224 @@ done
 assert_false "the greeting page draws no logo of its own" \
     grep -qE 'ProductLogo|ProductWelcome|imagePath' "$GREET_SRC/GreetingPage.cpp"
 
+# ---- 6e. the disk page's source, and the job it hands the disk to (plan/24) ------------------
+DISK_JOB="$CAL/local-modules/disksetup/main.py"
+DISK_QML="$DISK_SRC/qml/Disk.qml"
+
+# THE ONE ASSERTION IN THIS FILE THAT IS ABOUT SOMEBODY'S DATA.
+#
+# Until plan/24 the installation medium was kept out of the disk picker by code we did not write:
+# PartUtils::getDevices( WritableOnly ) drops any device holding a partition mounted at "/"
+# (core/DeviceList.cpp:178), and the stock partition module never showed it. We do not run that
+# code any more. The rule is ours now, in three places, and every one of them has to stay:
+#
+#   the page   so the medium cannot be selected
+#   the job    so a stale or forged GlobalStorage value cannot be acted on
+#   the greeting page's checker, which already had its own copy, so "is there a disk big enough"
+#              and "which disks may I use" cannot answer differently
+#
+# The test is the CONTAINMENT rule rather than the words: /sys/block/<disk>/<partition> exists iff
+# that partition belongs to that disk, which is what makes nvme0n1p3 resolve to nvme0n1 without
+# any rule about trailing digits. A rewrite that went back to string surgery would pass a grep for
+# "live" and fail on NVMe.
+assert_true "the disk page excludes the disk the installer is running from" \
+    bash -c "sed -n '/^liveMediumDisk()/,/^}/p' '$DISK_SRC/DiskConfig.cpp' | grep -q '/sys/block/%1/%2'"
+assert_true "...by containment, not by chopping digits off a partition name" \
+    grep -q 'QStorageInfo::root().device()' "$DISK_SRC/DiskConfig.cpp"
+assert_true "the job re-checks it before writing anything" \
+    bash -c "grep -q 'def disk_of' '$DISK_JOB' && grep -q 'os.path.exists(\"/sys/block/{}/{}\"' '$DISK_JOB'"
+assert_true "...and refuses the medium by name" \
+    bash -c "sed -n '/^def check_target/,/^def /p' '$DISK_JOB' | grep -q 'is the disk this installer is running from'"
+assert_true "...and refuses a target the page never confirmed" \
+    bash -c "sed -n '/^def check_target/,/^def /p' '$DISK_JOB' | grep -q 'diskConfirmed'"
+assert_true "...and refuses anything that is not a whole disk" \
+    bash -c "sed -n '/^def check_target/,/^def /p' '$DISK_JOB' | grep -q 'is not a whole disk'"
+# The greeting page's copy of the same rule, which predates this page and must not be quietly
+# dropped now that a second one exists.
+assert_true "the greeting page's checker still excludes the medium too" \
+    bash -c "sed -n '/^Requirements::largestInstallableDiskB/,/^}/p' '$GREET_SRC/Requirements.cpp' |
+             grep -q '/sys/block/%1/%2'"
+
+# A desktop session automounts what it finds, so the target's partitions may well be mounted when
+# the user reaches this page. sfdisk will rewrite the table underneath them and the kernel will
+# then refuse to re-read it — an install that appears to work and writes the payload to the old
+# offsets.
+assert_true "the job releases mounts and swap on the target before touching it" \
+    bash -c "grep -q 'def release_disk' '$DISK_JOB' && grep -q 'swapoff' '$DISK_JOB' && grep -q 'umount' '$DISK_JOB'"
+assert_true "...and stops rather than continuing when it cannot" \
+    bash -c "sed -n '/^def release_disk/,/^def /p' '$DISK_JOB' | grep -q 'could not be unmounted'"
+# wipefs before sfdisk: sfdisk writes a GPT and does not remove a stale MBR or a filesystem
+# superblock sitting where the new ESP will be, and blkid would go on reporting the old one.
+assert_true "old signatures are wiped before the new table is written" \
+    bash -c "sed -n '/^def write_table/,/^def /p' '$DISK_JOB' | grep -q 'wipefs'"
+assert_true "and the job waits for udev before it makes a filesystem" \
+    bash -c "grep -q 'def settle_for' '$DISK_JOB' && grep -q 'settle_for(\[esp' '$DISK_JOB'"
+
+# THE ROOT SLOTS ARE NOT FORMATTED. What goes in slot A is an EROFS image written byte-for-byte by
+# imagedeploy; a mkfs here would be a filesystem overwritten one step later, and slot B ships as
+# zeros for systemd-sysupdate to claim.
+# Comments stripped: the job explains in prose which labels stage 60 gives the factory image's
+# filesystems, and a naive count reads the explanation as a second mkfs.
+assert_eq "1" "$(grep -vE '^[[:space:]]*#' "$DISK_JOB" | grep -c 'mkfs.ext4')" \
+    "the job makes exactly one ext4 filesystem"
+assert_eq "1" "$(grep -vE '^[[:space:]]*#' "$DISK_JOB" | grep -c 'mkfs.vfat')" \
+    "...and exactly one FAT32 one"
+assert_false "neither root slot is formatted" \
+    bash -c "grep -E 'mkfs' '$DISK_JOB' | grep -q 'root_a\|root_b'"
+# The two filesystem labels the factory image carries. Nothing reads them — fstab finds both
+# partitions by PARTLABEL — but "indistinguishable from an image dd'd to the disk" is the property
+# this installer is built around, and lsblk shows a label to anyone comparing the two.
+assert_true "the installer's var label matches the factory image's" \
+    bash -c "grep -q 'mkfs.ext4 -q -F -L var' '$REPO_ROOT/scripts/stages/60-image.sh' &&
+             grep -qE '^varLabel:[[:space:]]+\"var\"' '$DISKSETUP_CONF'"
+assert_true "...and so does the ESP's" \
+    bash -c "grep -q 'mkfs.vfat -F32 -n ESP' '$REPO_ROOT/scripts/stages/60-image.sh' &&
+             grep -qE '^espLabel:[[:space:]]+\"ESP\"' '$DISKSETUP_CONF'"
+
+# THE CONTRACT WITH THE REST OF THE SEQUENCE. imagedeploy finds the root slot by `partlabel` and
+# the other two by `mountPoint`; imagebootloader finds /efi the same way. Both were written against
+# what KPMcore used to publish, and the test of an honest replacement is that neither needed a line
+# changed — so the keys they read are asserted here, on the module that now writes them.
+assert_true "the job publishes the partitions list the rest of the sequence reads" \
+    bash -c "grep -q 'globalstorage.insert(\"partitions\"' '$DISK_JOB'"
+for k in partlabel mountPoint device; do
+    assert_true "...with a '$k' on every entry" \
+        bash -c "sed -n '/partitions = \[/,/\]/p' '$DISK_JOB' | grep -q '\"$k\"'"
+done
+assert_true "...naming /efi and /var, which is how the next two modules find them" \
+    bash -c "sed -n '/partitions = \[/,/\]/p' '$DISK_JOB' | grep -q '\"/efi\"' &&
+             sed -n '/partitions = \[/,/\]/p' '$DISK_JOB' | grep -q '\"/var\"'"
+
+# ---- the page ------------------------------------------------------------------------------
+# Next is gated on BOTH a selected disk and a ticked box (plan/24 §2). Either half alone is a
+# mis-click away from an erased disk.
+assert_true "Next needs a disk AND the confirmation" \
+    bash -c "sed -n '/^DiskConfig::nextEnabled() const/,/^}/p' '$DISK_SRC/DiskConfig.cpp' |
+             grep -q 'isInstallable( m_currentIndex ) && m_confirmed'"
+# ...and the agreement is withdrawn when the disk changes, because it was about a disk.
+assert_true "changing the disk clears the confirmation" \
+    bash -c "sed -n '/^DiskConfig::setCurrentIndex/,/^}/p' '$DISK_SRC/DiskConfig.cpp' |
+             grep -q 'setConfirmed( false )'"
+# A blocked row can never become the selection, whichever way it is reached — mouse, arrow key or
+# a stale index from C++.
+assert_true "a disk that cannot be installed to is refused as a selection" \
+    bash -c "sed -n '/^DiskConfig::setCurrentIndex/,/^}/p' '$DISK_SRC/DiskConfig.cpp' |
+             grep -q 'isInstallable( index )'"
+
+# The selection crosses the QML/C++ boundary in both directions, and both are load-bearing — the
+# language page paid for these three lines with an installer that opened in the wrong language
+# (plan/22 §9). Here the same mistakes would pre-select somebody's disk, or draw one disk as chosen
+# while installing onto another.
+assert_true "a click moves the VIEW's currentIndex, which is what draws the highlight" \
+    grep -qE '^\s*onClicked: list\.currentIndex = row\.index$' "$DISK_QML"
+assert_false "no delegate writes the C++ index directly" \
+    grep -qE 'onClicked:.*disk\.currentIndex' "$DISK_QML"
+assert_true "the ListView clears its currentIndex so componentComplete() cannot select row 0" \
+    grep -qE '^\s*currentIndex: -1$' "$DISK_QML"
+assert_true "the view is seeded from C++ once the component is complete" \
+    grep -qE '^\s*Component\.onCompleted: list\.currentIndex = disk\.currentIndex$' "$DISK_QML"
+assert_true "a view-driven change is pushed back to C++" \
+    grep -qE '^\s*onCurrentIndexChanged: disk\.currentIndex = list\.currentIndex$' "$DISK_QML"
+assert_true "and C++ can drive the view back, for the rows setCurrentIndex() refuses" \
+    bash -c "sed -n '/Connections {/,/^                }/p' '$DISK_QML' |
+             grep -q 'list.currentIndex = disk.currentIndex'"
+
+# Greyed, not hidden (plan/24, Q3): the medium's own disk stays in the list, saying why.
+assert_true "disks that cannot be used are listed and disabled, not filtered out" \
+    grep -qE '^\s*enabled: !row\.blocked$' "$DISK_QML"
+# The encryption control is drawn and disabled. Hiding it would mean the first person to ask about
+# encryption has to ask whether it was forgotten (plan/24 §7).
+assert_true "the encryption control exists, disabled, with a reason" \
+    bash -c "grep -q 'Encrypt this disk' '$DISK_QML' && grep -q 'Not yet available' '$DISK_QML'"
+assert_true "...and nothing in this module can turn it on" \
+    bash -c "grep -q 'bool encryptionAvailable() const { return false; }' '$DISK_SRC/DiskConfig.h'"
+assert_false "...and no encryption is implemented behind it" \
+    grep -rqi 'cryptsetup\|luksFormat' "$DISK_SRC" "$DISK_JOB"
+
+# The style call belongs to whichever module loads FIRST — the language page — and is silently
+# ignored everywhere else. `^[^/*]*` so the comment here explaining its absence is not read as the
+# thing it explains.
+assert_false "the disk module does not set the Qt Quick Controls style" \
+    grep -rqE '^[^/*]*QQuickStyle::setStyle' "$DISK_SRC"
+# ...and the QML engine is retranslated, or every qsTr() on this page stays in the language the
+# installer started in.
+assert_true "the view step retranslates its QML engine on a language change" \
+    grep -q 'engine()->retranslate()' "$DISK_SRC/DiskViewStep.cpp"
+
+# A Qt context IS a class name, and check-translations.py check 5 resolves one to the file whose
+# stem matches. DiskModel says its own strings, so it has to be its own file or every one of them
+# would silently stay English the first time this page is translated (plan/23 §3).
+assert_file "$DISK_SRC/DiskModel.cpp" "DiskModel is a file of its own, because it calls tr()"
+assert_true "...and DiskConfig.cpp declares no DiskModel methods" \
+    bash -c "! grep -qE '^DiskModel::' '$DISK_SRC/DiskConfig.cpp'"
+
+# EVERY `disk.<name>` IN THE QML RESOLVES TO SOMETHING C++ DECLARES. A typo'd binding in QML is not
+# an error and not a warning: the expression is undefined and the control renders empty, so this is
+# what turns a silent blank into a failed build.
+assert_true "every QML binding resolves to a DiskConfig property or method" \
+    python3 -c '
+import re, sys, pathlib
+d = pathlib.Path(sys.argv[1])
+qml = (d / "qml" / "Disk.qml").read_text(encoding="utf-8")
+hdr = (d / "DiskConfig.h").read_text(encoding="utf-8")
+used = sorted(set(re.findall(r"\bdisk\.([A-Za-z_][A-Za-z0-9_]*)", qml)))
+assert used, "the QML binds to nothing at all - is the context property still called disk?"
+known = set(re.findall(r"Q_PROPERTY\(\s*\S+\s+(\w+)\s+READ", hdr))
+known |= set(re.findall(r"\b(\w+)\s*\([^)]*\)\s*(?:const)?\s*;", hdr))
+missing = [u for u in used if u not in known]
+assert not missing, "QML binds to %s, which DiskConfig does not declare" % ", ".join(missing)
+' "$DISK_SRC"
+# ...and every property either is CONSTANT or notifies a signal something actually emits. A NOTIFY
+# naming a signal nobody emits is a binding evaluated once and then never again — the page simply
+# stops updating, which looks exactly like "the value did not change".
+assert_true "every Q_PROPERTY is CONSTANT or notifies an emitted signal" \
+    python3 -c '
+import re, sys, pathlib
+d = pathlib.Path(sys.argv[1])
+hdr = (d / "DiskConfig.h").read_text(encoding="utf-8")
+cpp = (d / "DiskConfig.cpp").read_text(encoding="utf-8")
+bad = []
+for decl in re.findall(r"Q_PROPERTY\((.*?)\)", hdr, re.S):
+    flat = " ".join(decl.split()); name = flat.split()[1]
+    if "CONSTANT" in flat:
+        continue
+    m = re.search(r"NOTIFY\s+(\w+)", flat)
+    if not m:
+        bad.append("%s is neither CONSTANT nor NOTIFY" % name)
+    elif not re.search(r"void\s+%s\s*\(" % m.group(1), hdr):
+        bad.append("%s notifies %s, which is not declared" % (name, m.group(1)))
+    elif not re.search(r"emit\s+%s\s*\(" % m.group(1), cpp):
+        bad.append("%s notifies %s, which nothing emits" % (name, m.group(1)))
+assert not bad, "; ".join(bad)
+' "$DISK_SRC"
+
+# THE PACKAGED FALLBACK AND THE BUILD HAVE TO AGREE. files/disk.conf is what makes the module
+# loadable on its own (CalamaresConfig.cmake never exports INSTALL_CONFIG, so the glob installs
+# nothing without it) and the medium never reads it — /etc wins. That is exactly what lets it drift:
+# nothing on the medium would ever notice a fallback that still said 20 GB, and the first person to
+# load this module outside the pipeline would get a page enforcing a minimum this build abandoned.
+DISK_FALLBACK="$DISK_SRC/disk.conf"
+assert_file "$DISK_FALLBACK" "the packaged fallback disk.conf exists"
+assert_eq "$I_MIN_INSTALL_DISK_GB" \
+    "$(sed -nE 's/^minimumDiskSize:[[:space:]]+([0-9.]+).*/\1/p' "$DISK_FALLBACK")" \
+    "the fallback's minimum matches build.conf"
+assert_eq "$I_ESP_SIZE_MIB" \
+    "$(sed -nE 's/^espSizeMiB:[[:space:]]+([0-9]+).*/\1/p' "$DISK_FALLBACK")" \
+    "the fallback's ESP size matches build.conf"
+assert_eq "$I_ROOT_SLOT_SIZE_MIB" \
+    "$(sed -nE 's/^rootSlotSizeMiB:[[:space:]]+([0-9]+).*/\1/p' "$DISK_FALLBACK")" \
+    "the fallback's root slot size matches build.conf"
+
+# The module is `disk`, everywhere. A viewmodule called `partition` would collide file-for-file
+# with app-admin/calamares' own and ModuleManager would resolve the duplicate by search order,
+# silently (plan/24 §5).
+assert_true "the plugin is built as 'disk'" \
+    grep -qE '^calamares_add_plugin\(disk$' "$DISK_SRC/CMakeLists.txt"
+assert_true "...and the sidebar says Disk" \
+    bash -c "sed -n '/^DiskViewStep::prettyName/,/^}/p' '$DISK_SRC/DiskViewStep.cpp' | grep -q 'tr( \"Disk\" )'"
+assert_true "...and the QML travels inside the .so rather than being installed a second time" \
+    grep -q 'qt6_add_resources(${DISK_TARGET}' "$DISK_SRC/CMakeLists.txt"
+
 # ---- 7. YAML is YAML ------------------------------------------------------------------------
 # Calamares parses these with yaml-cpp and reports a parse error as a startup failure, so a
 # stray tab is a medium that does not install. Skipped rather than failed where PyYAML is absent,
@@ -620,20 +1004,22 @@ assert_eq "1" "${#installer_users[@]}" "exactly one profile emerges @installer"
 assert_eq "${#installer_users[@]}" "${#live_users[@]}" \
     "every profile that emerges @installer is a live profile"
 
-# The set names four atoms: Calamares, and the three view modules this project plugs into it — the
-# accounts page (plan/21), the language page (plan/22) and the greeting page (plan/23). Everything
-# else in the ~25-package tail is resolved, and a set that starts listing transitive deps stops
-# describing intent.
+# The set names five atoms: Calamares, and the four view modules this project plugs into it — the
+# accounts page (plan/21), the language page (plan/22), the greeting page (plan/23) and the disk
+# page (plan/24). Everything else in the ~25-package tail is resolved, and a set that starts listing
+# transitive deps stops describing intent.
 #
 # The count is asserted rather than the names, and it is a NUMBER on purpose: adding an atom here is
 # exactly the change that should have to be argued for in a diff, because @installer is the one set
-# whose contents the product image is forbidden to contain. The fourth was argued in plan/23 and is
-# a SPLIT of the third rather than new weight: a Calamares view step is one entry in the sidebar, so
-# a page with two screens had to become two modules.
-assert_eq "4" "$(grep -cvE '^[[:space:]]*(#|$)' "$REPO_ROOT/config/portage/sets/installer")" \
-    "@installer names exactly four atoms"
+# whose contents the product image is forbidden to contain. The fourth was argued in plan/23 and was
+# a SPLIT of the third rather than new weight. The fifth is argued in plan/24 and is a REPLACEMENT:
+# it takes a stock module out of the sequence rather than adding a page, and it drops this
+# installer's last use of KPMcore with it.
+assert_eq "5" "$(grep -cvE '^[[:space:]]*(#|$)' "$REPO_ROOT/config/portage/sets/installer")" \
+    "@installer names exactly five atoms"
 for atom in app-admin/calamares distro-base/distro-calamares-accounts \
-            distro-base/distro-calamares-greeting distro-base/distro-calamares-language; do
+            distro-base/distro-calamares-greeting distro-base/distro-calamares-language \
+            distro-base/distro-calamares-disk; do
     assert_true "@installer names $atom" \
         grep -qxF "$atom" "$REPO_ROOT/config/portage/sets/installer"
 done

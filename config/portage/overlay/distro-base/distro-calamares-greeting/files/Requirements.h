@@ -77,6 +77,13 @@ private:
 
     QStringList m_toCheck;
     QStringList m_toRequire;
-    double m_requiredStorageGiB = 0.0;
+    /*! Set when the configuration map could not be read as this module expects it. A page in this
+     *  state must not say yes: checkRequirements() emits a failing row of its own saying so, and
+     *  every other row reports its verdict as before. plan/24 §11 is the failure this prevents. */
+    bool m_configBroken = false;
+    /*! Decimal GB, not GiB — the unit a disk's vendor prints on it, and the unit the disk page
+     *  speaks (plan/24 §3). Rendered from build.conf's MIN_INSTALL_DISK_GB. */
+    double m_requiredStorageGB = 0.0;
+    /*! GiB, because memory really is sold in binary multiples. See memoryBytes(). */
     double m_requiredRamGiB = 0.0;
 };

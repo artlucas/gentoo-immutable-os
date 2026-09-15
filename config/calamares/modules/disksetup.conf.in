@@ -1,0 +1,46 @@
+# disksetup — the job that writes the GPT (plan/24).
+#
+# Replaces the exec half of Calamares' stock `partition` module. A Calamares view step owns its
+# jobs(), so replacing the page replaced the partitioner too; this file is what the replacement
+# is told.
+#
+# EVERY VALUE HERE IS A BUILD-TIME FACT, rendered by stage 40 from the same variables that
+# produced the image the medium carries — so the job never has to guess what it is installing.
+---
+# THE LAYOUT IS NOT IN THIS FILE, and that is the change plan/24 §4 exists for. This names the
+# helper stage 40 installs VERBATIM from scripts/lib/layout.sh — the same file, and the same two
+# shell functions, that stage 60 builds the factory .img with. The job runs it and pipes the
+# result into sfdisk.
+#
+# What that buys: an installed machine and an image dd'd to a disk are partitioned by one
+# description rather than by two that a test has to keep comparing (plan/16 §3.4 is why they have
+# to agree — sysupdate stops recognising a machine whose partition labels or types drift).
+layoutHelper:     "/usr/libexec/@DISTRO_ID@-disk-layout"
+
+# The geometry, from build.conf. modules/disk.conf renders the same two values for the page's bar.
+espSizeMiB:       @ESP_SIZE_MIB@
+rootSlotSizeMiB:  @ROOT_SLOT_SIZE_MIB@
+# The floor under /var, in MiB. Reached only by a disk the page should already have refused, so
+# this is the assertion rather than the policy: build.conf's MIN_INSTALL_DISK_GB is the policy,
+# and validate_config() checks that it leaves at least this much.
+minVarMiB:        4096
+
+# The same minimum the page applies, checked again before anything is written. The job does not
+# take the page's word for it: the answer arrives through GlobalStorage as a string, and a job
+# that erases a disk should re-ask every question it can answer itself.
+minimumDiskSize:  @MIN_INSTALL_DISK_GB@
+
+# The version that names the root slot, and the label the initrd will look for. The UKI's cmdline
+# says root=PARTLABEL=root_@VERSION@, baked in at build time and identical on every machine, so
+# these two have to agree with the payload this medium carries. The job checks that the layout
+# helper really did produce `rootPartLabel` and refuses to write the table if it did not — that
+# failure would otherwise be an install that completes and a machine that cannot find its root.
+version:          "@VERSION@"
+rootPartLabel:    "@ROOT_PARTLABEL@"
+
+# The filesystem labels the factory image's own filesystems carry (stage 60: `mkfs.ext4 -L var`,
+# `mkfs.vfat -n ESP`). Nothing reads them — /etc/fstab finds both partitions by PARTLABEL — but
+# "indistinguishable from an image dd'd to the disk" is the property this installer is built
+# around, and a label is part of what lsblk shows somebody comparing the two.
+varLabel:         "var"
+espLabel:         "ESP"

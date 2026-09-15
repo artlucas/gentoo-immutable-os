@@ -5,9 +5,10 @@ None of it ships in the product: [stage 40](../../scripts/stages/40-configure.sh
 tree only when the profile's sets include `installer`, and asserts its absence from every other
 profile. Designed in [plan/16](../../plan/16-installer.md); the accounts page that replaced the
 stock `users` module is [plan/21](../../plan/21-installer-accounts-page.md), the language page
-that replaced the stock `welcome` module is [plan/22](../../plan/22-installer-language-page.md), and
-the greeting page that took the second half of that replacement is
-[plan/23](../../plan/23-installer-greeting-page.md).
+that replaced the stock `welcome` module is [plan/22](../../plan/22-installer-language-page.md), the
+greeting page that took the second half of that replacement is
+[plan/23](../../plan/23-installer-greeting-page.md), and the disk page that replaced the stock
+`partition` module is [plan/24](../../plan/24-installer-disk-page.md).
 
 ## Where it goes
 
@@ -142,7 +143,7 @@ are ours.
 | `locale`, `keyboard`, `summary`, `finished`, `umount` | **kept**, unmodified |
 | `welcome` | **replaced** by `language` + `greeting` — the language list first and the requirements verdict second, because the stock page's order is in `WelcomePage.cpp` and no config key reaches it ([plan/22](../../plan/22-installer-language-page.md), split in [plan/23](../../plan/23-installer-greeting-page.md)). Its requirements **box** is borrowed rather than rewritten: `checker/` is vendored into the `greeting` module, because those three classes are private to the stock module and no header of theirs is installed |
 | `removeuser` | **kept** — and it works only because of the overlay; see below |
-| `partition` | **kept, reconfigured into a disk picker**: `allowManualPartitioning: false` plus a fixed `partitionLayout` leaves a device combo box and an Erase radio button |
+| `partition` | **replaced** by `disk` + `disksetup` ([plan/24](../../plan/24-installer-disk-page.md)). It was *kept and reconfigured* for the whole of Phase A — `allowManualPartitioning: false` plus a fixed `partitionLayout` leaves a device combo box and an Erase radio button — and what that leaves on screen is a partition editor with most of its controls taken away, in upstream's words for an installer that offers manual partitioning and side-by-side installs. Replacing the page replaced the partitioner too: a Calamares view step owns its `jobs()` |
 | `users` | **replaced** by `accounts` + `accountsetup` — one module where the mechanism is a choice, because upstream's could only offer domain join as an *addition* to a local account ([plan/21](../../plan/21-installer-accounts-page.md)) |
 | `unpackfs`, `mount` | **replaced** by `imagedeploy` |
 | `bootloader`, `grubcfg` | **replaced** by `imagebootloader` — four file copies and a three-line `loader.conf` |
@@ -180,8 +181,10 @@ custom step to do this by hand; the overlay does it for free.
 | `greeting` | `welcome` (the greeting **and** the checker) | the product, the sentence about erasing the disk, and the requirements verdict — in the language the page before it chose. A compiled view module from the overlay, not here; its config is `modules/greeting.conf.in`, which carries the `requirements:` block. Not called `welcome`: a viewmodule of that name would collide with `app-admin/calamares`' own, and `ModuleManager` resolves a duplicate name by search order without saying so |
 | `accounts` | `users` (the page) | the mode choice and its fields — a compiled view module from the overlay, not here; its config is `modules/accounts.conf.in` |
 | `accountsetup` | `users` (the jobs) + `managedenroll` | the local administrator, `/etc/hostname` and `/etc/hosts`, and then the domain join or the enrolment transplant |
+| `disk` | `partition` (the page) | the machine's disks, the ones that cannot be used and why, a to-scale picture of what is about to happen, and the checkbox that has to be ticked before Next lights up. A compiled view module from the overlay, not here; its config is `modules/disk.conf.in` |
+| `disksetup` | `partition` (the jobs) | releases the target's mounts, wipes it, writes the GPT and makes the two filesystems there are to make. The layout comes from `scripts/lib/layout.sh` — **the pipeline's own**, installed on the medium as `/usr/libexec/<id>-disk-layout` — so an installed machine and an image `dd`'d to a disk are partitioned by one description rather than two |
 
-All but `accounts` are Python job modules — a directory, a `module.desc` and a `main.py`.
+All but `accounts` and `disk` are Python job modules — a directory, a `module.desc` and a `main.py`.
 `module.desc`'s `name` **must** equal the directory name: `ModuleManager` compares the two and silently skips the
 module when they differ, which produces an install that runs to "finished" having never written
 the bootloader. Both stage 40 and `tests/test-installer.sh` assert it.
@@ -214,11 +217,17 @@ an installed system with no preinstalled apps until someone installs them.
   The cost was measured rather than estimated: the locale archive goes from 2.9 MiB to 9.8 MiB.
   What remains is the *reverse* limit, and it is now the interesting one — a language absent from
   that table cannot be chosen at all, which is a deliberate trade and not an oversight.
-- **The medium is excluded from the disk picker by Calamares, not by us.**
-  `PartUtils::getDevices(WritableOnly)` drops any device holding a partition mounted at `/`
-  (`core/DeviceList.cpp:178`). The live root is mounted at `/`, so the USB device disappears
-  before the page is drawn. Worth verifying on the first hardware run: it is the one failure in
-  this installer that destroys data.
+- ~~**The medium is excluded from the disk picker by Calamares, not by us.**~~ **Ours since
+  [plan/24](../../plan/24-installer-disk-page.md).** This used to read: `PartUtils::getDevices(WritableOnly)`
+  drops any device holding a partition mounted at `/` (`core/DeviceList.cpp:178`), so the USB
+  device disappears before the page is drawn. We no longer run that code. The rule is implemented
+  three times now — in the page (`liveMediumDisk()`), in the job that writes the GPT
+  (`check_target()`, which does not take the page's word for it), and in the greeting page's
+  requirement checker, which already had its own copy. All three test the same thing the same way:
+  a partition of disk *D* is a directory **inside** `/sys/block/D`, which is what makes
+  `nvme0n1p3` resolve to `nvme0n1` without any rule about trailing digits. It remains the one
+  failure in this installer that destroys data, and it is still worth verifying on the first
+  hardware run — what changed is that the medium is now *visible* in the list, greyed, saying why.
 - **Remove the medium before rebooting.** The installed root and var carry the same PARTLABELs as
   the stick's, because those strings are the system's identity and are deliberately not
   profile-suffixed. With both attached, `/dev/disk/by-partlabel/` resolves each name to whichever

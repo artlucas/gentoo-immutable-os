@@ -9,6 +9,7 @@ therefore cannot be built the way everything else in `config/rootfs/` is:
 | `<id>-calamares-accounts` | The installer's accounts page ([plan/21](../../../plan/21-installer-accounts-page.md)). Calamares accepts **only** C++ `QtPlugin` view modules — `ModuleFactory.cpp:53` — so a page cannot be a script. Its UI is QML with Kirigami, compiled into the plugin as a Qt resource; the C++ is a thin host |
 | `<id>-calamares-language` | The installer's language page ([plan/22](../../../plan/22-installer-language-page.md)), replacing the first half of the stock `welcome` module. Same wall, and one thing of its own: being **first in the sequence**, it is where `QQuickStyle::setStyle()` has to happen for every later QML page to have icons |
 | `<id>-calamares-greeting` | The installer's greeting page ([plan/23](../../../plan/23-installer-greeting-page.md)), replacing the other half. It owns the six requirement checks — including the disk check `-DCMAKE_DISABLE_FIND_PACKAGE_LIBPARTED=ON` silently deletes from upstream's — because a requirement is contributed by whichever module is in the sequence. Unlike its siblings it is **Qt Widgets, not QML**: the requirements box it draws is three classes vendored from the stock module, which are private to it and installed nowhere |
+| `<id>-calamares-disk` | The installer's disk page ([plan/24](../../../plan/24-installer-disk-page.md)), replacing the stock `partition` module outright rather than configuring it into a picker. Same wall as the others; what is particular to it is what it does **not** link against — no kpmcore, no libparted. It reads `/sys/block` for the disks and asks `lsblk` for what is on them, and the partitioning itself is a python job running the pipeline's own `scripts/lib/layout.sh` |
 
 They go to different images, and the split is deliberate rather than incidental. The KCM is in
 `@desktop` marked `#not-live`, so it reaches the product and **not** the installer medium — a live
@@ -75,6 +76,10 @@ config/portage/overlay/
     distro-calamares-greeting/
       distro-calamares-greeting-N.ebuild.in
       files/                    C++ only — no qml/ — plus files/checker/, vendored from Calamares
+    distro-calamares-disk/
+      distro-calamares-disk-N.ebuild.in
+      files/                    same shape as the language page; DiskModel is its own file
+                                because it calls tr() and a Qt context is a class name
 ```
 
 **Everything is rendered and rebranded on the way in.** Stage 20 runs the same

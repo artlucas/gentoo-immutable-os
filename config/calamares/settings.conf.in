@@ -9,9 +9,10 @@
 # package manager to run, no bootloader to generate and no fstab to write — the root filesystem
 # is an EROFS image that gets written to a partition byte-for-byte, and everything else was
 # decided at build time and is already inside it. So the stock modules that make sense here are
-# the ones that ASK THE USER SOMETHING (welcome, locale, keyboard) plus the ones that write
-# per-machine identity into /etc; the ones that do disk work are ours, and so — since
-# plan/21 — is the one that asks about accounts.
+# the ones that ASK THE USER SOMETHING (locale, keyboard) plus the ones that write per-machine
+# identity into /etc. Everything that touches a disk is ours, and so are the four pages: the
+# language list and the greeting (plan/22, plan/23), the disk (plan/24) and the accounts
+# question (plan/21).
 ---
 
 # `local` is <libdir>/calamares/modules — upstream's own modules, exactly as the ebuild installed
@@ -45,9 +46,16 @@ sequence:
   - greeting
   - locale
   - keyboard
-  # Whole-disk erase only, and the page is therefore a DISK PICKER rather than a partition
-  # editor — see modules/partition.conf for how a fixed partitionLayout does that.
-  - partition
+  # THE DISK, and since plan/24 this is ours too. It asks one question — which disk — and it is a
+  # disk picker in its own right rather than the stock partition editor with its controls
+  # configured away: rows that name the machine's disks by what is printed on them and what is on
+  # them now, the disks that cannot be used listed with the reason, a to-scale picture of what is
+  # about to happen, and one checkbox that has to be ticked before Next lights up.
+  #
+  # It is NOT called `partition`: a compiled viewmodule of that name would collide file-for-file
+  # with app-admin/calamares' own, and ModuleManager resolves a duplicate name by taking whichever
+  # modules-search entry it reached first, silently. The sidebar says "Disk".
+  - disk
   # Who will use this computer, as ONE choice: local accounts only, a managed system, or an
   # enterprise domain (plan/21). A compiled Calamares view module from the in-repo Portage
   # overlay, because Calamares accepts only C++ QtPlugin views — but MANDATORY, unlike the
@@ -58,10 +66,15 @@ sequence:
   - accounts
   - summary
 - exec:
-  # 1. The disk. Writes the GPT and creates the filesystems, from the fixed layout in
-  #    partition.conf. The two root slots are created UNFORMATTED: there is nothing to mkfs,
-  #    because what goes in them is an image.
-  - partition
+  # 1. The disk. Writes the GPT and creates the two filesystems there are to make, from
+  #    scripts/lib/layout.sh — the pipeline's OWN layout function, installed on this medium as
+  #    /usr/libexec/<id>-disk-layout, so an installed machine and an image dd'd to a disk are
+  #    partitioned by one description rather than two (plan/24 §4). The two root slots are created
+  #    UNFORMATTED: there is nothing to mkfs, because what goes in them is an image.
+  #
+  #    A separate module from the page above, and it has to be: a Calamares view step owns its
+  #    jobs(), so replacing stock `partition`'s page replaced its partitioner as well.
+  - disksetup
   # 2. Our three. Between them they are the whole install (plan/16 §5.1): write the root EROFS
   #    into slot A, mount the target the way the initrd does — /etc overlay included — seed
   #    /var, and put systemd-boot and the UKI on the ESP.
@@ -107,7 +120,7 @@ dont-chroot: false
 oem-setup: false
 
 disable-cancel: false
-# Past `partition` the disk has been rewritten; cancelling there would leave a machine with a
+# Past `disksetup` the disk has been rewritten; cancelling there would leave a machine with a
 # fresh GPT, no bootloader and no root. Better to finish and let the user retry.
 disable-cancel-during-exec: true
 hide-back-and-next-during-exec: true

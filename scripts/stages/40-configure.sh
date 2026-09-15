@@ -1065,6 +1065,19 @@ if profile_has_set installer; then
       scripts/relock.sh ${DISTRO_ID}-base/${DISTRO_ID}-calamares-greeting --profile installer"
   log "installer: the greeting page is installed"
 
+  # THE DISK PAGE (plan/24), and its absence is the one that fails in the exec phase rather than
+  # on screen. It is the only page that chooses a disk, and the `disksetup` job reads that choice
+  # out of GlobalStorage — so a medium without it boots an installer that asks for a language, a
+  # keyboard and an account, says "really install?", and then stops with no device to write to,
+  # having already told the user their disk was about to be erased.
+  compgen -G "$TARGET/usr/lib*/calamares/modules/disk/module.desc" >/dev/null \
+    || die "verify: the installer's disk page is not installed, so this medium would run an
+  installer with nothing to choose a disk with and would fail in the exec phase (plan/24 §5). It
+  comes from ${DISTRO_ID}-base/${DISTRO_ID}-calamares-disk in config/portage/overlay, which
+  reaches an image only through a re-resolved lock:
+      scripts/relock.sh ${DISTRO_ID}-base/${DISTRO_ID}-calamares-disk --profile installer"
+  log "installer: the disk page is installed"
+
   # INSTALLER_LANGUAGES — the `languages:` block for modules/language.conf — is built by
   # load_languages() in lib/common.sh, not here, because this stage is not the only thing that
   # renders that template: tests/test-installer.sh renders the whole Calamares tree offline, and a
@@ -1072,6 +1085,12 @@ if profile_has_set installer; then
   log "installer: language page offers $(grep -c '^    - id:' <<<"$INSTALLER_LANGUAGES") languages"
 
   export GPT_TYPE_ROOT_X64 GPT_TYPE_VAR ROOT_SLOT_SIZE_MIB ROOT_PARTLABEL UKI_NAME PAYLOAD_DIR
+  # ...and the two the disk page and its job are rendered from (plan/24). ESP_SIZE_MIB and
+  # MIN_INSTALL_DISK_GB are build.conf's; each reaches TWO templates, which is the whole reason
+  # they are rendered rather than written out: modules/disk.conf draws the bar and states the
+  # minimum, modules/disksetup.conf creates the partitions and re-checks the minimum, and
+  # modules/greeting.conf gates Next on the same number.
+  export ESP_SIZE_MIB MIN_INSTALL_DISK_GB
 
   # Renders *.in through render_template and copies everything else verbatim. Deliberately NOT
   # install_rootfs_overlay: that walks config/rootfs and rebrands "distro" in basenames, and this
@@ -1140,6 +1159,7 @@ if profile_has_set installer; then
     --source-dir "$REPO/config/portage/overlay/distro-base/distro-calamares-language/files" \
     --source-dir "$REPO/config/portage/overlay/distro-base/distro-calamares-greeting/files" \
     --source-dir "$REPO/config/portage/overlay/distro-base/distro-calamares-accounts/files" \
+    --source-dir "$REPO/config/portage/overlay/distro-base/distro-calamares-disk/files" \
     || die "installer: the branding translations do not match config/languages.conf or the module
   sources (plan/22 §4). Nothing above this line is a runtime error in Qt — a mismatched source
   string is a page that stays English — which is why it is a build failure here."
@@ -1197,6 +1217,55 @@ if profile_has_set installer; then
       || die "verify: module.desc in local-modules/$m does not declare name: \"$m\" — Calamares
   would skip it silently and the install would stop at a missing step"
   done
+
+  # ---- the layout helper: the pipeline's own partitioner, on the medium (plan/24 §4) --------
+  #
+  # scripts/lib/layout.sh, VERBATIM. It is a library when sourced — common.sh sources it, so stage
+  # 60 builds the factory .img from these functions — and a CLI when executed, which is how the
+  # `disksetup` job gets the sfdisk script for the disk the user chose.
+  #
+  # THE COPY IS THE POINT. Until plan/24 the installed machine's partitions came from a
+  # `partitionLayout:` block in modules/partition.conf and the factory image's came from
+  # emit_sfdisk_script() in lib/common.sh: two descriptions of one layout, 300 lines apart in two
+  # languages, that tests/test-installer.sh had to compare label by label and GUID by GUID. That
+  # test could only ever catch the drift it was taught to look for, and plan/16 §3.4 is what makes
+  # drift fatal — a machine whose partition labels or GPT types differ from the image's is one
+  # systemd-sysupdate stops recognising. One file cannot disagree with itself.
+  #
+  # cp and chmod rather than cal_install: this is not a template (it must stay byte-identical) and
+  # it has to be executable, which cal_install's 0644 would take away.
+  DISK_LAYOUT_SRC="$REPO/scripts/lib/layout.sh"
+  DISK_LAYOUT_DST="$TARGET/usr/libexec/$DISTRO_ID-disk-layout"
+  [[ -f $DISK_LAYOUT_SRC ]] \
+    || die "installer: $DISK_LAYOUT_SRC is missing — it is where the partition layout lives, and
+  the medium's disksetup job runs it to produce the sfdisk script (plan/24 §4)"
+  ensure_dir "$(dirname -- "$DISK_LAYOUT_DST")"
+  cp -f -- "$DISK_LAYOUT_SRC" "$DISK_LAYOUT_DST"
+  chmod 0755 -- "$DISK_LAYOUT_DST"
+  # Byte-for-byte, asserted rather than assumed. A rendered or rewritten copy would be a second
+  # description again, which is the thing this file exists to stop.
+  cmp -s "$DISK_LAYOUT_SRC" "$DISK_LAYOUT_DST" \
+    || die "installer: $DISK_LAYOUT_DST is not byte-identical to $DISK_LAYOUT_SRC"
+  # ...and it has to actually run on the medium, which is a different claim from "it was copied".
+  # The builder's bash is the image's bash, so a syntax error here is a syntax error there.
+  bash -n "$DISK_LAYOUT_DST" \
+    || die "installer: the disk layout helper does not parse as bash"
+  # One real invocation, against a plausible disk, checked for the one string an installed machine
+  # cannot boot without. This is the cheapest place to catch a layout helper that runs and emits
+  # the wrong thing: everything after it is a stranger's hardware.
+  _layout_probe="$("$DISK_LAYOUT_DST" sfdisk --disk-mib 65536 \
+                     --esp-mib "$ESP_SIZE_MIB" --slot-mib "$ROOT_SLOT_SIZE_MIB" \
+                     --version "$VERSION")" \
+    || die "installer: the disk layout helper failed on a 64 GiB disk"
+  for _want in "name=\"esp\"" "name=\"$ROOT_PARTLABEL\"" "name=\"_empty\"" "name=\"var\""; do
+    grep -qF -- "$_want" <<<"$_layout_probe" \
+      || die "installer: the disk layout helper does not create $_want. The initrd finds root by
+  PARTLABEL off the UKI cmdline and /etc/fstab finds var and esp the same way, so a machine
+  installed from this medium would not boot (plan/16 §3.4)."
+  done
+  # Counted out of the probe, not out of PART_COUNT: the helper ran in a subprocess, so this
+  # stage's own shell variables say nothing about what it produced.
+  log "installer: the disk layout helper is installed and creates $(grep -c '^start=' <<<"$_layout_probe") partitions"
 
   # The branding logo, composed by the same function that produces the boot splash's two halves.
   # Every raster artefact in this build comes out of one build_block(): the user sees this
@@ -2111,16 +2180,26 @@ if profile_has_set installer; then
   additive by construction (Config.cpp:1088-1104) — exactly the shape the accounts page exists
   to remove."
 
-  # The payload, and the one string that ties it to the boot: partition.conf creates a partition
-  # with this label and the UKI cmdline looks for it. They are rendered from the same variable,
-  # so this catches an edit that hardcoded one of them.
+  # The payload, and the one string that ties it to the boot. Three files have to agree about it:
+  # the layout helper CREATES a partition with this label (checked against a real invocation
+  # further up, where the helper is installed), disksetup.conf tells the job to REFUSE a layout
+  # that did not, and imagedeploy.conf LOOKS for it. They are rendered from the same variable, so
+  # this catches an edit that hardcoded one of them.
+  #
+  # Until plan/24 the first of those three was modules/partition.conf's partitionLayout block. It
+  # is gone, along with the module it configured.
   [[ -s $TARGET$PAYLOAD_DIR/root.erofs && -s $TARGET$PAYLOAD_DIR/uki.efi ]] \
     || die "verify: the payload is missing from $PAYLOAD_DIR"
   grep -q "\"root_partlabel\": \"$ROOT_PARTLABEL\"" "$TARGET$PAYLOAD_DIR/manifest.json" \
     || die "verify: manifest.json's root_partlabel is not $ROOT_PARTLABEL"
-  grep -q "\"$ROOT_PARTLABEL\"" "$TARGET/etc/calamares/modules/partition.conf" \
-    || die "verify: partition.conf does not create a partition labelled $ROOT_PARTLABEL —
-  the initrd's root=PARTLABEL=$ROOT_PARTLABEL would find nothing on the installed disk"
+  [[ ! -e $TARGET/etc/calamares/modules/partition.conf ]] \
+    || die "verify: /etc/calamares/modules/partition.conf is on the medium, but the stock
+  partition module left the sequence in plan/24. A stale config for a module that later comes back
+  under the same name is not inert — see the welcome.conf finding above the rm -rf of /etc/calamares."
+  grep -q "\"$ROOT_PARTLABEL\"" "$TARGET/etc/calamares/modules/disksetup.conf" \
+    || die "verify: disksetup.conf does not require the layout to create a partition labelled
+  $ROOT_PARTLABEL — the initrd's root=PARTLABEL=$ROOT_PARTLABEL would find nothing on the
+  installed disk"
   grep -q "$ROOT_PARTLABEL" "$TARGET/etc/calamares/modules/imagedeploy.conf" \
     || die "verify: imagedeploy.conf does not look for $ROOT_PARTLABEL"
 

@@ -1,0 +1,40 @@
+# The disk page (plan/24).
+#
+# GENERATED from config/calamares/modules/disk.conf.in by stage 40 into
+# /etc/calamares/modules/disk.conf, which Calamares searches before /usr/share/calamares/modules
+# (modulesystem/Module.cpp). The module ships a packaged fallback with the same values; this is
+# the copy the medium reads.
+#
+# THIS FILE REPLACED modules/partition.conf, and the difference is what is NOT in it. That file
+# was 120 lines, most of them a `partitionLayout:` block naming four partitions, their GPT type
+# GUIDs and their sizes — a second description of the layout scripts/lib/common.sh already had,
+# which tests/test-installer.sh had to compare against it label by label. The layout now lives in
+# scripts/lib/layout.sh alone, installed on the medium and run by the `disksetup` job
+# (plan/24 §4), and what is left here is the three numbers the PAGE needs in order to draw what is
+# about to happen.
+#
+# There is still no manual partitioning, no filesystem choice and no swap choice, for the reason
+# plan/16 §5.3 gave when the stock module was configured into a disk picker: the layout is fixed
+# by design. The difference is that it is no longer expressed as a partition editor with its
+# controls removed.
+---
+# The smallest disk this page will offer, in DECIMAL GB — the unit printed on the disk, and the
+# unit every size on this page is written in (plan/24 §3).
+#
+# NOT A NUMBER WRITTEN HERE: it is build.conf's MIN_INSTALL_DISK_GB, and modules/greeting.conf
+# renders its `requiredStorage` from the same value. The greeting page decides whether the install
+# may start at all and this page decides which disks are selectable; two numbers would eventually
+# be two answers, and the shape of that failure is an installer that says this computer can
+# install and then offers nothing to install onto.
+minimumDiskSize:  @MIN_INSTALL_DISK_GB@
+
+# What the page draws in its bar, in MiB, from the same build.conf values the `disksetup` job is
+# given — ESP_SIZE_MIB and ROOT_SLOT_SIZE_MIB. The picture the user is shown and the partitions
+# that get written have to be the same layout, and the only way to be sure of that is for both to
+# be rendered from one place.
+#
+# The page needs these and NOT the GPT type GUIDs, the partition names or the order: it draws four
+# labelled segments and says how big each one is. Everything that has to be exactly right about a
+# partition table is the job's, because the job is what writes it.
+espSizeMiB:       @ESP_SIZE_MIB@
+rootSlotSizeMiB:  @ROOT_SLOT_SIZE_MIB@

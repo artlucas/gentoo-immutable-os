@@ -96,3 +96,28 @@ distro-base/distro-calamares-language
 # the disk check that upstream silently drops on a Calamares built without libparted (plan/22 §3a).
 # A medium without it would offer to install onto a 16 GiB disk and fail at the partition step.
 distro-base/distro-calamares-greeting
+
+# ---- the disk page (plan/24) ------------------------------------------------------------------
+# The page that chooses a disk, and the module that replaced stock `partition` outright rather than
+# configuring it into something else. That module was kept and reconfigured for the whole of Phase
+# A — `allowManualPartitioning: false` plus a fixed `partitionLayout` leaves a device combo box and
+# an Erase radio button — and what it left on screen was a partition editor with most of its
+# controls taken away, using upstream's words for an installer that offers manual partitioning,
+# side-by-side installs and filesystem choices. This distro has none of those.
+#
+# It is NOT called `partition`, for the same file-collision reason as its three siblings, and
+# because ModuleManager takes the first module.desc it finds for a name across modules-search: two
+# modules of one name would resolve by list order, with nothing in the log saying which won.
+#
+# MANDATORY. It is the only page that chooses a disk, and the `disksetup` job reads its answer out
+# of GlobalStorage — so a medium without it runs an installer that reaches the accounts page and
+# then fails in the exec phase with no device to write to. Stage 40 refuses to build one.
+#
+# What it does NOT drag in is the point of the atom: no kpmcore, no libparted, no udisks. The page
+# reads /sys/block and asks lsblk for each row's second line; the job runs sfdisk and mkfs. The
+# dependency it replaces was upstream's KPMcore backend, which arrives with app-admin/calamares
+# either way and is now simply never used.
+#
+# Named only by this profile, like the other three: on a desktop image it would install a Calamares
+# plugin into a system with no Calamares.
+distro-base/distro-calamares-disk

@@ -37,6 +37,7 @@ SOURCES=(
   "config/portage/overlay/distro-base/distro-calamares-language/files"
   "config/portage/overlay/distro-base/distro-calamares-greeting/files"
   "config/portage/overlay/distro-base/distro-calamares-accounts/files"
+  "config/portage/overlay/distro-base/distro-calamares-disk/files"
 )
 
 # The .ts list is the TABLE's, both ways: a language with no file gets one, and a file for a

@@ -275,6 +275,10 @@ validate_config() {
   # Same ${x=y} shape once more, for the installer payload switch (plan/16 §5.1). Only the
   # `installer` profile stages a payload, so every other build validates this and ignores it.
   : "${INSTALLER_PAYLOAD_FLATPAKS=1}"
+  # The installer's minimum disk (plan/24 §3), defaulted for the same reason as every knob
+  # above: a build.conf written before it existed still has to validate. Read only by the two
+  # Calamares templates it is rendered into, and checked below against the layout it has to hold.
+  : "${MIN_INSTALL_DISK_GB=32}"
   # Managed mode (plan/19). Same ${x=y} shape as every knob above: a build.conf written before
   # the feature existed still has to validate, and both keys are only ever READ by stage 40 and
   # by the client's own template.
@@ -297,6 +301,19 @@ validate_config() {
   for n in ESP_SIZE_MIB ROOT_SLOT_SIZE_MIB VAR_SIZE_MIB; do
     [[ ${!n} =~ ^[0-9]+$ ]] || die "build.conf: $n must be an integer MiB count"
   done
+  [[ $MIN_INSTALL_DISK_GB =~ ^[0-9]+$ ]] \
+    || die "build.conf: MIN_INSTALL_DISK_GB must be an integer count of decimal GB"
+  # ...and it has to be a disk this layout actually fits on, which is arithmetic rather than
+  # judgement: the ESP, both root slots, the two alignment megabytes, and 4 GiB of /var — below
+  # which the seeded Flatpak store does not land. Without this check the number is free to drift
+  # below the thing it exists to guarantee, and the symptom is an installer whose picker offers a
+  # disk its own job then refuses (lib/layout.sh's emit_install_sfdisk_script).
+  local min_mib=$(( MIN_INSTALL_DISK_GB * 1000000000 / 1048576 ))
+  local need_mib=$(( 1 + ESP_SIZE_MIB + 2 * ROOT_SLOT_SIZE_MIB + 1 + 4096 ))
+  (( min_mib >= need_mib )) \
+    || die "build.conf: MIN_INSTALL_DISK_GB=$MIN_INSTALL_DISK_GB is ${min_mib} MiB, and this
+  layout needs ${need_mib} MiB (a ${ESP_SIZE_MIB} MiB ESP, two ${ROOT_SLOT_SIZE_MIB} MiB root
+  slots, 2 MiB of alignment and 4096 MiB of /var)"
   [[ $UPDATE_VERIFY =~ ^[01]$ ]] || die "build.conf: UPDATE_VERIFY must be 0 or 1"
   [[ $SPLASH_BACKEND =~ ^(kms|stub|both|none)$ ]] \
     || die "build.conf: SPLASH_BACKEND must be kms|stub|both|none (got: $SPLASH_BACKEND)"
@@ -595,84 +612,17 @@ render_branding() {
   return 0   # never let the last iteration's case status become the function's
 }
 
-# ---- GPT / image layout (pure math; unit-tested) ---------------------------------
-GPT_TYPE_ESP="C12A7328-F81F-11D2-BA4B-00A0C93EC93B"
-GPT_TYPE_ROOT_X64="4F68BC64-6ACB-4AA4-B891-DB7CD79ABF44"
-GPT_TYPE_VAR="4D21B016-B534-45C2-A9FB-5C16E091FD2D"
-
-# compute_layout ESP_MIB SLOT_MIB VAR_MIB [SLOTS] — sets the partition offsets for the image.
-# 1 MiB leading alignment gap + 1 MiB trailing slack for the backup GPT.
+# ---- GPT / image layout ----------------------------------------------------------
+# compute_layout(), emit_sfdisk_script() and the three GPT type GUIDs USED TO BE HERE and are now
+# in lib/layout.sh, unchanged. They moved for one reason (plan/24 §4): the installer needs them
+# too, and stage 40 puts that file on the medium verbatim, so the machine somebody installs and
+# the factory .img are partitioned by the same lines of shell rather than by two descriptions of
+# one layout that a test has to keep comparing.
 #
-# Two APIs over the same numbers, deliberately:
-#   POSITIONAL  P<n>_START_MIB / P<n>_SIZE_MIB for n in 1..PART_COUNT, in on-disk order. This is
-#               what the sfdisk script and the byte-offset assertions in tests/ speak.
-#   BY ROLE     ESP_START_MIB, ROOT_A_START_MIB, ROOT_B_START_MIB, VAR_START_MIB. Callers that
-#               care WHICH partition they are writing should use these, because the positional
-#               index of `var` moves with SLOTS and a hardcoded P4 would silently write the
-#               payload past the end of a one-slot image.
-#
-# SLOTS is the number of root slots, 2 (default) or 1:
-#   2  the A/B layout every INSTALLABLE image has. Slot B ships as zeros under PARTLABEL=_empty;
-#      systemd-sysupdate writes the next version into it and relabels (plan/01, plan/05).
-#   1  live media only. A live medium is never updated — stage 40 masks systemd-sysupdate for
-#      live-role profiles — so a second 6 GiB slot would be 6 GiB of zeros on every stick.
-#      Requested by config/profiles/*.conf's PROFILE_ROOT_SLOTS (plan/16 §3.1).
-compute_layout() {
-  local esp=$1 slot=$2 var=$3 slots=${4:-2}
-  [[ $slots == 1 || $slots == 2 ]] || die "compute_layout: SLOTS must be 1 or 2 (got: $slots)"
-
-  # Stale offsets from an earlier call in the same shell are worse than absent ones: a 1-slot
-  # layout that inherits P4_* from a 2-slot one hands out an offset for a partition that does
-  # not exist. The tests call this repeatedly in one process, so clear before setting.
-  unset P1_START_MIB P1_SIZE_MIB P2_START_MIB P2_SIZE_MIB \
-        P3_START_MIB P3_SIZE_MIB P4_START_MIB P4_SIZE_MIB ROOT_B_START_MIB
-
-  P1_START_MIB=1;                              P1_SIZE_MIB=$esp
-  P2_START_MIB=$((P1_START_MIB + P1_SIZE_MIB)); P2_SIZE_MIB=$slot
-  ESP_START_MIB=$P1_START_MIB
-  ROOT_A_START_MIB=$P2_START_MIB
-
-  if [[ $slots == 2 ]]; then
-    P3_START_MIB=$((P2_START_MIB + P2_SIZE_MIB)); P3_SIZE_MIB=$slot
-    P4_START_MIB=$((P3_START_MIB + P3_SIZE_MIB)); P4_SIZE_MIB=$var
-    ROOT_B_START_MIB=$P3_START_MIB
-    VAR_START_MIB=$P4_START_MIB
-    PART_COUNT=4
-    TOTAL_MIB=$((P4_START_MIB + P4_SIZE_MIB + 1))
-  else
-    P3_START_MIB=$((P2_START_MIB + P2_SIZE_MIB)); P3_SIZE_MIB=$var
-    ROOT_B_START_MIB=""
-    VAR_START_MIB=$P3_START_MIB
-    PART_COUNT=3
-    TOTAL_MIB=$((P3_START_MIB + P3_SIZE_MIB + 1))
-  fi
-}
-
-# emit_sfdisk_script VERSION — prints the sfdisk input for the computed layout.
-# compute_layout must have been called first.
-#
-# The NAMES here are the installed system's identity and are never profile-suffixed: the initrd
-# finds root by PARTLABEL=root_<version> off the UKI cmdline, /etc/fstab finds var and esp by
-# PARTLABEL, sysupdate matches root_@v, and repart.d/50-var.conf grows the partition whose TYPE
-# is var. Change one of these strings and an installed machine stops updating (plan/16 §3.4).
-emit_sfdisk_script() {
-  local version=$1
-  [[ -n ${TOTAL_MIB:-} ]] || die "emit_sfdisk_script: call compute_layout first"
-  printf 'label: gpt\n'
-  printf 'start=%sMiB, size=%sMiB, type=%s, name="esp"\n' \
-         "$P1_START_MIB" "$P1_SIZE_MIB" "$GPT_TYPE_ESP"
-  printf 'start=%sMiB, size=%sMiB, type=%s, name="root_%s"\n' \
-         "$P2_START_MIB" "$P2_SIZE_MIB" "$GPT_TYPE_ROOT_X64" "$version"
-  # Slot B, present only on installable images. "_empty" is systemd-sysupdate's own convention
-  # for an unused instance slot, not a name this project invented: sysupdate's partition target
-  # claims a partition whose label is empty or "_empty" when it needs a free instance.
-  if [[ ${PART_COUNT:-4} == 4 ]]; then
-    printf 'start=%sMiB, size=%sMiB, type=%s, name="_empty"\n' \
-           "$P3_START_MIB" "$P3_SIZE_MIB" "$GPT_TYPE_ROOT_X64"
-  fi
-  printf 'start=%sMiB, size=%sMiB, type=%s, name="var"\n' \
-         "$VAR_START_MIB" "$((PART_COUNT == 4 ? P4_SIZE_MIB : P3_SIZE_MIB))" "$GPT_TYPE_VAR"
-}
+# Sourced rather than duplicated, and sourced HERE rather than at the top of the file, so that
+# the functions land in the same place in the reading order they always occupied.
+# shellcheck source=layout.sh
+source "$(dirname -- "${BASH_SOURCE[0]}")/layout.sh"
 
 # ---- stage stamps (resume support) -------------------------------------------------
 sha256_file() { sha256sum -- "$1" | cut -d' ' -f1; }
