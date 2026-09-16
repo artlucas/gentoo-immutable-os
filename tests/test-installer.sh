@@ -364,6 +364,26 @@ for f in "${BRAND_FILES[@]}"; do
     fi
 done
 
+# THE SIDEBAR READS FROM THE LEFT (plan/26 §5). The widget flavour hard-codes centred step names
+# in upstream's ProgressTreeDelegate — unreachable from branding — so the QML flavour is used and
+# the branding component ships the sidebar QML itself (searchQmlFile looks in the branding
+# directory before the compiled-in stock copy). Both halves are asserted: the flavour switched,
+# and the shipped file is the left-aligned one.
+assert_true "branding.desc switches the sidebar to QML" \
+    grep -qE '^sidebar:[[:space:]]+qml$' "$BRAND"
+assert_true "...and only the sidebar — the bottom bar stays widget" \
+    grep -qE '^navigation:[[:space:]]+widget$' "$BRAND"
+SIDEBAR_QML="$CAL/branding/installer/calamares-sidebar.qml"
+assert_file "$SIDEBAR_QML" "the branding component carries its own calamares-sidebar.qml"
+assert_true "...whose step text is left-aligned with a margin" \
+    bash -c "grep -q 'anchors.left: parent.left' '$SIDEBAR_QML' &&
+             grep -q 'anchors.leftMargin: 12' '$SIDEBAR_QML'"
+assert_false "...and no step text is centred any more" \
+    bash -c "sed -n '/Repeater {/,/^        }/p' '$SIDEBAR_QML' |
+             grep -v '^[[:space:]]*//' | grep -q 'horizontalCenter'"
+assert_true "...and the colours still come from the branding style, not the copy" \
+    grep -q 'Branding.styleString' "$SIDEBAR_QML"
+
 # ---- 6. the modules exist and are wired into the sequence -----------------------------------
 SETTINGS="$RENDER/settings.conf"
 assert_file "$SETTINGS" "settings.conf rendered"

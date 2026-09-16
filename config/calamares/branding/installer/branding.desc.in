@@ -17,7 +17,14 @@ welcomeExpandingLogo:   true
 windowExpanding:    normal
 windowSize:         900px,600px
 windowPlacement:    center
-sidebar:            widget
+# QML, not widget, for one reason (plan/26 §5): the widget sidebar centres every step name in
+# ProgressTreeDelegate.cpp — a hard-coded Qt::AlignHCenter inside app-admin/calamares that no
+# branding file can reach — and this installer's steps read better from the left. The QML flavour
+# loads calamares-sidebar.qml from the branding directory BEFORE the compiled-in stock one
+# (utils/Qml.cpp's search order), so the copy beside this file is ours by filename alone: the
+# same file as upstream's, with the step text left-aligned and given a margin. The bottom
+# navigation bar stays widget; it was never the problem.
+sidebar:            qml
 navigation:         widget
 
 strings:
