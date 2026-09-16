@@ -7,6 +7,7 @@
 
 #include "GlobalStorage.h"
 #include "JobQueue.h"
+#include "ViewManager.h"
 #include "utils/Logger.h"
 #include "utils/Retranslator.h"
 
@@ -44,6 +45,17 @@ DiskViewStep::DiskViewStep( QObject* parent )
     // with more does not compile.
     connect( m_config, &DiskConfig::nextEnabledChanged, this, [ this ] {
         emit nextStatusChanged( m_config->nextEnabled() );
+    } );
+
+    // THE OTHER HALF OF "ERASE AND INSTALL": accepting the dialog sets confirmed, which flips
+    // isAtEnd(), and the advance the user asked for with their press of Next is completed here.
+    // The guard is the whole safety of it — confirmed is also set to false (on leaving, on a disk
+    // change), and those clears must never move the window.
+    connect( m_config, &DiskConfig::confirmedChanged, this, [ this ] {
+        if ( m_config->confirmed() )
+        {
+            Calamares::ViewManager::instance()->next();
+        }
     } );
 }
 
@@ -87,9 +99,10 @@ DiskViewStep::widget()
 bool
 DiskViewStep::isNextEnabled() const
 {
-    // A SELECTED DISK AND A TICKED BOX, both. This is the second of the two steps in this
-    // installer that can refuse to advance — the accounts page is the other — and it refuses for
-    // a blunter reason: past this page and its prompt, somebody's disk is rewritten.
+    // A SELECTED DISK, and that is all the button asks. The question the old checkbox used to put
+    // in front of the button is asked BY the button now: an unconfirmed press opens the erase
+    // dialog rather than leaving, so this is still one of the two steps in this installer that
+    // can refuse to advance — it just refuses at the door rather than darkening the handle.
     return m_config->nextEnabled();
 }
 
@@ -102,17 +115,33 @@ DiskViewStep::isBackEnabled() const
 bool
 DiskViewStep::isAtBeginning() const
 {
-    // ONE SCREEN. Both are constants, and that is what makes the window's Back and Next leave
-    // this module rather than move inside it: ViewManager::back() calls step->back() whenever
-    // isAtBeginning() is false, and next() likewise on isAtEnd(). The accounts page is the one
-    // module here that answers these with state.
+    // ONE SCREEN, so Back is always the window's. The confirmation is not a second screen — it
+    // is a dialog — but it uses the same machinery one: ViewManager::next() calls this step's
+    // next() instead of advancing whenever isAtEnd() is false, which is what turns a press of
+    // Next into the question instead of the erase.
     return true;
 }
 
 bool
 DiskViewStep::isAtEnd() const
 {
-    return true;
+    // CONFIRMATION STATE, not screen state: false until the dialog's "Erase and install" has
+    // answered, true for exactly the moment it takes to complete the advance (the constructor
+    // calls ViewManager::next() when confirmed flips). onLeave() withdraws the answer on the way
+    // out, so the next entry into this page finds the question unasked again.
+    return m_config->confirmed();
+}
+
+void
+DiskViewStep::next()
+{
+    // ViewManager::next() lands here — instead of leaving — for as long as isAtEnd() is false,
+    // which is every press that has not already been answered by the dialog. The dialog is drawn
+    // by the QML; this side of the boundary only knocks.
+    if ( !m_config->confirmed() )
+    {
+        m_config->requestConfirmation();
+    }
 }
 
 Calamares::JobList
@@ -126,10 +155,15 @@ DiskViewStep::onLeave()
 {
     // onLeave() fires on the way BACK as well as forward and Calamares gives a ViewStep no way to
     // tell the two apart. Publishing in both directions is harmless here: the keys describe what
-    // is currently chosen, and stepping back to the keyboard page and forward again re-publishes
-    // the same three values. What it must NOT do is anything irreversible — which is why the disk
-    // is written by a job in the exec phase and not from here.
+    // is currently chosen, and the exec phase is only ever reached through the forward leave that
+    // followed an accepted dialog, so diskConfirmed is true when anything reads it. What it must
+    // NOT do is anything irreversible — which is why the disk is written by a job in the exec
+    // phase and not from here.
     m_config->publish( Calamares::JobQueue::instance()->globalStorage() );
+    // WITHDRAW THE ANSWER, in both directions, because the question is asked on every press
+    // (plan/26 §1): leaving this page armed would make the next Next a silent one. This also
+    // closes a dialog the user abandoned with the window's Back — the QML listens for the clear.
+    m_config->setConfirmed( false );
 }
 
 void

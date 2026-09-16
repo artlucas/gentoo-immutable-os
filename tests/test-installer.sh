@@ -891,15 +891,43 @@ assert_true "...naming /efi and /var, which is how the next two modules find the
              sed -n '/partitions = \[/,/\]/p' '$DISK_JOB' | grep -q '\"/var\"'"
 
 # ---- the page ------------------------------------------------------------------------------
-# Next is gated on BOTH a selected disk and a ticked box (plan/24 §2). Either half alone is a
-# mis-click away from an erased disk.
-assert_true "Next needs a disk AND the confirmation" \
+# THE CONFIRMATION IS ASKED AT THE BUTTON, not in front of it (plan/26 §1). Next lights for a
+# disk alone; a press that has not been answered opens the erase dialog instead of leaving —
+# which is the accounts pager's mechanism worn as a dialog: ViewManager::next() calls the step's
+# next() while isAtEnd() is false, and isAtEnd() is the confirmation state.
+assert_true "Next is enabled by a selected disk alone" \
     bash -c "sed -n '/^DiskConfig::nextEnabled() const/,/^}/p' '$DISK_SRC/DiskConfig.cpp' |
+             grep -q 'isInstallable( m_currentIndex )'"
+assert_false "...and the confirmation no longer darkens the button" \
+    bash -c "sed -n '/^DiskConfig::nextEnabled() const/,/^}/p' '$DISK_SRC/DiskConfig.cpp' |
+             grep -q 'm_confirmed'"
+assert_true "isAtEnd() is the confirmation, so the window's Next opens the prompt instead of leaving" \
+    bash -c "sed -n '/^DiskViewStep::isAtEnd/,/^}/p' '$DISK_SRC/DiskViewStep.cpp' |
+             grep -q 'return m_config->confirmed();'"
+assert_true "the step's next() is what asks" \
+    bash -c "sed -n '/^DiskViewStep::next()$/,/^}/p' '$DISK_SRC/DiskViewStep.cpp' |
+             grep -q 'requestConfirmation()'"
+assert_true "...and accepting completes the advance the press asked for" \
+    grep -q 'ViewManager::instance()->next()' "$DISK_SRC/DiskViewStep.cpp"
+# ...and the question is asked on EVERY press: leaving the page withdraws the answer, so a
+# Back-and-return cannot turn the next Next into a silent one.
+assert_true "onLeave() re-arms the question" \
+    bash -c "sed -n '/^DiskViewStep::onLeave/,/^}/p' '$DISK_SRC/DiskViewStep.cpp' |
+             grep -q 'setConfirmed( false )'"
+# The job's contract is unchanged: publish() says "installable AND confirmed" explicitly, because
+# nextEnabled() — which it used to call — now answers a different question.
+assert_true "publish() keeps diskConfirmed meaning the agreed erase" \
+    bash -c "sed -n '/^DiskConfig::publish/,/^}/p' '$DISK_SRC/DiskConfig.cpp' |
              grep -q 'isInstallable( m_currentIndex ) && m_confirmed'"
-# ...and the agreement is withdrawn when the disk changes, because it was about a disk.
+# ...and the disk-change clear stays, belt and braces beside the onLeave clear.
 assert_true "changing the disk clears the confirmation" \
     bash -c "sed -n '/^DiskConfig::setCurrentIndex/,/^}/p' '$DISK_SRC/DiskConfig.cpp' |
              grep -q 'setConfirmed( false )'"
+# The QML half: the dialog that answers, and no checkbox left on the panel.
+assert_true "the QML carries the confirmation dialog" \
+    bash -c "grep -q 'Kirigami.PromptDialog' '$DISK_QML' && grep -q 'disk.acceptConfirmation()' '$DISK_QML'"
+assert_false "...and the checkbox it replaced is gone" \
+    grep -q 'Erase this disk and everything on it' "$DISK_QML"
 # A blocked row can never become the selection, whichever way it is reached — mouse, arrow key or
 # a stale index from C++.
 assert_true "a disk that cannot be installed to is refused as a selection" \

@@ -364,7 +364,7 @@ DiskConfig::rescan()
     m_model->setEntries( enumerate() );
     // The model reset dropped every row, so nothing is selected and nothing is agreed to. Both
     // have to be said out loud rather than assumed: a stale m_currentIndex would point into a
-    // list that has been rebuilt, and a stale m_confirmed would be agreement about a disk that
+    // list that has been rebuilt, and a stale m_confirmed would be an answer about a disk that
     // may no longer be there.
     m_currentIndex = -1;
     m_confirmed = false;
@@ -373,8 +373,8 @@ DiskConfig::rescan()
     if ( !wasNode.isEmpty() )
     {
         // Keep the user's disk across a rescan when it is still there and still usable. The
-        // checkbox is NOT restored with it — "Check again" changed what the page knows, so the
-        // agreement is asked for again.
+        // confirmation is NOT restored with it — "Check again" changed what the page knows, so
+        // the question is asked again.
         for ( int i = 0; i < m_model->rowCount(); ++i )
         {
             if ( m_model->entries().at( i ).node == wasNode && m_model->isInstallable( i ) )
@@ -386,8 +386,9 @@ DiskConfig::rescan()
     }
     if ( restore < 0 && m_model->installableCount() == 1 )
     {
-        // One disk, so there is nothing to choose. Selecting it is a convenience; ticking the box
-        // for the user would be removing the only deliberate act on the page (plan/24 §2).
+        // One disk, so there is nothing to choose. Selecting it is a convenience; answering the
+        // confirmation for the user would be removing the only deliberate act on the page — and
+        // the dialog asks for it on every press of Next anyway (plan/26 §1).
         restore = 0;  // installable rows sort first
     }
 
@@ -421,7 +422,9 @@ DiskConfig::setCurrentIndex( int index )
         return;
     }
     m_currentIndex = index;
-    // The agreement was about a disk, not about the page. Changing the disk withdraws it.
+    // The answer was about a disk, not about the page. Changing the disk withdraws it — mostly a
+    // formality now that onLeave() withdraws it too, but a dialog left pending over a changed
+    // selection is exactly the thing neither rule should have to be the only one preventing.
     setConfirmed( false );
     emit currentIndexChanged();
     emit planChanged();
@@ -437,15 +440,34 @@ DiskConfig::setConfirmed( bool confirmed )
     }
     m_confirmed = confirmed;
     emit confirmedChanged();
+    // nextEnabled() no longer reads m_confirmed (the button lights for a disk alone), but the
+    // re-ask is harmless and keeps this setter honest about everything that could depend on the
+    // answer — isAtEnd() among them, which the view step re-reads through its own connections.
     emit nextEnabledChanged();
+}
+
+void
+DiskConfig::requestConfirmation()
+{
+    // The dialog is QML's to draw; this is only the knock. Re-asking with one already open is a
+    // no-op on the QML side (open() on an open dialog), which is the right failure for a user
+    // who finds the window's Next twice.
+    emit confirmationRequested();
+}
+
+void
+DiskConfig::acceptConfirmation()
+{
+    setConfirmed( true );
 }
 
 bool
 DiskConfig::nextEnabled() const
 {
-    // BOTH, and this is the whole gate. A selection alone is a click that could have been a
-    // mis-click; the checkbox is the sentence the user read (plan/24 §2).
-    return m_model->isInstallable( m_currentIndex ) && m_confirmed;
+    // THE DISK, AND NOTHING ELSE. This answers "may the button be pressed", not "may the page be
+    // left": pressing it while unconfirmed opens the confirmation dialog instead (DiskViewStep's
+    // isAtEnd()/next() pair), and the erase is agreed to there, on every press (plan/26 §1).
+    return m_model->isInstallable( m_currentIndex );
 }
 
 int
@@ -573,6 +595,21 @@ DiskConfig::selectedNode() const
 }
 
 QString
+DiskConfig::selectedDiskTitle() const
+{
+    if ( !m_model->isInstallable( m_currentIndex ) )
+    {
+        return {};
+    }
+    const DiskModel::Entry& e = m_model->entries().at( m_currentIndex );
+    // rowTitle and the node, for the confirmation dialog: the name the user picked the disk by
+    // and the identifier the person who already knows which one they want reads — the same two
+    // things the row shows side by side, so the dialog cannot name the disk differently from the
+    // list above it.
+    return DiskModel::rowTitle( e ) + QLatin1String( " (" ) + e.node + QLatin1Char( ')' );
+}
+
+QString
 DiskConfig::prettyStatus() const
 {
     if ( !m_model->isInstallable( m_currentIndex ) )
@@ -599,7 +636,13 @@ DiskConfig::publish( Calamares::GlobalStorage* gs ) const
     // need to know what the page decided about anything else, and the page does not get to
     // describe a disk layout that does not exist yet.
     gs->insert( QStringLiteral( "diskDevice" ), selectedNode() );
-    gs->insert( QStringLiteral( "diskConfirmed" ), nextEnabled() );
+    // NOT nextEnabled(), which since plan/26 answers "may the button be pressed" (a disk alone)
+    // rather than "was the erase agreed to". Spelled out here as the old gate so the job's
+    // re-check keeps meaning what it has always meant: a selected, installable disk AND the
+    // dialog's answer. onLeave() publishes on the way back too, where the answer is false — the
+    // forward leave that reaches the exec phase is always the one that followed an accept.
+    gs->insert( QStringLiteral( "diskConfirmed" ),
+                m_model->isInstallable( m_currentIndex ) && m_confirmed );
     // RESERVED, and false in every build that has this comment in it (plan/24 §7). It is written
     // rather than omitted so that the key's absence never has to mean two things — "this medium
     // has no encryption" and "an older page forgot to say".

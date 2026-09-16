@@ -16,11 +16,12 @@
  *
  * ONE SCREEN, AND THE ORDER OF IT IS THE ARGUMENT (plan/24, plate 05 is the version that was not
  * taken). The list scrolls and the consequences do not: everything that follows from choosing a
- * disk — what will happen to it, what will be lost, and the checkbox that agrees to it — is
- * pinned below the list, so the one deliberate act on this page can never be the thing that is
- * below the fold. Folding the panel into the selected row reads better and behaves worse: the row
- * grows by ~160px, every row under it moves, and on a page whose one risk is clicking the wrong
- * disk the list must not move under the cursor.
+ * disk — what will happen to it, and what will be lost — is pinned below the list, so the one
+ * deliberate act on this page can never be the thing that is below the fold. Folding the panel
+ * into the selected row reads better and behaves worse: the row grows by ~160px, every row under
+ * it moves, and on a page whose one risk is clicking the wrong disk the list must not move under
+ * the cursor. The agreement itself moved off the panel and into the confirmation dialog the
+ * window's Next now opens (plan/26 §1), which is drawn at the bottom of this file.
  *
  * Measured against the viewport Calamares gives a view module — 710x536, the 900x600 branding
  * window less the 190px sidebar and the 64px navigation bar — the header is 44px, the panel is
@@ -415,30 +416,11 @@ Item {
                 }
             }
 
-            // ---- the one deliberate act on the page (plan/24 §2) --------------------------
-            QQC2.CheckBox {
-                id: confirmBox
-
-                Layout.topMargin: Kirigami.Units.smallSpacing
-                text: qsTr("Erase this disk and everything on it")
-                // Not a binding on `checked`: a QQC2 control assigns `checked` imperatively when
-                // clicked, which would break one. C++ is the source of truth — it clears the box
-                // whenever the selected disk changes, because the agreement was about a disk —
-                // and the two handlers below keep the pair in step without ringing.
-                checked: disk.confirmed
-                onToggled: disk.confirmed = confirmBox.checked
-
-                Connections {
-                    target: disk
-                    function onConfirmedChanged() {
-                        confirmBox.checked = disk.confirmed;
-                    }
-                }
-            }
-
-            // What is actually being lost, named. This is the sentence somebody needs in front of
-            // them before they tick the box above, and it is built from what the row they chose
-            // already said.
+            // ---- what is actually being lost, named (plan/24 §2; the dialog asks, plan/26 §1) --
+            // This is the sentence somebody needs in front of them before they answer the
+            // question the window's Next now asks, and it is built from what the row they chose
+            // already said. The dialog repeats it; the panel keeps it, because the dialog is a
+            // moment and the panel is the whole time the disk is chosen.
             QQC2.Label {
                 Layout.fillWidth: true
                 Layout.leftMargin: Kirigami.Units.gridUnit
@@ -483,6 +465,64 @@ Item {
 
                 QQC2.Switch {
                     checked: false
+                }
+            }
+        }
+    }
+
+    // ---- the question the window's Next now asks (plan/26 §1) --------------------------------
+    //
+    // This replaces the confirmation checkbox (plan/24 §2), and the mechanism is the accounts
+    // page's pager worn as a dialog: ViewManager::next() calls this step's next() — which is
+    // DiskConfig::requestConfirmation(), the signal the Connections below listens for — instead
+    // of leaving the page for as long as isAtEnd() is false, and isAtEnd() is disk.confirmed,
+    // which only "Erase and install" sets. Accepting completes the advance from C++ (the view
+    // step hears confirmedChanged and calls ViewManager::next() again, the call that leaves),
+    // and onLeave() withdraws the answer the moment the page is left — so the question is asked
+    // on EVERY press, going Back and returning no less than the first time through.
+    //
+    // A PromptDialog rather than a plain Dialog for the shape the KCM already uses
+    // (distro-kcm-managed's leaveDialog): a title, a wrapped paragraph, and two named actions.
+    Kirigami.PromptDialog {
+        id: confirmDialog
+
+        title: qsTr("Erase this disk?")
+        // The disk by the name the row used, then the loss summary — the same two sentences the
+        // page below the dialog already says, so the dialog cannot introduce a second name for
+        // the disk. lossSummary is C++ tr(), so it translates; the title and the buttons are
+        // qsTr(), which on this builder does not (plan/25 §7's lupdate limit).
+        subtitle: disk.selectedDiskTitle.length > 0 && disk.lossSummary.length > 0
+                      ? qsTr("%1 — %2").arg( disk.selectedDiskTitle ).arg( disk.lossSummary )
+                      : qsTr("Everything on the selected disk will be erased.")
+        standardButtons: Kirigami.Dialog.NoButton
+        customFooterActions: [
+            Kirigami.Action {
+                icon.name: "dialog-cancel"
+                text: qsTr("Cancel")
+                onTriggered: confirmDialog.close()
+            },
+            Kirigami.Action {
+                icon.name: "data-warning"
+                text: qsTr("Erase and install")
+                onTriggered: {
+                    confirmDialog.close();
+                    disk.acceptConfirmation();
+                }
+            }
+        ]
+
+        Connections {
+            target: disk
+            function onConfirmationRequested() {
+                confirmDialog.open();
+            }
+            // The withdrawn-answer cases — leaving the page (including by the window's Back,
+            // from under an open dialog), changing the disk, rescanning — all arrive here as
+            // confirmed going false, which is what closes a dialog nobody answered.
+            function onConfirmedChanged() {
+                if ( !disk.confirmed )
+                {
+                    confirmDialog.close();
                 }
             }
         }

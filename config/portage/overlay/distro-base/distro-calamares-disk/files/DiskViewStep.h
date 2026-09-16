@@ -50,6 +50,11 @@ public:
     bool isAtBeginning() const override;
     bool isAtEnd() const override;
 
+    /*! The other half of the confirmation, and the whole reason this step answers isAtEnd() with
+     *  state: ViewManager::next() calls this instead of advancing while isAtEnd() is false, so
+     *  this is where the window's Next opens the erase dialog instead of leaving (plan/26 §1). */
+    void next() override;
+
     /*! Empty, always. Writing the GPT and making the filesystem are the `disksetup` job's work,
      *  in the exec phase, where a failure can report itself and where Calamares has already
      *  asked its "really install?" question. A view step that partitioned in jobs() would be

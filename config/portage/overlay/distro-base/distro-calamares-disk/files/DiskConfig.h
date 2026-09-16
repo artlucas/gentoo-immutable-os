@@ -5,7 +5,7 @@
  *
  * TWO OBJECTS, THE SAME SHAPE AS THE LANGUAGE PAGE'S. DiskModel (DiskModel.h) is the machine's
  * disks — every one of them, including the ones that cannot be installed onto. This is the other
- * half: which row is chosen, whether the user has ticked the box that says so, and the strings
+ * half: which row is chosen, whether the confirmation dialog has been answered, and the strings
  * that describe what is about to happen to that disk.
  *
  * WHY THIS PAGE EXISTS AT ALL, given that the stock `partition` module already did it. It did,
@@ -52,15 +52,21 @@ public:
     // ---- the list ----------------------------------------------------------------------------
     Q_PROPERTY( QAbstractItemModel* disks READ disksModel CONSTANT )
     /*! The selected row, or -1. The QML's ListView owns the highlight and pushes its currentIndex
-     *  here, then puts back whatever this setter accepted — the language page's pattern, and for
+     *  here, then puts back whatever this setter accepts — the language page's pattern, and for
      *  the same reason: two sources of truth for a selection is how a page ends up drawing one
      *  row as chosen while installing onto another. Here that would be the wrong disk. */
     Q_PROPERTY( int currentIndex READ currentIndex WRITE setCurrentIndex NOTIFY currentIndexChanged )
-    /*! The checkbox. The user's one deliberate act on this page, and the only thing that lets
-     *  Next light up (plan/24 §2). Reset to false whenever the selection changes, because it was
-     *  agreement about a particular disk and not about the page. */
+    /*! The confirmation dialog's answer, and it lives for one press of Next (plan/26 §1). False
+     *  whenever the page is entered — DiskViewStep::onLeave() withdraws it on the way out — so
+     *  every press of the window's Next that would leave this page asks the question again, and
+     *  isAtEnd() is what makes it ask: while this is false, ViewManager::next() calls the step's
+     *  next() instead of advancing, and next() is what opens the dialog. Also reset by a disk
+     *  change or a rescan, belt and braces: no answer should outlive the thing it was about. */
     Q_PROPERTY( bool confirmed READ confirmed WRITE setConfirmed NOTIFY confirmedChanged )
     Q_PROPERTY( bool nextEnabled READ nextEnabled NOTIFY nextEnabledChanged )
+    /*! The selected disk, named the way the row names it (DiskModel::rowTitle, plus the device
+     *  node), so the confirmation dialog says WHICH disk. Empty when nothing is selected. */
+    Q_PROPERTY( QString selectedDiskTitle READ selectedDiskTitle NOTIFY currentIndexChanged )
 
     Q_PROPERTY( int diskCount READ diskCount NOTIFY disksChanged )
     Q_PROPERTY( int installableCount READ installableCount NOTIFY disksChanged )
@@ -77,7 +83,7 @@ public:
      *  selected. The QML gives them colours; the sizes and the order are the layout's. */
     Q_PROPERTY( QVariantList plan READ plan NOTIFY planChanged )
     /*! "3 partitions will be deleted, including Windows (NTFS, 420 GB)." The sentence under the
-     *  checkbox, built from what the row already read. */
+     *  plan bar and inside the confirmation dialog, built from what the row already read. */
     Q_PROPERTY( QString lossSummary READ lossSummary NOTIFY planChanged )
     /*! FALSE, and drawn anyway (plan/24 §7). The row exists, disabled, with a reason. Hiding it
      *  would mean the first person to ask about encryption asks whether it was forgotten. */
@@ -98,6 +104,7 @@ public:
     QString headline() const;
     QString subheadline() const;
     QString minimumSizeText() const;
+    QString selectedDiskTitle() const;
     QVariantList plan() const;
     QString lossSummary() const;
     bool encryptionAvailable() const { return false; }
@@ -105,6 +112,16 @@ public:
     /*! Re-enumerate. Bound to "Check again", because plugging a disk in is the fix for the one
      *  state this page can reach with nothing to offer. */
     Q_INVOKABLE void rescan();
+
+    /*! Ask the question the window's Next now asks (plan/26 §1). Called from
+     *  DiskViewStep::next() — which ViewManager::next() reaches instead of advancing while
+     *  isAtEnd() is false — and does nothing but emit confirmationRequested(); the dialog is
+     *  QML's to draw, because everything else on this page is. */
+    void requestConfirmation();
+
+    /*! The dialog's "Erase and install". Sets confirmed, which flips isAtEnd(), which lets the
+     *  view step complete the advance it was asked for. */
+    Q_INVOKABLE void acceptConfirmation();
 
     /*! What the summary page shows: the disk, by the name the user picked it by. */
     QString prettyStatus() const;
@@ -126,6 +143,7 @@ public slots:
 signals:
     void currentIndexChanged();
     void confirmedChanged();
+    void confirmationRequested();
     void nextEnabledChanged();
     void disksChanged();
     void planChanged();
