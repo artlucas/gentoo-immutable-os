@@ -248,15 +248,23 @@ DiskConfig::enumerate() const
 
         // The name on the box, as far as the kernel knows it. NVMe puts the whole thing in
         // `model`; SCSI and USB bridges split it across `vendor` and `model` and pad both.
+        // THE VENDOR SURVIVES ONLY WHEN IT IS A MAKER'S NAME, and what each bus puts in that
+        // attribute is why: virtio offers a PCI vendor ID ("0x1af4") and no model at all — which
+        // is how a row of this page once read "0x1af4" where a name belongs — and SATA reports
+        // "ATA", the bus rather than the maker, on disks whose model already begins with the
+        // maker ("WDC WD10EZEX…"). USB is the case the attribute is FOR: "SanDisk" + "Ultra".
         const QString vendor = sysfsRead( base + QStringLiteral( "/device/vendor" ) );
         const QString model = sysfsRead( base + QStringLiteral( "/device/model" ) );
-        e.title = ( vendor + QLatin1Char( ' ' ) + model ).simplified();
-        if ( e.title.isEmpty() )
-        {
-            // Virtio disks and some NVMe namespaces carry neither. The node is a worse name and
-            // is never nothing, which is what the row needs.
-            e.title = e.node;
-        }
+        const bool vendorIsAName = !vendor.isEmpty() && !vendor.startsWith( QLatin1String( "0x" ) )
+            && vendor != QLatin1String( "ATA" ) && !model.startsWith( vendor );
+        e.title = ( vendorIsAName ? vendor + QLatin1Char( ' ' ) + model : model ).simplified();
+
+        // The bus, as the bus names itself. Read as a LINK, not a file: sysfs subsystems are
+        // symlinks, and opening one gets a directory. Stored raw — the word for a bus is said by
+        // DiskModel when the row is read (Entry::transport), because a word built here would keep
+        // the first language's spelling for the rest of the session.
+        e.transport = QFileInfo( base + QStringLiteral( "/device/subsystem" ) ).symLinkTarget()
+                          .section( QLatin1Char( '/' ), -1 );
 
         if ( name == medium )
         {
@@ -575,8 +583,9 @@ DiskConfig::prettyStatus() const
     const auto* branding = Calamares::Branding::instance();
     const QString product = branding ? branding->string( Calamares::Branding::VersionedName ) : DiskModel::productName();
     // The summary page's job is to name the disk one last time, in the same words the user picked
-    // it by — model and node, not a partition table.
-    return tr( "Erase %1 (%2) and install %3 on it." ).arg( e.title, e.node, product );
+    // it by — rowTitle rather than e.title, so a disk the row named "VirtIO disk" is not suddenly
+    // nameless on the summary: one composer, and the two cannot disagree.
+    return tr( "Erase %1 (%2) and install %3 on it." ).arg( DiskModel::rowTitle( e ), e.node, product );
 }
 
 void

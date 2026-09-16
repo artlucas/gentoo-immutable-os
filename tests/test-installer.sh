@@ -907,6 +907,33 @@ assert_file "$DISK_SRC/DiskModel.cpp" "DiskModel is a file of its own, because i
 assert_true "...and DiskConfig.cpp declares no DiskModel methods" \
     bash -c "! grep -qE '^DiskModel::' '$DISK_SRC/DiskConfig.cpp'"
 
+# THE NAME ON A ROW IS A NAME, NOT AN IDENTIFIER. The kernel-side strings are `vendor` + `model`,
+# and what each bus puts in them differs: NVMe has the whole name in `model`; USB splits it
+# usefully ("SanDisk" + "Ultra"); SATA reports "ATA" — the bus, not the maker — while the model
+# already begins with the maker; and virtio offers a PCI vendor ID ("0x1af4") with no model at
+# all, which is how every disk in a QEMU guest was once titled "0x1af4" where a name belongs.
+# The vendor is kept only when it is a maker's name, and a disk with no model is named for its
+# bus — by DiskModel, at read time, so a language change can say it again — rather than by the
+# device node, which the row already shows small next to the title.
+assert_true "a hex vendor ID is never the name on the row" \
+    bash -c "grep -q 'startsWith( QLatin1String( \"0x\" ) )' '$DISK_SRC/DiskConfig.cpp'"
+assert_true "...nor is the SATA bus string, which is not a maker" \
+    bash -c "grep -q 'vendor != QLatin1String( \"ATA\" )' '$DISK_SRC/DiskConfig.cpp'"
+assert_true "...nor a vendor the model already begins with" \
+    bash -c "grep -q 'model.startsWith( vendor )' '$DISK_SRC/DiskConfig.cpp'"
+assert_false "a disk with no model is not named by its device node" \
+    grep -q 'e\.title = e\.node' "$DISK_SRC/DiskConfig.cpp"
+assert_true "...it is named for its bus, in DiskModel, where a retranslate says it again" \
+    bash -c "grep -q 'tr( \"VirtIO disk\" )' '$DISK_SRC/DiskModel.cpp' &&
+             grep -q 'tr( \"NVMe disk\" )' '$DISK_SRC/DiskModel.cpp' &&
+             grep -q 'tr( \"Disk\" )' '$DISK_SRC/DiskModel.cpp'"
+assert_true "the row reads the title through the one composer" \
+    bash -c "sed -n '/^DiskModel::data/,/^}/p' '$DISK_SRC/DiskModel.cpp' | grep -q 'return rowTitle( e );'"
+assert_true "...and a language change re-says it, so the generic name is not scan-time English" \
+    bash -c "sed -n '/^DiskModel::retranslated/,/^}/p' '$DISK_SRC/DiskModel.cpp' | grep -q 'TitleRole'"
+assert_true "the summary names the disk with the same composer the row used" \
+    bash -c "grep -q 'DiskModel::rowTitle( e )' '$DISK_SRC/DiskConfig.cpp'"
+
 # EVERY `disk.<name>` IN THE QML RESOLVES TO SOMETHING C++ DECLARES. A typo'd binding in QML is not
 # an error and not a warning: the expression is undefined and the control renders empty, so this is
 # what turns a silent blank into a failed build.

@@ -28,6 +28,32 @@ DiskModel::productName()
     return branding ? branding->string( Calamares::Branding::ProductName ) : QStringLiteral( "this system" );
 }
 
+QString
+DiskModel::genericTitle( const Entry& e )
+{
+    // A DISK WITH NO MODEL STRING IS NOT AN ERROR STATE, and virtio is the case that proves it:
+    // every disk a QEMU guest sees reports no model at all, and the one kernel-side string it
+    // does offer is a PCI vendor ID ("0x1af4"), which is how a row of this page once came to be
+    // titled with a number. The bus is the next best name — for a VM it is the thing the person
+    // running it chose, and "virtio" is a word they used — and "Disk", with the node beside it,
+    // says less than the truth but never says something false.
+    if ( e.transport == QLatin1String( "virtio" ) )
+    {
+        return tr( "VirtIO disk" );
+    }
+    if ( e.transport == QLatin1String( "nvme" ) )
+    {
+        return tr( "NVMe disk" );
+    }
+    return tr( "Disk" );
+}
+
+QString
+DiskModel::rowTitle( const Entry& e )
+{
+    return e.title.isEmpty() ? genericTitle( e ) : e.title;
+}
+
 void
 DiskModel::setEntries( const QVector< Entry >& entries )
 {
@@ -53,7 +79,7 @@ DiskModel::data( const QModelIndex& index, int role ) const
     switch ( role )
     {
     case TitleRole:
-        return e.title;
+        return rowTitle( e );
     case NodeRole:
         return e.node;
     case SizeTextRole:
@@ -101,8 +127,10 @@ DiskModel::retranslated()
     }
     // ContentsRole and SizeTextRole are the two that are built rather than stored: one of them is
     // a sentence and the other goes through QLocale, whose decimal separator is the language's.
+    // TitleRole joins them for the rows that say the bus's generic name — those are DiskModel's
+    // words too, said when the row is read rather than when it was scanned.
     emit dataChanged( index( 0 ), index( static_cast< int >( m_entries.count() ) - 1 ),
-                      { ContentsRole, SizeTextRole } );
+                      { TitleRole, ContentsRole, SizeTextRole } );
 }
 
 bool

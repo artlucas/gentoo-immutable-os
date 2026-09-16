@@ -43,7 +43,8 @@ public:
 
     enum Roles
     {
-        /*! What the user reads first: "Samsung SSD 990 PRO 1TB", from sysfs. */
+        /*! What the user reads first: "Samsung SSD 990 PRO 1TB", from sysfs — or the bus's own
+         *  name when the kernel reports no model (rowTitle, below). */
         TitleRole = Qt::DisplayRole,
         /*! "/dev/nvme0n1". Shown small, for the people who already know which disk they want. */
         NodeRole = Qt::UserRole + 1,
@@ -59,7 +60,14 @@ public:
     {
         QString node;        //!< /dev/nvme0n1
         QString kernelName;  //!< nvme0n1, the /sys/block directory
+        /*! "Samsung SSD 990 PRO 1TB". EMPTY when the kernel reports no model, which is not an
+         *  error state: virtio disks never have one, and the row then says the bus's name
+         *  (rowTitle) rather than falling back to the node it already shows small. */
         QString title;
+        /*! The bus as /sys names it — "nvme", "virtio", "scsi" — from the device's subsystem
+         *  link. Kept raw rather than said as a word at scan time, for the reason Block's texts
+         *  give: a word built once would keep the first language's spelling for the session. */
+        QString transport;
         qint64 bytes = 0;
         bool removable = false;
         int partitions = 0;
@@ -95,6 +103,13 @@ public:
      *  plan bar's segments with the same rule, and two formatters would be two answers to one
      *  question on one screen. */
     static QString formatSize( qint64 bytes );
+    /*! The row's title as the user reads it: the model string when the kernel has one, the bus's
+     *  generic name when it does not. THE ONE COMPOSER — the summary page names the disk through
+     *  this too, so it cannot disagree with the row about which disk was chosen. */
+    static QString rowTitle( const Entry& e );
+    /*! "VirtIO disk", "NVMe disk", "Disk". Static for the same reason formatSize is: one name,
+     *  said by the rows and by the summary, and two spellings would be two disks. */
+    static QString genericTitle( const Entry& e );
     /*! The branding's product name, or a usable stand-in. Static for the same reason. */
     static QString productName();
 
