@@ -692,8 +692,11 @@ EOF"
 # modes still gate on nothing but their own fields.
 assert_true "Next is mode-dependent rather than unconditional" \
     grep -q 'return m_config->nextEnabled();' "$PAGE/AccountsViewStep.cpp"
-assert_true "...local and domain mode gate on field validity only" \
-    grep -qF 'm_loginNameValid && m_passwordValid && passwordsMatch()' "$PAGE/AccountsConfig.cpp"
+# Since plan/26 §3 the field gate is two-part: the BUTTON asks "complete?" (login name, a
+# non-empty matching password — strength excluded when allowWeakPasswords lets the door ask),
+# and the DOOR asks "strong, or warned?" through isAtEnd()/next() below.
+assert_true "...local and domain mode gate on field completeness, strength at the door" \
+    grep -qF 'm_loginNameValid && passwordsMatch() && ( m_allowWeakPasswords || m_passwordValid )' "$PAGE/AccountsConfig.cpp"
 assert_true "...and managed mode gates on a completed enrolment that granted somebody" \
     grep -qF 'm_enrolState == Succeeded && !m_grantedUsers.isEmpty()' "$PAGE/AccountsConfig.cpp"
 # TWO SCREENS, ONE VIEW STEP, AND FOUR FUNCTIONS THAT HAVE TO AGREE (plan/21 §1a).
@@ -705,8 +708,11 @@ assert_true "...and managed mode gates on a completed enrolment that granted som
 # leaves the page from the first screen and publishes a mode whose fields nobody filled in.
 assert_true "the view step reports which of its two screens is showing" \
     grep -qF 'return m_config->onChooser();' "$PAGE/AccountsViewStep.cpp"
-assert_true "...on both ends" \
-    grep -qF 'return m_config->onFields();' "$PAGE/AccountsViewStep.cpp"
+# ...and the end is the fields screen AND a settled password (plan/26 §3): a complete password
+# that fails libpwquality is the one state in which the window's Next opens the weak-password
+# prompt rather than leaving.
+assert_true "...on both ends, with the password settled" \
+    grep -qF 'return m_config->onFields() && m_config->passwordSettled();' "$PAGE/AccountsViewStep.cpp"
 assert_true "...so the window's Back moves between them" \
     grep -qF 'm_config->goToChooser();' "$PAGE/AccountsViewStep.cpp"
 assert_true "...and so does its Next" \
@@ -801,6 +807,8 @@ assert_true "the job reads the same GlobalStorage keys the page writes" \
 # Two exemptions, both stated rather than pattern-matched. `rootMountPoint` is Calamares' own
 # key, published by the mount module. `managedOrgName` has no reader on purpose (plan/21 §4) —
 # it is in the log for the operator, and asserting that keeps it from being quietly repurposed.
+# `autoLogin` has its reader in ANOTHER job of this repo: imageidentity writes the plasmalogin
+# drop-in from it (plan/26 §4), and test-installer.sh §6a asserts that side of the contract.
 assert_true "every key the job reads is published, and every key published is read or exempt" \
     bash -c "python3 - <<'EOF'
 import pathlib, re, sys
@@ -816,11 +824,12 @@ read |= set(re.findall(r'\(\s*\"(domain[A-Za-z]+)\"\s*,\s*\"--', job))
 
 CALAMARES_OWN = {'rootMountPoint'}
 WRITE_ONLY = {'managedOrgName'}
+READ_BY_IMAGEIDENTITY = {'autoLogin'}
 
 missing = sorted(read - published - CALAMARES_OWN)
 if missing:
     sys.exit('the job reads keys the page never publishes: ' + ', '.join(missing))
-orphans = sorted(published - read - WRITE_ONLY)
+orphans = sorted(published - read - WRITE_ONLY - READ_BY_IMAGEIDENTITY)
 if orphans:
     sys.exit('the page publishes keys nothing reads: ' + ', '.join(orphans))
 if not published or not read:
