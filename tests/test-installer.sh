@@ -42,7 +42,7 @@ eval "$( BUILD_PROFILE_OVERRIDE=installer; load_config
                     ROOT_PARTLABEL UKI_NAME PAYLOAD_DIR IMG_NAME \
                     PAYLOAD_ROOT_EROFS PAYLOAD_UKI PAYLOAD_VAR_TAR VERSION \
                     ROOT_SLOT_SIZE_MIB ESP_SIZE_MIB MIN_INSTALL_DISK_GB \
-                    DISTRO_ID DISTRO_NAME LIVE_USER HOME_URL \
+                    DISTRO_ID DISTRO_NAME LIVE_USER HOME_URL INTERNET_CHECK_URL \
            | sed 's/^declare -[-x]* /I_/; s/^I_/declare -g I_/' )"
 
 assert_eq "live"    "$I_PROFILE_ROLE"       "the installer profile is a LIVE profile"
@@ -122,7 +122,7 @@ render_all() {
       export REPO="$REPO_ROOT" WORK="$TMP/w" OUT="$TMP/o" STAGE_NAME=t BUILD_PROFILE_OVERRIDE=installer
       source "$REPO_ROOT/scripts/lib/common.sh"
       load_config
-      export DISTRO_ID DISTRO_NAME VERSION HOME_URL LIVE_USER UPDATE_URL UPDATE_CHANNEL
+      export DISTRO_ID DISTRO_NAME VERSION HOME_URL INTERNET_CHECK_URL LIVE_USER UPDATE_URL UPDATE_CHANNEL
       export GPT_TYPE_ROOT_X64 GPT_TYPE_VAR GPT_TYPE_ESP ROOT_SLOT_SIZE_MIB ROOT_PARTLABEL \
              UKI_NAME PAYLOAD_DIR
       while IFS= read -r -d '' f; do
@@ -1077,6 +1077,15 @@ assert_file "$APPS_JOB_CONF" "appsetup.conf rendered"
 assert_eq "$(sed -nE 's/^[[:space:]]*internetCheckUrl:[[:space:]]+"([^"]+)".*/\1/p' "$GREETING_CONF")" \
     "$(sed -nE 's/^[[:space:]]*internetCheckUrl:[[:space:]]+"([^"]+)".*/\1/p' "$APPS_JOB_CONF")" \
     "appsetup probes the same URL the greeting checks"
+# AND THAT URL IS THE CHECK KNOB, NOT HOME_URL. Both render from build.conf's INTERNET_CHECK_URL:
+# HOME_URL is metadata for the product's own site, which was NXDOMAIN when this assertion was
+# written, and a probe against a dead domain says "no internet" on every machine that has
+# internet — the greeting always reported offline and the apps page always forced "None extra"
+# until the knob existed. Asserted against the knob (not a literal URL) so pointing it at the
+# real product site one day needs no test change.
+assert_eq "$I_INTERNET_CHECK_URL" \
+    "$(sed -nE 's/^[[:space:]]*internetCheckUrl:[[:space:]]+"([^"]+)".*/\1/p' "$APPS_JOB_CONF")" \
+    "the shared probe URL is build.conf's INTERNET_CHECK_URL, not HOME_URL"
 for k in remote flathubUrl installTimeoutS updateTimeoutS; do
     assert_true "appsetup.conf sets $k" grep -qE "^$k:" "$APPS_JOB_CONF"
 done

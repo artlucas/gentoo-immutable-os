@@ -19,7 +19,7 @@ VERIFY="$([[ $UPDATE_VERIFY == 1 ]] && echo yes || echo no)"
 # ("Stable · v0.1.0 · amd64" -> "STABLE · V0.1.0 · AMD64"). Composed here rather than in the SVG
 # because both halves come from build.conf and neither is a plain @TOKEN@ substitution.
 SPLASH_STATUS_LEFT="$(printf '%s · V%s · AMD64' "$UPDATE_CHANNEL" "$VERSION" | tr '[:lower:]' '[:upper:]')"
-export DISTRO_ID DISTRO_NAME VERSION HOME_URL UPDATE_URL LIVE_USER VERIFY FLATPAK_PREINSTALL
+export DISTRO_ID DISTRO_NAME VERSION HOME_URL INTERNET_CHECK_URL UPDATE_URL LIVE_USER VERIFY FLATPAK_PREINSTALL
 export UPDATE_CHANNEL SPLASH_STATUS_LEFT DISTROBOX_DEFAULT_IMAGE
 # ---- CONFIG_PROTECT: apply what the merge deferred, BEFORE our overlay -----------------------
 # Portage does not overwrite a file under CONFIG_PROTECT (/etc, among others) when a package

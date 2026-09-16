@@ -279,6 +279,11 @@ validate_config() {
   # above: a build.conf written before it existed still has to validate. Read only by the two
   # Calamares templates it is rendered into, and checked below against the layout it has to hold.
   : "${MIN_INSTALL_DISK_GB=32}"
+  # The URL the installer's two connectivity probes hit (greeting's requirements block,
+  # appsetup's curl). Same ${x=y} shape as the knobs above: a build.conf predating it still
+  # validates, and the default is a site that answers — see build.conf for why this is not
+  # HOME_URL.
+  : "${INTERNET_CHECK_URL=https://www.gentoo.org}"
   # Managed mode (plan/19). Same ${x=y} shape as every knob above: a build.conf written before
   # the feature existed still has to validate, and both keys are only ever READ by stage 40 and
   # by the client's own template.

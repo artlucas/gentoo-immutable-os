@@ -40,7 +40,10 @@ requirements:
     requiredStorage:    @MIN_INSTALL_DISK_GB@
     # Plasma 6 Wayland. Under this the session runs but swaps.
     requiredRam:        4.0
-    internetCheckUrl:   "@HOME_URL@"
+    # Rendered from build.conf's INTERNET_CHECK_URL knob, deliberately not HOME_URL: that is
+    # metadata for the product's own site, which did not resolve when the knob was added, and a
+    # probe against a dead domain reports "no internet" on every machine that has internet.
+    internetCheckUrl:   "@INTERNET_CHECK_URL@"
     check:
         - storage
         - ram

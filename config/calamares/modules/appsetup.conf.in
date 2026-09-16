@@ -6,11 +6,12 @@
 # answers down to one ref list before publishing, so the two files never both describe "what gets
 # installed".
 ---
-# The URL the job's OWN connectivity probe curls, rendered from the same build.conf HOME_URL the
-# greeting page's requirements block checks. One value in one place, twice: a job that probed a
-# different URL than the page whose verdict it is re-asking would be two answers to "is there
-# internet", and the offline path turns on exactly that answer.
-internetCheckUrl: "@HOME_URL@"
+# The URL the job's OWN connectivity probe curls, rendered from the same build.conf
+# INTERNET_CHECK_URL knob the greeting page's requirements block checks (NOT HOME_URL — that is
+# the product's future website, not a health endpoint). One value in one place, twice: a job that
+# probed a different URL than the page whose verdict it is re-asking would be two answers to "is
+# there internet", and the offline path turns on exactly that answer.
+internetCheckUrl: "@INTERNET_CHECK_URL@"
 
 # The remote the refs in GlobalStorage's appsSelected are resolved against. The name — not the
 # URL — is what `flatpak install` takes here; the URL below is only for the fallback that adds

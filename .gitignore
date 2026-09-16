@@ -14,3 +14,6 @@ config/keys/*.asc
 # Obsidian's vault state for plan/. Editor config, not project content: workspace.json alone
 # records which panes were open and changes on every scroll.
 plan/.obsidian/
+
+# ZCode session state, same rule as .claude above: nothing here is project content.
+.zcode/
