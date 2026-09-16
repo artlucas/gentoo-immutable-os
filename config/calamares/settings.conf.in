@@ -10,9 +10,9 @@
 # is an EROFS image that gets written to a partition byte-for-byte, and everything else was
 # decided at build time and is already inside it. So the stock modules that make sense here are
 # the ones that ASK THE USER SOMETHING (locale, keyboard) plus the ones that write per-machine
-# identity into /etc. Everything that touches a disk is ours, and so are the four pages: the
-# language list and the greeting (plan/22, plan/23), the disk (plan/24) and the accounts
-# question (plan/21).
+# identity into /etc. Everything that touches a disk is ours, and so are the five pages: the
+# language list and the greeting (plan/22, plan/23), the disk (plan/24), the accounts question
+# (plan/21) and the applications question (plan/25).
 ---
 
 # `local` is <libdir>/calamares/modules — upstream's own modules, exactly as the ebuild installed
@@ -64,6 +64,15 @@ sequence:
   # settings.conf naming a module that is installed nowhere is a step Calamares silently drops,
   # and dropping this one produces an install that reaches "finished" with no account on it.
   - accounts
+  # The last question, and the only one whose absence the install survives in full: which extra
+  # applications to add from Flathub — the typical set, nothing, or a chosen list (plan/25).
+  # AFTER the accounts page, because it is the one question that cannot invalidate any other:
+  # everything before it describes the machine being built, this describes what goes on top, and
+  # a user who backs out of the summary should meet it as the last thing they chose, not the
+  # first. Ours too, and for the same reason as the four above; the work is the `appsetup` job's.
+  # Offline the page forces its own second answer — nothing extra — and stays a page, because an
+  # offline install is a supported path this installer was built around.
+  - apps
   - summary
 - exec:
   # 1. The disk. Writes the GPT and creates the two filesystems there are to make, from
@@ -98,10 +107,18 @@ sequence:
   #    exactly what §5.4 asks for, at no cost.
   - removeuser
   # 5. What no stock module covers: subordinate UID/GID ranges, the autologin drop-in that turns
-  #    the live medium's autologin OFF, and the locale/machine-id fixups this image needs. In
-  #    managed mode there is no local username in GlobalStorage, so it skips the subuid range and
-  #    says so — correct, because the managed client owns those ranges for managed users.
+  # the live medium's autologin OFF, and the locale/machine-id fixups this image needs. In
+  # managed mode there is no local username in GlobalStorage, so it skips the subuid range and
+  # says so — correct, because the managed client owns those ranges for managed users.
   - imageidentity
+  # 5b. The applications page's decision, downloaded (plan/25 §5). LAST of the chroot work, for
+  #     two reasons that are the same reason: everything before it writes the machine, this adds
+  #     to it, and the one failure it can meet — a download that did not finish — must not run
+  #     after a job that would have reacted to it. It installs the refs the page published and
+  #     then updates every flatpak in the target, so the payload's build-time pins (apps.lock)
+  #     are lifted to what Flathub has today. Offline it does nothing at all, on its own
+  #     re-checked verdict, and that is the whole job.
+  - appsetup
   - umount
 - show:
   - finished

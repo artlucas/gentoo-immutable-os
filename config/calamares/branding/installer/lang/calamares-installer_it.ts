@@ -1,40 +1,342 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE TS>
-<!--
-  Translations for the it row of config/languages.conf.
-
-  GENERATED SHAPE, HAND-WRITTEN CONTENT. Calamares loads this file's compiled .qm as its BRANDING
-  translator (Branding.cpp:296 builds the prefix <component>/lang/calamares-<component>_, and
-  installTranslator() reloads it on every language change), so our modules' tr() and qsTr() strings
-  resolve out of it with no QTranslator of our own and no retranslation wiring. See plan/22 §4.
-
-  Source strings must match the C++ and QML BYTE FOR BYTE. Do not reflow them, do not "fix" the
-  ellipsis or the em dash: a mismatch is not an error anywhere, it is a string that silently stays
-  English. scripts/update-translations.sh re-extracts them with lupdate; stage 40 refuses to build
-  a medium whose LanguageNames context is missing a row that config/languages.conf names.
-
-  A CONTEXT IS A CLASS NAME, which is why plan/23 touched this file at all: moving the greeting out
-  of the language module moved four strings from LanguageConfig into GreetingPage and GreetingConfig
-  without changing one character of any of them. Nothing checks that a context still names a class
-  that exists — a stale one is another string that silently stays English — so check-translations.py
-  grew a rule for it.
-
-  THREE OF THE CONTEXTS BELOW ARE UPSTREAM'S: CheckerContainer, ResultsListWidget and the
-  GreetingViewStep sidebar entry are Calamares' own strings, and their translations are lifted from
-  Calamares' own catalogue (lang/calamares_it_IT.ts in the 3.4.2 tarball) rather than written
-  again here. They are in OUR catalogue because upstream's copy is keyed to a source ending in three
-  ASCII dots while the code it ships says "…", so Qt never finds it; the trailing dots in the
-  translations are normalised to match. That is upstream's bug, fixed for this medium only.
-
-  The accounts page's contexts are NOT here yet — run scripts/update-translations.sh to pull them
-  in. Until then that page is English in every language, which plan/22 §8 records as a known limit.
--->
 <TS version="2.1" language="it">
+<context>
+    <name>AccountsConfig</name>
+    <message>
+        <source>Enter the enrolment code from your organisation.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Give this computer a name first.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Could not prepare %1. The installer is not running as root.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Contacting your organisation…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Your organisation did not answer within two minutes. Check the network and try again.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>This computer could not be enrolled.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The enrolment finished but could not be read back.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The enrolment reported success but wrote nothing.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>This computer is enrolled, but nobody has been given access to it yet. Add someone in your organisation&apos;s web interface, then try again.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>This computer is enrolled with %1, but nobody has been given access to it yet. Add someone in your organisation&apos;s web interface, then try again.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message numerus="yes">
+        <source>Enrolled. %n person can use this computer.</source>
+        <translation type="unfinished">
+            <numerusform></numerusform>
+            <numerusform></numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>Enrolled with %1. %n person can use this computer.</source>
+        <translation type="unfinished">
+            <numerusform></numerusform>
+            <numerusform></numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Enter the domain and a join account first.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Checking %1…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The check did not finish in time.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 answered and accepted %2.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 could not be reached. The installation will still finish, and this computer can be joined afterwards.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The domain controller rejected %1.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>This computer&apos;s clock is too far from the domain controller&apos;s for Kerberos.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The domain could not be checked (status %1).</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Use lower-case letters, digits, - and _, starting with a letter.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 is already used by this system.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Use letters, digits and -, starting and ending with a letter or digit.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 cannot be used as a computer name.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Local account %1 on %2.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 will be managed by your organisation.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 will be managed by %2.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 will join %2, with the local administrator %3.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>No accounts have been set up.</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>AccountsViewStep</name>
+    <message>
+        <source>Accounts</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>AppsConfig</name>
+    <message>
+        <source>Add more applications to %1?</source>
+        <translation>Aggiungere altre applicazioni a %1?</translation>
+    </message>
+    <message>
+        <source>These come from Flathub and are installed while the installer runs, so they need an internet connection. When there is one, the applications already included are updated to their latest versions too.</source>
+        <translation>Provengono da Flathub e vengono installate mentre il programma di installazione è in esecuzione, quindi richiedono una connessione internet. Quando c'è, anche le applicazioni già incluse vengono aggiornate alle versioni più recenti.</translation>
+    </message>
+    <message>
+        <source>No internet connection. Nothing can be added from Flathub without one — install now and add applications later from Discover.</source>
+        <translation>Nessuna connessione internet: senza connessione non è possibile aggiungere nulla da Flathub — installa ora e aggiungi le applicazioni più tardi da Discover.</translation>
+    </message>
+    <message>
+        <source>Check again</source>
+        <translation>Controlla di nuovo</translation>
+    </message>
+    <message>
+        <source>Typical set</source>
+        <translation>Insieme tipico</translation>
+    </message>
+    <message>
+        <source>Nothing extra</source>
+        <translation>Niente di extra</translation>
+    </message>
+    <message>
+        <source>Only the applications already included</source>
+        <translation>Solo le applicazioni già incluse</translation>
+    </message>
+    <message>
+        <source>Choose individually</source>
+        <translation>Scegliere singolarmente</translation>
+    </message>
+    <message>
+        <source>Pick from the list below</source>
+        <translation>Scegli dall'elenco sottostante</translation>
+    </message>
+    <message>
+        <source>Typical application set</source>
+        <translation>Insieme tipico di applicazioni</translation>
+    </message>
+    <message>
+        <source>No extra applications</source>
+        <translation>Nessuna applicazione extra</translation>
+    </message>
+    <message>
+        <source>Extra applications: %1</source>
+        <translation>Applicazioni extra: %1</translation>
+    </message>
+</context>
+<context>
+    <name>AppsViewStep</name>
+    <message>
+        <source>Applications</source>
+        <translation>Applicazioni</translation>
+    </message>
+</context>
 <context>
     <name>CheckerContainer</name>
     <message>
         <source>Gathering system information…</source>
         <translation>Raccolta delle informazioni di sistema…</translation>
+    </message>
+</context>
+<context>
+    <name>DiskConfig</name>
+    <message>
+        <source>unformatted</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 (%2)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 (%2, %3)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Empty — no partition table</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>One filesystem, no partition table</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message numerus="yes">
+        <source>%n partition(s) — %1</source>
+        <comment>disk contents</comment>
+        <translation type="unfinished">
+            <numerusform></numerusform>
+            <numerusform></numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>No disk can be used for the installation.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>This computer has one disk.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Where should %1 be installed?</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 needs a disk of at least %2 that it is not itself running from.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 will be installed on it, and everything on it now will be erased.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Everything on the disk you choose will be erased. Nothing else on this computer is changed.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Boot</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>System</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Reserved for updates</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Your files</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Everything on this disk will be deleted.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>This disk is empty.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message numerus="yes">
+        <source>%n partition(s) will be deleted.</source>
+        <comment>erase warning</comment>
+        <translation type="unfinished">
+            <numerusform></numerusform>
+            <numerusform></numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n partition(s) will be deleted, including %1.</source>
+        <comment>erase warning</comment>
+        <translation type="unfinished">
+            <numerusform></numerusform>
+            <numerusform></numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>This is a removable disk.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Erase %1 (%2) and install %3 on it.</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>DiskModel</name>
+    <message>
+        <source>VirtIO disk</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>NVMe disk</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Disk</source>
+        <translation type="unfinished">Disco</translation>
+    </message>
+    <message>
+        <source>%1 is running from this disk</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Too small for an installation</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>This disk is write-protected</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Contents unknown</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>DiskViewStep</name>
+    <message>
+        <source>Disk</source>
+        <translation type="unfinished">Disco</translation>
     </message>
 </context>
 <context>
@@ -120,6 +422,17 @@
     </message>
 </context>
 <context>
+    <name>QObject</name>
+    <message>
+        <source>The password must be at least %1 characters long.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>That password is not strong enough.</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
     <name>Requirements</name>
     <message>
         <source>Disk</source>
@@ -150,8 +463,24 @@
         <translation>%1 disponibili, %2 necessari</translation>
     </message>
     <message>
+        <source>Installer configuration</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>this installer cannot tell whether this computer meets its requirements — see the installer log</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>this installer was not told how large a disk it needs</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>no disk to install onto, %1 needed</source>
         <translation>nessun disco su cui installare, %1 necessari</translation>
+    </message>
+    <message>
+        <source>this installer was not told how much memory it needs</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>the installer is not running with administrator rights</source>

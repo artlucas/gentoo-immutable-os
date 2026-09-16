@@ -1,0 +1,15 @@
+# Module metadata. `name` MUST equal this directory's name or ModuleManager silently skips it
+# (ModuleManager::doInit compares the two and only warns when the descriptor is otherwise valid).
+# A skipped module here is an install that finishes without the applications the user chose and
+# without the update the medium promised, and nothing in the log says why.
+---
+type:       "job"
+name:       "appsetup"
+interface:  "python"
+script:     "main.py"
+# Bounded network work, and the only such job in the sequence that is OPTIONAL by design: the
+# `appsetup` run can download gigabytes (LibreOffice and Krita together are ~1.5 GiB of Flathub
+# objects), so it is heavier than accountsetup's 6 — but everything it does has an offline answer
+# the medium already shipped, so it is nowhere near imagedeploy's 60. flatpak reports no progress
+# over its CLI, so this weight buys the bar its segment, not smooth movement inside it.
+weight:     20

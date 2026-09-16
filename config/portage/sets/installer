@@ -121,3 +121,19 @@ distro-base/distro-calamares-greeting
 # Named only by this profile, like the other three: on a desktop image it would install a Calamares
 # plugin into a system with no Calamares.
 distro-base/distro-calamares-disk
+
+# ---- the applications page (plan/25) -----------------------------------------------------------
+# The page that asks which extra applications to add from Flathub, and the last question the
+# installer asks. It replaces nothing — no stock module asks this — which is also why it is the
+# one page whose absence the install survives in full: the payload's own applications are already
+# on the disk, offline the page forces "nothing extra" anyway, and the `appsetup` job that does
+# the downloading may not fail an install for a download that did not finish.
+#
+# MANDATORY all the same, for the reason that makes every sibling mandatory: settings.conf names
+# it, Calamares silently drops any step whose module is installed nowhere, and the shape of THAT
+# failure is an installer that never mentions applications and never updates the ones it ships —
+# a promise the medium makes on its applications page that the medium then breaks.
+#
+# Named only by this profile, like the other four: on a desktop image it would install a
+# Calamares plugin into a system with no Calamares.
+distro-base/distro-calamares-apps

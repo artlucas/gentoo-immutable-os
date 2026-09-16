@@ -8,7 +8,9 @@ stock `users` module is [plan/21](../../plan/21-installer-accounts-page.md), the
 that replaced the stock `welcome` module is [plan/22](../../plan/22-installer-language-page.md), the
 greeting page that took the second half of that replacement is
 [plan/23](../../plan/23-installer-greeting-page.md), and the disk page that replaced the stock
-`partition` module is [plan/24](../../plan/24-installer-disk-page.md).
+`partition` module is [plan/24](../../plan/24-installer-disk-page.md). The applications page and
+its job — the one pair that adds to the image rather than writing it — are
+[plan/25](../../plan/25-flatpak-apps-page.md).
 
 ## Where it goes
 
@@ -183,8 +185,10 @@ custom step to do this by hand; the overlay does it for free.
 | `accountsetup` | `users` (the jobs) + `managedenroll` | the local administrator, `/etc/hostname` and `/etc/hosts`, and then the domain join or the enrolment transplant |
 | `disk` | `partition` (the page) | the machine's disks, the ones that cannot be used and why, a to-scale picture of what is about to happen, and the checkbox that has to be ticked before Next lights up. A compiled view module from the overlay, not here; its config is `modules/disk.conf.in` |
 | `disksetup` | `partition` (the jobs) | releases the target's mounts, wipes it, writes the GPT and makes the two filesystems there are to make. The layout comes from `scripts/lib/layout.sh` — **the pipeline's own**, installed on the medium as `/usr/libexec/<id>-disk-layout` — so an installed machine and an image `dd`'d to a disk are partitioned by one description rather than two |
+| `apps` | — (nothing stock asks this) | which extra applications to add from Flathub: the typical set, nothing, or a chosen list. A compiled view module from the overlay, not here; its config is `modules/apps.conf` (not a template — the list is facts about Flathub, not about this build). Offline it forces its own second answer, "nothing extra", and the install is none the worse for it |
+| `appsetup` | — | the `apps` page's decision, downloaded: installs the published refs in the chroot and then updates every flatpak in the target, so the payload's build-time pins (`apps.lock`) are lifted to what Flathub has today. Re-checks the network itself; offline it does nothing at all, and no failure in it may fail an install |
 
-All but `accounts` and `disk` are Python job modules — a directory, a `module.desc` and a `main.py`.
+All but `accounts`, `disk` and `apps` are Python job modules — a directory, a `module.desc` and a `main.py`.
 `module.desc`'s `name` **must** equal the directory name: `ModuleManager` compares the two and silently skips the
 module when they differ, which produces an install that runs to "finished" having never written
 the bootloader. Both stage 40 and `tests/test-installer.sh` assert it.

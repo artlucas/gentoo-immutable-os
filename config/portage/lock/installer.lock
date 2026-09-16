@@ -4,7 +4,7 @@
 # SNAPSHOT_SHA256: c61294000825031e58a38f60fadb603423c61430b841d73b87705f789d83944b
 # SNAPSHOT_DATE: 20260820
 # PROFILE: default/linux/amd64/23.0/desktop/plasma/systemd
-# PORTAGE_CONFIG_HASH: d9ba2ac865a4aaa282bd3a630134be26be87906cce9c8945ada85074d5f77f76
+# PORTAGE_CONFIG_HASH: 86053c9063abced02dc688694dc4a45feba56332325dd61b126e65fbd2dfd968
 # INCLUDE_CJK_FONTS: 1
 # INCLUDE_PRINTING: 1
 # INCLUDE_DISTROBOX: 0
@@ -252,6 +252,7 @@
 =gui-libs/egl-wayland2-1.0.1
 =gui-libs/libdecor-0.2.5
 =immos-base/immos-calamares-accounts-1.0
+=immos-base/immos-calamares-apps-1.0
 =immos-base/immos-calamares-disk-1.0
 =immos-base/immos-calamares-greeting-1.0
 =immos-base/immos-calamares-language-1.0

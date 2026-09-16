@@ -272,6 +272,7 @@ assert_eq "$I_ROOT_SLOT_SIZE_MIB" "$(sed -nE 's/^rootSlotSizeMiB:[[:space:]]+([0
 # agree is the formatter each one uses.
 GREET_SRC="$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-greeting/files"
 DISK_SRC="$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-disk/files"
+APPS_SRC="$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-apps/files"
 assert_true "the greeting page reports disk sizes in decimal GB" \
     bash -c "sed -n '/^diskBytes( qint64 bytes )/,/^}/p' '$GREET_SRC/Requirements.cpp' |
              grep -q 'DataSizeSIFormat'"
@@ -367,11 +368,13 @@ done
 SETTINGS="$RENDER/settings.conf"
 assert_file "$SETTINGS" "settings.conf rendered"
 mapfile -t OURS < <(find "$CAL/local-modules" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort)
-# FIVE since plan/24, and the fifth is a substitution like the fourth was: `disksetup` took over
-# the exec half of the stock `partition` module, which could not be kept when its page was replaced
-# — a Calamares view step owns its jobs(). The others are accountsetup (which replaced managedenroll
-# AND the stock `users` module's jobs, plan/21), imagedeploy, imagebootloader and imageidentity.
-(( ${#OURS[@]} == 5 )) || _fail "expected five local modules, found ${#OURS[@]}: ${OURS[*]}"
+# SIX since plan/25, and the sixth is the first that replaces nothing: `appsetup` downloads what
+# the applications page chose, and no stock module ever asked that question. The five before it
+# are substitutions — disksetup took the exec half of the stock `partition` module when its page
+# was replaced (a view step owns its jobs()), accountsetup replaced managedenroll AND the stock
+# `users` module's jobs (plan/21), and imagedeploy, imagebootloader and imageidentity replaced
+# unpackfs+mount, bootloader, and a pile of per-image fixups nothing stock covers.
+(( ${#OURS[@]} == 6 )) || _fail "expected six local modules, found ${#OURS[@]}: ${OURS[*]}"
 for m in "${OURS[@]}"; do
     d="$CAL/local-modules/$m"
     assert_file "$d/module.desc" "$m has a module descriptor"
@@ -488,6 +491,21 @@ assert_true "the show sequence names the disk page" \
     bash -c "sed -n '/^- show:/,/^- exec:/p' '$SETTINGS' | grep -qE '^[[:space:]]*-[[:space:]]+disk\$'"
 assert_true "the exec sequence names disksetup" \
     bash -c "sed -n '/^- exec:/,/^- show:/p' '$SETTINGS' | grep -qE '^[[:space:]]*-[[:space:]]+disksetup\$'"
+# ...and the applications pair, the same way (plan/25). `apps` draws the page, `appsetup`
+# downloads its answer — two modules for the same one-question reason as the two pairs above.
+assert_true "the show sequence names the applications page" \
+    bash -c "sed -n '/^- show:/,/^- exec:/p' '$SETTINGS' | grep -qE '^[[:space:]]*-[[:space:]]+apps\$'"
+assert_true "the exec sequence names appsetup" \
+    bash -c "sed -n '/^- exec:/,/^- show:/p' '$SETTINGS' | grep -qE '^[[:space:]]*-[[:space:]]+appsetup\$'"
+# LAST of the show sequence. Everything before it describes the machine being built; this
+# describes what goes on top, so it belongs after the last machine question (accounts) and
+# immediately before the summary that repeats every answer back.
+assert_true "the applications page comes after accounts and before summary" \
+    bash -c "
+      seq=\$(sed -n '/^- show:/,/^- exec:/p' '$SETTINGS' | sed -nE 's/^[[:space:]]*-[[:space:]]+([a-z][a-z0-9_-]*)\$/\\1/p')
+      idx() { printf '%s\\n' \"\$seq\" | grep -nxF \"\$1\" | cut -d: -f1; }
+      [[ \$(idx accounts) -lt \$(idx apps) ]] &&
+      [[ \$(idx apps) -lt \$(idx summary) ]]"
 # The disk page must come BEFORE the accounts page, and not because either depends on the other:
 # the accounts page can spend minutes enrolling a managed machine against a real service (plan/21
 # §3), and asking somebody to do that before they know whether the installer can even use their
@@ -515,6 +533,17 @@ assert_true "accountsetup runs after imagedeploy and before removeuser and image
       [[ \$(idx imagedeploy) -lt \$(idx accountsetup) ]] &&
       [[ \$(idx accountsetup) -lt \$(idx removeuser) ]] &&
       [[ \$(idx accountsetup) -lt \$(idx imageidentity) ]]"
+# appsetup LAST of the chroot work, after imageidentity and before umount (plan/25 §5). It needs
+# everything imageidentity needed — a deployed, /var-seeded, chroot-ready target — and it must be
+# the last thing that touches the target, because the one failure it can meet (a download that
+# did not finish) is one every job before it would have had to decide something about, and the
+# one after it (umount) exists to tear the target down whatever happened.
+assert_true "appsetup runs after imageidentity and before umount" \
+    bash -c "
+      seq=\$(sed -n '/^- exec:/,/^- show:/p' '$SETTINGS' | sed -nE 's/^[[:space:]]*-[[:space:]]+([a-z][a-z0-9_-]*)\$/\\1/p')
+      idx() { printf '%s\\n' \"\$seq\" | grep -nxF \"\$1\" | cut -d: -f1; }
+      [[ \$(idx imageidentity) -lt \$(idx appsetup) ]] &&
+      [[ \$(idx appsetup) -lt \$(idx umount) ]]"
 
 # ---- 6b. the language page (plan/22) --------------------------------------------------------
 #
@@ -616,7 +645,8 @@ assert_true "the branding translations match the table and the module sources" \
         --source-dir "$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-language/files" \
         --source-dir "$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-greeting/files" \
         --source-dir "$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-accounts/files" \
-        --source-dir "$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-disk/files"
+        --source-dir "$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-disk/files" \
+        --source-dir "$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-apps/files"
 
 # ---- 6c. the language page's source (plan/22) ----------------------------------------------
 LANG_SRC="$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-language/files"
@@ -1017,6 +1047,142 @@ assert_true "...and the sidebar says Disk" \
 assert_true "...and the QML travels inside the .so rather than being installed a second time" \
     grep -q 'qt6_add_resources(${DISK_TARGET}' "$DISK_SRC/CMakeLists.txt"
 
+# ---- 6f. the applications page, and the job that downloads its answer (plan/25) -------------
+APPS_JOB="$CAL/local-modules/appsetup/main.py"
+APPS_QML="$APPS_SRC/qml/Apps.qml"
+APPS_CONF="$RENDER/modules/apps.conf"
+APPS_JOB_CONF="$RENDER/modules/appsetup.conf"
+
+# THE LIST IS THE OFFER, and two files carry it: modules/apps.conf is what the page draws its
+# rows from and the packaged fallback is what loads the module where /etc/calamares is not.
+# The two must agree app for app — the medium reads the /etc copy, so nothing would ever notice
+# a fallback still offering an app a newer conf dropped. Six ids, none of them in
+# config/flatpak/apps.lock: these are DOWNLOADED at install time, which is the whole difference
+# between this list and FLATPAK_PREINSTALL.
+APPS_EXPECTED="org.mozilla.Thunderbird org.videolan.VLC org.libreoffice.LibreOffice org.kde.krita org.kde.krdc org.kde.kate"
+assert_file "$APPS_CONF" "apps.conf rendered"
+assert_eq "$APPS_EXPECTED" \
+    "$(sed -nE 's/^[[:space:]]+- id:[[:space:]]+(\S+).*/\1/p' "$APPS_CONF" | tr '\n' ' ' | sed 's/ $//')" \
+    "apps.conf offers the six applications, in file order"
+assert_eq "$APPS_EXPECTED" \
+    "$(sed -nE 's/^[[:space:]]+- id:[[:space:]]+(\S+).*/\1/p' "$APPS_SRC/apps.conf" | tr '\n' ' ' | sed 's/ $//')" \
+    "...and the packaged fallback offers exactly the same six"
+assert_true "apps.conf defaults to the typical set" \
+    grep -qE '^defaultMode:[[:space:]]+typical$' "$APPS_CONF"
+
+# ONE ANSWER TO "IS THERE INTERNET". The job's own probe curls the same URL the greeting page's
+# requirements block checks; two URLs would be two verdicts, and the offline path turns on that
+# verdict (the page forces its second answer, the job skips both its passes).
+assert_file "$APPS_JOB_CONF" "appsetup.conf rendered"
+assert_eq "$(sed -nE 's/^[[:space:]]*internetCheckUrl:[[:space:]]+"([^"]+)".*/\1/p' "$GREETING_CONF")" \
+    "$(sed -nE 's/^[[:space:]]*internetCheckUrl:[[:space:]]+"([^"]+)".*/\1/p' "$APPS_JOB_CONF")" \
+    "appsetup probes the same URL the greeting checks"
+for k in remote flathubUrl installTimeoutS updateTimeoutS; do
+    assert_true "appsetup.conf sets $k" grep -qE "^$k:" "$APPS_JOB_CONF"
+done
+
+# THE OFFLINE RULE, IN BOTH HALVES. The page re-asks the internet question every time it is
+# entered (the greeting's startup verdict is minutes old by then), forces "none" when the answer
+# is no, and the QML disables the two choices that need a connection so the force never fights
+# the user. The job re-asks AGAIN, itself, and skips both its passes offline — the page's answer
+# is not authority for spending forty minutes of someone's data plan either way.
+assert_true "the page re-asks the internet question on every entry" \
+    bash -c "sed -n '/^AppsViewStep::onActivate/,/^}/p' '$APPS_SRC/AppsViewStep.cpp' | grep -q 'recheckInternet'"
+assert_true "the check is the greeting page's own Manager call, URL and all" \
+    grep -q 'Calamares::Network::Manager nam' "$APPS_SRC/AppsConfig.cpp"
+assert_true "...and the offline verdict forces the second answer" \
+    bash -c "sed -n '/^AppsConfig::recheckInternet/,/^}/p' '$APPS_SRC/AppsConfig.cpp' | grep -q 'm_mode = QStringLiteral( \"none\" )'"
+assert_true "the two choices that need a connection are disabled offline, not hidden" \
+    bash -c "grep -c 'enabled: apps.hasInternet' '$APPS_QML' | grep -qx 2"
+assert_true "the job re-checks connectivity itself, on the host" \
+    grep -q 'def check_internet' "$APPS_JOB"
+assert_true "...and skips the install AND the update when offline" \
+    grep -q 'skipping both the install' "$APPS_JOB"
+
+# THE ONE RULE THE JOB MAY NOT BREAK: no download failure may fail an install. When appsetup
+# runs, the OS is on the disk; failing for a stalled LibreOffice would present a working machine
+# as broken and offer a retry that rewrites the disk for an app Discover installs in a minute.
+# Its single fatal case is the one that is not its fault: no rootMountPoint means imagedeploy
+# never ran, and silence there is the lie this count exists to prevent.
+assert_eq "1" "$(grep -c 'return (' "$APPS_JOB")" \
+    "the job's only error tuple is the missing-rootMountPoint configuration error"
+assert_true "the install and update passes run flatpak noninteractively" \
+    bash -c "grep -q '\"flatpak\", \"install\", \"-y\", \"--system\", \"--noninteractive\"' '$APPS_JOB' &&
+             grep -q '\"flatpak\", \"update\", \"-y\", \"--system\", \"--noninteractive\"' '$APPS_JOB'"
+assert_true "the update pass runs even when nothing was selected" \
+    grep -qE '^[[:space:]]+update_refs\(root, conf\)$' "$APPS_JOB"
+
+# DNS IN THE CHROOT IS THE ONE THING imagedeploy DOES NOT PROVIDE and flatpak cannot live
+# without: the target's /etc/resolv.conf is resolved's stub symlink into a /run the chroot
+# remounted empty, and it dangles. A BIND MOUNT is the only shape that is right on both sides
+# of the overlay — a written file would persist past the reboot, a deleted one would whiteout
+# the lower's symlink out of existence — and the stock umount module cleans the mount up.
+assert_true "the job binds a working resolver config into the target" \
+    bash -c "grep -q 'run/systemd/resolve/resolv.conf' '$APPS_JOB' &&
+             grep -q 'mount.*--bind' '$APPS_JOB'"
+
+# THE PAGE'S CONTRACT WITH THE JOB IS TWO KEYS, and the mode is not one the job acts on: the
+# page resolves "typical" to its ids before publishing, so the job cannot disagree with the
+# conf about what the set was. The intersection for "custom" is taken in the same place.
+assert_true "the page publishes exactly the two keys the job reads" \
+    bash -c "grep -q 'gs->insert( QStringLiteral( \"appsMode\" )' '$APPS_SRC/AppsConfig.cpp' &&
+             grep -q 'gs->insert( QStringLiteral( \"appsSelected\" )' '$APPS_SRC/AppsConfig.cpp'"
+
+# EVERY `apps.<name>` IN THE QML RESOLVES TO SOMETHING C++ DECLARES — the disk page's check, for
+# the disk page's reason: a typo'd binding in QML renders empty, silently.
+assert_true "every QML binding resolves to an AppsConfig property or method" \
+    python3 -c '
+import re, sys, pathlib
+d = pathlib.Path(sys.argv[1])
+qml = (d / "qml" / "Apps.qml").read_text(encoding="utf-8")
+hdr = (d / "AppsConfig.h").read_text(encoding="utf-8")
+used = sorted(set(re.findall(r"\bapps\.([A-Za-z_][A-Za-z0-9_]*)", qml)))
+assert used, "the QML binds to nothing at all - is the context property still called apps?"
+known = set(re.findall(r"Q_PROPERTY\(\s*\S+\s+(\w+)\s+READ", hdr))
+known |= set(re.findall(r"\b(\w+)\s*\([^)]*\)\s*(?:const)?\s*;", hdr))
+missing = [u for u in used if u not in known]
+assert not missing, "QML binds to %s, which AppsConfig does not declare" % ", ".join(missing)
+' "$APPS_SRC"
+# ...and every property either is CONSTANT or notifies a signal something actually emits.
+assert_true "every Q_PROPERTY is CONSTANT or notifies an emitted signal" \
+    python3 -c '
+import re, sys, pathlib
+d = pathlib.Path(sys.argv[1])
+hdr = (d / "AppsConfig.h").read_text(encoding="utf-8")
+cpp = (d / "AppsConfig.cpp").read_text(encoding="utf-8")
+bad = []
+for decl in re.findall(r"Q_PROPERTY\((.*?)\)", hdr, re.S):
+    flat = " ".join(decl.split()); name = flat.split()[1]
+    if "CONSTANT" in flat:
+        continue
+    m = re.search(r"NOTIFY\s+(\w+)", flat)
+    if not m:
+        bad.append("%s is neither CONSTANT nor NOTIFY" % name)
+    elif not re.search(r"void\s+%s\s*\(" % m.group(1), hdr):
+        bad.append("%s notifies %s, which is not declared" % (name, m.group(1)))
+    elif not re.search(r"emit\s+%s\s*\(" % m.group(1), cpp):
+        bad.append("%s notifies %s, which nothing emits" % (name, m.group(1)))
+assert not bad, "; ".join(bad)
+' "$APPS_SRC"
+
+# NO qsTr() CALL IN THIS MODULE'S QML, and the reason is the toolchain: the builder's lupdate
+# (dev-qt/qttools 6.11) is built without QML support, so a qsTr() here has never reached the
+# branding catalogue and would render English in all nine languages. Every string this page
+# shows is a tr()'d AppsConfig property instead — see AppsConfig.h. The day the builder grows
+# QML-aware lupdate, this assertion is the one to drop. (The grep matches the CALL — a quote
+# after the paren — because the comments above say qsTr() too, saying why there is none.)
+assert_false "the QML carries no qsTr() call of its own" \
+    grep -q 'qsTr("' "$APPS_QML"
+
+# The module is `apps`, everywhere the siblings are: built by that name, sidebar named by the
+# page's one noun, QML inside the .so.
+assert_true "the plugin is built as 'apps'" \
+    grep -qE '^calamares_add_plugin\(apps$' "$APPS_SRC/CMakeLists.txt"
+assert_true "...and the sidebar says Applications" \
+    bash -c "sed -n '/^AppsViewStep::prettyName/,/^}/p' '$APPS_SRC/AppsViewStep.cpp' | grep -q 'tr( \"Applications\" )'"
+assert_true "...and the QML travels inside the .so rather than being installed a second time" \
+    grep -q 'qt6_add_resources(${APPS_TARGET}' "$APPS_SRC/CMakeLists.txt"
+
 # ---- 7. YAML is YAML ------------------------------------------------------------------------
 # Calamares parses these with yaml-cpp and reports a parse error as a startup failure, so a
 # stray tab is a medium that does not install. Skipped rather than failed where PyYAML is absent,
@@ -1047,22 +1213,23 @@ assert_eq "1" "${#installer_users[@]}" "exactly one profile emerges @installer"
 assert_eq "${#installer_users[@]}" "${#live_users[@]}" \
     "every profile that emerges @installer is a live profile"
 
-# The set names five atoms: Calamares, and the four view modules this project plugs into it — the
-# accounts page (plan/21), the language page (plan/22), the greeting page (plan/23) and the disk
-# page (plan/24). Everything else in the ~25-package tail is resolved, and a set that starts listing
-# transitive deps stops describing intent.
+# The set names six atoms: Calamares, and the five view modules this project plugs into it — the
+# accounts page (plan/21), the language page (plan/22), the greeting page (plan/23), the disk page
+# (plan/24) and the applications page (plan/25). Everything else in the ~25-package tail is
+# resolved, and a set that starts listing transitive deps stops describing intent.
 #
 # The count is asserted rather than the names, and it is a NUMBER on purpose: adding an atom here is
 # exactly the change that should have to be argued for in a diff, because @installer is the one set
 # whose contents the product image is forbidden to contain. The fourth was argued in plan/23 and was
 # a SPLIT of the third rather than new weight. The fifth is argued in plan/24 and is a REPLACEMENT:
 # it takes a stock module out of the sequence rather than adding a page, and it drops this
-# installer's last use of KPMcore with it.
-assert_eq "5" "$(grep -cvE '^[[:space:]]*(#|$)' "$REPO_ROOT/config/portage/sets/installer")" \
-    "@installer names exactly five atoms"
+# installer's last use of KPMcore with it. The sixth is argued in plan/25 and is the first that
+# replaces NOTHING — a new question, with no stock module that ever asked it.
+assert_eq "6" "$(grep -cvE '^[[:space:]]*(#|$)' "$REPO_ROOT/config/portage/sets/installer")" \
+    "@installer names exactly six atoms"
 for atom in app-admin/calamares distro-base/distro-calamares-accounts \
             distro-base/distro-calamares-greeting distro-base/distro-calamares-language \
-            distro-base/distro-calamares-disk; do
+            distro-base/distro-calamares-disk distro-base/distro-calamares-apps; do
     assert_true "@installer names $atom" \
         grep -qxF "$atom" "$REPO_ROOT/config/portage/sets/installer"
 done

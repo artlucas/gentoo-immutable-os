@@ -1078,6 +1078,19 @@ if profile_has_set installer; then
       scripts/relock.sh ${DISTRO_ID}-base/${DISTRO_ID}-calamares-disk --profile installer"
   log "installer: the disk page is installed"
 
+  # THE APPLICATIONS PAGE (plan/25). Its absence is the mildest of the five — nothing breaks, the
+  # payload's applications are already on the disk — and it is a die anyway, because what a medium
+  # without it does is QUIETER than breaking: settings.conf drops the step in silence, the
+  # installer never says the word "applications", and the update the subheadline on every other
+  # page implies simply does not happen. A promise kept by nobody is worse than an error.
+  compgen -G "$TARGET/usr/lib*/calamares/modules/apps/module.desc" >/dev/null \
+    || die "verify: the installer's applications page is not installed, so this medium would
+  never ask which applications to add and would never update the ones it ships (plan/25 §5). It
+  comes from ${DISTRO_ID}-base/${DISTRO_ID}-calamares-apps in config/portage/overlay, which
+  reaches an image only through a re-resolved lock:
+      scripts/relock.sh ${DISTRO_ID}-base/${DISTRO_ID}-calamares-apps --profile installer"
+  log "installer: the applications page is installed"
+
   # INSTALLER_LANGUAGES — the `languages:` block for modules/language.conf — is built by
   # load_languages() in lib/common.sh, not here, because this stage is not the only thing that
   # renders that template: tests/test-installer.sh renders the whole Calamares tree offline, and a
@@ -1160,6 +1173,7 @@ if profile_has_set installer; then
     --source-dir "$REPO/config/portage/overlay/distro-base/distro-calamares-greeting/files" \
     --source-dir "$REPO/config/portage/overlay/distro-base/distro-calamares-accounts/files" \
     --source-dir "$REPO/config/portage/overlay/distro-base/distro-calamares-disk/files" \
+    --source-dir "$REPO/config/portage/overlay/distro-base/distro-calamares-apps/files" \
     || die "installer: the branding translations do not match config/languages.conf or the module
   sources (plan/22 §4). Nothing above this line is a runtime error in Qt — a mismatched source
   string is a page that stays English — which is why it is a build failure here."

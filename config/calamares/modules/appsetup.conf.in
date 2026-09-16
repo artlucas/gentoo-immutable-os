@@ -1,0 +1,33 @@
+# The applications page's job (plan/25 §5).
+#
+# GENERATED from config/calamares/modules/appsetup.conf.in by stage 40 into
+# /etc/calamares/modules/appsetup.conf, which Calamares searches first. Read by the `appsetup`
+# python job; the page's own list lives in modules/apps.conf, and the page resolves its three
+# answers down to one ref list before publishing, so the two files never both describe "what gets
+# installed".
+---
+# The URL the job's OWN connectivity probe curls, rendered from the same build.conf HOME_URL the
+# greeting page's requirements block checks. One value in one place, twice: a job that probed a
+# different URL than the page whose verdict it is re-asking would be two answers to "is there
+# internet", and the offline path turns on exactly that answer.
+internetCheckUrl: "@HOME_URL@"
+
+# The remote the refs in GlobalStorage's appsSelected are resolved against. The name — not the
+# URL — is what `flatpak install` takes here; the URL below is only for the fallback that adds
+# the remote to a target that does not have it (a medium built with INSTALLER_PAYLOAD_FLATPAKS=0,
+# whose bare /var seeded no flatpak store at all).
+remote: flathub
+
+# NOT a rendered token, on purpose: stage 40's FLATHUB_SRC is rewritten to a builder-local path
+# when the vendor archive substitutes for the network (scripts/stages/90-vendor.sh), and a medium
+# is not a build — the canonical URL is the only one that is right on every medium. Stage 40
+# itself uses the same constant when it adds this remote at build time.
+flathubUrl: "https://dl.flathub.org/repo/flathub.flatpakrepo"
+
+# Flatpak reports no progress over its CLI, so these are outer walls rather than budgets. The
+# install bound covers the whole typical set on a slow link (LibreOffice and Krita alone are
+# ~1.5 GiB of objects); the update bound covers the payload's five apps plus the runtimes they
+# share with whatever was just installed. Both end in a warning and a finished install, never a
+# failed one — see the header of local-modules/appsetup/main.py.
+installTimeoutS: 2400
+updateTimeoutS: 1200
