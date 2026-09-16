@@ -226,6 +226,22 @@ assert_true "disksetup.conf names the helper stage 40 installs" \
     grep -qE "^layoutHelper:[[:space:]]+\"/usr/libexec/${I_DISTRO_ID}-disk-layout\"" "$DISKSETUP_CONF"
 assert_true "...and stage 40 installs it under exactly that name" \
     grep -qF 'DISK_LAYOUT_DST="$TARGET/usr/libexec/$DISTRO_ID-disk-layout"' "$STAGE40"
+# THE INTERPRETER LINE, WITHOUT WHICH THE HELPER IS NOT A PROGRAM. The job runs this file with
+# python's subprocess — plain execve — and execve refuses a text file whose first two bytes are
+# not `#!`. A shell would have adopted it anyway (bash's ENOEXEC fallback), which is how stage
+# 40's probe passed and a whole medium shipped whose every install died at "[Errno 8] Exec
+# format error" one screen after the user agreed to the erase. Sourcing — the pipeline's path —
+# never reads the line, so it costs the builder nothing.
+assert_eq "#!/bin/bash" "$(head -n 1 "$LAYOUT_SH")" \
+    "the layout helper carries the interpreter its execve requires"
+# The builder has to check for it as bytes: running the file proves nothing (the shell adopts a
+# shebang-less script), and neither does `env`, because glibc's execvp keeps the /bin/sh fallback.
+assert_true "stage 40 checks the helper's interpreter line itself" \
+    grep -qF "== '#!/bin/bash'" "$STAGE40"
+# The other half of the same failure: a shebang naming an interpreter the medium does not carry
+# is ENOENT, one screen later all the same.
+assert_true "...and checks the interpreter is on the medium" \
+    grep -qF '[[ -x $TARGET/bin/bash ]]' "$STAGE40"
 # The job must not grow a layout of its own. A GPT type GUID in main.py would be the second
 # description coming back by another door.
 assert_false "the disksetup job carries no partition layout of its own" \

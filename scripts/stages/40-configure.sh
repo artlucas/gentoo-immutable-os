@@ -1250,6 +1250,21 @@ if profile_has_set installer; then
   # The builder's bash is the image's bash, so a syntax error here is a syntax error there.
   bash -n "$DISK_LAYOUT_DST" \
     || die "installer: the disk layout helper does not parse as bash"
+  # THE INTERPRETER LINE, CHECKED AS BYTES RATHER THAN BY RUNNING THE FILE. The `disksetup` job
+  # starts this helper with python's subprocess — plain execve — and execve refuses a text file
+  # whose first two bytes are not `#!`. Everything else here reads it through a shell, and a
+  # shell quietly adopts a shebang-less script (bash's ENOEXEC fallback), which is how a medium
+  # shipped whose every install died at "[Errno 8] Exec format error" one screen after the user
+  # agreed to the erase. `env` is no detector either: glibc's execvp keeps the /bin/sh fallback,
+  # so a shebang-less helper survives that too. The magic is asserted here, and so is the
+  # interpreter it names — a shebang pointing at a binary the medium does not carry is ENOENT,
+  # which differs from ENOEXEC only in which of the two is missing.
+  [[ $(head -n 1 -- "$DISK_LAYOUT_DST") == '#!/bin/bash' ]] \
+    || die "installer: the disk layout helper has no interpreter line. A shell runs it anyway,
+  which is why this was never noticed, but the job execve's it — every install from the medium
+  would fail with \"Exec format error\" (plan/24 §4)"
+  [[ -x $TARGET/bin/bash ]] \
+    || die "installer: /bin/bash is not on the medium, so its own disk layout helper cannot run"
   # One real invocation, against a plausible disk, checked for the one string an installed machine
   # cannot boot without. This is the cheapest place to catch a layout helper that runs and emits
   # the wrong thing: everything after it is a stranger's hardware.

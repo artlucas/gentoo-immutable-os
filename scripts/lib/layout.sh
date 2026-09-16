@@ -1,3 +1,4 @@
+#!/bin/bash
 # shellcheck shell=bash
 # layout.sh — the partition layout, and the one place it is written down (plan/24 §4).
 #
@@ -22,6 +23,12 @@
 # GPT type GUIDs. Run, it is the CLI at the bottom — which is what the installer uses, because a
 # python job calling one subprocess is a smaller contract than a python re-implementation of the
 # arithmetic.
+#
+# The shebang on the first line belongs to the second consumer only, and the medium it shipped on
+# is the one that explains why it must be there. A shell asked to run a script with no interpreter
+# line quietly adopts it — that is what stage 40's probe did, so the probe passed. The python job
+# calls execve, which does not: a file whose first two bytes are not `#!` and which is not an ELF
+# is "[Errno 8] Exec format error", and every install from that medium died at the first disk.
 #
 # It must stay SELF-CONTAINED: no $REPO, no load_config, no logging beyond die(). The copy on the
 # installer medium has none of those things, and tests/test-installer.sh asserts the two copies
