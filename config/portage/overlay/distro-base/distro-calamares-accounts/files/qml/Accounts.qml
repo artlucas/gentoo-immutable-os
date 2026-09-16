@@ -340,4 +340,50 @@ Item {
             }
         }
     }
+
+    // ---- the question the window's Next asks on the fields screen (plan/26 §3) ----------------
+    //
+    // The disk page's confirmation, worn one screen later: while the password is complete but
+    // failing libpwquality, AccountsViewStep::isAtEnd() is false, so ViewManager::next() calls
+    // the step's next() instead of advancing — which is requestPasswordConfirmation(), the
+    // signal the Connections below listens for. "Use anyway" settles the password and the view
+    // step completes the advance; the answer is withdrawn by the next edit of either password
+    // field, never by leaving the page — a chosen password is a decision, an erase is an event.
+    //
+    // At the root rather than in either form because both of them collect this password: local
+    // for its own account, domain for the failsafe administrator.
+    Kirigami.PromptDialog {
+        id: weakPasswordDialog
+
+        title: qsTr("Use this password anyway?")
+        // libpwquality's own reason — the same sentence the field already shows in red, because
+        // one policy should have one message (plan/21 §2). C++ tr(), so it translates; the title
+        // and the buttons are qsTr(), which on this builder does not (plan/25 §7).
+        subtitle: accounts.passwordMessage.length > 0
+                      ? accounts.passwordMessage
+                      : qsTr("That password is not strong enough.")
+        standardButtons: Kirigami.Dialog.NoButton
+        customFooterActions: [
+            Kirigami.Action {
+                icon.name: "dialog-cancel"
+                text: qsTr("Cancel")
+                onTriggered: weakPasswordDialog.close()
+            },
+            Kirigami.Action {
+                icon.name: "data-warning"
+                text: qsTr("Use anyway")
+                onTriggered: {
+                    weakPasswordDialog.close();
+                    accounts.acceptWeakPassword();
+                }
+            }
+        ]
+
+        Connections {
+            target: accounts
+            function onPasswordConfirmationRequested() {
+                weakPasswordDialog.open();
+            }
+        }
+    }
 }

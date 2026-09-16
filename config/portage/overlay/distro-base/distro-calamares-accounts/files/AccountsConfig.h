@@ -109,6 +109,10 @@ public:
     /*! libpwquality's 0..100 score, for the meter. Not a gate — passwordValid is the gate. */
     Q_PROPERTY( int passwordScore READ passwordScore NOTIFY validityChanged )
     Q_PROPERTY( bool passwordsMatch READ passwordsMatch NOTIFY validityChanged )
+    /*! Whether to log the created user straight in, off by default (plan/26 §4). A checkbox on
+     *  the local form only; publish() gates the GlobalStorage key on the mode, so managed and
+     *  domain installs get the same no-autologin drop-in they always did. */
+    Q_PROPERTY( bool autoLogin READ autoLogin WRITE setAutoLogin NOTIFY autoLoginChanged )
 
     // ---- the computer's name (every mode) ----------------------------------------------------
     Q_PROPERTY( QString hostname READ hostname WRITE setHostname NOTIFY hostnameChanged )
@@ -170,6 +174,7 @@ public:
     QString loginName() const { return m_loginName; }
     QString password() const { return m_password; }
     QString passwordRepeat() const { return m_passwordRepeat; }
+    bool autoLogin() const { return m_autoLogin; }
     QString hostname() const { return m_hostname; }
     QString enrolmentCode() const { return m_enrolmentCode; }
     QString organisationHint() const { return m_organisationHint; }
@@ -205,6 +210,13 @@ public:
 
     bool nextEnabled() const;
 
+    /*! Whether the fields screen may be LEFT with the password as it stands: valid, or weak and
+     *  answered-for. The second half of the two-part gate plan/26 §3 puts on this page —
+     *  nextEnabled() asks "complete?", this asks "strong, or warned?" — and the window's Next
+     *  opens the weak-password prompt rather than leaving while it is false. Managed mode
+     *  collects no password, so it is always settled there; its gate is the enrolment. */
+    bool passwordSettled() const;
+
     /*! One line for the summary page, in the mode's own terms. */
     QString prettyStatus() const;
 
@@ -226,6 +238,7 @@ public Q_SLOTS:
     void setLoginName( const QString& name );
     void setPassword( const QString& password );
     void setPasswordRepeat( const QString& password );
+    void setAutoLogin( bool autoLogin );
     void setHostname( const QString& hostname );
     void setEnrolmentCode( const QString& code );
     void setDomainName( const QString& domain );
@@ -251,6 +264,18 @@ public Q_SLOTS:
      *  block this page, because mode Domain creates a local administrator either way. */
     void verifyDomain();
 
+    /*! Ask the question the window's Next now asks on the fields screen (plan/26 §3). Called
+     *  from AccountsViewStep::next(), which ViewManager::next() reaches — instead of advancing —
+     *  for as long as passwordSettled() is false; emits passwordConfirmationRequested() only
+     *  when the password is genuinely the one thing in the way: complete, and failing
+     *  libpwquality. The dialog is QML's to draw. */
+    void requestPasswordConfirmation();
+
+    /*! The dialog's "Use anyway". Records the answer and reports it; the view step completes the
+     *  advance on the signal. Withdrawn by the next edit of either password field or a mode
+     *  change — never by leaving the page, because a chosen password is a decision. */
+    Q_INVOKABLE void acceptWeakPassword();
+
 Q_SIGNALS:
     void stepChanged();
     void modeChanged();
@@ -258,6 +283,9 @@ Q_SIGNALS:
     void loginNameChanged();
     void passwordChanged();
     void passwordRepeatChanged();
+    void autoLoginChanged();
+    void passwordConfirmationRequested();
+    void weakPasswordAccepted();
     void hostnameChanged();
     void enrolmentCodeChanged();
     void domainChanged();
@@ -281,6 +309,10 @@ private:
 
     Step m_step = ChooseMode;
 
+    // NoMode only until setConfigurationMap() runs: it pre-selects Local when the profile offers
+    // it (plan/26 §2), so the chooser opens with the answer most machines give already given. A
+    // profile that offers no local mode keeps NoMode, and its old rule — nothing selected until
+    // somebody selects — because there is nothing that can honestly be pre-selected.
     Mode m_mode = NoMode;
     QStringList m_modesOffered;
 
@@ -310,6 +342,11 @@ private:
     QString m_passwordMessage;
     bool m_passwordValid = false;
     int m_passwordScore = 0;
+    // The weak-password answer, and the knob that allows the question at all. Neither is a
+    // Q_PROPERTY: QML never binds them — the dialog opens on a signal and answers through an
+    // invokable — and a property nobody binds is a NOTIFY nobody can keep honest.
+    bool m_weakPasswordAccepted = false;
+    bool m_autoLogin = false;
     QString m_hostnameMessage;
     bool m_hostnameValid = false;
     // The last value nextEnabled() reported, so revalidate() can emit its signal only when
@@ -337,6 +374,7 @@ private:
     QString m_hostnameTemplate;
     QStringList m_pwqualityOptions;
     int m_minPasswordLength = 0;
+    bool m_allowWeakPasswords = true;
     QString m_organisationHint;
     QString m_failsafeUserName;
     QString m_scratchRoot;

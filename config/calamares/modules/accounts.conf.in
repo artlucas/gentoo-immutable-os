@@ -68,10 +68,12 @@ user:
 #       sudo/polkit as the wheel member the page creates. Stage 40 never sets a root password
 #       either, and the job never offers to; a root password field would have created a second,
 #       weaker way in.
-#   doAutologin / displayAutologin: the installed system must not autologin, and turning the live
-#       medium's autologin OFF is not a matter of leaving a key unset — that autologin lives in
-#       /etc/plasmalogin.conf.d/10-autologin.conf INSIDE the read-only image. `imageidentity`
-#       writes a later-sorting drop-in that overrides it (plan/16 §5.4).
+#   doAutologin / displayAutologin: autologin is the PAGE's to offer now (plan/26 §4), and there
+#       is deliberately no key for it here — it is a per-machine answer the person installing
+#       gives on the local form's checkbox, not a build-time fact. The page publishes a
+#       GlobalStorage bool; `imageidentity` writes the drop-in it has always written, with the
+#       created user when the box was ticked and the empty User that keeps the installed system
+#       at the greeter when it was not (plan/16 §5.4).
 #   sudoersGroup / autologinGroup: the image ships /etc/sudoers.d/wheel with
 #       `%wheel ALL=(ALL:ALL) ALL`, so there is nothing for the installer to write, and there is
 #       no autologin group to join.
@@ -90,11 +92,19 @@ user:
 # stage 40 runs create-cracklib-dict itself. Without it EVERY password on this page is rejected
 # with "The password fails the dictionary check" — and the installer gets all the way through the
 # disk step before the person finds out.
+#
+# allowWeakPasswords (plan/26 §3): whether a password that fails the checks above is a warning or
+# a wall. True — the default — keeps Next lit for a complete-but-weak password and asks "Use this
+# password anyway?" on the press, with libpwquality's own reason as the warning; the person
+# installing a kitchen computer knows more about its threat model than the page does, and a hard
+# wall only teaches password1!, password2!. False restores plan/21's behaviour exactly: the
+# button darkens on the verdict and the question is never asked.
 passwordRequirements:
     minLength: 8
     libpwquality:
         - minlen=8
         - minclass=2
+    allowWeakPasswords: true
 
 # ---- the computer's name ---------------------------------------------------------------------
 # The default offered in the field, not a fixed value — the person can type their own. One field

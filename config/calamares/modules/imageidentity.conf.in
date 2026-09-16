@@ -1,8 +1,10 @@
 # imageidentity — the per-machine settings no stock module covers (plan/16 §5.4).
 ---
-# Turns the live medium's autologin off. 20- sorts after the image's 10-autologin.conf, which
+# The autologin drop-in, written either way: an empty User turns the live medium's autologin off
+# on the installed system, and — when the accounts page's checkbox asked for it (plan/26 §4) —
+# the created user turns it on instead. 20- sorts after the image's 10-autologin.conf, which
 # lives in the read-only root and cannot be deleted through the overlay.
-autologinDropIn: "/etc/plasmalogin.conf.d/20-no-autologin.conf"
+autologinDropIn: "/etc/plasmalogin.conf.d/20-autologin.conf"
 
 # Subordinate ID ranges for rootless podman (plan/13). The same window stage 40 gives the live
 # user, and for the same reason: without it every `distrobox` call fails at first use, months

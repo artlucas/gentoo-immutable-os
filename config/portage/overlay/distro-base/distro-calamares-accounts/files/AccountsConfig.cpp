@@ -144,6 +144,17 @@ AccountsConfig::setConfigurationMap( const QVariantMap& map )
             m_modesOffered.append( QStringLiteral( "local" ) );
         }
     }
+    // THE ANSWER MOST MACHINES GIVE, ALREADY GIVEN (plan/26 §2). plan/21 opened this page with
+    // nothing selected, on the argument that no default is right for everybody — and a version
+    // later the page itself makes the counter-argument: most machines are household machines,
+    // the enterprise modes are offered and are the exception. Pre-selecting Local turns the
+    // first screen from a question into a confirmation, which is what it was for almost
+    // everybody anyway. Before the QML exists, so no signal is needed — the buttons read the
+    // state when they are created.
+    if ( m_mode == NoMode && localOffered() )
+    {
+        m_mode = Local;
+    }
 
     const QVariantList groups = map.value( QStringLiteral( "defaultGroups" ) ).toList();
     for ( const QVariant& g : groups )
@@ -197,6 +208,10 @@ AccountsConfig::setConfigurationMap( const QVariantMap& map )
     {
         m_pwqualityOptions.append( o.toString() );
     }
+    // True by default: a weak password is warned about, not refused (plan/26 §3). A profile that
+    // wants the refusal back sets this to false and gets exactly the old wall — the button goes
+    // dark on libpwquality's verdict and the prompt never opens.
+    m_allowWeakPasswords = pw.value( QStringLiteral( "allowWeakPasswords" ), true ).toBool();
     m_pwcheck.configure( m_pwqualityOptions, m_minPasswordLength );
 
     m_organisationHint = map.value( QStringLiteral( "organisationHint" ) ).toString();
@@ -274,6 +289,9 @@ AccountsConfig::setMode( Mode mode )
         releaseEnrolment();
     }
     m_mode = mode;
+    // A weak-password answer is an answer about one password, offered on one mode's form.
+    // Switching modes withdraws it — the fields it agreed to are not the fields on screen.
+    m_weakPasswordAccepted = false;
     // The failsafe administrator is only a default, and only where it is the failsafe. Typing a
     // name in local mode and then switching to domain keeps the name.
     if ( mode == Domain && !m_loginNameEdited && m_loginName.isEmpty() )
@@ -332,6 +350,11 @@ AccountsConfig::setLoginName( const QString& name )
 void
 AccountsConfig::setPassword( const QString& password )
 {
+    // BEFORE the equality guard: "Use this password anyway?" answered the password as it stood,
+    // and an edit that happened to land on the same string is still nobody's idea of a new
+    // agreement to keep. Withdrawn silently — the next press of Next re-asks, which is the only
+    // consumer of the state.
+    m_weakPasswordAccepted = false;
     if ( m_password == password )
     {
         return;
@@ -344,6 +367,8 @@ AccountsConfig::setPassword( const QString& password )
 void
 AccountsConfig::setPasswordRepeat( const QString& password )
 {
+    // Same withdrawal as setPassword(): the repeat is half of what the answer was about.
+    m_weakPasswordAccepted = false;
     if ( m_passwordRepeat == password )
     {
         return;
@@ -351,6 +376,17 @@ AccountsConfig::setPasswordRepeat( const QString& password )
     m_passwordRepeat = password;
     emit passwordRepeatChanged();
     revalidate();
+}
+
+void
+AccountsConfig::setAutoLogin( bool autoLogin )
+{
+    if ( m_autoLogin == autoLogin )
+    {
+        return;
+    }
+    m_autoLogin = autoLogin;
+    emit autoLoginChanged();
 }
 
 bool
@@ -859,15 +895,22 @@ AccountsConfig::nextEnabled() const
     switch ( m_mode )
     {
     case NoMode:
-        // The whole point of the page: a mode is a decision, and there is no default that is
-        // right for everybody.
+        // Only reachable in a profile that offers no local mode (plan/26 §2 pre-selects it
+        // otherwise): a mode is a decision, and with nothing to pre-select honestly, the
+        // decision waits for the user exactly as plan/21 laid it out.
         return false;
     case Local:
     case Domain:
-        // Field validation only. A domain that cannot be reached does NOT block: the local
-        // administrator is created either way, `<id>-domain` verifies before it writes, and the
-        // failure is recorded for `<id>-domain status` (plan/18 §7.4).
-        if ( !( m_loginNameValid && m_passwordValid && passwordsMatch() ) )
+        // THE BUTTON ASKS "COMPLETE?", NOT "STRONG?" (plan/26 §3). Strength is the door's
+        // question — passwordSettled(), asked as a dialog on the way out, and only when
+        // allowWeakPasswords lets it be asked — so a complete but weak password leaves the
+        // button lit and puts the warning in the press. An empty or mistyped password is
+        // incomplete, not weak, and still darkens the button here.
+        //
+        // A domain that cannot be reached does NOT block: the local administrator is created
+        // either way, `<id>-domain` verifies before it writes, and the failure is recorded for
+        // `<id>-domain status` (plan/18 §7.4).
+        if ( !( m_loginNameValid && passwordsMatch() && ( m_allowWeakPasswords || m_passwordValid ) ) )
         {
             return false;
         }
@@ -884,6 +927,51 @@ AccountsConfig::nextEnabled() const
         return m_enrolState == Succeeded && !m_grantedUsers.isEmpty();
     }
     return false;
+}
+
+bool
+AccountsConfig::passwordSettled() const
+{
+    switch ( m_mode )
+    {
+    case Managed:
+    case NoMode:
+        // No password is collected in managed mode, so there is nothing to settle; its gate is
+        // the enrolment, which nextEnabled() holds. NoMode never reaches the fields screen
+        // (goToFields() refuses it).
+        return true;
+    case Local:
+    case Domain:
+        return m_passwordValid || ( m_allowWeakPasswords && m_weakPasswordAccepted );
+    }
+    return false;
+}
+
+void
+AccountsConfig::requestPasswordConfirmation()
+{
+    // Emits only when the password is genuinely the one thing in the way: complete (non-empty,
+    // matching — those darkened the button if not), failing libpwquality, and the override
+    // allowed. Any other arrival in next() is a state the button already refused, so there is
+    // nothing to ask and nothing to do.
+    if ( m_allowWeakPasswords && !m_passwordValid && passwordsMatch() )
+    {
+        emit passwordConfirmationRequested();
+    }
+}
+
+void
+AccountsConfig::acceptWeakPassword()
+{
+    if ( m_weakPasswordAccepted )
+    {
+        return;
+    }
+    m_weakPasswordAccepted = true;
+    revalidate();
+    // After the flag: the view step's slot reads passwordSettled() through ViewManager::next(),
+    // and the flag is what it answers with.
+    emit weakPasswordAccepted();
 }
 
 QString
@@ -937,6 +1025,10 @@ AccountsConfig::publish( Calamares::GlobalStorage* gs ) const
     gs->insert( QStringLiteral( "userGroups" ), hasLocalUser ? m_defaultGroups : QStringList() );
     gs->insert( QStringLiteral( "userShell" ), m_shell );
     gs->insert( QStringLiteral( "homePermissions" ), m_homePermissions );
+    // A bool, not a maybe, and gated on the mode (plan/26 §4): `imageidentity` branches on it —
+    // true writes the autologin drop-in FOR the created user, false writes the empty-User one
+    // that turns it off, which is what every mode but local gets regardless of any checkbox.
+    gs->insert( QStringLiteral( "autoLogin" ), m_mode == Local && m_autoLogin );
 
     // NO managedEnrollmentRequested. `managedenroll` had one, because it was a job with no other
     // way to know whether the page it followed had been used. accountsMode above says the same

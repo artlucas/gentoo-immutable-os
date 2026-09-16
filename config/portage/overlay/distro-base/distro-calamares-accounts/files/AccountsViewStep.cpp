@@ -7,6 +7,7 @@
 
 #include "GlobalStorage.h"
 #include "JobQueue.h"
+#include "ViewManager.h"
 #include "utils/Logger.h"
 
 #include <QQmlContext>
@@ -67,6 +68,14 @@ AccountsViewStep::AccountsViewStep( QObject* parent )
     // just left.
     connect( m_config, &AccountsConfig::stepChanged, this, [ this ] {
         emit nextStatusChanged( m_config->nextEnabled() );
+    } );
+
+    // THE OTHER HALF OF "USE ANYWAY" (plan/26 §3): the dialog's accept settles the password,
+    // which flips isAtEnd(), and the advance the user asked for with their press of Next is
+    // completed here. No guard is needed beyond the signal itself — it is emitted only by
+    // acceptWeakPassword(), never by the withdrawals, which clear the flag silently.
+    connect( m_config, &AccountsConfig::weakPasswordAccepted, this, [ this ] {
+        Calamares::ViewManager::instance()->next();
     } );
 }
 
@@ -138,7 +147,12 @@ AccountsViewStep::isAtBeginning() const
 bool
 AccountsViewStep::isAtEnd() const
 {
-    return m_config->onFields();
+    // THE FIELDS SCREEN, AND A SETTLED PASSWORD (plan/26 §3). The first half is the pager's own
+    // rule; the second is the disk page's confirmation worn one screen later — a complete
+    // password that fails libpwquality is the one state in which the window's Next opens the
+    // weak-password prompt instead of leaving. Managed mode is always settled here; its gate is
+    // the enrolment, and nextEnabled() is where it is held.
+    return m_config->onFields() && m_config->passwordSettled();
 }
 
 void
@@ -150,7 +164,16 @@ AccountsViewStep::back()
 void
 AccountsViewStep::next()
 {
-    m_config->goToFields();
+    if ( m_config->onChooser() )
+    {
+        m_config->goToFields();
+        return;
+    }
+    // On the fields screen, the only reason ViewManager landed here instead of advancing is the
+    // unsettled password. The config asks, and emits only when the password is genuinely the
+    // one thing in the way — any other arrival is a state the button should already have
+    // refused, and standing still is the honest answer to it.
+    m_config->requestPasswordConfirmation();
 }
 
 Calamares::JobList

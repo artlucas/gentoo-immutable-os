@@ -442,6 +442,41 @@ for k in enrolScratchRoot secretsPath; do
         grep -qE "^$k:[[:space:]]+\"?/run/" "$ACCOUNTS_CONF"
 done
 
+# ---- 6a. the accounts page's own behaviour (plan/26) ------------------------------------------
+# THE CHOOSER OPENS ANSWERED. Local is pre-selected when the profile offers it, which turns the
+# first screen from a question into a confirmation for the machines that outnumber all the
+# others; a profile offering no local mode keeps plan/21's nothing-selected rule, because there
+# is nothing that can honestly be pre-selected.
+assert_true "setConfigurationMap pre-selects Local when it is offered" \
+    bash -c "sed -n '/^AccountsConfig::setConfigurationMap/,/^}/p' '$OVL_ACCOUNTS/files/AccountsConfig.cpp' |
+             grep -q 'm_mode = Local'"
+# A WEAK PASSWORD IS A WARNING, NOT A WALL. The two-part gate: the button asks "complete?", the
+# door asks "strong, or warned?" — so a complete-but-weak password leaves Next lit and puts the
+# warning in the press, exactly as the disk page puts the erase question there.
+assert_true "accounts.conf allows the weak-password question" \
+    grep -qE '^[[:space:]]+allowWeakPasswords:' "$ACCOUNTS_CONF"
+assert_true "the page reads the knob" \
+    grep -q 'allowWeakPasswords' "$OVL_ACCOUNTS/files/AccountsConfig.cpp"
+assert_true "the button asks complete, not strong" \
+    bash -c "sed -n '/^AccountsConfig::nextEnabled() const/,/^}/p' '$OVL_ACCOUNTS/files/AccountsConfig.cpp' |
+             grep -q 'm_allowWeakPasswords || m_passwordValid'"
+assert_true "the door is passwordSettled(), asked on the way out" \
+    grep -q 'passwordSettled()' "$OVL_ACCOUNTS/files/AccountsViewStep.cpp"
+assert_true "...and the dialog's accept completes the advance" \
+    grep -q 'ViewManager::instance()->next()' "$OVL_ACCOUNTS/files/AccountsViewStep.cpp"
+assert_true "editing the password withdraws a given answer" \
+    bash -c "sed -n '/^AccountsConfig::setPassword/,/^}/p' '$OVL_ACCOUNTS/files/AccountsConfig.cpp' |
+             grep -q 'm_weakPasswordAccepted = false'"
+# AUTO-LOGIN, OFFERED RATHER THAN FORBIDDEN: the checkbox on the local form, the mode-gated
+# GlobalStorage key, and the job that writes the drop-in either way.
+assert_true "the local form carries the checkbox" \
+    grep -q 'Log in automatically as this user' "$OVL_ACCOUNTS/files/qml/LocalForm.qml"
+assert_true "the page publishes autoLogin, local mode only" \
+    grep -q 'm_mode == Local && m_autoLogin' "$OVL_ACCOUNTS/files/AccountsConfig.cpp"
+assert_true "imageidentity honours the request with the same keys the image's drop-in uses" \
+    bash -c "grep -q 'value(\"autoLogin\")' '$CAL/local-modules/imageidentity/main.py' &&
+             grep -q 'Session=plasma' '$CAL/local-modules/imageidentity/main.py'"
+
 # The sequence must not name the stock modules that cannot work here. Each of these would fail
 # or, worse, half-succeed: localecfg runs `locale-gen` in a target that has none; unpackfs looks
 # for a squashfs; bootloader/grubcfg generate a GRUB config for a machine that boots a UKI;

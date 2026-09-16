@@ -8,12 +8,14 @@
 # whose upper lives on /var — so each write is a copy-up that shadows the read-only image's own
 # copy (plan/16 §5.2, §5.4).
 #
-#   1. AUTOLOGIN OFF. The live medium autologins, and it has to: that is how it reaches a Plasma
-#      session to run this installer from. That autologin lives in the image's
+#   1. AUTOLOGIN, EITHER WAY. The live medium autologins, and it has to: that is how it reaches a
+#      Plasma session to run this installer from. That autologin lives in the image's
 #      /etc/plasmalogin.conf.d/10-autologin.conf, inside the read-only EROFS the installed system
 #      also uses, so it cannot be deleted — deleting a lower file through an overlay needs a
 #      whiteout device, which is not something to leave on a user's disk. Drop-ins sort
-#      lexically, so a 20- file in the upper wins.
+#      lexically, so a 20- file in the upper wins. Since plan/26 §4 the accounts page can ask for
+#      the same arrangement on the installed machine: when GlobalStorage says autoLogin and names
+#      the created user, the drop-in carries that user instead of an empty one.
 #
 #   2. SUBUID/SUBGID. Rootless podman needs subordinate ID ranges; stage 40 allocates them for
 #      the live user and Calamares' `users` module has no concept of them (plan/13, plan/16 §5.4).
@@ -53,8 +55,9 @@ def target_path(root, path):
     return os.path.join(root, path.lstrip("/"))
 
 
-def write_autologin_dropin(root, conf):
-    """Turn the live medium's autologin off on the installed system.
+def write_autologin_dropin(root, conf, username):
+    """Write the autologin drop-in — for the created user when the accounts page asked for that
+    (plan/26 §4), and against the live medium's autologin otherwise.
 
     A drop-in, not an edit. And the MTIME matters here in a way nothing about the file's content
     reveals: Plasma Login Manager only re-reads plasmalogin.conf.d when its newest mtime beats a
@@ -62,13 +65,34 @@ def write_autologin_dropin(root, conf):
     stage 60 now stamps SOURCE_DATE_EPOCH to avoid. A file written here carries a real current
     mtime, decades after the image's, so the directory is re-read and this file is seen. That is
     the right outcome by luck rather than by design, so it is written down.
+
+    The enabled branch mirrors 10-autologin.conf.in key for key — User, Session, Relogin — so an
+    installed machine that logs itself in is the live medium's arrangement with one name swapped,
+    not an improvisation.
     """
-    path = target_path(root, conf.get("autologinDropIn", "/etc/plasmalogin.conf.d/20-no-autologin.conf"))
+    path = target_path(root, conf.get("autologinDropIn", "/etc/plasmalogin.conf.d/20-autologin.conf"))
     if not os.path.isdir(os.path.dirname(path)):
-        # No Plasma Login Manager in this payload (a console profile, say). Nothing to turn off.
+        # No Plasma Login Manager in this payload (a console profile, say). Nothing to turn off
+        # or on.
         debug("no plasmalogin.conf.d in the target; skipping the autologin drop-in")
         return
     os.makedirs(os.path.dirname(path), exist_ok=True)
+    if username:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(
+                "# Written by the installer at the request the accounts page recorded: this\n"
+                "# machine logs straight in as the created user. Drop-ins sort lexically, so\n"
+                "# this later file wins over 10-autologin.conf, which ships inside the\n"
+                "# read-only system image and cannot be deleted from it. Delete this file — or\n"
+                "# empty User below — to put the login screen back.\n"
+                "[Autologin]\n"
+                "User={}\n"
+                "Session=plasma\n"
+                "Relogin=false\n".format(username)
+            )
+        os.chmod(path, 0o644)
+        debug("autologin enabled for {} via {}".format(username, path))
+        return
     with open(path, "w", encoding="utf-8") as f:
         f.write(
             "# Written by the installer. Overrides 10-autologin.conf, which ships inside the\n"
@@ -201,7 +225,17 @@ def run():
     username = libcalamares.globalstorage.value("username")
 
     try:
-        write_autologin_dropin(root, conf)
+        # The accounts page's checkbox (plan/26 §4): true only in local mode. A request with no
+        # username behind it cannot be honoured — and would only arise from a hand-edited
+        # GlobalStorage — so it warns and writes the disable drop-in rather than a User= that
+        # names nobody.
+        autologin = bool(libcalamares.globalstorage.value("autoLogin"))
+        if autologin and not username:
+            warning(
+                "autoLogin is set but no username is in GlobalStorage; "
+                "writing the no-autologin drop-in instead"
+            )
+        write_autologin_dropin(root, conf, autologin and username)
         if username:
             write_subids(root, username, conf)
         else:

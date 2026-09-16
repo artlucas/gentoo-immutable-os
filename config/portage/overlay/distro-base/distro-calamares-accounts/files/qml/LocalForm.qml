@@ -8,6 +8,10 @@
  * Two behaviours here are stock users' and are kept on purpose: typing a full name guesses the
  * username (in AccountsConfig::setFullName, until the person edits the username themselves), and
  * the password meter is libpwquality's own 0..100 score rather than a rule of our own.
+ *
+ * One is new (plan/26 §4): the auto-login checkbox under the password, off by default. The
+ * installed machine greets unless the person standing here says otherwise — the same default
+ * plan/21 shipped, now with a way to ask for the other thing.
  */
 import QtQuick
 import QtQuick.Layouts
@@ -76,6 +80,25 @@ Kirigami.FormLayout {
         text: qsTr("The two passwords are not the same.")
         color: Kirigami.Theme.negativeTextColor
         font: Kirigami.Theme.smallFont
+    }
+
+    // Not a binding on `checked`, for the reason every control in this family gives: a QQC2
+    // control assigns `checked` imperatively when clicked, which breaks one. C++ is the source
+    // of truth — it is what publish() reads — and the Connections below puts back what it says.
+    QQC2.CheckBox {
+        id: autoLoginBox
+
+        Layout.topMargin: Kirigami.Units.smallSpacing
+        text: qsTr("Log in automatically as this user")
+        checked: accounts.autoLogin
+        onToggled: accounts.autoLogin = autoLoginBox.checked
+
+        Connections {
+            target: accounts
+            function onAutoLoginChanged() {
+                autoLoginBox.checked = accounts.autoLogin;
+            }
+        }
     }
 
     Item {
