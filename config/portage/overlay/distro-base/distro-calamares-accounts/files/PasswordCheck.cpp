@@ -3,10 +3,16 @@
  */
 #include "PasswordCheck.h"
 
-#include <QObject>
+#include <QCoreApplication>
 
 #include <pwquality.h>
 
+// QCoreApplication::translate with THIS file's name as the context, rather than the QObject::tr
+// this replaced: a bare utility class is not a QObject and has no tr() of its own, and the
+// QObject context could never be finished — check-translations.py check 5 demands that a
+// finished context's strings live in the file whose stem is the context name, and nothing is
+// named QObject.cpp. The explicit context lands these two strings in PasswordCheck, which is
+// this file (plan/27 §1).
 void
 PasswordCheck::configure( const QStringList& options, int minLength )
 {
@@ -24,8 +30,10 @@ PasswordCheck::check( const QString& password ) const
     }
     if ( m_minLength > 0 && password.length() < m_minLength )
     {
-        r.message
-            = QObject::tr( "The password must be at least %1 characters long." ).arg( m_minLength );
+        r.message = QCoreApplication::translate( "PasswordCheck",
+                                                 "The password must be at least %1 characters "
+                                                 "long." )
+                        .arg( m_minLength );
         return r;
     }
 
@@ -54,7 +62,8 @@ PasswordCheck::check( const QString& password ) const
         char buf[ PWQ_MAX_ERROR_MESSAGE_LEN ] = { 0 };
         const char* msg = pwquality_strerror( buf, sizeof( buf ), rv, auxerror );
         r.message = msg ? QString::fromUtf8( msg )
-                        : QObject::tr( "That password is not strong enough." );
+                        : QCoreApplication::translate( "PasswordCheck",
+                                                       "That password is not strong enough." );
     }
     else
     {

@@ -13,10 +13,13 @@
  * the style's name, and that plugin is what initialises the icon theme, so under any other style
  * this page has no icons at all (plan/21 §1b, measured in a VM).
  *
- * qsTr(), never i18n(). plan/19 §7.2 measured what i18n() does with no KLocalizedContext on the
- * engine: a ReferenceError and an empty string. Calamares is a C++ host and could install one,
- * at the cost of a ki18n dependency this page has no other use for; Qt's own macros are already
- * wired into libcalamares' translation machinery.
+ * No qsTr() in this file, and none anywhere in this module's QML (plan/27 §1): the builder's
+ * lupdate is built without QML support, so a qsTr() here never reached the branding catalogue
+ * and rendered English in every language. Every word is a tr()'d AccountsConfig property
+ * instead, re-said on a language change through the ViewStep's engine retranslate. (And never
+ * i18n() either — plan/19 §7.2 measured what that does with no KLocalizedContext on the engine:
+ * a ReferenceError and an empty string. Calamares is a C++ host and could install one, at the
+ * cost of a ki18n dependency this page has no other use for.)
  *
  * `accounts` is the AccountsConfig context property. Every field below is a two-way binding onto
  * it, so this file holds no state of its own except which disclosure triangle is open.
@@ -56,6 +59,11 @@ Item {
     // reads the chosen entry back out of it. The alternative — a title in the chooser and the
     // same title again in the header — is two strings that have to be kept saying the same thing.
     //
+    // The words inside are AccountsConfig properties, not qsTr() calls: the builder's lupdate is
+    // built without QML support, so a qsTr() here has never reached the branding catalogue
+    // (plan/27 §1). The array keeps its shape — one array, read twice — only its string sources
+    // moved.
+    //
     // `mode` is the ONLY numeric enumerator in this file, and it appears once per choice, next to
     // the name it stands for. Everything downstream reads accounts.isLocalMode / isManagedMode /
     // isDomainMode instead, so renumbering AccountsConfig::Mode cannot quietly change which form
@@ -65,25 +73,25 @@ Item {
             mode: 1,  // AccountsConfig.Local
             offered: accounts.localOffered,
             icon: "user-identity",
-            title: qsTr("Local accounts only"),
-            subtitle: qsTr("One account, on this computer. Nothing is sent anywhere."),
-            needs: qsTr("Works with no network. More accounts can be added afterwards.")
+            title: accounts.localModeTitle,
+            subtitle: accounts.localModeSubtitle,
+            needs: accounts.localModeNeeds
         },
         {
             mode: 2,  // AccountsConfig.Managed
             offered: accounts.managedOffered,
             icon: "group",
-            title: qsTr("Managed system"),
-            subtitle: qsTr("Accounts come from your organisation, and whoever runs it can change them from anywhere."),
-            needs: qsTr("Needs a network connection and an enrolment code now, before the disk is written.")
+            title: accounts.managedModeTitle,
+            subtitle: accounts.managedModeSubtitle,
+            needs: accounts.managedModeNeeds
         },
         {
             mode: 3,  // AccountsConfig.Domain
             offered: accounts.domainOffered,
             icon: "network-server",
-            title: qsTr("Join an enterprise domain"),
-            subtitle: qsTr("Accounts come from Active Directory, with one local administrator kept as the way back in."),
-            needs: qsTr("Needs the domain name and an account allowed to join computers to it.")
+            title: accounts.domainModeTitle,
+            subtitle: accounts.domainModeSubtitle,
+            needs: accounts.domainModeNeeds
         }
     ]
     readonly property var chosen: root.modes.find(function (m) { return m.mode === accounts.mode }) || null
@@ -146,14 +154,14 @@ Item {
                         Layout.fillWidth: true
                         level: 2
                         wrapMode: Text.WordWrap
-                        text: qsTr("How should people sign in to this computer?")
+                        text: accounts.chooserHeading
                     }
 
                     QQC2.Label {
                         Layout.fillWidth: true
                         wrapMode: Text.WordWrap
                         opacity: 0.75
-                        text: qsTr("This is the one choice on this page that cannot be changed later without reinstalling. Everything else follows from it.")
+                        text: accounts.chooserWarning
                     }
 
                     Repeater {
@@ -355,23 +363,24 @@ Item {
     Kirigami.PromptDialog {
         id: weakPasswordDialog
 
-        title: qsTr("Use this password anyway?")
+        title: accounts.weakPasswordDialogTitle
         // libpwquality's own reason — the same sentence the field already shows in red, because
-        // one policy should have one message (plan/21 §2). C++ tr(), so it translates; the title
-        // and the buttons are qsTr(), which on this builder does not (plan/25 §7).
+        // one policy should have one message (plan/21 §2). Every string in this dialog is a C++
+        // tr() property now, so the whole question follows the catalogue (plan/27 §1); the
+        // fallback line covers a message libpwquality declined to give.
         subtitle: accounts.passwordMessage.length > 0
                       ? accounts.passwordMessage
-                      : qsTr("That password is not strong enough.")
+                      : accounts.weakPasswordFallback
         standardButtons: Kirigami.Dialog.NoButton
         customFooterActions: [
             Kirigami.Action {
                 icon.name: "dialog-cancel"
-                text: qsTr("Cancel")
+                text: accounts.cancelLabel
                 onTriggered: weakPasswordDialog.close()
             },
             Kirigami.Action {
                 icon.name: "data-warning"
-                text: qsTr("Use anyway")
+                text: accounts.useAnywayLabel
                 onTriggered: {
                     weakPasswordDialog.close();
                     accounts.acceptWeakPassword();

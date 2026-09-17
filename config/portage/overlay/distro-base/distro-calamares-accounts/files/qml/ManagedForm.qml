@@ -38,7 +38,7 @@ ColumnLayout {
 
         QQC2.TextField {
             id: codeField
-            Kirigami.FormData.label: qsTr("Enrolment code:")
+            Kirigami.FormData.label: accounts.enrolmentCodeLabel
             text: accounts.enrolmentCode
             onTextEdited: accounts.enrolmentCode = text
             placeholderText: "K7QF-9M2B"
@@ -55,7 +55,7 @@ ColumnLayout {
         spacing: Kirigami.Units.smallSpacing
 
         QQC2.Button {
-            text: accounts.enrolFailed ? qsTr("Try again") : qsTr("Check and continue")
+            text: accounts.enrolFailed ? accounts.tryAgainLabel : accounts.checkAndContinueLabel
             icon.name: "network-connect"
             enabled: !accounts.enrolRunning && accounts.enrolmentCode.length > 0
                 && accounts.hostnameValid
@@ -93,7 +93,7 @@ ColumnLayout {
         wrapMode: Text.WordWrap
         opacity: 0.75
         font: Kirigami.Theme.smallFont
-        text: qsTr("Accounts on this computer: %1").arg(accounts.grantedUsers.join(", "))
+        text: accounts.grantedAccountsText.arg(accounts.grantedUsers.join(", "))
     }
 
     QQC2.Label {
@@ -102,6 +102,6 @@ ColumnLayout {
         wrapMode: Text.WordWrap
         opacity: 0.75
         font: Kirigami.Theme.smallFont
-        text: qsTr("This computer needs to reach your organisation now, because this option creates no local account. The code is used once and expires after fifteen minutes.")
+        text: accounts.managedIntroText
     }
 }

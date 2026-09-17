@@ -18,7 +18,7 @@ import org.kde.kirigami as Kirigami
 ColumnLayout {
     id: field
 
-    Kirigami.FormData.label: qsTr("Computer name:")
+    Kirigami.FormData.label: accounts.computerNameLabel
 
     spacing: 0
 

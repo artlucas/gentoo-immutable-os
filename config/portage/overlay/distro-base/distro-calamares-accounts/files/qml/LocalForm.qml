@@ -12,6 +12,20 @@
  * One is new (plan/26 §4): the auto-login checkbox under the password, off by default. The
  * installed machine greets unless the person standing here says otherwise — the same default
  * plan/21 shipped, now with a way to ask for the other thing.
+ *
+ * THE ERROR IS GLUED TO ITS FIELD (plan/27 §6). A Kirigami.FormLayout gives every child its own
+ * row and its own gap, which put the red password message a row — and, whenever a password
+ * existed, the score meter's row — away from the field it answered. Each field and its message
+ * are now ONE form row: a ColumnLayout with spacing 0 (the shape ComputerNameField has always
+ * had), the message the immediately following sibling. Inside the password column the order is
+ * field, error, meter: the error answers the field, the meter scores it, and only the meter
+ * gets breathing room.
+ *
+ * No qsTr() anywhere in this file: every word is an AccountsConfig tr() property, because the
+ * builder's lupdate is built without QML support and a qsTr() here would never reach the
+ * branding catalogue (plan/25 §4, applied here by plan/27 §1). The placeholders are the one
+ * deliberate exception — "Ada Lovelace" and "ada" are proper nouns, kept as literals for the
+ * same reason apps.conf keeps application names untranslated.
  */
 import QtQuick
 import QtQuick.Layouts
@@ -22,64 +36,89 @@ Kirigami.FormLayout {
     id: form
 
     QQC2.TextField {
-        Kirigami.FormData.label: qsTr("Your name:")
+        Kirigami.FormData.label: accounts.realNameLabel
         text: accounts.fullName
         onTextEdited: accounts.fullName = text
-        placeholderText: qsTr("Ada Lovelace")
+        placeholderText: "Ada Lovelace"
     }
 
-    QQC2.TextField {
-        id: loginField
-        Kirigami.FormData.label: qsTr("Username:")
-        text: accounts.loginName
-        onTextEdited: accounts.loginName = text
-        placeholderText: qsTr("ada")
+    ColumnLayout {
+        Kirigami.FormData.label: accounts.loginNameLabel
+
+        spacing: 0
+
+        QQC2.TextField {
+            id: loginField
+
+            Layout.fillWidth: true
+            text: accounts.loginName
+            onTextEdited: accounts.loginName = text
+            placeholderText: "ada"
+        }
+
+        QQC2.Label {
+            visible: accounts.loginNameMessage.length > 0
+            text: accounts.loginNameMessage
+            wrapMode: Text.WordWrap
+            Layout.fillWidth: true
+            color: Kirigami.Theme.negativeTextColor
+            font: Kirigami.Theme.smallFont
+        }
     }
 
-    QQC2.Label {
-        visible: accounts.loginNameMessage.length > 0
-        text: accounts.loginNameMessage
-        wrapMode: Text.WordWrap
-        Layout.maximumWidth: loginField.width
-        color: Kirigami.Theme.negativeTextColor
-        font: Kirigami.Theme.smallFont
+    ColumnLayout {
+        Kirigami.FormData.label: accounts.passwordLabel
+
+        spacing: 0
+
+        Kirigami.PasswordField {
+            id: passwordField
+
+            Layout.fillWidth: true
+            text: accounts.password
+            onTextEdited: accounts.password = text
+        }
+
+        QQC2.Label {
+            visible: accounts.passwordMessage.length > 0
+            text: accounts.passwordMessage
+            wrapMode: Text.WordWrap
+            Layout.fillWidth: true
+            color: Kirigami.Theme.negativeTextColor
+            font: Kirigami.Theme.smallFont
+        }
+
+        QQC2.ProgressBar {
+            Layout.fillWidth: true
+            Layout.topMargin: Kirigami.Units.smallSpacing
+            from: 0
+            to: 100
+            value: accounts.passwordScore
+            visible: accounts.password.length > 0
+        }
     }
 
-    Kirigami.PasswordField {
-        id: passwordField
-        Kirigami.FormData.label: qsTr("Password:")
-        text: accounts.password
-        onTextEdited: accounts.password = text
-    }
+    ColumnLayout {
+        Kirigami.FormData.label: accounts.passwordRepeatLabel
 
-    QQC2.ProgressBar {
-        Layout.maximumWidth: passwordField.width
-        from: 0
-        to: 100
-        value: accounts.passwordScore
-        visible: accounts.password.length > 0
-    }
+        spacing: 0
 
-    QQC2.Label {
-        visible: accounts.passwordMessage.length > 0
-        text: accounts.passwordMessage
-        wrapMode: Text.WordWrap
-        Layout.maximumWidth: passwordField.width
-        color: Kirigami.Theme.negativeTextColor
-        font: Kirigami.Theme.smallFont
-    }
+        Kirigami.PasswordField {
+            id: repeatField
 
-    Kirigami.PasswordField {
-        Kirigami.FormData.label: qsTr("Repeat password:")
-        text: accounts.passwordRepeat
-        onTextEdited: accounts.passwordRepeat = text
-    }
+            Layout.fillWidth: true
+            text: accounts.passwordRepeat
+            onTextEdited: accounts.passwordRepeat = text
+        }
 
-    QQC2.Label {
-        visible: accounts.passwordRepeat.length > 0 && !accounts.passwordsMatch
-        text: qsTr("The two passwords are not the same.")
-        color: Kirigami.Theme.negativeTextColor
-        font: Kirigami.Theme.smallFont
+        QQC2.Label {
+            visible: accounts.passwordRepeat.length > 0 && !accounts.passwordsMatch
+            text: accounts.passwordsDifferText
+            wrapMode: Text.WordWrap
+            Layout.fillWidth: true
+            color: Kirigami.Theme.negativeTextColor
+            font: Kirigami.Theme.smallFont
+        }
     }
 
     // Not a binding on `checked`, for the reason every control in this family gives: a QQC2
@@ -89,7 +128,7 @@ Kirigami.FormLayout {
         id: autoLoginBox
 
         Layout.topMargin: Kirigami.Units.smallSpacing
-        text: qsTr("Log in automatically as this user")
+        text: accounts.autoLoginLabel
         checked: accounts.autoLogin
         onToggled: accounts.autoLogin = autoLoginBox.checked
 

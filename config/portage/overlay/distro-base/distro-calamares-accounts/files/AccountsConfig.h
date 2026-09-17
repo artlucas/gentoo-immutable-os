@@ -149,6 +149,63 @@ public:
     Q_PROPERTY( bool verifyFailed READ verifyFailed NOTIFY verifyStateChanged )
     Q_PROPERTY( QString verifyMessage READ verifyMessage NOTIFY verifyStateChanged )
 
+    // ---- the words (plan/27) -----------------------------------------------------------------
+    /*! Every user-visible string the page shows, as a property — the treatment the applications
+     *  page established (plan/25 §4) and this page now shares: the builder's lupdate
+     *  (dev-qt/qttools 6.11) is built without QML support, so a qsTr() in this module's QML has
+     *  never reached the branding catalogue and has rendered English in all eight translated
+     *  languages. Said here as tr(), extracted by lupdate, translated by the catalogue, and
+     *  re-said on a language change through NOTIFY retranslated. The strings that are NOT here
+     *  are deliberate: example data that is a proper noun ("Ada Lovelace", "ada",
+     *  corp.example.com, "Administrator", the OU and domain-group and enrolment-code examples)
+     *  stays a QML literal for the same reason apps.conf keeps application names untranslated.
+     *
+     *  The three modes' title/subtitle/needs are separate properties rather than entries in one
+     *  map, so the QML `modes` array keeps the shape its comment promises — one array, read
+     *  twice — and only its string sources move. */
+    Q_PROPERTY( QString chooserHeading READ chooserHeading NOTIFY retranslated )
+    Q_PROPERTY( QString chooserWarning READ chooserWarning NOTIFY retranslated )
+    Q_PROPERTY( QString localModeTitle READ localModeTitle NOTIFY retranslated )
+    Q_PROPERTY( QString localModeSubtitle READ localModeSubtitle NOTIFY retranslated )
+    Q_PROPERTY( QString localModeNeeds READ localModeNeeds NOTIFY retranslated )
+    Q_PROPERTY( QString managedModeTitle READ managedModeTitle NOTIFY retranslated )
+    Q_PROPERTY( QString managedModeSubtitle READ managedModeSubtitle NOTIFY retranslated )
+    Q_PROPERTY( QString managedModeNeeds READ managedModeNeeds NOTIFY retranslated )
+    Q_PROPERTY( QString domainModeTitle READ domainModeTitle NOTIFY retranslated )
+    Q_PROPERTY( QString domainModeSubtitle READ domainModeSubtitle NOTIFY retranslated )
+    Q_PROPERTY( QString domainModeNeeds READ domainModeNeeds NOTIFY retranslated )
+    Q_PROPERTY( QString weakPasswordDialogTitle READ weakPasswordDialogTitle NOTIFY retranslated )
+    Q_PROPERTY( QString weakPasswordFallback READ weakPasswordFallback NOTIFY retranslated )
+    Q_PROPERTY( QString cancelLabel READ cancelLabel NOTIFY retranslated )
+    Q_PROPERTY( QString useAnywayLabel READ useAnywayLabel NOTIFY retranslated )
+    Q_PROPERTY( QString realNameLabel READ realNameLabel NOTIFY retranslated )
+    Q_PROPERTY( QString loginNameLabel READ loginNameLabel NOTIFY retranslated )
+    Q_PROPERTY( QString passwordLabel READ passwordLabel NOTIFY retranslated )
+    Q_PROPERTY( QString passwordRepeatLabel READ passwordRepeatLabel NOTIFY retranslated )
+    Q_PROPERTY( QString passwordsDifferText READ passwordsDifferText NOTIFY retranslated )
+    Q_PROPERTY( QString autoLoginLabel READ autoLoginLabel NOTIFY retranslated )
+    Q_PROPERTY( QString computerNameLabel READ computerNameLabel NOTIFY retranslated )
+    Q_PROPERTY( QString enrolmentCodeLabel READ enrolmentCodeLabel NOTIFY retranslated )
+    Q_PROPERTY( QString tryAgainLabel READ tryAgainLabel NOTIFY retranslated )
+    Q_PROPERTY( QString checkAndContinueLabel READ checkAndContinueLabel NOTIFY retranslated )
+    Q_PROPERTY( QString grantedAccountsText READ grantedAccountsText NOTIFY retranslated )
+    Q_PROPERTY( QString managedIntroText READ managedIntroText NOTIFY retranslated )
+    Q_PROPERTY( QString domainHeading READ domainHeading NOTIFY retranslated )
+    Q_PROPERTY( QString domainNameLabel READ domainNameLabel NOTIFY retranslated )
+    Q_PROPERTY( QString joinAccountLabel READ joinAccountLabel NOTIFY retranslated )
+    Q_PROPERTY( QString joinPasswordLabel READ joinPasswordLabel NOTIFY retranslated )
+    Q_PROPERTY( QString dcLabel READ dcLabel NOTIFY retranslated )
+    Q_PROPERTY( QString dcPlaceholder READ dcPlaceholder NOTIFY retranslated )
+    Q_PROPERTY( QString checkDomainLabel READ checkDomainLabel NOTIFY retranslated )
+    Q_PROPERTY( QString adminHeading READ adminHeading NOTIFY retranslated )
+    Q_PROPERTY( QString adminIntroText READ adminIntroText NOTIFY retranslated )
+    Q_PROPERTY( QString advancedLabel READ advancedLabel NOTIFY retranslated )
+    Q_PROPERTY( QString computerOuLabel READ computerOuLabel NOTIFY retranslated )
+    Q_PROPERTY( QString adminGroupLabel READ adminGroupLabel NOTIFY retranslated )
+    Q_PROPERTY( QString computerAccountLabel READ computerAccountLabel NOTIFY retranslated )
+    Q_PROPERTY( QString computerAccountPlaceholder READ computerAccountPlaceholder NOTIFY
+                    retranslated )
+
     // ---- the answer --------------------------------------------------------------------------
     Q_PROPERTY( bool nextEnabled READ nextEnabled NOTIFY nextEnabledChanged )
 
@@ -210,6 +267,84 @@ public:
 
     bool nextEnabled() const;
 
+    // The words (plan/27). One line each; see the property block above for why they exist.
+    QString chooserHeading() const { return tr( "How should people sign in to this computer?" ); }
+    QString chooserWarning() const
+    {
+        return tr( "This is the one choice on this page that cannot be changed later without "
+                   "reinstalling. Everything else follows from it." );
+    }
+    QString localModeTitle() const { return tr( "Local accounts only" ); }
+    QString localModeSubtitle() const
+    {
+        return tr( "One account, on this computer. Nothing is sent anywhere." );
+    }
+    QString localModeNeeds() const
+    {
+        return tr( "Works with no network. More accounts can be added afterwards." );
+    }
+    QString managedModeTitle() const { return tr( "Managed system" ); }
+    QString managedModeSubtitle() const
+    {
+        return tr( "Accounts come from your organisation, and whoever runs it can change them "
+                   "from anywhere." );
+    }
+    QString managedModeNeeds() const
+    {
+        return tr( "Needs a network connection and an enrolment code now, before the disk is "
+                   "written." );
+    }
+    QString domainModeTitle() const { return tr( "Join an enterprise domain" ); }
+    QString domainModeSubtitle() const
+    {
+        return tr( "Accounts come from Active Directory, with one local administrator kept as the "
+                   "way back in." );
+    }
+    QString domainModeNeeds() const
+    {
+        return tr( "Needs the domain name and an account allowed to join computers to it." );
+    }
+    QString weakPasswordDialogTitle() const { return tr( "Use this password anyway?" ); }
+    QString weakPasswordFallback() const { return tr( "That password is not strong enough." ); }
+    QString cancelLabel() const { return tr( "Cancel" ); }
+    QString useAnywayLabel() const { return tr( "Use anyway" ); }
+    QString realNameLabel() const { return tr( "Your name:" ); }
+    QString loginNameLabel() const { return tr( "Username:" ); }
+    QString passwordLabel() const { return tr( "Password:" ); }
+    QString passwordRepeatLabel() const { return tr( "Repeat password:" ); }
+    QString passwordsDifferText() const { return tr( "The two passwords are not the same." ); }
+    QString autoLoginLabel() const { return tr( "Log in automatically as this user" ); }
+    QString computerNameLabel() const { return tr( "Computer name:" ); }
+    QString enrolmentCodeLabel() const { return tr( "Enrolment code:" ); }
+    QString tryAgainLabel() const { return tr( "Try again" ); }
+    QString checkAndContinueLabel() const { return tr( "Check and continue" ); }
+    QString grantedAccountsText() const { return tr( "Accounts on this computer: %1" ); }
+    QString managedIntroText() const
+    {
+        return tr( "This computer needs to reach your organisation now, because this option "
+                   "creates no local account. The code is used once and expires after fifteen "
+                   "minutes." );
+    }
+    QString domainHeading() const { return tr( "The domain" ); }
+    QString domainNameLabel() const { return tr( "Domain:" ); }
+    QString joinAccountLabel() const { return tr( "Join account:" ); }
+    QString joinPasswordLabel() const { return tr( "Join password:" ); }
+    QString dcLabel() const { return tr( "Domain controller:" ); }
+    QString dcPlaceholder() const { return tr( "optional IP address" ); }
+    QString checkDomainLabel() const { return tr( "Check domain" ); }
+    QString adminHeading() const { return tr( "Local administrator" ); }
+    QString adminIntroText() const
+    {
+        return tr( "The way back in when the domain controller cannot be reached. This system "
+                   "has no rescue shell, so it is the only other way to administer the "
+                   "machine." );
+    }
+    QString advancedLabel() const { return tr( "Advanced" ); }
+    QString computerOuLabel() const { return tr( "Computer OU:" ); }
+    QString adminGroupLabel() const { return tr( "Domain group granted administration:" ); }
+    QString computerAccountLabel() const { return tr( "Computer account name:" ); }
+    QString computerAccountPlaceholder() const { return tr( "the computer name below" ); }
+
     /*! Whether the fields screen may be LEFT with the password as it stands: valid, or weak and
      *  answered-for. The second half of the two-part gate plan/26 §3 puts on this page —
      *  nextEnabled() asks "complete?", this asks "strong, or warned?" — and the window's Next
@@ -226,6 +361,13 @@ public:
     void publish( Calamares::GlobalStorage* gs ) const;
 
 public Q_SLOTS:
+    /*! Re-say every word the page shows, in the language the catalogue now holds. Connected to
+     *  Calamares' Retranslator by the macro in the constructor; emits retranslated() so the
+     *  string properties' QML bindings re-evaluate (the ViewStep tells the engine), and runs
+     *  revalidate() first so the cached validity messages — which ordinary edits recompute but
+     *  a language change would otherwise leave in the old one — follow too. */
+    void retranslate();
+
     /*! Move between the page's two screens. Called from two places that must agree: the window's
      *  Back and Next buttons, through AccountsViewStep::back()/next() — the only navigation the
      *  page offers — and setMode(), which cannot leave somebody looking at a form for a mode they
@@ -279,6 +421,7 @@ public Q_SLOTS:
 Q_SIGNALS:
     void stepChanged();
     void modeChanged();
+    void retranslated();
     void fullNameChanged();
     void loginNameChanged();
     void passwordChanged();

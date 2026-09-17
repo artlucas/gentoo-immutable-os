@@ -549,11 +549,14 @@ assert_true "...and turns on the option that actually installs it" \
 # all — no modes offered, no groups, an empty page.
 assert_false "...and does not claim to have no configuration" \
     bash -c "grep -E '^[^#]*NO_CONFIG' '$PAGE/CMakeLists.txt' | grep -q NO_CONFIG"
-# qsTr, not i18n: the bare Qt Quick engine Calamares hosts installs no KLocalizedContext, and
-# i18n() there is a ReferenceError and an empty string (plan/19 §7.2, measured).
-# Comment lines excluded, because the file that explains why i18n() is wrong necessarily
-# contains the string. A grep that cannot tell the two apart is a grep that has to be relaxed
-# the first time somebody documents the rule.
+# tr() PROPERTIES, NOT qsTr() AND NOT i18n(). The bare Qt Quick engine Calamares hosts installs
+# no KLocalizedContext, and i18n() there is a ReferenceError and an empty string (plan/19 §7.2,
+# measured) — and the builder's lupdate is built without QML support besides (plan/25 §4), so a
+# qsTr() here never reached the branding catalogue either: this page rendered English in all
+# eight translated languages until plan/27 §1 moved every word to a tr()'d AccountsConfig
+# property. Comment lines excluded, because the files that explain why both are wrong necessarily
+# contain the strings. A grep that cannot tell the two apart is a grep that has to be relaxed the
+# first time somebody documents the rule.
 assert_true "the page's QML does not call i18n() (nothing installs a KLocalizedContext)" \
     bash -c "python3 - <<'EOF'
 import pathlib, sys
@@ -565,7 +568,8 @@ for f in pathlib.Path('$PAGE/qml').glob('*.qml'):
         if 'i18n(' in stripped:
             sys.exit('%s:%d calls i18n()' % (f.name, n))
 EOF"
-assert_true "...it uses qsTr() instead" bash -c "grep -rq 'qsTr(' '$PAGE/qml'"
+assert_false "...and no qsTr() call is left in it either (plan/27 §1)" \
+    grep -rq 'qsTr("' "$PAGE/qml"
 
 # THE STYLE, AND WHY THE GUARD IN FRONT OF IT IS PART OF THE CONTRACT.
 # Kirigami picks its platform integration plugin from the Qt Quick Controls style's name, and

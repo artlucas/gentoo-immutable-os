@@ -77,14 +77,14 @@ ColumnLayout {
 
             Kirigami.Heading {
                 level: 4
-                text: qsTr("The domain")
+                text: accounts.domainHeading
             }
 
             Kirigami.FormLayout {
                 Layout.fillWidth: true
 
                 QQC2.TextField {
-                    Kirigami.FormData.label: qsTr("Domain:")
+                    Kirigami.FormData.label: accounts.domainNameLabel
                     Layout.fillWidth: true
                     Layout.preferredWidth: form.fieldWidth
                     text: accounts.domainName
@@ -93,7 +93,7 @@ ColumnLayout {
                 }
 
                 QQC2.TextField {
-                    Kirigami.FormData.label: qsTr("Join account:")
+                    Kirigami.FormData.label: accounts.joinAccountLabel
                     Layout.fillWidth: true
                     Layout.preferredWidth: form.fieldWidth
                     text: accounts.joinUser
@@ -101,8 +101,8 @@ ColumnLayout {
                     placeholderText: "Administrator"
                 }
 
-                Kirigami.PasswordField {
-                    Kirigami.FormData.label: qsTr("Join password:")
+                QQC2.PasswordField {
+                    Kirigami.FormData.label: accounts.joinPasswordLabel
                     Layout.fillWidth: true
                     Layout.preferredWidth: form.fieldWidth
                     text: accounts.joinPassword
@@ -115,12 +115,12 @@ ColumnLayout {
                 // the word "address" when this became a half-width column; the placeholder says
                 // what goes in it, which is where that word was doing more good anyway.
                 QQC2.TextField {
-                    Kirigami.FormData.label: qsTr("Domain controller:")
+                    Kirigami.FormData.label: accounts.dcLabel
                     Layout.fillWidth: true
                     Layout.preferredWidth: form.fieldWidth
                     text: accounts.dcAddress
                     onTextEdited: accounts.dcAddress = text
-                    placeholderText: qsTr("optional IP address")
+                    placeholderText: accounts.dcPlaceholder
                 }
             }
 
@@ -129,7 +129,7 @@ ColumnLayout {
                 spacing: Kirigami.Units.smallSpacing
 
                 QQC2.Button {
-                    text: qsTr("Check domain")
+                    text: accounts.checkDomainLabel
                     icon.name: "network-connect"
                     enabled: !accounts.verifyRunning
                     onClicked: accounts.verifyDomain()
@@ -163,7 +163,7 @@ ColumnLayout {
 
             Kirigami.Heading {
                 level: 4
-                text: qsTr("Local administrator")
+                text: accounts.adminHeading
             }
 
             QQC2.Label {
@@ -171,71 +171,91 @@ ColumnLayout {
                 wrapMode: Text.WordWrap
                 opacity: 0.75
                 font: Kirigami.Theme.smallFont
-                text: qsTr("The way back in when the domain controller cannot be reached. This system has no rescue shell, so it is the only other way to administer the machine.")
+                text: accounts.adminIntroText
             }
 
             Kirigami.FormLayout {
                 Layout.fillWidth: true
 
-                QQC2.TextField {
-                    id: adminLogin
-                    Kirigami.FormData.label: qsTr("Username:")
-                    Layout.fillWidth: true
-                    Layout.preferredWidth: form.fieldWidth
-                    text: accounts.loginName
-                    onTextEdited: accounts.loginName = text
+                // The glued field-and-error rows LocalForm explains (plan/27 §6): one form row,
+                // spacing 0, the message the field's immediately following sibling.
+                ColumnLayout {
+                    Kirigami.FormData.label: accounts.loginNameLabel
+
+                    spacing: 0
+
+                    QQC2.TextField {
+                        id: adminLogin
+
+                        Layout.fillWidth: true
+                        Layout.preferredWidth: form.fieldWidth
+                        text: accounts.loginName
+                        onTextEdited: accounts.loginName = text
+                    }
+
+                    QQC2.Label {
+                        visible: accounts.loginNameMessage.length > 0
+                        text: accounts.loginNameMessage
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                        color: Kirigami.Theme.negativeTextColor
+                        font: Kirigami.Theme.smallFont
+                    }
                 }
 
-                QQC2.Label {
-                    visible: accounts.loginNameMessage.length > 0
-                    text: accounts.loginNameMessage
-                    wrapMode: Text.WordWrap
-                    Layout.maximumWidth: adminLogin.width
-                    color: Kirigami.Theme.negativeTextColor
-                    font: Kirigami.Theme.smallFont
+                ColumnLayout {
+                    Kirigami.FormData.label: accounts.passwordLabel
+
+                    spacing: 0
+
+                    QQC2.PasswordField {
+                        id: adminPassword
+
+                        Layout.fillWidth: true
+                        Layout.preferredWidth: form.fieldWidth
+                        text: accounts.password
+                        onTextEdited: accounts.password = text
+                    }
+
+                    QQC2.Label {
+                        visible: accounts.passwordMessage.length > 0
+                        text: accounts.passwordMessage
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                        color: Kirigami.Theme.negativeTextColor
+                        font: Kirigami.Theme.smallFont
+                    }
+
+                    QQC2.ProgressBar {
+                        Layout.fillWidth: true
+                        Layout.topMargin: Kirigami.Units.smallSpacing
+                        from: 0
+                        to: 100
+                        value: accounts.passwordScore
+                        visible: accounts.password.length > 0
+                    }
                 }
 
-                Kirigami.PasswordField {
-                    id: adminPassword
-                    Kirigami.FormData.label: qsTr("Password:")
-                    Layout.fillWidth: true
-                    Layout.preferredWidth: form.fieldWidth
-                    text: accounts.password
-                    onTextEdited: accounts.password = text
-                }
+                ColumnLayout {
+                    Kirigami.FormData.label: accounts.passwordRepeatLabel
 
-                QQC2.ProgressBar {
-                    Layout.maximumWidth: adminPassword.width
-                    from: 0
-                    to: 100
-                    value: accounts.passwordScore
-                    visible: accounts.password.length > 0
-                }
+                    spacing: 0
 
-                QQC2.Label {
-                    visible: accounts.passwordMessage.length > 0
-                    text: accounts.passwordMessage
-                    wrapMode: Text.WordWrap
-                    Layout.maximumWidth: adminPassword.width
-                    color: Kirigami.Theme.negativeTextColor
-                    font: Kirigami.Theme.smallFont
-                }
+                    QQC2.PasswordField {
+                        Layout.fillWidth: true
+                        Layout.preferredWidth: form.fieldWidth
+                        text: accounts.passwordRepeat
+                        onTextEdited: accounts.passwordRepeat = text
+                    }
 
-                Kirigami.PasswordField {
-                    Kirigami.FormData.label: qsTr("Repeat password:")
-                    Layout.fillWidth: true
-                    Layout.preferredWidth: form.fieldWidth
-                    text: accounts.passwordRepeat
-                    onTextEdited: accounts.passwordRepeat = text
-                }
-
-                QQC2.Label {
-                    visible: accounts.passwordRepeat.length > 0 && !accounts.passwordsMatch
-                    text: qsTr("The two passwords are not the same.")
-                    wrapMode: Text.WordWrap
-                    Layout.maximumWidth: adminPassword.width
-                    color: Kirigami.Theme.negativeTextColor
-                    font: Kirigami.Theme.smallFont
+                    QQC2.Label {
+                        visible: accounts.passwordRepeat.length > 0 && !accounts.passwordsMatch
+                        text: accounts.passwordsDifferText
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                        color: Kirigami.Theme.negativeTextColor
+                        font: Kirigami.Theme.smallFont
+                    }
                 }
             }
         }
@@ -249,7 +269,7 @@ ColumnLayout {
         id: advancedToggle
         checkable: true
         flat: true
-        text: qsTr("Advanced")
+        text: accounts.advancedLabel
         icon.name: checked ? "go-down-symbolic" : "go-next-symbolic"
     }
 
@@ -258,7 +278,7 @@ ColumnLayout {
         visible: advancedToggle.checked
 
         QQC2.TextField {
-            Kirigami.FormData.label: qsTr("Computer OU:")
+            Kirigami.FormData.label: accounts.computerOuLabel
             Layout.fillWidth: true
             Layout.preferredWidth: form.fieldWidth
             text: accounts.computerOu
@@ -267,7 +287,7 @@ ColumnLayout {
         }
 
         QQC2.TextField {
-            Kirigami.FormData.label: qsTr("Domain group granted administration:")
+            Kirigami.FormData.label: accounts.adminGroupLabel
             Layout.fillWidth: true
             Layout.preferredWidth: form.fieldWidth
             text: accounts.adminGroup
@@ -276,12 +296,12 @@ ColumnLayout {
         }
 
         QQC2.TextField {
-            Kirigami.FormData.label: qsTr("Computer account name:")
+            Kirigami.FormData.label: accounts.computerAccountLabel
             Layout.fillWidth: true
             Layout.preferredWidth: form.fieldWidth
             text: accounts.computerName
             onTextEdited: accounts.computerName = text
-            placeholderText: qsTr("the computer name below")
+            placeholderText: accounts.computerAccountPlaceholder
         }
     }
 

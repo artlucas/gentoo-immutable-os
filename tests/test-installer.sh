@@ -490,12 +490,46 @@ assert_true "editing the password withdraws a given answer" \
 # AUTO-LOGIN, OFFERED RATHER THAN FORBIDDEN: the checkbox on the local form, the mode-gated
 # GlobalStorage key, and the job that writes the drop-in either way.
 assert_true "the local form carries the checkbox" \
-    grep -q 'Log in automatically as this user' "$OVL_ACCOUNTS/files/qml/LocalForm.qml"
+    grep -q 'Log in automatically as this user' "$OVL_ACCOUNTS/files/AccountsConfig.h"
 assert_true "the page publishes autoLogin, local mode only" \
     grep -q 'm_mode == Local && m_autoLogin' "$OVL_ACCOUNTS/files/AccountsConfig.cpp"
 assert_true "imageidentity honours the request with the same keys the image's drop-in uses" \
     bash -c "grep -q 'value(\"autoLogin\")' '$CAL/local-modules/imageidentity/main.py' &&
              grep -q 'Session=plasma' '$CAL/local-modules/imageidentity/main.py'"
+
+# THE WORDS ARE C++ PROPERTIES (plan/27 §1). The builder's lupdate is built without QML support
+# (plan/25 §4), so a qsTr() in this module's QML never reached the branding catalogue — the
+# accounts page rendered English in all eight translated languages, and the weak-password dialog
+# plan/26 added asked its question in English too. Every string is a tr()'d AccountsConfig
+# property now, and the two retranslate halves — the halves this was the one QML module without —
+# are what re-say them when the language changes.
+assert_false "no qsTr() call is left in the accounts QML" \
+    grep -rq 'qsTr("' "$OVL_ACCOUNTS/files/qml"
+assert_true "the words live on AccountsConfig, where lupdate can see them" \
+    grep -q 'tr( "Use this password anyway?" )' "$OVL_ACCOUNTS/files/AccountsConfig.h"
+assert_true "the config carries the retranslate slot" \
+    grep -q 'CALAMARES_RETRANSLATE_SLOT( &AccountsConfig::retranslate )' "$OVL_ACCOUNTS/files/AccountsConfig.cpp"
+assert_true "...and the view step retranslates its QML engine on a language change" \
+    grep -q 'engine()->retranslate()' "$OVL_ACCOUNTS/files/AccountsViewStep.cpp"
+# PasswordCheck says its two strings in its own context: the QObject context they used to live in
+# can never be finished (check 5 demands a file whose stem is the context name, and nothing is
+# named QObject.cpp) — the one context in the catalogue that was unfinishable by construction.
+# Comment lines excluded: the one explaining the change necessarily names what changed.
+assert_true "PasswordCheck names its own context rather than QObject's" \
+    grep -q 'translate( "PasswordCheck"' "$OVL_ACCOUNTS/files/PasswordCheck.cpp"
+assert_false "...and no QObject::tr is left in it" \
+    bash -c "grep -vE '^[[:space:]]*(//|/\*|\*)' '$OVL_ACCOUNTS/files/PasswordCheck.cpp' |
+             grep -q 'QObject::tr'"
+# THE ERROR GLUED TO ITS FIELD (plan/27 §6). A Kirigami.FormLayout gives every child its own row
+# and its own gap, which put the red message a row — and the meter's row — away from the field it
+# answered. Field and message now share one spacing-0 form row, the shape ComputerNameField has
+# always had.
+assert_true "the password field and its message share one spacing-0 form row" \
+    bash -c "grep -A3 'Kirigami.FormData.label: accounts.passwordLabel' '$OVL_ACCOUNTS/files/qml/LocalForm.qml' |
+             grep -qE '^[[:space:]]*spacing: 0$'"
+assert_true "...and so do the repeat field and its mismatch message" \
+    bash -c "grep -A3 'Kirigami.FormData.label: accounts.passwordRepeatLabel' '$OVL_ACCOUNTS/files/qml/LocalForm.qml' |
+             grep -qE '^[[:space:]]*spacing: 0$'"
 
 # The sequence must not name the stock modules that cannot work here. Each of these would fail
 # or, worse, half-succeed: localecfg runs `locale-gen` in a target that has none; unpackfs looks

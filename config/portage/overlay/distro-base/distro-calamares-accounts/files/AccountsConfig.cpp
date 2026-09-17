@@ -4,6 +4,7 @@
 #include "AccountsConfig.h"
 
 #include "GlobalStorage.h"
+#include "utils/Retranslator.h"
 
 #include <QDir>
 #include <QFile>
@@ -117,6 +118,10 @@ AccountsConfig::AccountsConfig( QObject* parent )
         }
     } );
     revalidate();
+
+    // The retranslate half every other QML module in this installer already had: without it, a
+    // language change re-says nothing this page shows (plan/27 §1).
+    CALAMARES_RETRANSLATE_SLOT( &AccountsConfig::retranslate );
 }
 
 AccountsConfig::~AccountsConfig()
@@ -992,6 +997,16 @@ AccountsConfig::prettyStatus() const
         break;
     }
     return tr( "No accounts have been set up." );
+}
+
+void
+AccountsConfig::retranslate()
+{
+    // revalidate() BEFORE the emit, so the validity-message properties the QML re-reads on
+    // retranslated() already hold the new language's words (libpwquality's own strings follow
+    // the C locale, but ours — the login-name and hostname rules — re-say here).
+    revalidate();
+    emit retranslated();
 }
 
 // ---- what the job reads -----------------------------------------------------------------------

@@ -9,6 +9,7 @@
 #include "JobQueue.h"
 #include "ViewManager.h"
 #include "utils/Logger.h"
+#include "utils/Retranslator.h"
 
 #include <QQmlContext>
 #include <QQmlEngine>
@@ -77,6 +78,12 @@ AccountsViewStep::AccountsViewStep( QObject* parent )
     connect( m_config, &AccountsConfig::weakPasswordAccepted, this, [ this ] {
         Calamares::ViewManager::instance()->next();
     } );
+
+    // QML BINDINGS DO NOT RETRANSLATE BY THEMSELVES: a QTranslator swap posts
+    // QEvent::LanguageChange, which re-runs QObject::tr() consumers, while a string bound from a
+    // C++ property is only re-evaluated when the engine is told to. Same line, same reason, as
+    // every other QML module in this installer — this was the one page without it (plan/27 §1).
+    CALAMARES_RETRANSLATE( if ( m_widget && m_widget->engine() ) { m_widget->engine()->retranslate(); } );
 }
 
 AccountsViewStep::~AccountsViewStep()
