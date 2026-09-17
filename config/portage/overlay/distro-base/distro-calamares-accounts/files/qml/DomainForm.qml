@@ -101,7 +101,7 @@ ColumnLayout {
                     placeholderText: "Administrator"
                 }
 
-                QQC2.PasswordField {
+                Kirigami.PasswordField {
                     Kirigami.FormData.label: accounts.joinPasswordLabel
                     Layout.fillWidth: true
                     Layout.preferredWidth: form.fieldWidth
@@ -208,7 +208,7 @@ ColumnLayout {
 
                     spacing: 0
 
-                    QQC2.PasswordField {
+                    Kirigami.PasswordField {
                         id: adminPassword
 
                         Layout.fillWidth: true
@@ -241,7 +241,7 @@ ColumnLayout {
 
                     spacing: 0
 
-                    QQC2.PasswordField {
+                    Kirigami.PasswordField {
                         Layout.fillWidth: true
                         Layout.preferredWidth: form.fieldWidth
                         text: accounts.passwordRepeat

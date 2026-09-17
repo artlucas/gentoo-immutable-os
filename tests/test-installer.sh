@@ -545,6 +545,18 @@ assert_true "...and so do the repeat field and its mismatch message" \
     bash -c "grep -A3 'Kirigami.FormData.label: accounts.passwordRepeatLabel' '$OVL_ACCOUNTS/files/qml/LocalForm.qml' |
              grep -qE '^[[:space:]]*spacing: 0$'"
 
+# PasswordField IS KIRIGAMI'S, AND THERE IS NO OTHER. QtQuick.Controls has no type of that name,
+# so a `QQC2.PasswordField` is not a control with the wrong look — it is a type error, and the
+# whole component tree fails to load with it. DomainForm instantiates unconditionally in
+# Accounts.qml, so that one line took the entire page down: the QQuickWidget painted its clear
+# colour, which is white, and the accounts page came up blank in every mode. The QML travels
+# inside the .so as a resource and nothing compiles it at build time, so this reaches a VM
+# untouched by the compiler that built the module around it — which is what this check is for.
+assert_false "no QQC2.PasswordField: QtQuick.Controls has no such type" \
+    grep -rq 'QQC2\.PasswordField' "$OVL_ACCOUNTS/files/qml"
+assert_true "the domain form's three password fields are Kirigami's" \
+    bash -c "[[ \$(grep -c 'Kirigami.PasswordField {' '$OVL_ACCOUNTS/files/qml/DomainForm.qml') -eq 3 ]]"
+
 # The sequence must not name the stock modules that cannot work here. Each of these would fail
 # or, worse, half-succeed: localecfg runs `locale-gen` in a target that has none; unpackfs looks
 # for a squashfs; bootloader/grubcfg generate a GRUB config for a machine that boots a UKI;
