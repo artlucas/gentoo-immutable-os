@@ -1198,6 +1198,25 @@ assert_eq "$APPS_EXPECTED" \
 assert_true "apps.conf defaults to the typical set" \
     grep -qE '^defaultMode:[[:space:]]+typical$' "$APPS_CONF"
 
+# A DESCRIPTION UNDER EVERY NAME (plan/27 §7), in both confs and agreeing — the medium reads the
+# /etc copy, so a fallback still describing an app a newer conf reworded would render its stale
+# sentence with nothing to notice. Six, one per id, and each a sentence the custom row shows under
+# the name where the Flathub identifier used to sit.
+assert_eq "$(sed -nE 's/^[[:space:]]+description:[[:space:]]+(\S.*)$/\1/p' "$APPS_CONF" | tr '\n' '|' | sed 's/|$//')" \
+    "$(sed -nE 's/^[[:space:]]+description:[[:space:]]+(\S.*)$/\1/p' "$APPS_SRC/apps.conf" | tr '\n' '|' | sed 's/|$//')" \
+    "the packaged fallback carries the same descriptions"
+assert_true "...one per application, none missing" \
+    bash -c "[[ \$(sed -nE 's/^[[:space:]]+description:[[:space:]]+(\S.*)$/\1/p' '$APPS_CONF' | wc -l) -eq 6 ]]"
+# The description is the one conf-sourced string that translates: its English text is the lookup
+# key into the hand-maintained AppsDescriptions context (the LanguageNames bargain), and the list
+# property gives up CONSTANT for retranslated so the re-read follows a language change.
+assert_true "C++ copies the description key through to the QML" \
+    grep -q 'QStringLiteral( "description" )' "$APPS_SRC/AppsConfig.cpp"
+assert_true "...wrapping it in the AppsDescriptions context at read time" \
+    grep -q 'translate( "AppsDescriptions"' "$APPS_SRC/AppsConfig.cpp"
+assert_true "the app list notifies retranslated, so descriptions re-say" \
+    bash -c "grep -B2 'READ apps' '$APPS_SRC/AppsConfig.h' | grep -q 'NOTIFY retranslated'"
+
 # ONE ANSWER TO "IS THERE INTERNET". The job's own probe curls the same URL the greeting page's
 # requirements block checks; two URLs would be two verdicts, and the offline path turns on that
 # verdict (the page forces its second answer, the job skips both its passes).
@@ -1310,6 +1329,24 @@ assert not bad, "; ".join(bad)
 # after the paren — because the comments above say qsTr() too, saying why there is none.)
 assert_false "the QML carries no qsTr() call of its own" \
     grep -q 'qsTr("' "$APPS_QML"
+
+# THE LABEL IS PART OF THE CONTROL (plan/27 §7). The three mode rows put their text beside bare
+# radio buttons and the custom rows beside checkboxes, and a QQC2 control without `text:` does
+# not extend its hit area to a sibling label — so each label block is a MouseArea that does what
+# the control's own click does. Four of them: three modes, one per app row.
+assert_true "every label block is a click target beside its control" \
+    bash -c "grep -c 'cursorShape: Qt.PointingHandCursor' '$APPS_QML' | grep -qx 4"
+assert_true "...each mode's click answers the same question its radio does" \
+    bash -c "grep -A4 'cursorShape: Qt.PointingHandCursor' '$APPS_QML' | grep -q 'apps.mode = \"typical\"'"
+# The custom row leads with a name and a sentence: the Flathub id stays the key C++ and the job
+# exchange, and stops being the text the row is read by.
+assert_false "no label draws the Flathub identifier any more" \
+    grep -q 'text: appRow.modelData.id' "$APPS_QML"
+assert_true "...the description sits under the name instead" \
+    grep -q 'text: appRow.modelData.description' "$APPS_QML"
+assert_true "...and a click on it toggles the checkbox it belongs to" \
+    bash -c "grep -A6 'cursorShape: Qt.PointingHandCursor' '$APPS_QML' |
+             grep -q 'apps.setSelected('"
 
 # The module is `apps`, everywhere the siblings are: built by that name, sidebar named by the
 # page's one noun, QML inside the .so.

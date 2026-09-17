@@ -9,6 +9,8 @@
 #include "utils/Logger.h"
 #include "utils/Retranslator.h"
 
+#include <QCoreApplication>
+
 AppsConfig::AppsConfig( QObject* parent )
     : QObject( parent )
 {
@@ -33,6 +35,10 @@ AppsConfig::setConfigurationMap( const QVariantMap& configurationMap )
         out.insert( QStringLiteral( "id" ), id );
         out.insert( QStringLiteral( "name" ), e.value( QStringLiteral( "name" ) ).toString() );
         out.insert( QStringLiteral( "icon" ), e.value( QStringLiteral( "icon" ) ).toString() );
+        // The description is stored raw and translated at read time — see apps() — because its
+        // source lives in the conf beside the name it belongs to, not in this file.
+        out.insert( QStringLiteral( "description" ),
+                    e.value( QStringLiteral( "description" ) ).toString() );
         m_apps.append( out );
     }
 
@@ -95,6 +101,31 @@ AppsConfig::selectedIds() const
     for ( const QString& id : m_selected )
     {
         out.append( id );
+    }
+    return out;
+}
+
+QVariantList
+AppsConfig::apps() const
+{
+    // m_apps holds the conf's words raw; the description is the one key that translates, and it
+    // translates HERE rather than in setConfigurationMap because the language can change after
+    // the conf is read. QCoreApplication::translate with a named context — the LanguageNames
+    // bargain (LanguageConfig.cpp): a conf-sourced string's translation is looked up by its own
+    // text in a context no lupdate ever sees, hand-maintained in the .ts files beside the
+    // machine-extracted ones. An untranslated or drifted entry falls back to the English the
+    // conf already holds, which is the correct failure (plan/27 §2).
+    QVariantList out;
+    for ( const QVariant& v : m_apps )
+    {
+        QVariantMap e = v.toMap();
+        e.insert( QStringLiteral( "description" ),
+                  QCoreApplication::translate( "AppsDescriptions",
+                                               e.value( QStringLiteral( "description" ) )
+                                                   .toString()
+                                                   .toUtf8()
+                                                   .constData() ) );
+        out.append( e );
     }
     return out;
 }

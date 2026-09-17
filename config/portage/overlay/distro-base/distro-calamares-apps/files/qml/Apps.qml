@@ -147,26 +147,42 @@ Item {
                         Accessible.description: apps.typicalNames
                     }
 
-                    ColumnLayout {
+                    // THE LABEL IS PART OF THE RADIO (plan/27 §7). A RadioButton that carries no
+                    // `text:` of its own does not extend its hit area to a sibling label, so the
+                    // words beside it are this MouseArea: pointing-hand cursor, the sidebar
+                    // button's precedent, and `enabled` following the radio's so the offline rule
+                    // keeps its refusal quiet — a dimmed label that clicks would be a promise the
+                    // rule just took away. The click does what the radio's own click does.
+                    MouseArea {
                         Layout.fillWidth: true
-                        spacing: 0
+                        implicitHeight: typicalLabels.implicitHeight
+                        cursorShape: Qt.PointingHandCursor
+                        enabled: typicalRadio.enabled
+                        onClicked: apps.mode = "typical"
 
-                        QQC2.Label {
-                            Layout.fillWidth: true
-                            text: apps.typicalTitle
-                            wrapMode: Text.WordWrap
-                            font.bold: typicalRadio.checked
-                            opacity: apps.hasInternet ? 1 : 0.5
-                        }
+                        ColumnLayout {
+                            id: typicalLabels
 
-                        // The configured names, not a hard-coded list: C++ joins them out of the
-                        // configured app list, so the row cannot disagree with what gets installed.
-                        QQC2.Label {
-                            Layout.fillWidth: true
-                            text: apps.typicalNames
-                            wrapMode: Text.WordWrap
-                            opacity: apps.hasInternet ? 0.7 : 0.35
-                            font: Kirigami.Theme.smallFont
+                            anchors.fill: parent
+                            spacing: 0
+
+                            QQC2.Label {
+                                Layout.fillWidth: true
+                                text: apps.typicalTitle
+                                wrapMode: Text.WordWrap
+                                font.bold: typicalRadio.checked
+                                opacity: apps.hasInternet ? 1 : 0.5
+                            }
+
+                            // The configured names, not a hard-coded list: C++ joins them out of the
+                            // configured app list, so the row cannot disagree with what gets installed.
+                            QQC2.Label {
+                                Layout.fillWidth: true
+                                text: apps.typicalNames
+                                wrapMode: Text.WordWrap
+                                opacity: apps.hasInternet ? 0.7 : 0.35
+                                font: Kirigami.Theme.smallFont
+                            }
                         }
                     }
                 }
@@ -195,12 +211,22 @@ Item {
                         Accessible.name: apps.noneTitle
                     }
 
-                    QQC2.Label {
+                    MouseArea {
                         Layout.fillWidth: true
-                        text: apps.noneSubtitle
-                        wrapMode: Text.WordWrap
-                        opacity: 0.7
-                        font: Kirigami.Theme.smallFont
+                        implicitHeight: noneLabel.implicitHeight
+                        cursorShape: Qt.PointingHandCursor
+                        enabled: noneRadio.enabled
+                        onClicked: apps.mode = "none"
+
+                        QQC2.Label {
+                            id: noneLabel
+
+                            anchors.fill: parent
+                            text: apps.noneSubtitle
+                            wrapMode: Text.WordWrap
+                            opacity: 0.7
+                            font: Kirigami.Theme.smallFont
+                        }
                     }
                 }
 
@@ -231,12 +257,22 @@ Item {
                         Accessible.name: apps.customTitle
                     }
 
-                    QQC2.Label {
+                    MouseArea {
                         Layout.fillWidth: true
-                        text: apps.customSubtitle
-                        wrapMode: Text.WordWrap
-                        opacity: apps.hasInternet ? 0.7 : 0.35
-                        font: Kirigami.Theme.smallFont
+                        implicitHeight: customLabel.implicitHeight
+                        cursorShape: Qt.PointingHandCursor
+                        enabled: customRadio.enabled
+                        onClicked: apps.mode = "custom"
+
+                        QQC2.Label {
+                            id: customLabel
+
+                            anchors.fill: parent
+                            text: apps.customSubtitle
+                            wrapMode: Text.WordWrap
+                            opacity: apps.hasInternet ? 0.7 : 0.35
+                            font: Kirigami.Theme.smallFont
+                        }
                     }
                 }
 
@@ -264,31 +300,68 @@ Item {
                             spacing: Kirigami.Units.smallSpacing
 
                             QQC2.CheckBox {
+                                id: appBox
+
                                 checked: apps.selectedIds.indexOf(appRow.modelData.id) !== -1
                                 onToggled: apps.setSelected(appRow.modelData.id, checked)
 
                                 Accessible.name: appRow.modelData.name
+                                Accessible.description: appRow.modelData.description
                             }
 
-                            Kirigami.Icon {
-                                source: appRow.modelData.icon
-                                implicitWidth: Kirigami.Units.iconSizes.smallMedium
-                                implicitHeight: Kirigami.Units.iconSizes.smallMedium
-                                isMask: false
-                            }
-
-                            QQC2.Label {
+                            // EVERYTHING BUT THE CHECKBOX IS ONE CLICK TARGET (plan/27 §7), the
+                            // same treatment the radio labels above got: a name somebody reads is
+                            // a thing somebody clicks. The click toggles the box it belongs to —
+                            // the negation of what selectedIds says, which is C++'s answer and
+                            // therefore the one that cannot disagree with what gets installed.
+                            //
+                            // The Flathub ID is gone from the row: it remains the key C++ and the
+                            // job exchange and the thing the summary page can name, but it was
+                            // never the sentence to lead with. The description under the name is
+                            // the conf's own, translated through the AppsDescriptions context —
+                            // the same conf-sourced-words bargain the language page's names make.
+                            MouseArea {
                                 Layout.fillWidth: true
-                                text: appRow.modelData.name
-                                elide: Text.ElideRight
-                            }
+                                implicitHeight: appLabels.implicitHeight
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: apps.setSelected(
+                                    appRow.modelData.id,
+                                    apps.selectedIds.indexOf(appRow.modelData.id) === -1)
 
-                            // The Flathub ID, for the people who already know which one they
-                            // want. Small and dim: it is an identifier, not a name.
-                            QQC2.Label {
-                                text: appRow.modelData.id
-                                opacity: 0.6
-                                font: Kirigami.Theme.smallFont
+                                RowLayout {
+                                    id: appLabels
+
+                                    anchors.fill: parent
+                                    spacing: Kirigami.Units.smallSpacing
+
+                                    Kirigami.Icon {
+                                        source: appRow.modelData.icon
+                                        implicitWidth: Kirigami.Units.iconSizes.smallMedium
+                                        implicitHeight: Kirigami.Units.iconSizes.smallMedium
+                                        isMask: false
+                                    }
+
+                                    ColumnLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 0
+
+                                        QQC2.Label {
+                                            Layout.fillWidth: true
+                                            text: appRow.modelData.name
+                                            elide: Text.ElideRight
+                                            font.bold: appBox.checked
+                                        }
+
+                                        QQC2.Label {
+                                            Layout.fillWidth: true
+                                            visible: appRow.modelData.description.length > 0
+                                            text: appRow.modelData.description
+                                            wrapMode: Text.WordWrap
+                                            opacity: 0.7
+                                            font: Kirigami.Theme.smallFont
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

@@ -49,10 +49,14 @@ public:
      *  verdict: that one is five minutes old by the time this page is reached and was never
      *  re-asked. Changes whenever the page is entered or "Check again" is pressed. */
     Q_PROPERTY( bool hasInternet READ hasInternet NOTIFY hasInternetChanged )
-    /*! [{id, name, icon}] out of modules/apps.conf, in file order. CONSTANT because the file is
-     *  facts about Flathub, not about this machine; a page that re-read its app list mid-answer
-     *  would be asking a different question than the one it started. */
-    Q_PROPERTY( QVariantList apps READ apps CONSTANT )
+    /*! [{id, name, icon, description}] out of modules/apps.conf, in file order. The list itself
+     *  is read once — the apps are Flathub IDs and proper-noun names, facts about the world
+     *  rather than about this machine — but it is NOT CONSTANT: the description is a sentence,
+     *  translated at read time through the AppsDescriptions context (the language page's
+     *  LanguageNames bargain — the conf text is the lookup key, the .ts entry is hand-maintained
+     *  beside it), so the getter re-wraps it and retranslated() is what tells the QML to re-read
+     *  (plan/27 §2). Selection lives in selectedIds, so the re-read costs nothing but paint. */
+    Q_PROPERTY( QVariantList apps READ apps NOTIFY retranslated )
     /*! The ids currently ticked for the "custom" answer, in file order. Kept in step with the
      *  checkboxes by setSelected(); starting state is all of them, so "custom" begins where
      *  "typical" ends and un-ticking is the only work a user who wants most of the set does. */
@@ -90,7 +94,7 @@ public:
     QString mode() const { return m_mode; }
     void setMode( const QString& mode );
     bool hasInternet() const { return m_hasInternet; }
-    QVariantList apps() const { return m_apps; }
+    QVariantList apps() const;
     QVariantList selectedIds() const;
     QString headline() const;
     QString subheadline() const;
