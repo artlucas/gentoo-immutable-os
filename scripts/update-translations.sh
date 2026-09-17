@@ -9,7 +9,9 @@
 #
 # lupdate is what keeps their <source> elements in step with the code. Run it after adding or
 # changing a translatable string; it adds new messages as `type="unfinished"`, marks removed ones
-# `vanished`, and leaves existing translations alone. Then somebody fills in the new entries.
+# `vanished`, and leaves existing translations alone. Then somebody fills in the new entries —
+# and the step at the bottom un-vanishes the three pseudo-contexts lupdate can never see, which
+# used to be somebody's chore too.
 #
 # IT DOES NOT RUN IN THE BUILD, on purpose. A build stage that rewrote files in the repository
 # would make `git status` depend on whether you had built, and would quietly "fix" the one failure
@@ -78,6 +80,38 @@ RUNTIME="${1:-docker}"
     [[ -x \$lu ]] || { echo 'no lupdate on the builder: dev-qt/qttools:6[linguist] is not merged there' >&2; exit 1; }
     \"\$lu\" -locations none -extensions cpp,h,qml ${SOURCES[*]} -ts ${TS_ARGS[*]}
   " || die "lupdate failed"
+
+# ---- the pseudo-contexts, un-vanished ----------------------------------------------------------
+#
+# lupdate marks every message it did not find in the sources `vanished` — right for a renamed
+# string, wrong for the three contexts whose sources it cannot see BY DESIGN (check-translations.py
+# names them): LanguageNames arrives at runtime out of config/languages.conf, AppsDescriptions out
+# of modules/apps.conf, CalamaresSidebar out of the branding sidebar's qsTranslate calls in a
+# directory no lupdate run scans. Every one of their entries would re-vanish on every refresh,
+# lrelease would drop them, and somebody would have to flip them back by hand — the chore this
+# step used to be. Their translations survive the round-trip because -no-obsolete is not passed;
+# only the marker is wrong, and only the marker is fixed here.
+python3 - "$LANG_DIR" <<'EOF'
+import pathlib, re, sys
+
+lang_dir = pathlib.Path(sys.argv[1])
+PSEUDO = ("LanguageNames", "AppsDescriptions", "CalamaresSidebar")
+fixed = 0
+for ts in sorted(lang_dir.glob("*.ts")):
+    text = ts.read_text(encoding="utf-8")
+    context = None
+    out = []
+    for line in text.splitlines(keepends=True):
+        m = re.search(r"<name>([^<]+)</name>", line)
+        if m:
+            context = m.group(1)
+        if context in PSEUDO and 'type="vanished"' in line:
+            line = line.replace(' type="vanished"', "")
+            fixed += 1
+        out.append(line)
+    ts.write_text("".join(out), encoding="utf-8")
+print(f"un-vanished {fixed} pseudo-context entries")
+EOF
 
 log "done. Now fill in the new entries, then verify:"
 log "  python3 scripts/lib/check-translations.py --table config/languages.conf \\"

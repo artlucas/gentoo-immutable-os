@@ -49,7 +49,13 @@ SOURCE_GLOBS = ("*.cpp", "*.h", "qml/*.qml", "checker/*.cpp", "checker/*.h")
 # LanguageNames is not a class and never will be: it is a hand-written context whose sources arrive
 # at runtime out of config/languages.conf, through QCoreApplication::translate(). Checks 4 and 5
 # both skip it, and the table is its authority instead.
-PSEUDO_CONTEXTS = {"LanguageNames"}
+#
+# AppsDescriptions (plan/27 §2) is the same bargain one directory over: the applications page's
+# conf-sourced descriptions, looked up by their own English text through translate() in
+# AppsConfig.cpp -- the conf is its authority. CalamaresSidebar (plan/27 §3) is the branding
+# sidebar's qsTranslate() context, hand-maintained because the builder's lupdate cannot read QML
+# at all; the sidebar file itself, outside every --source-dir, is its authority.
+PSEUDO_CONTEXTS = {"LanguageNames", "AppsDescriptions", "CalamaresSidebar"}
 
 
 def read_table(path):

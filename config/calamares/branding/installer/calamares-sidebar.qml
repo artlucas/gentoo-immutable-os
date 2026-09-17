@@ -15,10 +15,15 @@
    same dark surface and teal current-step as the widget flavour had, so the change reads as
    alignment and nothing else.
 
-   KNOWN LIMIT, inherited willingly: "About" and "Debug" below are qsTr() in a file the builder's
-   lupdate never reads (dev-qt/qttools is built without QML support — plan/25 §4), so they render
-   English in every language. The step names do not share the problem: they come from the
-   ViewManager model, which names them in C++ tr().
+   "About" and "Debug" below are qsTranslate() into a NAMED context, CalamaresSidebar, whose
+   entries are hand-maintained in the branding .ts files — the language page's LanguageNames
+   bargain, because the builder's lupdate is built without QML support (plan/25 §4) and cannot
+   extract from this file no matter what function it calls. The branding translator is installed
+   on the app, and qsTranslate consults it by (context, source), so the two buttons follow the
+   catalogue (plan/27 §3). One limit remains, stated plainly: Calamares' own sidebar engine gets
+   no engine-retranslate from our code, so a language changed mid-session leaves these two in the
+   old language until restart — the step names do not share the problem, re-saying through the
+   ViewManager model in C++ tr().
 
    SPDX-FileCopyrightText: 2020 Adriaan de Groot <groot@kde.org>
    SPDX-FileCopyrightText: 2021 Anke Boersma <demm@kaosx.us>
@@ -104,7 +109,7 @@ Rectangle {
                         anchors.verticalCenter: parent.verticalCenter;
                         anchors.horizontalCenter: parent.horizontalCenter;
                         x: parent.x + 4;
-                        text: qsTr("About")
+                        text: qsTranslate("CalamaresSidebar", "About")
                         color: Branding.styleString( Branding.SidebarTextCurrent );
                         font.pointSize : 9
                     }
@@ -130,7 +135,7 @@ Rectangle {
                         anchors.verticalCenter: parent.verticalCenter;
                         anchors.horizontalCenter: parent.horizontalCenter;
                         x: parent.x + 4;
-                        text: qsTr("Debug")
+                        text: qsTranslate("CalamaresSidebar", "Debug")
                         color: Branding.styleString( Branding.SidebarTextCurrent );
                         font.pointSize : 9
                     }

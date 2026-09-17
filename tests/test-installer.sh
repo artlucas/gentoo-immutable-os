@@ -383,6 +383,14 @@ assert_false "...and no step text is centred any more" \
              grep -v '^[[:space:]]*//' | grep -q 'horizontalCenter'"
 assert_true "...and the colours still come from the branding style, not the copy" \
     grep -q 'Branding.styleString' "$SIDEBAR_QML"
+# The sidebar's own two words ask the catalogue BY NAME (plan/27 §3): qsTranslate with an explicit
+# CalamaresSidebar context, because the context a plain qsTr would use is unspellable without a
+# QML-aware lupdate to discover it. The context is hand-maintained in the .ts files, the
+# LanguageNames bargain — see the pseudo-context assertions in the translations section.
+assert_true "the sidebar's buttons ask the catalogue by a named context" \
+    grep -q 'qsTranslate("CalamaresSidebar", "About")' "$SIDEBAR_QML"
+assert_false "...and no bare qsTr() call is left in it either" \
+    grep -q 'qsTr("' "$SIDEBAR_QML"
 
 # ---- 6. the modules exist and are wired into the sequence -----------------------------------
 SETTINGS="$RENDER/settings.conf"
@@ -736,6 +744,18 @@ assert_true "the branding translations match the table and the module sources" \
         --source-dir "$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-accounts/files" \
         --source-dir "$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-disk/files" \
         --source-dir "$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-apps/files"
+
+# THE THREE PSEUDO-CONTEXTS (plan/27 §2-§4): contexts whose sources no lupdate run can see —
+# LanguageNames out of languages.conf, AppsDescriptions out of apps.conf, CalamaresSidebar out of
+# the branding sidebar — are exempt from the source-matching checks and are un-vanished again
+# after every lupdate run, or lrelease would drop them and the picker's second line (and now the
+# app descriptions and the sidebar's buttons) would silently fall back to English.
+assert_true "check-translations names the three pseudo-contexts" \
+    grep -q '"LanguageNames", "AppsDescriptions", "CalamaresSidebar"' \
+        "$REPO_ROOT/scripts/lib/check-translations.py"
+assert_true "update-translations un-vanishes what lupdate cannot see" \
+    grep -q 'PSEUDO = ("LanguageNames", "AppsDescriptions", "CalamaresSidebar")' \
+        "$REPO_ROOT/scripts/update-translations.sh"
 
 # ---- 6c. the language page's source (plan/22) ----------------------------------------------
 LANG_SRC="$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-language/files"
