@@ -5,16 +5,75 @@
 
 #include "LanguageConfig.h"
 
+#include "ViewManager.h"
 #include "utils/Logger.h"
 #include "utils/Retranslator.h"
 
+#include <QApplication>
 #include <QQmlContext>
 #include <QQmlEngine>
 #include <QQuickStyle>
 #include <QQuickWidget>
 #include <QUrl>
+#include <QWidget>
 
 CALAMARES_PLUGIN_FACTORY_DEFINITION( LanguageViewStepFactory, registerPlugin< LanguageViewStep >(); )
+
+/** @brief Re-say the words in the main window's own QML panels.
+ *
+ * THE SIDEBAR IS NOBODY'S MODULE, AND SO NOBODY RETRANSLATES IT. branding.desc asks for
+ * `sidebar: qml` (plan/26 §5), which makes the panel down the left a QQuickWidget that
+ * CalamaresWindow built from calamares-sidebar.qml — and CalamaresWindow.cpp wires no
+ * retranslation to it whatsoever. Two different caches go stale there the moment the language
+ * changes, and this function clears both, because this is the module that changes the language.
+ *
+ * The step names first. They are bound `text: display` on the ViewManager model, whose data()
+ * asks each step for its prettyName() afresh every time it is called — which is why the WIDGET
+ * flavour needs no signal at all (ProgressTreeView repaints and the words come back translated)
+ * and why ViewManager emits dataChanged() from nowhere in upstream. A QML delegate binding does
+ * not repaint-and-re-read: it re-reads on dataChanged() and on nothing else. So dataChanged() is
+ * emitted here, for every row and every role, on a model this module does not own — the one
+ * liberty in this file, taken because the alternative is a sidebar that names the steps in the
+ * language the installer started in.
+ *
+ * Then "About" and "Debug", which are qsTranslate() bindings inside that QML (plan/27 §3). A
+ * translation binding is re-evaluated when its engine is told to retranslate and at no other
+ * time — exactly the fact the m_widget line in the constructor exists for, one engine further
+ * out.
+ *
+ * The panels are found by the file they were built from, because the window gives them no
+ * objectName. Our own pages' QQuickWidgets are children of the same window and are deliberately
+ * not matched: they load from qrc: and each re-says for itself.
+ */
+static void
+retranslateWindowPanels()
+{
+    const auto isPanel = []( const QQuickWidget* w )
+    {
+        const QString file = w->source().fileName();
+        return file == QLatin1String( "calamares-sidebar.qml" )
+            || file == QLatin1String( "calamares-navigation.qml" );
+    };
+
+    const auto windows = QApplication::topLevelWidgets();
+    for ( const QWidget* top : windows )
+    {
+        const auto panels = top->findChildren< QQuickWidget* >();
+        for ( QQuickWidget* panel : panels )
+        {
+            if ( isPanel( panel ) && panel->engine() )
+            {
+                panel->engine()->retranslate();
+            }
+        }
+    }
+
+    auto* views = Calamares::ViewManager::instance();
+    if ( views && views->rowCount() > 0 )
+    {
+        emit views->dataChanged( views->index( 0, 0 ), views->index( views->rowCount() - 1, 0 ) );
+    }
+}
 
 LanguageViewStep::LanguageViewStep( QObject* parent )
     : Calamares::ViewStep( parent )
@@ -50,7 +109,13 @@ LanguageViewStep::LanguageViewStep( QObject* parent )
     // is only re-evaluated when the engine is told to, and nothing tells it. This is the same line
     // Slideshow.cpp:57 carries for the same reason — and its absence is why the accounts page's
     // qsTr() strings stayed in the language the installer started in.
-    CALAMARES_RETRANSLATE( if ( m_widget && m_widget->engine() ) { m_widget->engine()->retranslate(); } );
+    //
+    // The second call is the window's sidebar, which has the same problem and no module to fix it
+    // — see retranslateWindowPanels() above. It runs from here because this page is where the
+    // language changes, and it is harmless before the window exists: at attach time (the macro
+    // calls the body once immediately) there are no top-level widgets and no view steps yet.
+    CALAMARES_RETRANSLATE( if ( m_widget && m_widget->engine() ) { m_widget->engine()->retranslate(); }
+                           retranslateWindowPanels(); );
 }
 
 LanguageViewStep::~LanguageViewStep()

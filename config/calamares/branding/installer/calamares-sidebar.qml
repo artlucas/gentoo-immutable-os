@@ -20,10 +20,16 @@
    bargain, because the builder's lupdate is built without QML support (plan/25 §4) and cannot
    extract from this file no matter what function it calls. The branding translator is installed
    on the app, and qsTranslate consults it by (context, source), so the two buttons follow the
-   catalogue (plan/27 §3). One limit remains, stated plainly: Calamares' own sidebar engine gets
-   no engine-retranslate from our code, so a language changed mid-session leaves these two in the
-   old language until restart — the step names do not share the problem, re-saying through the
-   ViewManager model in C++ tr().
+   catalogue (plan/27 §3).
+
+   NOTHING IN CALAMARES RETRANSLATES THIS FILE, and that is why it once read English in a Japanese
+   installer. CalamaresWindow builds this QML into a QQuickWidget and then wires no retranslation
+   to it at all: a qsTranslate() binding re-evaluates only when its engine is told to, and the
+   step names below re-read `display` only when the ViewManager model says dataChanged — which
+   upstream emits nowhere, because the WIDGET sidebar flavour gets its fresh words from a repaint
+   and never needed a signal. Both are now driven from the module that changes the language, in
+   LanguageViewStep.cpp's retranslateWindowPanels() (plan/27 §3), which finds this panel by this
+   filename. Renaming this file without renaming it there leaves the sidebar stale again.
 
    SPDX-FileCopyrightText: 2020 Adriaan de Groot <groot@kde.org>
    SPDX-FileCopyrightText: 2021 Anke Boersma <demm@kaosx.us>

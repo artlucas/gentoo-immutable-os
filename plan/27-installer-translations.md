@@ -94,6 +94,22 @@ the branding translator is installed on the app, and `qsTranslate` consults it b
 does not resolve — verified in the VM, not assumed — the entries are dropped and the documented
 limit returns; nothing else changes.
 
+**And the panel is made to re-say them**, which the first draft of this section left out and the
+VM found: naming the context fixes what the two buttons *say when they are created* and nothing
+else. `CalamaresWindow` builds `calamares-sidebar.qml` into a `QQuickWidget` and wires no
+retranslation to it anywhere — so a `qsTranslate()` binding, which re-evaluates only on an engine
+retranslate, keeps the language the installer started in. The step names beside them are stale
+for a sibling reason: they are `text: display` on the `ViewManager` model, and upstream emits
+`dataChanged()` from nowhere, because the *widget* sidebar flavour re-reads `prettyName()` on
+every repaint and never needed a signal. `LanguageViewStep` therefore grows
+`retranslateWindowPanels()`, called from the same `CALAMARES_RETRANSLATE` that already retranslates
+this module's own engine: it retranslates the engine of any `QQuickWidget` in the window loaded
+from `calamares-sidebar.qml` or `calamares-navigation.qml` (found by source filename — the window
+gives its panels no `objectName`, and our own pages load from `qrc:` and re-say for themselves),
+and emits `dataChanged()` across the `ViewManager` rows. That last is a signal emitted on a model
+this module does not own, taken deliberately and commented as such: the alternative is a sidebar
+that names the steps in the language nobody chose.
+
 ## 4. The un-vanish chore, ended
 
 A pseudo-context's entries are invisible to lupdate, so every `update-translations.sh` run marks
@@ -147,7 +163,10 @@ assertions pin the descriptions (present in both confs, agreeing, copied by C++,
 `AppsDescriptions` translate call, `apps` notifying `retranslated`), the accounts retranslate
 halves (the slot in AccountsConfig, `engine()->retranslate()` in AccountsViewStep, mirroring
 :1027-1030), PasswordCheck's plain `tr(`, the sidebar's `qsTranslate("CalamaresSidebar"`, and
-every `.ts` finishing the new contexts. test-managed.sh: its "the QML uses qsTr()" assertion
+every `.ts` finishing the new contexts. The sidebar's re-saying is pinned from both ends: the
+branding QML's filename is asserted to appear in LanguageViewStep.cpp (that literal is how the
+panel is found), and the language module's assertions cover `retranslateWindowPanels()` and the
+`dataChanged` inside it. test-managed.sh: its "the QML uses qsTr()" assertion
 (:568, written when qsTr *was* the house pattern) flips to forbid the call, with the toolchain
 reason; the binding-resolution sweep picks up the new `accounts.*` names mechanically.
 
@@ -155,10 +174,11 @@ reason; the binding-resolution sweep picks up the new `accounts.*` names mechani
 
 - **The translations are mine.** Eight languages, ~95 sources, authored to be reviewed. A
   native speaker's pass over `lang/` is the follow-up this plan owes.
-- **About/Debug re-say only at creation.** Calamares' own sidebar engine gets no
-  `engine()->retranslate()` from our code; a language changed mid-session leaves the two buttons
-  in the old language until restart. The step names do not share this (they re-say through the
-  widget model).
+- **The sidebar re-says through a filename and a foreign signal.** `retranslateWindowPanels()`
+  finds the window's panels by the QML file they were loaded from and nudges a model it does not
+  own; an upstream rename of either file, or a `ViewManager` that starts emitting `dataChanged()`
+  itself, would want that code revisited. (This replaces the earlier limit here, which said the
+  two buttons re-said only at creation — they now follow the language, and so do the step names.)
 - **`AppsDescriptions` drift is silent.** The conf text is the lookup key: edit one without the
   `.ts` and the description falls back to English — the same contract `LanguageNames` has always
   had.

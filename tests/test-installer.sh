@@ -391,6 +391,12 @@ assert_true "the sidebar's buttons ask the catalogue by a named context" \
     grep -q 'qsTranslate("CalamaresSidebar", "About")' "$SIDEBAR_QML"
 assert_false "...and no bare qsTr() call is left in it either" \
     grep -q 'qsTr("' "$SIDEBAR_QML"
+# The file's NAME is load-bearing twice over: CalamaresWindow finds this copy by it (searchQmlFile
+# asks for "calamares-sidebar"), and the language module finds the built panel by it in order to
+# retranslate the engine nobody else does — see the LanguageViewStep assertions below.
+assert_true "the language module knows this file by name, which is how the sidebar re-says" \
+    grep -q "\"$(basename "$SIDEBAR_QML")\"" \
+        "$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-language/files/LanguageViewStep.cpp"
 
 # ---- 6. the modules exist and are wired into the sequence -----------------------------------
 SETTINGS="$RENDER/settings.conf"
@@ -844,6 +850,20 @@ assert not bad, "; ".join(bad)
 # installer started in. Slideshow.cpp:57 is the only other place in the tree that needs it.
 assert_true "the view step retranslates its QML engine on a language change" \
     grep -q 'engine()->retranslate()' "$LANG_SRC/LanguageViewStep.cpp"
+# AND THE WINDOW'S SIDEBAR, WHICH IS A PANEL NO MODULE OWNS (plan/27 §3). CalamaresWindow builds
+# calamares-sidebar.qml into a QQuickWidget and retranslates it from nowhere, so both of the
+# sidebar's caches go stale on a language change: the qsTranslate() bindings that say About and
+# Debug (a translation binding re-evaluates only on an engine retranslate) and the step names,
+# which are `text: display` on the ViewManager model and re-read only on dataChanged — a signal
+# upstream emits nowhere, because the widget flavour re-reads prettyName() on every repaint. This
+# module does both, being the one that changes the language.
+assert_true "...and the window's own QML panels with it" \
+    grep -q 'retranslateWindowPanels()' "$LANG_SRC/LanguageViewStep.cpp"
+assert_true "...finding the sidebar by the file the window loaded it from" \
+    grep -q '"calamares-sidebar.qml"' "$LANG_SRC/LanguageViewStep.cpp"
+assert_true "...and nudging the step names, which are a model read rather than a binding" \
+    bash -c "sed -n '/^retranslateWindowPanels/,/^}/p' '$LANG_SRC/LanguageViewStep.cpp' |
+             grep -q 'dataChanged'"
 # And the style call stays in the FIRST module, which is this one.
 assert_true "the language module sets the Qt Quick Controls style" \
     grep -q 'QQuickStyle::setStyle' "$LANG_SRC/LanguageViewStep.cpp"
