@@ -148,10 +148,11 @@ def main():
                     continue  # falls back to the source string, which is correct behaviour
                 finished.setdefault(ctx_name, set()).add(src)
 
-                # Check 4. LanguageNames is exempt: its sources arrive at runtime out of the
-                # table, through QCoreApplication::translate(), so there is no literal in any
-                # source file to match them against — the table is their authority, above.
-                if ctx_name != "LanguageNames" and args.source_dir and src not in collapsed:
+                # Check 4. The pseudo-contexts are exempt: their sources arrive at runtime out
+                # of files no source-dir scan covers (languages.conf, apps.conf, the branding
+                # sidebar's qsTranslate calls), so there is no literal in any module source to
+                # match them against — their own files are their authority.
+                if ctx_name not in PSEUDO_CONTEXTS and args.source_dir and src not in collapsed:
                     problems.append(
                         "%s: context %s has <source>%r, which appears in none of the module "
                         "sources. Qt will never look that string up, so it stays English."

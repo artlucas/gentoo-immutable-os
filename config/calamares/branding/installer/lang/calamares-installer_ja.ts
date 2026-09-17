@@ -5,130 +5,294 @@
     <name>AccountsConfig</name>
     <message>
         <source>Enter the enrolment code from your organisation.</source>
-        <translation type="unfinished"></translation>
+        <translation>組織からの登録コードを入力してください。</translation>
     </message>
     <message>
         <source>Give this computer a name first.</source>
-        <translation type="unfinished"></translation>
+        <translation>まずこのコンピューターに名前を付けてください。</translation>
     </message>
     <message>
         <source>Could not prepare %1. The installer is not running as root.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 を準備できませんでした。インストーラーが root で実行されていません。</translation>
     </message>
     <message>
         <source>Contacting your organisation…</source>
-        <translation type="unfinished"></translation>
+        <translation>組織に接続しています…</translation>
     </message>
     <message>
         <source>Your organisation did not answer within two minutes. Check the network and try again.</source>
-        <translation type="unfinished"></translation>
+        <translation>組織から 2 分以内に応答がありませんでした。ネットワークを確認して再試行してください。</translation>
     </message>
     <message>
         <source>This computer could not be enrolled.</source>
-        <translation type="unfinished"></translation>
+        <translation>このコンピューターを登録できませんでした。</translation>
     </message>
     <message>
         <source>The enrolment finished but could not be read back.</source>
-        <translation type="unfinished"></translation>
+        <translation>登録は完了しましたが、読み取れませんでした。</translation>
     </message>
     <message>
         <source>The enrolment reported success but wrote nothing.</source>
-        <translation type="unfinished"></translation>
+        <translation>登録は成功を報告しましたが、何も書き込みませんでした。</translation>
     </message>
     <message>
         <source>This computer is enrolled, but nobody has been given access to it yet. Add someone in your organisation&apos;s web interface, then try again.</source>
-        <translation type="unfinished"></translation>
+        <translation>このコンピューターは登録されていますが、まだ誰にもアクセスが与えられていません。組織のウェブインターフェースで誰かを追加してから、再試行してください。</translation>
     </message>
     <message>
         <source>This computer is enrolled with %1, but nobody has been given access to it yet. Add someone in your organisation&apos;s web interface, then try again.</source>
-        <translation type="unfinished"></translation>
+        <translation>このコンピューターは %1 に登録されていますが、まだ誰にもアクセスが与えられていません。組織のウェブインターフェースで誰かを追加してから、再試行してください。</translation>
     </message>
     <message numerus="yes">
         <source>Enrolled. %n person can use this computer.</source>
-        <translation type="unfinished">
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>登録されました。%n 人がこのコンピューターを使用できます。</numerusform>
         </translation>
     </message>
     <message numerus="yes">
         <source>Enrolled with %1. %n person can use this computer.</source>
-        <translation type="unfinished">
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>%1 に登録されました。%n 人がこのコンピューターを使用できます。</numerusform>
         </translation>
     </message>
     <message>
         <source>Enter the domain and a join account first.</source>
-        <translation type="unfinished"></translation>
+        <translation>まずドメインと参加アカウントを入力してください。</translation>
     </message>
     <message>
         <source>Checking %1…</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 を確認しています…</translation>
     </message>
     <message>
         <source>The check did not finish in time.</source>
-        <translation type="unfinished"></translation>
+        <translation>確認が時間内に終わりませんでした。</translation>
     </message>
     <message>
         <source>%1 answered and accepted %2.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 が応答し、%2 を受け入れました。</translation>
     </message>
     <message>
         <source>%1 could not be reached. The installation will still finish, and this computer can be joined afterwards.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 に接続できませんでした。インストールは続行され、このコンピューターは後でドメインに参加できます。</translation>
     </message>
     <message>
         <source>The domain controller rejected %1.</source>
-        <translation type="unfinished"></translation>
+        <translation>ドメインコントローラーが %1 を拒否しました。</translation>
     </message>
     <message>
         <source>This computer&apos;s clock is too far from the domain controller&apos;s for Kerberos.</source>
-        <translation type="unfinished"></translation>
+        <translation>このコンピューターの時計が、Kerberos にはドメインコントローラーと大きくずれすぎています。</translation>
     </message>
     <message>
         <source>The domain could not be checked (status %1).</source>
-        <translation type="unfinished"></translation>
+        <translation>ドメインを確認できませんでした (状態 %1)。</translation>
     </message>
     <message>
         <source>Use lower-case letters, digits, - and _, starting with a letter.</source>
-        <translation type="unfinished"></translation>
+        <translation>小文字、数字、-、_ を使用し、先頭は文字にしてください。</translation>
     </message>
     <message>
         <source>%1 is already used by this system.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 はこのシステムで既に使用されています。</translation>
     </message>
     <message>
         <source>Use letters, digits and -, starting and ending with a letter or digit.</source>
-        <translation type="unfinished"></translation>
+        <translation>文字、数字、- を使用し、先頭と末尾は文字または数字にしてください。</translation>
     </message>
     <message>
         <source>%1 cannot be used as a computer name.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 はコンピューター名として使用できません。</translation>
     </message>
     <message>
         <source>Local account %1 on %2.</source>
-        <translation type="unfinished"></translation>
+        <translation>ローカルアカウント %1（%2）。</translation>
     </message>
     <message>
         <source>%1 will be managed by your organisation.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 は組織によって管理されます。</translation>
     </message>
     <message>
         <source>%1 will be managed by %2.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 は %2 によって管理されます。</translation>
     </message>
     <message>
         <source>%1 will join %2, with the local administrator %3.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 は %2 に参加し、ローカル管理者は %3 です。</translation>
     </message>
     <message>
         <source>No accounts have been set up.</source>
-        <translation type="unfinished"></translation>
+        <translation>アカウントは設定されていません。</translation>
+    </message>
+    <message>
+        <source>How should people sign in to this computer?</source>
+        <translation>このコンピューターにはどのようにサインインしますか？</translation>
+    </message>
+    <message>
+        <source>This is the one choice on this page that cannot be changed later without reinstalling. Everything else follows from it.</source>
+        <translation>これはこのページで、後から再インストールなしでは変更できない唯一の選択です。他のすべてはここから決まります。</translation>
+    </message>
+    <message>
+        <source>Local accounts only</source>
+        <translation>ローカルアカウントのみ</translation>
+    </message>
+    <message>
+        <source>One account, on this computer. Nothing is sent anywhere.</source>
+        <translation>このコンピューター上の 1 つのアカウント。何もどこにも送信されません。</translation>
+    </message>
+    <message>
+        <source>Works with no network. More accounts can be added afterwards.</source>
+        <translation>ネットワークなしで動作します。アカウントは後から追加できます。</translation>
+    </message>
+    <message>
+        <source>Managed system</source>
+        <translation>管理されたシステム</translation>
+    </message>
+    <message>
+        <source>Accounts come from your organisation, and whoever runs it can change them from anywhere.</source>
+        <translation>アカウントは組織から提供され、運営者はどこからでも変更できます。</translation>
+    </message>
+    <message>
+        <source>Needs a network connection and an enrolment code now, before the disk is written.</source>
+        <translation>ディスクに書き込む前に、ネットワーク接続と登録コードが必要です。</translation>
+    </message>
+    <message>
+        <source>Join an enterprise domain</source>
+        <translation>企業ドメインに参加</translation>
+    </message>
+    <message>
+        <source>Accounts come from Active Directory, with one local administrator kept as the way back in.</source>
+        <translation>アカウントは Active Directory から提供され、ローカル管理者が非常時の入口として残されます。</translation>
+    </message>
+    <message>
+        <source>Needs the domain name and an account allowed to join computers to it.</source>
+        <translation>ドメイン名と、コンピューターをドメインに参加させる権限のあるアカウントが必要です。</translation>
+    </message>
+    <message>
+        <source>Use this password anyway?</source>
+        <translation>このパスワードをそれでも使用しますか？</translation>
+    </message>
+    <message>
+        <source>That password is not strong enough.</source>
+        <translation>このパスワードは十分に強くありません。</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>キャンセル</translation>
+    </message>
+    <message>
+        <source>Use anyway</source>
+        <translation>それでも使用</translation>
+    </message>
+    <message>
+        <source>Your name:</source>
+        <translation>お名前:</translation>
+    </message>
+    <message>
+        <source>Username:</source>
+        <translation>ユーザー名:</translation>
+    </message>
+    <message>
+        <source>Password:</source>
+        <translation>パスワード:</translation>
+    </message>
+    <message>
+        <source>Repeat password:</source>
+        <translation>パスワードの再入力:</translation>
+    </message>
+    <message>
+        <source>The two passwords are not the same.</source>
+        <translation>2 つのパスワードが一致しません。</translation>
+    </message>
+    <message>
+        <source>Log in automatically as this user</source>
+        <translation>このユーザーとして自動的にサインインする</translation>
+    </message>
+    <message>
+        <source>Computer name:</source>
+        <translation>コンピューター名:</translation>
+    </message>
+    <message>
+        <source>Enrolment code:</source>
+        <translation>登録コード:</translation>
+    </message>
+    <message>
+        <source>Try again</source>
+        <translation>再試行</translation>
+    </message>
+    <message>
+        <source>Check and continue</source>
+        <translation>確認して続行</translation>
+    </message>
+    <message>
+        <source>Accounts on this computer: %1</source>
+        <translation>このコンピューターのアカウント: %1</translation>
+    </message>
+    <message>
+        <source>This computer needs to reach your organisation now, because this option creates no local account. The code is used once and expires after fifteen minutes.</source>
+        <translation>このオプションはローカルアカウントを作成しないため、このコンピューターは今すぐ組織に到達する必要があります。コードは 1 回だけ使用でき、15 分で失効します。</translation>
+    </message>
+    <message>
+        <source>The domain</source>
+        <translation>ドメイン</translation>
+    </message>
+    <message>
+        <source>Domain:</source>
+        <translation>ドメイン:</translation>
+    </message>
+    <message>
+        <source>Join account:</source>
+        <translation>参加アカウント:</translation>
+    </message>
+    <message>
+        <source>Join password:</source>
+        <translation>参加パスワード:</translation>
+    </message>
+    <message>
+        <source>Domain controller:</source>
+        <translation>ドメインコントローラー:</translation>
+    </message>
+    <message>
+        <source>optional IP address</source>
+        <translation>任意の IP アドレス</translation>
+    </message>
+    <message>
+        <source>Check domain</source>
+        <translation>ドメインを確認</translation>
+    </message>
+    <message>
+        <source>Local administrator</source>
+        <translation>ローカル管理者</translation>
+    </message>
+    <message>
+        <source>The way back in when the domain controller cannot be reached. This system has no rescue shell, so it is the only other way to administer the machine.</source>
+        <translation>ドメインコントローラーに到達できないときの入口です。このシステムにはレスキューシェルがないため、マシンを管理する他の唯一の方法です。</translation>
+    </message>
+    <message>
+        <source>Advanced</source>
+        <translation>詳細</translation>
+    </message>
+    <message>
+        <source>Computer OU:</source>
+        <translation>コンピューター OU:</translation>
+    </message>
+    <message>
+        <source>Domain group granted administration:</source>
+        <translation>管理権限を与えるドメイングループ:</translation>
+    </message>
+    <message>
+        <source>Computer account name:</source>
+        <translation>コンピューターアカウント名:</translation>
+    </message>
+    <message>
+        <source>the computer name below</source>
+        <translation>下のコンピューター名</translation>
     </message>
 </context>
 <context>
     <name>AccountsViewStep</name>
     <message>
         <source>Accounts</source>
-        <translation type="unfinished"></translation>
+        <translation>アカウント</translation>
     </message>
 </context>
 <context>
@@ -183,10 +347,48 @@
     </message>
 </context>
 <context>
+    <name>AppsDescriptions</name>
+    <message>
+        <source>A powerful text editor by KDE</source>
+        <translation>KDE の高機能テキストエディター</translation>
+    </message>
+    <message>
+        <source>Digital painting and illustration</source>
+        <translation>デジタルペイントとイラスト</translation>
+    </message>
+    <message>
+        <source>Email, calendars and chat from Mozilla</source>
+        <translation>Mozilla のメール、カレンダー、チャット</translation>
+    </message>
+    <message>
+        <source>Plays nearly every audio and video format</source>
+        <translation>ほぼすべての音声・動画形式を再生</translation>
+    </message>
+    <message>
+        <source>View and control a remote desktop</source>
+        <translation>リモートデスクトップの表示と操作</translation>
+    </message>
+    <message>
+        <source>Word processor, spreadsheet and presentations</source>
+        <translation>文書作成、表計算、プレゼンテーション</translation>
+    </message>
+</context>
+<context>
     <name>AppsViewStep</name>
     <message>
         <source>Applications</source>
         <translation>アプリケーション</translation>
+    </message>
+</context>
+<context>
+    <name>CalamaresSidebar</name>
+    <message>
+        <source>About</source>
+        <translation>このプログラムについて</translation>
+    </message>
+    <message>
+        <source>Debug</source>
+        <translation>デバッグ</translation>
     </message>
 </context>
 <context>
@@ -200,138 +402,182 @@
     <name>DiskConfig</name>
     <message>
         <source>unformatted</source>
-        <translation type="unfinished"></translation>
+        <translation>未フォーマット</translation>
     </message>
     <message>
         <source>%1 (%2)</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 (%2)</translation>
     </message>
     <message>
         <source>%1 (%2, %3)</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 (%2, %3)</translation>
     </message>
     <message>
         <source>Empty — no partition table</source>
-        <translation type="unfinished"></translation>
+        <translation>空 — パーティションテーブルなし</translation>
     </message>
     <message>
         <source>One filesystem, no partition table</source>
-        <translation type="unfinished"></translation>
+        <translation>単一のファイルシステム、パーティションテーブルなし</translation>
     </message>
     <message numerus="yes">
         <source>%n partition(s) — %1</source>
         <comment>disk contents</comment>
-        <translation type="unfinished">
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>%n 個のパーティション — %1</numerusform>
         </translation>
     </message>
     <message>
         <source>No disk can be used for the installation.</source>
-        <translation type="unfinished"></translation>
+        <translation>インストールに使用できるディスクがありません。</translation>
     </message>
     <message>
         <source>This computer has one disk.</source>
-        <translation type="unfinished"></translation>
+        <translation>このコンピューターにはディスクが 1 つあります。</translation>
     </message>
     <message>
         <source>Where should %1 be installed?</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 をどこにインストールしますか？</translation>
     </message>
     <message>
         <source>%1 needs a disk of at least %2 that it is not itself running from.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 には、自身が起動していない %2 以上のディスクが必要です。</translation>
     </message>
     <message>
         <source>%1 will be installed on it, and everything on it now will be erased.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 がそこにインストールされ、現在そこにあるすべての内容が消去されます。</translation>
     </message>
     <message>
         <source>Everything on the disk you choose will be erased. Nothing else on this computer is changed.</source>
-        <translation type="unfinished"></translation>
+        <translation>選択したディスク上のすべてが消去されます。このコンピューターの他の部分は変更されません。</translation>
     </message>
     <message>
         <source>Boot</source>
-        <translation type="unfinished"></translation>
+        <translation>ブート</translation>
     </message>
     <message>
         <source>System</source>
-        <translation type="unfinished"></translation>
+        <translation>システム</translation>
     </message>
     <message>
         <source>Reserved for updates</source>
-        <translation type="unfinished"></translation>
+        <translation>更新用に予約</translation>
     </message>
     <message>
         <source>Your files</source>
-        <translation type="unfinished"></translation>
+        <translation>あなたのファイル</translation>
     </message>
     <message>
         <source>Everything on this disk will be deleted.</source>
-        <translation type="unfinished"></translation>
+        <translation>このディスク上のすべてが削除されます。</translation>
     </message>
     <message>
         <source>This disk is empty.</source>
-        <translation type="unfinished"></translation>
+        <translation>このディスクは空です。</translation>
     </message>
     <message numerus="yes">
         <source>%n partition(s) will be deleted.</source>
         <comment>erase warning</comment>
-        <translation type="unfinished">
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>%n 個のパーティションが削除されます。</numerusform>
         </translation>
     </message>
     <message numerus="yes">
         <source>%n partition(s) will be deleted, including %1.</source>
         <comment>erase warning</comment>
-        <translation type="unfinished">
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>%n 個のパーティション（%1 を含む）が削除されます。</numerusform>
         </translation>
     </message>
     <message>
         <source>This is a removable disk.</source>
-        <translation type="unfinished"></translation>
+        <translation>これはリムーバブルディスクです。</translation>
+    </message>
+    <message>
+        <source>%1 — %2</source>
+        <translation>%1 — %2</translation>
+    </message>
+    <message>
+        <source>Everything on the selected disk will be erased.</source>
+        <translation>選択したディスク上のすべてが消去されます。</translation>
     </message>
     <message>
         <source>Erase %1 (%2) and install %3 on it.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1（%2）を消去し、そこに %3 をインストールします。</translation>
+    </message>
+    <message>
+        <source>Check again</source>
+        <translation>再チェック</translation>
+    </message>
+    <message>
+        <source>No disks were found at all.</source>
+        <translation>ディスクがまったく見つかりませんでした。</translation>
+    </message>
+    <message>
+        <source>Plug in a disk of at least %1 and choose Check again. These are the disks this computer has now:</source>
+        <translation>%1 以上のディスクを接続して「再チェック」を選んでください。現在このコンピューターにあるディスクは次のとおりです:</translation>
+    </message>
+    <message>
+        <source>The disk will be set up like this</source>
+        <translation>ディスクは次のように設定されます</translation>
+    </message>
+    <message>
+        <source>Encrypt this disk</source>
+        <translation>このディスクを暗号化</translation>
+    </message>
+    <message>
+        <source>Not yet available</source>
+        <translation>まだ利用できません</translation>
+    </message>
+    <message>
+        <source>Erase this disk?</source>
+        <translation>このディスクを消去しますか？</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>キャンセル</translation>
+    </message>
+    <message>
+        <source>Erase and install</source>
+        <translation>消去してインストール</translation>
     </message>
 </context>
 <context>
     <name>DiskModel</name>
     <message>
         <source>VirtIO disk</source>
-        <translation type="unfinished"></translation>
+        <translation>VirtIO ディスク</translation>
     </message>
     <message>
         <source>NVMe disk</source>
-        <translation type="unfinished"></translation>
+        <translation>NVMe ディスク</translation>
     </message>
     <message>
         <source>Disk</source>
-        <translation type="unfinished">ディスク</translation>
+        <translation>ディスク</translation>
     </message>
     <message>
         <source>%1 is running from this disk</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 はこのディスクから起動しています</translation>
     </message>
     <message>
         <source>Too small for an installation</source>
-        <translation type="unfinished"></translation>
+        <translation>インストールには小さすぎます</translation>
     </message>
     <message>
         <source>This disk is write-protected</source>
-        <translation type="unfinished"></translation>
+        <translation>このディスクは書き込み禁止です</translation>
     </message>
     <message>
         <source>Contents unknown</source>
-        <translation type="unfinished"></translation>
+        <translation>内容は不明です</translation>
     </message>
 </context>
 <context>
     <name>DiskViewStep</name>
     <message>
         <source>Disk</source>
-        <translation type="unfinished">ディスク</translation>
+        <translation>ディスク</translation>
     </message>
 </context>
 <context>
@@ -417,14 +663,14 @@
     </message>
 </context>
 <context>
-    <name>QObject</name>
+    <name>PasswordCheck</name>
     <message>
         <source>The password must be at least %1 characters long.</source>
-        <translation type="unfinished"></translation>
+        <translation>パスワードは %1 文字以上にしてください。</translation>
     </message>
     <message>
         <source>That password is not strong enough.</source>
-        <translation type="unfinished"></translation>
+        <translation>このパスワードは十分に強くありません。</translation>
     </message>
 </context>
 <context>
@@ -459,15 +705,15 @@
     </message>
     <message>
         <source>Installer configuration</source>
-        <translation type="unfinished"></translation>
+        <translation>インストーラーの設定</translation>
     </message>
     <message>
         <source>this installer cannot tell whether this computer meets its requirements — see the installer log</source>
-        <translation type="unfinished"></translation>
+        <translation>このインストーラーは、このコンピューターが要件を満たしているか判断できません — インストーラーのログを参照してください</translation>
     </message>
     <message>
         <source>this installer was not told how large a disk it needs</source>
-        <translation type="unfinished"></translation>
+        <translation>このインストーラーに必要なディスクサイズが指定されていません</translation>
     </message>
     <message>
         <source>no disk to install onto, %1 needed</source>
@@ -475,7 +721,7 @@
     </message>
     <message>
         <source>this installer was not told how much memory it needs</source>
-        <translation type="unfinished"></translation>
+        <translation>このインストーラーに必要なメモリー量が指定されていません</translation>
     </message>
     <message>
         <source>the installer is not running with administrator rights</source>

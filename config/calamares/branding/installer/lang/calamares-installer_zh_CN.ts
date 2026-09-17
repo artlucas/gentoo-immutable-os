@@ -5,130 +5,294 @@
     <name>AccountsConfig</name>
     <message>
         <source>Enter the enrolment code from your organisation.</source>
-        <translation type="unfinished"></translation>
+        <translation>请输入来自您组织的注册码。</translation>
     </message>
     <message>
         <source>Give this computer a name first.</source>
-        <translation type="unfinished"></translation>
+        <translation>请先为这台电脑命名。</translation>
     </message>
     <message>
         <source>Could not prepare %1. The installer is not running as root.</source>
-        <translation type="unfinished"></translation>
+        <translation>无法准备 %1。安装程序未以 root 身份运行。</translation>
     </message>
     <message>
         <source>Contacting your organisation…</source>
-        <translation type="unfinished"></translation>
+        <translation>正在联系您的组织…</translation>
     </message>
     <message>
         <source>Your organisation did not answer within two minutes. Check the network and try again.</source>
-        <translation type="unfinished"></translation>
+        <translation>您的组织在两分钟内未予回应。请检查网络后重试。</translation>
     </message>
     <message>
         <source>This computer could not be enrolled.</source>
-        <translation type="unfinished"></translation>
+        <translation>无法注册这台电脑。</translation>
     </message>
     <message>
         <source>The enrolment finished but could not be read back.</source>
-        <translation type="unfinished"></translation>
+        <translation>注册已完成，但无法读取结果。</translation>
     </message>
     <message>
         <source>The enrolment reported success but wrote nothing.</source>
-        <translation type="unfinished"></translation>
+        <translation>注册报告成功，但未写入任何内容。</translation>
     </message>
     <message>
         <source>This computer is enrolled, but nobody has been given access to it yet. Add someone in your organisation&apos;s web interface, then try again.</source>
-        <translation type="unfinished"></translation>
+        <translation>这台电脑已注册，但尚未授予任何人访问权限。请在您组织的网页界面中添加人员，然后重试。</translation>
     </message>
     <message>
         <source>This computer is enrolled with %1, but nobody has been given access to it yet. Add someone in your organisation&apos;s web interface, then try again.</source>
-        <translation type="unfinished"></translation>
+        <translation>这台电脑已在 %1 注册，但尚未授予任何人访问权限。请在您组织的网页界面中添加人员，然后重试。</translation>
     </message>
     <message numerus="yes">
         <source>Enrolled. %n person can use this computer.</source>
-        <translation type="unfinished">
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>已注册。%n 人可以使用这台电脑。</numerusform>
         </translation>
     </message>
     <message numerus="yes">
         <source>Enrolled with %1. %n person can use this computer.</source>
-        <translation type="unfinished">
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>已在 %1 注册。%n 人可以使用这台电脑。</numerusform>
         </translation>
     </message>
     <message>
         <source>Enter the domain and a join account first.</source>
-        <translation type="unfinished"></translation>
+        <translation>请先输入域名和加入账户。</translation>
     </message>
     <message>
         <source>Checking %1…</source>
-        <translation type="unfinished"></translation>
+        <translation>正在检查 %1…</translation>
     </message>
     <message>
         <source>The check did not finish in time.</source>
-        <translation type="unfinished"></translation>
+        <translation>检查未在规定时间内完成。</translation>
     </message>
     <message>
         <source>%1 answered and accepted %2.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 已回应并接受了 %2。</translation>
     </message>
     <message>
         <source>%1 could not be reached. The installation will still finish, and this computer can be joined afterwards.</source>
-        <translation type="unfinished"></translation>
+        <translation>无法连接 %1。安装仍会完成，这台电脑以后也可以再加入域。</translation>
     </message>
     <message>
         <source>The domain controller rejected %1.</source>
-        <translation type="unfinished"></translation>
+        <translation>域控制器拒绝了 %1。</translation>
     </message>
     <message>
         <source>This computer&apos;s clock is too far from the domain controller&apos;s for Kerberos.</source>
-        <translation type="unfinished"></translation>
+        <translation>这台电脑的时钟与域控制器相差过大，无法使用 Kerberos。</translation>
     </message>
     <message>
         <source>The domain could not be checked (status %1).</source>
-        <translation type="unfinished"></translation>
+        <translation>无法检查域（状态 %1）。</translation>
     </message>
     <message>
         <source>Use lower-case letters, digits, - and _, starting with a letter.</source>
-        <translation type="unfinished"></translation>
+        <translation>使用小写字母、数字、- 和 _，并以字母开头。</translation>
     </message>
     <message>
         <source>%1 is already used by this system.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 已被本系统使用。</translation>
     </message>
     <message>
         <source>Use letters, digits and -, starting and ending with a letter or digit.</source>
-        <translation type="unfinished"></translation>
+        <translation>使用字母、数字和 -，并以字母或数字开头和结尾。</translation>
     </message>
     <message>
         <source>%1 cannot be used as a computer name.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 不能用作电脑名称。</translation>
     </message>
     <message>
         <source>Local account %1 on %2.</source>
-        <translation type="unfinished"></translation>
+        <translation>本地账户 %1（位于 %2）。</translation>
     </message>
     <message>
         <source>%1 will be managed by your organisation.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 将由您的组织管理。</translation>
     </message>
     <message>
         <source>%1 will be managed by %2.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 将由 %2 管理。</translation>
     </message>
     <message>
         <source>%1 will join %2, with the local administrator %3.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 将加入 %2，本地管理员为 %3。</translation>
     </message>
     <message>
         <source>No accounts have been set up.</source>
-        <translation type="unfinished"></translation>
+        <translation>尚未设置任何账户。</translation>
+    </message>
+    <message>
+        <source>How should people sign in to this computer?</source>
+        <translation>人们应如何登录这台电脑？</translation>
+    </message>
+    <message>
+        <source>This is the one choice on this page that cannot be changed later without reinstalling. Everything else follows from it.</source>
+        <translation>这是此页面上唯一一个日后不重装就无法更改的选择。其他一切都由此决定。</translation>
+    </message>
+    <message>
+        <source>Local accounts only</source>
+        <translation>仅本地账户</translation>
+    </message>
+    <message>
+        <source>One account, on this computer. Nothing is sent anywhere.</source>
+        <translation>一个账户，就在这台电脑上。不会向任何地方发送内容。</translation>
+    </message>
+    <message>
+        <source>Works with no network. More accounts can be added afterwards.</source>
+        <translation>无需网络即可使用。之后可以添加更多账户。</translation>
+    </message>
+    <message>
+        <source>Managed system</source>
+        <translation>托管系统</translation>
+    </message>
+    <message>
+        <source>Accounts come from your organisation, and whoever runs it can change them from anywhere.</source>
+        <translation>账户来自您的组织，运营者可以从任何地方更改它们。</translation>
+    </message>
+    <message>
+        <source>Needs a network connection and an enrolment code now, before the disk is written.</source>
+        <translation>需要在写入磁盘之前提供网络连接和注册码。</translation>
+    </message>
+    <message>
+        <source>Join an enterprise domain</source>
+        <translation>加入企业域</translation>
+    </message>
+    <message>
+        <source>Accounts come from Active Directory, with one local administrator kept as the way back in.</source>
+        <translation>账户来自 Active Directory，并保留一个本地管理员作为退路。</translation>
+    </message>
+    <message>
+        <source>Needs the domain name and an account allowed to join computers to it.</source>
+        <translation>需要域名和一个有权将计算机加入域的账户。</translation>
+    </message>
+    <message>
+        <source>Use this password anyway?</source>
+        <translation>仍要使用此密码吗？</translation>
+    </message>
+    <message>
+        <source>That password is not strong enough.</source>
+        <translation>此密码不够安全。</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>取消</translation>
+    </message>
+    <message>
+        <source>Use anyway</source>
+        <translation>仍要使用</translation>
+    </message>
+    <message>
+        <source>Your name:</source>
+        <translation>您的姓名：</translation>
+    </message>
+    <message>
+        <source>Username:</source>
+        <translation>用户名：</translation>
+    </message>
+    <message>
+        <source>Password:</source>
+        <translation>密码：</translation>
+    </message>
+    <message>
+        <source>Repeat password:</source>
+        <translation>重复密码：</translation>
+    </message>
+    <message>
+        <source>The two passwords are not the same.</source>
+        <translation>两次输入的密码不一致。</translation>
+    </message>
+    <message>
+        <source>Log in automatically as this user</source>
+        <translation>以此用户身份自动登录</translation>
+    </message>
+    <message>
+        <source>Computer name:</source>
+        <translation>电脑名称：</translation>
+    </message>
+    <message>
+        <source>Enrolment code:</source>
+        <translation>注册码：</translation>
+    </message>
+    <message>
+        <source>Try again</source>
+        <translation>重试</translation>
+    </message>
+    <message>
+        <source>Check and continue</source>
+        <translation>检查并继续</translation>
+    </message>
+    <message>
+        <source>Accounts on this computer: %1</source>
+        <translation>这台电脑上的账户：%1</translation>
+    </message>
+    <message>
+        <source>This computer needs to reach your organisation now, because this option creates no local account. The code is used once and expires after fifteen minutes.</source>
+        <translation>此选项不创建本地账户，因此这台电脑现在需要连接到您的组织。注册码一次性使用，十五分钟后过期。</translation>
+    </message>
+    <message>
+        <source>The domain</source>
+        <translation>域</translation>
+    </message>
+    <message>
+        <source>Domain:</source>
+        <translation>域名：</translation>
+    </message>
+    <message>
+        <source>Join account:</source>
+        <translation>加入账户：</translation>
+    </message>
+    <message>
+        <source>Join password:</source>
+        <translation>加入密码：</translation>
+    </message>
+    <message>
+        <source>Domain controller:</source>
+        <translation>域控制器：</translation>
+    </message>
+    <message>
+        <source>optional IP address</source>
+        <translation>可选的 IP 地址</translation>
+    </message>
+    <message>
+        <source>Check domain</source>
+        <translation>检查域</translation>
+    </message>
+    <message>
+        <source>Local administrator</source>
+        <translation>本地管理员</translation>
+    </message>
+    <message>
+        <source>The way back in when the domain controller cannot be reached. This system has no rescue shell, so it is the only other way to administer the machine.</source>
+        <translation>域控制器无法连接时的退路。本系统没有救援 shell，因此这是管理这台机器的另一种唯一途径。</translation>
+    </message>
+    <message>
+        <source>Advanced</source>
+        <translation>高级</translation>
+    </message>
+    <message>
+        <source>Computer OU:</source>
+        <translation>计算机 OU：</translation>
+    </message>
+    <message>
+        <source>Domain group granted administration:</source>
+        <translation>授予管理权限的域组：</translation>
+    </message>
+    <message>
+        <source>Computer account name:</source>
+        <translation>计算机账户名：</translation>
+    </message>
+    <message>
+        <source>the computer name below</source>
+        <translation>下方的电脑名称</translation>
     </message>
 </context>
 <context>
     <name>AccountsViewStep</name>
     <message>
         <source>Accounts</source>
-        <translation type="unfinished"></translation>
+        <translation>账户</translation>
     </message>
 </context>
 <context>
@@ -183,10 +347,48 @@
     </message>
 </context>
 <context>
+    <name>AppsDescriptions</name>
+    <message>
+        <source>A powerful text editor by KDE</source>
+        <translation>KDE 出品的强大文本编辑器</translation>
+    </message>
+    <message>
+        <source>Digital painting and illustration</source>
+        <translation>数字绘画与插画</translation>
+    </message>
+    <message>
+        <source>Email, calendars and chat from Mozilla</source>
+        <translation>来自 Mozilla 的邮件、日历和聊天</translation>
+    </message>
+    <message>
+        <source>Plays nearly every audio and video format</source>
+        <translation>播放几乎所有音频和视频格式</translation>
+    </message>
+    <message>
+        <source>View and control a remote desktop</source>
+        <translation>查看和控制远程桌面</translation>
+    </message>
+    <message>
+        <source>Word processor, spreadsheet and presentations</source>
+        <translation>文字处理、电子表格和演示文稿</translation>
+    </message>
+</context>
+<context>
     <name>AppsViewStep</name>
     <message>
         <source>Applications</source>
         <translation>应用程序</translation>
+    </message>
+</context>
+<context>
+    <name>CalamaresSidebar</name>
+    <message>
+        <source>About</source>
+        <translation>关于</translation>
+    </message>
+    <message>
+        <source>Debug</source>
+        <translation>调试</translation>
     </message>
 </context>
 <context>
@@ -200,138 +402,182 @@
     <name>DiskConfig</name>
     <message>
         <source>unformatted</source>
-        <translation type="unfinished"></translation>
+        <translation>未格式化</translation>
     </message>
     <message>
         <source>%1 (%2)</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 (%2)</translation>
     </message>
     <message>
         <source>%1 (%2, %3)</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 (%2, %3)</translation>
     </message>
     <message>
         <source>Empty — no partition table</source>
-        <translation type="unfinished"></translation>
+        <translation>空 — 无分区表</translation>
     </message>
     <message>
         <source>One filesystem, no partition table</source>
-        <translation type="unfinished"></translation>
+        <translation>单一文件系统，无分区表</translation>
     </message>
     <message numerus="yes">
         <source>%n partition(s) — %1</source>
         <comment>disk contents</comment>
-        <translation type="unfinished">
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>%n 个分区 — %1</numerusform>
         </translation>
     </message>
     <message>
         <source>No disk can be used for the installation.</source>
-        <translation type="unfinished"></translation>
+        <translation>没有可用于安装的磁盘。</translation>
     </message>
     <message>
         <source>This computer has one disk.</source>
-        <translation type="unfinished"></translation>
+        <translation>这台电脑只有一块磁盘。</translation>
     </message>
     <message>
         <source>Where should %1 be installed?</source>
-        <translation type="unfinished"></translation>
+        <translation>将 %1 安装到哪里？</translation>
     </message>
     <message>
         <source>%1 needs a disk of at least %2 that it is not itself running from.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 需要一块至少 %2 的磁盘，且不能是它正在运行的那块。</translation>
     </message>
     <message>
         <source>%1 will be installed on it, and everything on it now will be erased.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 将安装到该磁盘，其上现有的所有内容都将被擦除。</translation>
     </message>
     <message>
         <source>Everything on the disk you choose will be erased. Nothing else on this computer is changed.</source>
-        <translation type="unfinished"></translation>
+        <translation>您选择的磁盘上的所有内容都将被擦除。这台电脑上的其他内容不会改变。</translation>
     </message>
     <message>
         <source>Boot</source>
-        <translation type="unfinished"></translation>
+        <translation>引导</translation>
     </message>
     <message>
         <source>System</source>
-        <translation type="unfinished"></translation>
+        <translation>系统</translation>
     </message>
     <message>
         <source>Reserved for updates</source>
-        <translation type="unfinished"></translation>
+        <translation>保留用于更新</translation>
     </message>
     <message>
         <source>Your files</source>
-        <translation type="unfinished"></translation>
+        <translation>您的文件</translation>
     </message>
     <message>
         <source>Everything on this disk will be deleted.</source>
-        <translation type="unfinished"></translation>
+        <translation>这块磁盘上的所有内容都将被删除。</translation>
     </message>
     <message>
         <source>This disk is empty.</source>
-        <translation type="unfinished"></translation>
+        <translation>这块磁盘是空的。</translation>
     </message>
     <message numerus="yes">
         <source>%n partition(s) will be deleted.</source>
         <comment>erase warning</comment>
-        <translation type="unfinished">
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>%n 个分区将被删除。</numerusform>
         </translation>
     </message>
     <message numerus="yes">
         <source>%n partition(s) will be deleted, including %1.</source>
         <comment>erase warning</comment>
-        <translation type="unfinished">
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>%n 个分区将被删除，包括 %1。</numerusform>
         </translation>
     </message>
     <message>
         <source>This is a removable disk.</source>
-        <translation type="unfinished"></translation>
+        <translation>这是一块可移动磁盘。</translation>
+    </message>
+    <message>
+        <source>%1 — %2</source>
+        <translation>%1 — %2</translation>
+    </message>
+    <message>
+        <source>Everything on the selected disk will be erased.</source>
+        <translation>所选磁盘上的所有内容都将被擦除。</translation>
     </message>
     <message>
         <source>Erase %1 (%2) and install %3 on it.</source>
-        <translation type="unfinished"></translation>
+        <translation>擦除 %1 (%2) 并在其上安装 %3。</translation>
+    </message>
+    <message>
+        <source>Check again</source>
+        <translation>重新检查</translation>
+    </message>
+    <message>
+        <source>No disks were found at all.</source>
+        <translation>完全没有找到磁盘。</translation>
+    </message>
+    <message>
+        <source>Plug in a disk of at least %1 and choose Check again. These are the disks this computer has now:</source>
+        <translation>请插入一块至少 %1 的磁盘，然后选择“重新检查”。这台电脑现在拥有的磁盘如下：</translation>
+    </message>
+    <message>
+        <source>The disk will be set up like this</source>
+        <translation>磁盘将按如下方式设置</translation>
+    </message>
+    <message>
+        <source>Encrypt this disk</source>
+        <translation>加密此磁盘</translation>
+    </message>
+    <message>
+        <source>Not yet available</source>
+        <translation>尚不可用</translation>
+    </message>
+    <message>
+        <source>Erase this disk?</source>
+        <translation>擦除这块磁盘？</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>取消</translation>
+    </message>
+    <message>
+        <source>Erase and install</source>
+        <translation>擦除并安装</translation>
     </message>
 </context>
 <context>
     <name>DiskModel</name>
     <message>
         <source>VirtIO disk</source>
-        <translation type="unfinished"></translation>
+        <translation>VirtIO 磁盘</translation>
     </message>
     <message>
         <source>NVMe disk</source>
-        <translation type="unfinished"></translation>
+        <translation>NVMe 磁盘</translation>
     </message>
     <message>
         <source>Disk</source>
-        <translation type="unfinished">磁盘</translation>
+        <translation>磁盘</translation>
     </message>
     <message>
         <source>%1 is running from this disk</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 正在这块磁盘上运行</translation>
     </message>
     <message>
         <source>Too small for an installation</source>
-        <translation type="unfinished"></translation>
+        <translation>对于安装来说太小</translation>
     </message>
     <message>
         <source>This disk is write-protected</source>
-        <translation type="unfinished"></translation>
+        <translation>这块磁盘有写保护</translation>
     </message>
     <message>
         <source>Contents unknown</source>
-        <translation type="unfinished"></translation>
+        <translation>内容未知</translation>
     </message>
 </context>
 <context>
     <name>DiskViewStep</name>
     <message>
         <source>Disk</source>
-        <translation type="unfinished">磁盘</translation>
+        <translation>磁盘</translation>
     </message>
 </context>
 <context>
@@ -417,14 +663,14 @@
     </message>
 </context>
 <context>
-    <name>QObject</name>
+    <name>PasswordCheck</name>
     <message>
         <source>The password must be at least %1 characters long.</source>
-        <translation type="unfinished"></translation>
+        <translation>密码长度不得少于 %1 个字符。</translation>
     </message>
     <message>
         <source>That password is not strong enough.</source>
-        <translation type="unfinished"></translation>
+        <translation>此密码不够安全。</translation>
     </message>
 </context>
 <context>
@@ -459,15 +705,15 @@
     </message>
     <message>
         <source>Installer configuration</source>
-        <translation type="unfinished"></translation>
+        <translation>安装程序配置</translation>
     </message>
     <message>
         <source>this installer cannot tell whether this computer meets its requirements — see the installer log</source>
-        <translation type="unfinished"></translation>
+        <translation>此安装程序无法判断这台电脑是否满足其要求 — 请参阅安装程序日志</translation>
     </message>
     <message>
         <source>this installer was not told how large a disk it needs</source>
-        <translation type="unfinished"></translation>
+        <translation>未告知此安装程序它需要多大的磁盘</translation>
     </message>
     <message>
         <source>no disk to install onto, %1 needed</source>
@@ -475,7 +721,7 @@
     </message>
     <message>
         <source>this installer was not told how much memory it needs</source>
-        <translation type="unfinished"></translation>
+        <translation>未告知此安装程序它需要多少内存</translation>
     </message>
     <message>
         <source>the installer is not running with administrator rights</source>

@@ -5,143 +5,307 @@
     <name>AccountsConfig</name>
     <message>
         <source>Enter the enrolment code from your organisation.</source>
-        <translation type="unfinished"></translation>
+        <translation>Saisissez le code d&apos;inscription de votre organisation.</translation>
     </message>
     <message>
         <source>Give this computer a name first.</source>
-        <translation type="unfinished"></translation>
+        <translation>Donnez d&apos;abord un nom à cet ordinateur.</translation>
     </message>
     <message>
         <source>Could not prepare %1. The installer is not running as root.</source>
-        <translation type="unfinished"></translation>
+        <translation>Impossible de préparer %1. L&apos;installateur ne s&apos;exécute pas en tant que root.</translation>
     </message>
     <message>
         <source>Contacting your organisation…</source>
-        <translation type="unfinished"></translation>
+        <translation>Contact de votre organisation…</translation>
     </message>
     <message>
         <source>Your organisation did not answer within two minutes. Check the network and try again.</source>
-        <translation type="unfinished"></translation>
+        <translation>Votre organisation n&apos;a pas répondu en deux minutes. Vérifiez le réseau et réessayez.</translation>
     </message>
     <message>
         <source>This computer could not be enrolled.</source>
-        <translation type="unfinished"></translation>
+        <translation>Cet ordinateur n&apos;a pas pu être inscrit.</translation>
     </message>
     <message>
         <source>The enrolment finished but could not be read back.</source>
-        <translation type="unfinished"></translation>
+        <translation>L&apos;inscription s&apos;est terminée mais n&apos;a pas pu être relue.</translation>
     </message>
     <message>
         <source>The enrolment reported success but wrote nothing.</source>
-        <translation type="unfinished"></translation>
+        <translation>L&apos;inscription a signalé un succès mais n&apos;a rien écrit.</translation>
     </message>
     <message>
         <source>This computer is enrolled, but nobody has been given access to it yet. Add someone in your organisation&apos;s web interface, then try again.</source>
-        <translation type="unfinished"></translation>
+        <translation>Cet ordinateur est inscrit, mais personne n&apos;y a encore accès. Ajoutez quelqu&apos;un dans l&apos;interface web de votre organisation, puis réessayez.</translation>
     </message>
     <message>
         <source>This computer is enrolled with %1, but nobody has been given access to it yet. Add someone in your organisation&apos;s web interface, then try again.</source>
-        <translation type="unfinished"></translation>
+        <translation>Cet ordinateur est inscrit auprès de %1, mais personne n&apos;y a encore accès. Ajoutez quelqu&apos;un dans l&apos;interface web de votre organisation, puis réessayez.</translation>
     </message>
     <message numerus="yes">
         <source>Enrolled. %n person can use this computer.</source>
-        <translation type="unfinished">
-            <numerusform></numerusform>
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>Inscrit. %n personne peut utiliser cet ordinateur.</numerusform>
+            <numerusform>Inscrit. %n personnes peuvent utiliser cet ordinateur.</numerusform>
         </translation>
     </message>
     <message numerus="yes">
         <source>Enrolled with %1. %n person can use this computer.</source>
-        <translation type="unfinished">
-            <numerusform></numerusform>
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>Inscrit auprès de %1. %n personne peut utiliser cet ordinateur.</numerusform>
+            <numerusform>Inscrit auprès de %1. %n personnes peuvent utiliser cet ordinateur.</numerusform>
         </translation>
     </message>
     <message>
         <source>Enter the domain and a join account first.</source>
-        <translation type="unfinished"></translation>
+        <translation>Saisissez d&apos;abord le domaine et un compte de jonction.</translation>
     </message>
     <message>
         <source>Checking %1…</source>
-        <translation type="unfinished"></translation>
+        <translation>Vérification de %1…</translation>
     </message>
     <message>
         <source>The check did not finish in time.</source>
-        <translation type="unfinished"></translation>
+        <translation>La vérification ne s&apos;est pas terminée à temps.</translation>
     </message>
     <message>
         <source>%1 answered and accepted %2.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 a répondu et a accepté %2.</translation>
     </message>
     <message>
         <source>%1 could not be reached. The installation will still finish, and this computer can be joined afterwards.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 n&apos;a pas pu être atteint. L&apos;installation se terminera quand même, et cet ordinateur pourra être joint ensuite.</translation>
     </message>
     <message>
         <source>The domain controller rejected %1.</source>
-        <translation type="unfinished"></translation>
+        <translation>Le contrôleur de domaine a rejeté %1.</translation>
     </message>
     <message>
         <source>This computer&apos;s clock is too far from the domain controller&apos;s for Kerberos.</source>
-        <translation type="unfinished"></translation>
+        <translation>L&apos;horloge de cet ordinateur est trop éloignée de celle du contrôleur de domaine pour Kerberos.</translation>
     </message>
     <message>
         <source>The domain could not be checked (status %1).</source>
-        <translation type="unfinished"></translation>
+        <translation>Le domaine n&apos;a pas pu être vérifié (statut %1).</translation>
     </message>
     <message>
         <source>Use lower-case letters, digits, - and _, starting with a letter.</source>
-        <translation type="unfinished"></translation>
+        <translation>Utilisez des minuscules, des chiffres, - et _, en commençant par une lettre.</translation>
     </message>
     <message>
         <source>%1 is already used by this system.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 est déjà utilisé par ce système.</translation>
     </message>
     <message>
         <source>Use letters, digits and -, starting and ending with a letter or digit.</source>
-        <translation type="unfinished"></translation>
+        <translation>Utilisez des lettres, des chiffres et -, en commençant et en finissant par une lettre ou un chiffre.</translation>
     </message>
     <message>
         <source>%1 cannot be used as a computer name.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 ne peut pas être utilisé comme nom d&apos;ordinateur.</translation>
     </message>
     <message>
         <source>Local account %1 on %2.</source>
-        <translation type="unfinished"></translation>
+        <translation>Compte local %1 sur %2.</translation>
     </message>
     <message>
         <source>%1 will be managed by your organisation.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 sera géré par votre organisation.</translation>
     </message>
     <message>
         <source>%1 will be managed by %2.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 sera géré par %2.</translation>
     </message>
     <message>
         <source>%1 will join %2, with the local administrator %3.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 rejoindra %2, avec l&apos;administrateur local %3.</translation>
     </message>
     <message>
         <source>No accounts have been set up.</source>
-        <translation type="unfinished"></translation>
+        <translation>Aucun compte n&apos;a été configuré.</translation>
+    </message>
+    <message>
+        <source>How should people sign in to this computer?</source>
+        <translation>Comment les gens doivent-ils se connecter à cet ordinateur ?</translation>
+    </message>
+    <message>
+        <source>This is the one choice on this page that cannot be changed later without reinstalling. Everything else follows from it.</source>
+        <translation>C&apos;est le seul choix de cette page qui ne peut pas être changé plus tard sans réinstallation. Tout le reste en découle.</translation>
+    </message>
+    <message>
+        <source>Local accounts only</source>
+        <translation>Comptes locaux uniquement</translation>
+    </message>
+    <message>
+        <source>One account, on this computer. Nothing is sent anywhere.</source>
+        <translation>Un compte, sur cet ordinateur. Rien n&apos;est envoyé nulle part.</translation>
+    </message>
+    <message>
+        <source>Works with no network. More accounts can be added afterwards.</source>
+        <translation>Fonctionne sans réseau. D&apos;autres comptes peuvent être ajoutés ensuite.</translation>
+    </message>
+    <message>
+        <source>Managed system</source>
+        <translation>Système géré</translation>
+    </message>
+    <message>
+        <source>Accounts come from your organisation, and whoever runs it can change them from anywhere.</source>
+        <translation>Les comptes viennent de votre organisation, et quiconque l&apos;exploite peut les modifier depuis n&apos;importe où.</translation>
+    </message>
+    <message>
+        <source>Needs a network connection and an enrolment code now, before the disk is written.</source>
+        <translation>Nécessite une connexion réseau et un code d&apos;inscription maintenant, avant l&apos;écriture du disque.</translation>
+    </message>
+    <message>
+        <source>Join an enterprise domain</source>
+        <translation>Rejoindre un domaine d&apos;entreprise</translation>
+    </message>
+    <message>
+        <source>Accounts come from Active Directory, with one local administrator kept as the way back in.</source>
+        <translation>Les comptes viennent d&apos;Active Directory, avec un administrateur local gardé comme solution de repli.</translation>
+    </message>
+    <message>
+        <source>Needs the domain name and an account allowed to join computers to it.</source>
+        <translation>Nécessite le nom du domaine et un compte autorisé à y joindre des ordinateurs.</translation>
+    </message>
+    <message>
+        <source>Use this password anyway?</source>
+        <translation>Utiliser ce mot de passe quand même ?</translation>
+    </message>
+    <message>
+        <source>That password is not strong enough.</source>
+        <translation>Ce mot de passe n&apos;est pas assez robuste.</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Annuler</translation>
+    </message>
+    <message>
+        <source>Use anyway</source>
+        <translation>Utiliser quand même</translation>
+    </message>
+    <message>
+        <source>Your name:</source>
+        <translation>Votre nom :</translation>
+    </message>
+    <message>
+        <source>Username:</source>
+        <translation>Nom d&apos;utilisateur :</translation>
+    </message>
+    <message>
+        <source>Password:</source>
+        <translation>Mot de passe :</translation>
+    </message>
+    <message>
+        <source>Repeat password:</source>
+        <translation>Répéter le mot de passe :</translation>
+    </message>
+    <message>
+        <source>The two passwords are not the same.</source>
+        <translation>Les deux mots de passe ne sont pas identiques.</translation>
+    </message>
+    <message>
+        <source>Log in automatically as this user</source>
+        <translation>Se connecter automatiquement avec cet utilisateur</translation>
+    </message>
+    <message>
+        <source>Computer name:</source>
+        <translation>Nom de l&apos;ordinateur :</translation>
+    </message>
+    <message>
+        <source>Enrolment code:</source>
+        <translation>Code d&apos;inscription :</translation>
+    </message>
+    <message>
+        <source>Try again</source>
+        <translation>Réessayer</translation>
+    </message>
+    <message>
+        <source>Check and continue</source>
+        <translation>Vérifier et continuer</translation>
+    </message>
+    <message>
+        <source>Accounts on this computer: %1</source>
+        <translation>Comptes sur cet ordinateur : %1</translation>
+    </message>
+    <message>
+        <source>This computer needs to reach your organisation now, because this option creates no local account. The code is used once and expires after fifteen minutes.</source>
+        <translation>Cet ordinateur doit joindre votre organisation maintenant, car cette option ne crée aucun compte local. Le code est à usage unique et expire au bout de quinze minutes.</translation>
+    </message>
+    <message>
+        <source>The domain</source>
+        <translation>Le domaine</translation>
+    </message>
+    <message>
+        <source>Domain:</source>
+        <translation>Domaine :</translation>
+    </message>
+    <message>
+        <source>Join account:</source>
+        <translation>Compte de jonction :</translation>
+    </message>
+    <message>
+        <source>Join password:</source>
+        <translation>Mot de passe de jonction :</translation>
+    </message>
+    <message>
+        <source>Domain controller:</source>
+        <translation>Contrôleur de domaine :</translation>
+    </message>
+    <message>
+        <source>optional IP address</source>
+        <translation>adresse IP facultative</translation>
+    </message>
+    <message>
+        <source>Check domain</source>
+        <translation>Vérifier le domaine</translation>
+    </message>
+    <message>
+        <source>Local administrator</source>
+        <translation>Administrateur local</translation>
+    </message>
+    <message>
+        <source>The way back in when the domain controller cannot be reached. This system has no rescue shell, so it is the only other way to administer the machine.</source>
+        <translation>La solution de repli quand le contrôleur de domaine est injoignable. Ce système n&apos;a pas de console de secours, c&apos;est donc le seul autre moyen d&apos;administrer la machine.</translation>
+    </message>
+    <message>
+        <source>Advanced</source>
+        <translation>Avancé</translation>
+    </message>
+    <message>
+        <source>Computer OU:</source>
+        <translation>OU de l&apos;ordinateur :</translation>
+    </message>
+    <message>
+        <source>Domain group granted administration:</source>
+        <translation>Groupe du domaine doté de l&apos;administration :</translation>
+    </message>
+    <message>
+        <source>Computer account name:</source>
+        <translation>Nom du compte d&apos;ordinateur :</translation>
+    </message>
+    <message>
+        <source>the computer name below</source>
+        <translation>le nom de l&apos;ordinateur ci-dessous</translation>
     </message>
 </context>
 <context>
     <name>AccountsViewStep</name>
     <message>
         <source>Accounts</source>
-        <translation type="unfinished"></translation>
+        <translation>Comptes</translation>
     </message>
 </context>
 <context>
     <name>AppsConfig</name>
     <message>
         <source>Add more applications to %1?</source>
-        <translation>Ajouter d'autres applications à %1 ?</translation>
+        <translation>Ajouter d&apos;autres applications à %1 ?</translation>
     </message>
     <message>
         <source>These come from Flathub and are installed while the installer runs, so they need an internet connection. When there is one, the applications already included are updated to their latest versions too.</source>
-        <translation>Elles proviennent de Flathub et sont installées pendant l'exécution de l'installeur : elles nécessitent donc une connexion internet. Quand il y en a une, les applications déjà incluses sont également mises à jour vers leurs dernières versions.</translation>
+        <translation>Elles proviennent de Flathub et sont installées pendant l&apos;exécution de l&apos;installeur : elles nécessitent donc une connexion internet. Quand il y en a une, les applications déjà incluses sont également mises à jour vers leurs dernières versions.</translation>
     </message>
     <message>
         <source>No internet connection. Nothing can be added from Flathub without one — install now and add applications later from Discover.</source>
@@ -173,7 +337,7 @@
     </message>
     <message>
         <source>Typical application set</source>
-        <translation>Ensemble d'applications typique</translation>
+        <translation>Ensemble d&apos;applications typique</translation>
     </message>
     <message>
         <source>No extra applications</source>
@@ -185,10 +349,48 @@
     </message>
 </context>
 <context>
+    <name>AppsDescriptions</name>
+    <message>
+        <source>A powerful text editor by KDE</source>
+        <translation>Un éditeur de texte puissant, par KDE</translation>
+    </message>
+    <message>
+        <source>Digital painting and illustration</source>
+        <translation>Peinture numérique et illustration</translation>
+    </message>
+    <message>
+        <source>Email, calendars and chat from Mozilla</source>
+        <translation>Courriels, agendas et discussions de Mozilla</translation>
+    </message>
+    <message>
+        <source>Plays nearly every audio and video format</source>
+        <translation>Lit presque tous les formats audio et vidéo</translation>
+    </message>
+    <message>
+        <source>View and control a remote desktop</source>
+        <translation>Voir et contrôler un bureau à distance</translation>
+    </message>
+    <message>
+        <source>Word processor, spreadsheet and presentations</source>
+        <translation>Traitement de texte, tableur et présentations</translation>
+    </message>
+</context>
+<context>
     <name>AppsViewStep</name>
     <message>
         <source>Applications</source>
         <translation>Applications</translation>
+    </message>
+</context>
+<context>
+    <name>CalamaresSidebar</name>
+    <message>
+        <source>About</source>
+        <translation>À propos</translation>
+    </message>
+    <message>
+        <source>Debug</source>
+        <translation>Débogage</translation>
     </message>
 </context>
 <context>
@@ -202,141 +404,185 @@
     <name>DiskConfig</name>
     <message>
         <source>unformatted</source>
-        <translation type="unfinished"></translation>
+        <translation>non formaté</translation>
     </message>
     <message>
         <source>%1 (%2)</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 (%2)</translation>
     </message>
     <message>
         <source>%1 (%2, %3)</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 (%2, %3)</translation>
     </message>
     <message>
         <source>Empty — no partition table</source>
-        <translation type="unfinished"></translation>
+        <translation>Vide — pas de table de partitions</translation>
     </message>
     <message>
         <source>One filesystem, no partition table</source>
-        <translation type="unfinished"></translation>
+        <translation>Un système de fichiers, pas de table de partitions</translation>
     </message>
     <message numerus="yes">
         <source>%n partition(s) — %1</source>
         <comment>disk contents</comment>
-        <translation type="unfinished">
-            <numerusform></numerusform>
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>%n partition — %1</numerusform>
+            <numerusform>%n partitions — %1</numerusform>
         </translation>
     </message>
     <message>
         <source>No disk can be used for the installation.</source>
-        <translation type="unfinished"></translation>
+        <translation>Aucun disque ne peut être utilisé pour l&apos;installation.</translation>
     </message>
     <message>
         <source>This computer has one disk.</source>
-        <translation type="unfinished"></translation>
+        <translation>Cet ordinateur a un disque.</translation>
     </message>
     <message>
         <source>Where should %1 be installed?</source>
-        <translation type="unfinished"></translation>
+        <translation>Où %1 doit-il être installé ?</translation>
     </message>
     <message>
         <source>%1 needs a disk of at least %2 that it is not itself running from.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 a besoin d&apos;un disque d&apos;au moins %2 dont il ne s&apos;exécute pas lui-même.</translation>
     </message>
     <message>
         <source>%1 will be installed on it, and everything on it now will be erased.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 y sera installé, et tout ce qui s&apos;y trouve actuellement sera effacé.</translation>
     </message>
     <message>
         <source>Everything on the disk you choose will be erased. Nothing else on this computer is changed.</source>
-        <translation type="unfinished"></translation>
+        <translation>Tout ce qui se trouve sur le disque choisi sera effacé. Rien d&apos;autre sur cet ordinateur n&apos;est modifié.</translation>
     </message>
     <message>
         <source>Boot</source>
-        <translation type="unfinished"></translation>
+        <translation>Démarrage</translation>
     </message>
     <message>
         <source>System</source>
-        <translation type="unfinished"></translation>
+        <translation>Système</translation>
     </message>
     <message>
         <source>Reserved for updates</source>
-        <translation type="unfinished"></translation>
+        <translation>Réservé aux mises à jour</translation>
     </message>
     <message>
         <source>Your files</source>
-        <translation type="unfinished"></translation>
+        <translation>Vos fichiers</translation>
     </message>
     <message>
         <source>Everything on this disk will be deleted.</source>
-        <translation type="unfinished"></translation>
+        <translation>Tout ce qui se trouve sur ce disque sera effacé.</translation>
     </message>
     <message>
         <source>This disk is empty.</source>
-        <translation type="unfinished"></translation>
+        <translation>Ce disque est vide.</translation>
     </message>
     <message numerus="yes">
         <source>%n partition(s) will be deleted.</source>
         <comment>erase warning</comment>
-        <translation type="unfinished">
-            <numerusform></numerusform>
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>%n partition sera effacée.</numerusform>
+            <numerusform>%n partitions seront effacées.</numerusform>
         </translation>
     </message>
     <message numerus="yes">
         <source>%n partition(s) will be deleted, including %1.</source>
         <comment>erase warning</comment>
-        <translation type="unfinished">
-            <numerusform></numerusform>
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>%n partition sera effacée, y compris %1.</numerusform>
+            <numerusform>%n partitions seront effacées, y compris %1.</numerusform>
         </translation>
     </message>
     <message>
         <source>This is a removable disk.</source>
-        <translation type="unfinished"></translation>
+        <translation>Ceci est un disque amovible.</translation>
+    </message>
+    <message>
+        <source>%1 — %2</source>
+        <translation>%1 — %2</translation>
+    </message>
+    <message>
+        <source>Everything on the selected disk will be erased.</source>
+        <translation>Tout ce qui se trouve sur le disque sélectionné sera effacé.</translation>
     </message>
     <message>
         <source>Erase %1 (%2) and install %3 on it.</source>
-        <translation type="unfinished"></translation>
+        <translation>Efface %1 (%2) et installe %3 dessus.</translation>
+    </message>
+    <message>
+        <source>Check again</source>
+        <translation>Revérifier</translation>
+    </message>
+    <message>
+        <source>No disks were found at all.</source>
+        <translation>Aucun disque n&apos;a été trouvé.</translation>
+    </message>
+    <message>
+        <source>Plug in a disk of at least %1 and choose Check again. These are the disks this computer has now:</source>
+        <translation>Branchez un disque d&apos;au moins %1 et choisissez Revérifier. Voici les disques que cet ordinateur possède actuellement :</translation>
+    </message>
+    <message>
+        <source>The disk will be set up like this</source>
+        <translation>Le disque sera configuré ainsi</translation>
+    </message>
+    <message>
+        <source>Encrypt this disk</source>
+        <translation>Chiffrer ce disque</translation>
+    </message>
+    <message>
+        <source>Not yet available</source>
+        <translation>Pas encore disponible</translation>
+    </message>
+    <message>
+        <source>Erase this disk?</source>
+        <translation>Effacer ce disque ?</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Annuler</translation>
+    </message>
+    <message>
+        <source>Erase and install</source>
+        <translation>Effacer et installer</translation>
     </message>
 </context>
 <context>
     <name>DiskModel</name>
     <message>
         <source>VirtIO disk</source>
-        <translation type="unfinished"></translation>
+        <translation>Disque VirtIO</translation>
     </message>
     <message>
         <source>NVMe disk</source>
-        <translation type="unfinished"></translation>
+        <translation>Disque NVMe</translation>
     </message>
     <message>
         <source>Disk</source>
-        <translation type="unfinished">Disque</translation>
+        <translation>Disque</translation>
     </message>
     <message>
         <source>%1 is running from this disk</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 s&apos;exécute depuis ce disque</translation>
     </message>
     <message>
         <source>Too small for an installation</source>
-        <translation type="unfinished"></translation>
+        <translation>Trop petit pour une installation</translation>
     </message>
     <message>
         <source>This disk is write-protected</source>
-        <translation type="unfinished"></translation>
+        <translation>Ce disque est protégé en écriture</translation>
     </message>
     <message>
         <source>Contents unknown</source>
-        <translation type="unfinished"></translation>
+        <translation>Contenu inconnu</translation>
     </message>
 </context>
 <context>
     <name>DiskViewStep</name>
     <message>
         <source>Disk</source>
-        <translation type="unfinished">Disque</translation>
+        <translation>Disque</translation>
     </message>
 </context>
 <context>
@@ -422,14 +668,14 @@
     </message>
 </context>
 <context>
-    <name>QObject</name>
+    <name>PasswordCheck</name>
     <message>
         <source>The password must be at least %1 characters long.</source>
-        <translation type="unfinished"></translation>
+        <translation>Le mot de passe doit contenir au moins %1 caractères.</translation>
     </message>
     <message>
         <source>That password is not strong enough.</source>
-        <translation type="unfinished"></translation>
+        <translation>Ce mot de passe n&apos;est pas assez robuste.</translation>
     </message>
 </context>
 <context>
@@ -464,15 +710,15 @@
     </message>
     <message>
         <source>Installer configuration</source>
-        <translation type="unfinished"></translation>
+        <translation>Configuration de l&apos;installateur</translation>
     </message>
     <message>
         <source>this installer cannot tell whether this computer meets its requirements — see the installer log</source>
-        <translation type="unfinished"></translation>
+        <translation>cet installateur ne peut pas déterminer si cet ordinateur satisfait à ses exigences — voir le journal de l&apos;installateur</translation>
     </message>
     <message>
         <source>this installer was not told how large a disk it needs</source>
-        <translation type="unfinished"></translation>
+        <translation>la taille de disque nécessaire n&apos;a pas été indiquée à cet installateur</translation>
     </message>
     <message>
         <source>no disk to install onto, %1 needed</source>
@@ -480,7 +726,7 @@
     </message>
     <message>
         <source>this installer was not told how much memory it needs</source>
-        <translation type="unfinished"></translation>
+        <translation>la mémoire nécessaire n&apos;a pas été indiquée à cet installateur</translation>
     </message>
     <message>
         <source>the installer is not running with administrator rights</source>

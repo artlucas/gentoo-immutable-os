@@ -5,134 +5,298 @@
     <name>AccountsConfig</name>
     <message>
         <source>Enter the enrolment code from your organisation.</source>
-        <translation type="unfinished"></translation>
+        <translation>Введите код регистрации от вашей организации.</translation>
     </message>
     <message>
         <source>Give this computer a name first.</source>
-        <translation type="unfinished"></translation>
+        <translation>Сначала дайте этому компьютеру имя.</translation>
     </message>
     <message>
         <source>Could not prepare %1. The installer is not running as root.</source>
-        <translation type="unfinished"></translation>
+        <translation>Не удалось подготовить %1. Программа установки не запущена от имени root.</translation>
     </message>
     <message>
         <source>Contacting your organisation…</source>
-        <translation type="unfinished"></translation>
+        <translation>Связь с вашей организацией…</translation>
     </message>
     <message>
         <source>Your organisation did not answer within two minutes. Check the network and try again.</source>
-        <translation type="unfinished"></translation>
+        <translation>Ваша организация не ответила в течение двух минут. Проверьте сеть и попробуйте снова.</translation>
     </message>
     <message>
         <source>This computer could not be enrolled.</source>
-        <translation type="unfinished"></translation>
+        <translation>Не удалось зарегистрировать этот компьютер.</translation>
     </message>
     <message>
         <source>The enrolment finished but could not be read back.</source>
-        <translation type="unfinished"></translation>
+        <translation>Регистрация завершилась, но её не удалось прочитать обратно.</translation>
     </message>
     <message>
         <source>The enrolment reported success but wrote nothing.</source>
-        <translation type="unfinished"></translation>
+        <translation>Регистрация сообщила об успехе, но ничего не записала.</translation>
     </message>
     <message>
         <source>This computer is enrolled, but nobody has been given access to it yet. Add someone in your organisation&apos;s web interface, then try again.</source>
-        <translation type="unfinished"></translation>
+        <translation>Этот компьютер зарегистрирован, но доступ пока никому не предоставлен. Добавьте кого-нибудь в веб-интерфейсе вашей организации и попробуйте снова.</translation>
     </message>
     <message>
         <source>This computer is enrolled with %1, but nobody has been given access to it yet. Add someone in your organisation&apos;s web interface, then try again.</source>
-        <translation type="unfinished"></translation>
+        <translation>Этот компьютер зарегистрирован в %1, но доступ пока никому не предоставлен. Добавьте кого-нибудь в веб-интерфейсе вашей организации и попробуйте снова.</translation>
     </message>
     <message numerus="yes">
         <source>Enrolled. %n person can use this computer.</source>
-        <translation type="unfinished">
-            <numerusform></numerusform>
-            <numerusform></numerusform>
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>Зарегистрирован. %n человек может использовать этот компьютер.</numerusform>
+            <numerusform>Зарегистрирован. %n человека могут использовать этот компьютер.</numerusform>
+            <numerusform>Зарегистрирован. %n человек могут использовать этот компьютер.</numerusform>
         </translation>
     </message>
     <message numerus="yes">
         <source>Enrolled with %1. %n person can use this computer.</source>
-        <translation type="unfinished">
-            <numerusform></numerusform>
-            <numerusform></numerusform>
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>Зарегистрирован в %1. %n человек может использовать этот компьютер.</numerusform>
+            <numerusform>Зарегистрирован в %1. %n человека могут использовать этот компьютер.</numerusform>
+            <numerusform>Зарегистрирован в %1. %n человек могут использовать этот компьютер.</numerusform>
         </translation>
     </message>
     <message>
         <source>Enter the domain and a join account first.</source>
-        <translation type="unfinished"></translation>
+        <translation>Сначала введите домен и учётную запись для подключения.</translation>
     </message>
     <message>
         <source>Checking %1…</source>
-        <translation type="unfinished"></translation>
+        <translation>Проверка %1…</translation>
     </message>
     <message>
         <source>The check did not finish in time.</source>
-        <translation type="unfinished"></translation>
+        <translation>Проверка не завершилась вовремя.</translation>
     </message>
     <message>
         <source>%1 answered and accepted %2.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 ответил и принял %2.</translation>
     </message>
     <message>
         <source>%1 could not be reached. The installation will still finish, and this computer can be joined afterwards.</source>
-        <translation type="unfinished"></translation>
+        <translation>Не удалось связаться с %1. Установка всё равно завершится, и этот компьютер можно будет подключить к домену позже.</translation>
     </message>
     <message>
         <source>The domain controller rejected %1.</source>
-        <translation type="unfinished"></translation>
+        <translation>Контроллер домена отклонил %1.</translation>
     </message>
     <message>
         <source>This computer&apos;s clock is too far from the domain controller&apos;s for Kerberos.</source>
-        <translation type="unfinished"></translation>
+        <translation>Часы этого компьютера слишком расходятся с часами контроллера домена для Kerberos.</translation>
     </message>
     <message>
         <source>The domain could not be checked (status %1).</source>
-        <translation type="unfinished"></translation>
+        <translation>Не удалось проверить домен (статус %1).</translation>
     </message>
     <message>
         <source>Use lower-case letters, digits, - and _, starting with a letter.</source>
-        <translation type="unfinished"></translation>
+        <translation>Используйте строчные буквы, цифры, - и _, начиная с буквы.</translation>
     </message>
     <message>
         <source>%1 is already used by this system.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 уже используется этой системой.</translation>
     </message>
     <message>
         <source>Use letters, digits and -, starting and ending with a letter or digit.</source>
-        <translation type="unfinished"></translation>
+        <translation>Используйте буквы, цифры и -, начиная и заканчивая буквой или цифрой.</translation>
     </message>
     <message>
         <source>%1 cannot be used as a computer name.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 нельзя использовать в качестве имени компьютера.</translation>
     </message>
     <message>
         <source>Local account %1 on %2.</source>
-        <translation type="unfinished"></translation>
+        <translation>Локальная учётная запись %1 на %2.</translation>
     </message>
     <message>
         <source>%1 will be managed by your organisation.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 будет управляться вашей организацией.</translation>
     </message>
     <message>
         <source>%1 will be managed by %2.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 будет управляться %2.</translation>
     </message>
     <message>
         <source>%1 will join %2, with the local administrator %3.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 будет подключён к %2, с локальным администратором %3.</translation>
     </message>
     <message>
         <source>No accounts have been set up.</source>
-        <translation type="unfinished"></translation>
+        <translation>Учётные записи не настроены.</translation>
+    </message>
+    <message>
+        <source>How should people sign in to this computer?</source>
+        <translation>Как люди будут входить в этот компьютер?</translation>
+    </message>
+    <message>
+        <source>This is the one choice on this page that cannot be changed later without reinstalling. Everything else follows from it.</source>
+        <translation>Это единственный выбор на этой странице, который нельзя изменить позже без переустановки. Всё остальное зависит от него.</translation>
+    </message>
+    <message>
+        <source>Local accounts only</source>
+        <translation>Только локальные учётные записи</translation>
+    </message>
+    <message>
+        <source>One account, on this computer. Nothing is sent anywhere.</source>
+        <translation>Одна учётная запись, на этом компьютере. Никуда ничего не отправляется.</translation>
+    </message>
+    <message>
+        <source>Works with no network. More accounts can be added afterwards.</source>
+        <translation>Работает без сети. Позже можно добавить другие учётные записи.</translation>
+    </message>
+    <message>
+        <source>Managed system</source>
+        <translation>Управляемая система</translation>
+    </message>
+    <message>
+        <source>Accounts come from your organisation, and whoever runs it can change them from anywhere.</source>
+        <translation>Учётные записи приходят из вашей организации, и тот, кто ею управляет, может менять их откуда угодно.</translation>
+    </message>
+    <message>
+        <source>Needs a network connection and an enrolment code now, before the disk is written.</source>
+        <translation>Нужно сетевое подключение и код регистрации прямо сейчас, до записи на диск.</translation>
+    </message>
+    <message>
+        <source>Join an enterprise domain</source>
+        <translation>Подключить к корпоративному домену</translation>
+    </message>
+    <message>
+        <source>Accounts come from Active Directory, with one local administrator kept as the way back in.</source>
+        <translation>Учётные записи приходят из Active Directory, с локальным администратором как путём возврата.</translation>
+    </message>
+    <message>
+        <source>Needs the domain name and an account allowed to join computers to it.</source>
+        <translation>Нужно имя домена и учётная запись с правом подключать к нему компьютеры.</translation>
+    </message>
+    <message>
+        <source>Use this password anyway?</source>
+        <translation>Всё равно использовать этот пароль?</translation>
+    </message>
+    <message>
+        <source>That password is not strong enough.</source>
+        <translation>Этот пароль недостаточно надёжен.</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Отмена</translation>
+    </message>
+    <message>
+        <source>Use anyway</source>
+        <translation>Использовать всё равно</translation>
+    </message>
+    <message>
+        <source>Your name:</source>
+        <translation>Ваше имя:</translation>
+    </message>
+    <message>
+        <source>Username:</source>
+        <translation>Имя пользователя:</translation>
+    </message>
+    <message>
+        <source>Password:</source>
+        <translation>Пароль:</translation>
+    </message>
+    <message>
+        <source>Repeat password:</source>
+        <translation>Повторите пароль:</translation>
+    </message>
+    <message>
+        <source>The two passwords are not the same.</source>
+        <translation>Два пароля не совпадают.</translation>
+    </message>
+    <message>
+        <source>Log in automatically as this user</source>
+        <translation>Входить в систему автоматически под этим пользователем</translation>
+    </message>
+    <message>
+        <source>Computer name:</source>
+        <translation>Имя компьютера:</translation>
+    </message>
+    <message>
+        <source>Enrolment code:</source>
+        <translation>Код регистрации:</translation>
+    </message>
+    <message>
+        <source>Try again</source>
+        <translation>Повторить</translation>
+    </message>
+    <message>
+        <source>Check and continue</source>
+        <translation>Проверить и продолжить</translation>
+    </message>
+    <message>
+        <source>Accounts on this computer: %1</source>
+        <translation>Учётные записи на этом компьютере: %1</translation>
+    </message>
+    <message>
+        <source>This computer needs to reach your organisation now, because this option creates no local account. The code is used once and expires after fifteen minutes.</source>
+        <translation>Этому компьютеру нужно связаться с вашей организацией прямо сейчас, потому что этот параметр не создаёт локальной учётной записи. Код используется один раз и истекает через пятнадцать минут.</translation>
+    </message>
+    <message>
+        <source>The domain</source>
+        <translation>Домен</translation>
+    </message>
+    <message>
+        <source>Domain:</source>
+        <translation>Домен:</translation>
+    </message>
+    <message>
+        <source>Join account:</source>
+        <translation>Учётная запись для подключения:</translation>
+    </message>
+    <message>
+        <source>Join password:</source>
+        <translation>Пароль для подключения:</translation>
+    </message>
+    <message>
+        <source>Domain controller:</source>
+        <translation>Контроллер домена:</translation>
+    </message>
+    <message>
+        <source>optional IP address</source>
+        <translation>необязательный IP-адрес</translation>
+    </message>
+    <message>
+        <source>Check domain</source>
+        <translation>Проверить домен</translation>
+    </message>
+    <message>
+        <source>Local administrator</source>
+        <translation>Локальный администратор</translation>
+    </message>
+    <message>
+        <source>The way back in when the domain controller cannot be reached. This system has no rescue shell, so it is the only other way to administer the machine.</source>
+        <translation>Путь возврата, когда контроллер домена недоступен. В этой системе нет аварийной оболочки, так что это единственный другой способ администрировать машину.</translation>
+    </message>
+    <message>
+        <source>Advanced</source>
+        <translation>Дополнительно</translation>
+    </message>
+    <message>
+        <source>Computer OU:</source>
+        <translation>OU компьютера:</translation>
+    </message>
+    <message>
+        <source>Domain group granted administration:</source>
+        <translation>Группа домена с правами администрирования:</translation>
+    </message>
+    <message>
+        <source>Computer account name:</source>
+        <translation>Имя учётной записи компьютера:</translation>
+    </message>
+    <message>
+        <source>the computer name below</source>
+        <translation>имя компьютера ниже</translation>
     </message>
 </context>
 <context>
     <name>AccountsViewStep</name>
     <message>
         <source>Accounts</source>
-        <translation type="unfinished"></translation>
+        <translation>Учётные записи</translation>
     </message>
 </context>
 <context>
@@ -187,10 +351,48 @@
     </message>
 </context>
 <context>
+    <name>AppsDescriptions</name>
+    <message>
+        <source>A powerful text editor by KDE</source>
+        <translation>Мощный текстовый редактор от KDE</translation>
+    </message>
+    <message>
+        <source>Digital painting and illustration</source>
+        <translation>Цифровая живопись и иллюстрация</translation>
+    </message>
+    <message>
+        <source>Email, calendars and chat from Mozilla</source>
+        <translation>Электронная почта, календари и чат от Mozilla</translation>
+    </message>
+    <message>
+        <source>Plays nearly every audio and video format</source>
+        <translation>Воспроизводит почти все форматы аудио и видео</translation>
+    </message>
+    <message>
+        <source>View and control a remote desktop</source>
+        <translation>Просмотр удалённого рабочего стола и управление им</translation>
+    </message>
+    <message>
+        <source>Word processor, spreadsheet and presentations</source>
+        <translation>Текстовый процессор, таблицы и презентации</translation>
+    </message>
+</context>
+<context>
     <name>AppsViewStep</name>
     <message>
         <source>Applications</source>
         <translation>Приложения</translation>
+    </message>
+</context>
+<context>
+    <name>CalamaresSidebar</name>
+    <message>
+        <source>About</source>
+        <translation>О программе</translation>
+    </message>
+    <message>
+        <source>Debug</source>
+        <translation>Отладка</translation>
     </message>
 </context>
 <context>
@@ -204,144 +406,188 @@
     <name>DiskConfig</name>
     <message>
         <source>unformatted</source>
-        <translation type="unfinished"></translation>
+        <translation>не отформатирован</translation>
     </message>
     <message>
         <source>%1 (%2)</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 (%2)</translation>
     </message>
     <message>
         <source>%1 (%2, %3)</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 (%2, %3)</translation>
     </message>
     <message>
         <source>Empty — no partition table</source>
-        <translation type="unfinished"></translation>
+        <translation>Пусто — без таблицы разделов</translation>
     </message>
     <message>
         <source>One filesystem, no partition table</source>
-        <translation type="unfinished"></translation>
+        <translation>Одна файловая система, без таблицы разделов</translation>
     </message>
     <message numerus="yes">
         <source>%n partition(s) — %1</source>
         <comment>disk contents</comment>
-        <translation type="unfinished">
-            <numerusform></numerusform>
-            <numerusform></numerusform>
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>%n раздел — %1</numerusform>
+            <numerusform>%n раздела — %1</numerusform>
+            <numerusform>%n разделов — %1</numerusform>
         </translation>
     </message>
     <message>
         <source>No disk can be used for the installation.</source>
-        <translation type="unfinished"></translation>
+        <translation>Ни один диск не подходит для установки.</translation>
     </message>
     <message>
         <source>This computer has one disk.</source>
-        <translation type="unfinished"></translation>
+        <translation>На этом компьютере один диск.</translation>
     </message>
     <message>
         <source>Where should %1 be installed?</source>
-        <translation type="unfinished"></translation>
+        <translation>Куда установить %1?</translation>
     </message>
     <message>
         <source>%1 needs a disk of at least %2 that it is not itself running from.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 нужен диск размером не менее %2, не тот, с которого он сам работает.</translation>
     </message>
     <message>
         <source>%1 will be installed on it, and everything on it now will be erased.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 будет установлен на него, и всё, что сейчас на нём есть, будет стёрто.</translation>
     </message>
     <message>
         <source>Everything on the disk you choose will be erased. Nothing else on this computer is changed.</source>
-        <translation type="unfinished"></translation>
+        <translation>Всё на выбранном диске будет стёрто. Больше ничего на этом компьютере не изменится.</translation>
     </message>
     <message>
         <source>Boot</source>
-        <translation type="unfinished"></translation>
+        <translation>Загрузка</translation>
     </message>
     <message>
         <source>System</source>
-        <translation type="unfinished"></translation>
+        <translation>Система</translation>
     </message>
     <message>
         <source>Reserved for updates</source>
-        <translation type="unfinished"></translation>
+        <translation>Зарезервировано для обновлений</translation>
     </message>
     <message>
         <source>Your files</source>
-        <translation type="unfinished"></translation>
+        <translation>Ваши файлы</translation>
     </message>
     <message>
         <source>Everything on this disk will be deleted.</source>
-        <translation type="unfinished"></translation>
+        <translation>Всё на этом диске будет стёрто.</translation>
     </message>
     <message>
         <source>This disk is empty.</source>
-        <translation type="unfinished"></translation>
+        <translation>Этот диск пуст.</translation>
     </message>
     <message numerus="yes">
         <source>%n partition(s) will be deleted.</source>
         <comment>erase warning</comment>
-        <translation type="unfinished">
-            <numerusform></numerusform>
-            <numerusform></numerusform>
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>Будет стёрт %n раздел.</numerusform>
+            <numerusform>Будет стёрто %n раздела.</numerusform>
+            <numerusform>Будет стёрто %n разделов.</numerusform>
         </translation>
     </message>
     <message numerus="yes">
         <source>%n partition(s) will be deleted, including %1.</source>
         <comment>erase warning</comment>
-        <translation type="unfinished">
-            <numerusform></numerusform>
-            <numerusform></numerusform>
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>Будет стёрт %n раздел, включая %1.</numerusform>
+            <numerusform>Будет стёрто %n раздела, включая %1.</numerusform>
+            <numerusform>Будет стёрто %n разделов, включая %1.</numerusform>
         </translation>
     </message>
     <message>
         <source>This is a removable disk.</source>
-        <translation type="unfinished"></translation>
+        <translation>Это съёмный диск.</translation>
+    </message>
+    <message>
+        <source>%1 — %2</source>
+        <translation>%1 — %2</translation>
+    </message>
+    <message>
+        <source>Everything on the selected disk will be erased.</source>
+        <translation>Всё на выбранном диске будет стёрто.</translation>
     </message>
     <message>
         <source>Erase %1 (%2) and install %3 on it.</source>
-        <translation type="unfinished"></translation>
+        <translation>Стирает %1 (%2) и устанавливает на него %3.</translation>
+    </message>
+    <message>
+        <source>Check again</source>
+        <translation>Проверить снова</translation>
+    </message>
+    <message>
+        <source>No disks were found at all.</source>
+        <translation>Дисков не найдено вовсе.</translation>
+    </message>
+    <message>
+        <source>Plug in a disk of at least %1 and choose Check again. These are the disks this computer has now:</source>
+        <translation>Подключите диск размером не менее %1 и нажмите «Проверить снова». Вот диски, которые есть на этом компьютере сейчас:</translation>
+    </message>
+    <message>
+        <source>The disk will be set up like this</source>
+        <translation>Диск будет настроен так</translation>
+    </message>
+    <message>
+        <source>Encrypt this disk</source>
+        <translation>Шифровать этот диск</translation>
+    </message>
+    <message>
+        <source>Not yet available</source>
+        <translation>Пока недоступно</translation>
+    </message>
+    <message>
+        <source>Erase this disk?</source>
+        <translation>Стереть этот диск?</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Отмена</translation>
+    </message>
+    <message>
+        <source>Erase and install</source>
+        <translation>Стереть и установить</translation>
     </message>
 </context>
 <context>
     <name>DiskModel</name>
     <message>
         <source>VirtIO disk</source>
-        <translation type="unfinished"></translation>
+        <translation>Диск VirtIO</translation>
     </message>
     <message>
         <source>NVMe disk</source>
-        <translation type="unfinished"></translation>
+        <translation>Диск NVMe</translation>
     </message>
     <message>
         <source>Disk</source>
-        <translation type="unfinished">Диск</translation>
+        <translation>Диск</translation>
     </message>
     <message>
         <source>%1 is running from this disk</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 работает с этого диска</translation>
     </message>
     <message>
         <source>Too small for an installation</source>
-        <translation type="unfinished"></translation>
+        <translation>Слишком мал для установки</translation>
     </message>
     <message>
         <source>This disk is write-protected</source>
-        <translation type="unfinished"></translation>
+        <translation>Этот диск защищён от записи</translation>
     </message>
     <message>
         <source>Contents unknown</source>
-        <translation type="unfinished"></translation>
+        <translation>Содержимое неизвестно</translation>
     </message>
 </context>
 <context>
     <name>DiskViewStep</name>
     <message>
         <source>Disk</source>
-        <translation type="unfinished">Диск</translation>
+        <translation>Диск</translation>
     </message>
 </context>
 <context>
@@ -427,14 +673,14 @@
     </message>
 </context>
 <context>
-    <name>QObject</name>
+    <name>PasswordCheck</name>
     <message>
         <source>The password must be at least %1 characters long.</source>
-        <translation type="unfinished"></translation>
+        <translation>Пароль должен быть не короче %1 символов.</translation>
     </message>
     <message>
         <source>That password is not strong enough.</source>
-        <translation type="unfinished"></translation>
+        <translation>Этот пароль недостаточно надёжен.</translation>
     </message>
 </context>
 <context>
@@ -469,15 +715,15 @@
     </message>
     <message>
         <source>Installer configuration</source>
-        <translation type="unfinished"></translation>
+        <translation>Конфигурация программы установки</translation>
     </message>
     <message>
         <source>this installer cannot tell whether this computer meets its requirements — see the installer log</source>
-        <translation type="unfinished"></translation>
+        <translation>эта программа установки не может определить, соответствует ли этот компьютер её требованиям — см. журнал программы установки</translation>
     </message>
     <message>
         <source>this installer was not told how large a disk it needs</source>
-        <translation type="unfinished"></translation>
+        <translation>этой программе установки не сообщили, какого размера диск ей нужен</translation>
     </message>
     <message>
         <source>no disk to install onto, %1 needed</source>
@@ -485,7 +731,7 @@
     </message>
     <message>
         <source>this installer was not told how much memory it needs</source>
-        <translation type="unfinished"></translation>
+        <translation>этой программе установки не сообщили, сколько памяти ей нужно</translation>
     </message>
     <message>
         <source>the installer is not running with administrator rights</source>
