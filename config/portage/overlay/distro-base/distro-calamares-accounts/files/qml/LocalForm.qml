@@ -13,13 +13,12 @@
  * installed machine greets unless the person standing here says otherwise — the same default
  * plan/21 shipped, now with a way to ask for the other thing.
  *
- * THE ERROR IS GLUED TO ITS FIELD (plan/27 §6). A Kirigami.FormLayout gives every child its own
- * row and its own gap, which put the red password message a row — and, whenever a password
- * existed, the score meter's row — away from the field it answered. Each field and its message
- * are now ONE form row: a ColumnLayout with spacing 0 (the shape ComputerNameField has always
- * had), the message the immediately following sibling. Inside the password column the order is
- * field, error, meter: the error answers the field, the meter scores it, and only the meter
- * gets breathing room.
+ * THE ERROR IS GLUED TO ITS FIELD (plan/27 §6), and since plan/28 it cannot come unglued: a
+ * Kirigami.FormLayout gave every child its own row and its own gap, which put the red password
+ * message a row — and, whenever a password existed, the score meter's row — away from the field
+ * it answered. The layout is now a two-column grid of shared Field objects, and label, value,
+ * error and hint are one object inside each cell. There is no layout left that could separate
+ * them.
  *
  * No qsTr() anywhere in this file: every word is an AccountsConfig tr() property, because the
  * builder's lupdate is built without QML support and a qsTr() here would never reach the
@@ -29,120 +28,162 @@
  */
 import QtQuick
 import QtQuick.Layouts
-import QtQuick.Controls as QQC2
-import org.kde.kirigami as Kirigami
 
-Kirigami.FormLayout {
+ColumnLayout {
     id: form
 
-    QQC2.TextField {
-        Kirigami.FormData.label: accounts.realNameLabel
-        text: accounts.fullName
-        onTextEdited: accounts.fullName = text
-        placeholderText: "Ada Lovelace"
-    }
+    required property Theme ds
 
-    ColumnLayout {
-        Kirigami.FormData.label: accounts.loginNameLabel
+    spacing: form.ds.space6
 
-        spacing: 0
+    GridLayout {
+        Layout.fillWidth: true
+        columns: 2
+        columnSpacing: form.ds.space5 - 2
+        rowSpacing: form.ds.space5 - 2
 
-        QQC2.TextField {
-            id: loginField
-
+        Field {
             Layout.fillWidth: true
+            ds: form.ds
+            label: accounts.realNameLabel
+            text: accounts.fullName
+            placeholder: "Ada Lovelace"
+            onEdited: function (value) { accounts.fullName = value; }
+        }
+
+        Field {
+            Layout.fillWidth: true
+            ds: form.ds
+            label: accounts.loginNameLabel
             text: accounts.loginName
-            onTextEdited: accounts.loginName = text
-            placeholderText: "ada"
+            error: accounts.loginNameMessage
+            placeholder: "ada"
+            // A user name is an identifier, and the design system sets identifiers in mono.
+            mono: true
+            onEdited: function (value) { accounts.loginName = value; }
         }
 
-        QQC2.Label {
-            visible: accounts.loginNameMessage.length > 0
-            text: accounts.loginNameMessage
-            wrapMode: Text.WordWrap
+        // THE METER IS PART OF THE PASSWORD CELL, not a row of its own. It is libpwquality's own
+        // 0..100 score, and it belongs under the field it scores — which is what a form layout
+        // could not be made to promise.
+        ColumnLayout {
             Layout.fillWidth: true
-            color: Kirigami.Theme.negativeTextColor
-            font: Kirigami.Theme.smallFont
-        }
-    }
+            spacing: form.ds.space2
 
-    ColumnLayout {
-        Kirigami.FormData.label: accounts.passwordLabel
+            Field {
+                id: passwordField
 
-        spacing: 0
+                Layout.fillWidth: true
+                ds: form.ds
+                label: accounts.passwordLabel
+                text: accounts.password
+                error: accounts.passwordMessage
+                echoPassword: true
+                onEdited: function (value) { accounts.password = value; }
+            }
 
-        Kirigami.PasswordField {
-            id: passwordField
+            // The design system's Progress track: 8px, pill, sunken ground, accent fill.
+            Rectangle {
+                Layout.fillWidth: true
+                implicitHeight: 8
+                visible: accounts.password.length > 0
+                radius: form.ds.radiusPill
+                color: form.ds.surfaceSunken
 
-            Layout.fillWidth: true
-            text: accounts.password
-            onTextEdited: accounts.password = text
-        }
+                Rectangle {
+                    width: parent.width * Math.max(0, Math.min(100, accounts.passwordScore)) / 100
+                    height: parent.height
+                    radius: form.ds.radiusPill
+                    // The score's own colour, because a full bar in the accent would say "good"
+                    // about a password libpwquality scored 20. The thresholds are the meter's,
+                    // not a policy: the policy is the message above, which C++ owns.
+                    color: accounts.passwordScore >= 70
+                        ? form.ds.statusSuccess
+                        : (accounts.passwordScore >= 40 ? form.ds.statusWarning
+                                                        : form.ds.statusDanger)
 
-        QQC2.Label {
-            visible: accounts.passwordMessage.length > 0
-            text: accounts.passwordMessage
-            wrapMode: Text.WordWrap
-            Layout.fillWidth: true
-            color: Kirigami.Theme.negativeTextColor
-            font: Kirigami.Theme.smallFont
-        }
-
-        QQC2.ProgressBar {
-            Layout.fillWidth: true
-            Layout.topMargin: Kirigami.Units.smallSpacing
-            from: 0
-            to: 100
-            value: accounts.passwordScore
-            visible: accounts.password.length > 0
-        }
-    }
-
-    ColumnLayout {
-        Kirigami.FormData.label: accounts.passwordRepeatLabel
-
-        spacing: 0
-
-        Kirigami.PasswordField {
-            id: repeatField
-
-            Layout.fillWidth: true
-            text: accounts.passwordRepeat
-            onTextEdited: accounts.passwordRepeat = text
-        }
-
-        QQC2.Label {
-            visible: accounts.passwordRepeat.length > 0 && !accounts.passwordsMatch
-            text: accounts.passwordsDifferText
-            wrapMode: Text.WordWrap
-            Layout.fillWidth: true
-            color: Kirigami.Theme.negativeTextColor
-            font: Kirigami.Theme.smallFont
-        }
-    }
-
-    // Not a binding on `checked`, for the reason every control in this family gives: a QQC2
-    // control assigns `checked` imperatively when clicked, which breaks one. C++ is the source
-    // of truth — it is what publish() reads — and the Connections below puts back what it says.
-    QQC2.CheckBox {
-        id: autoLoginBox
-
-        Layout.topMargin: Kirigami.Units.smallSpacing
-        text: accounts.autoLoginLabel
-        checked: accounts.autoLogin
-        onToggled: accounts.autoLogin = autoLoginBox.checked
-
-        Connections {
-            target: accounts
-            function onAutoLoginChanged() {
-                autoLoginBox.checked = accounts.autoLogin;
+                    Behavior on width {
+                        NumberAnimation { duration: form.ds.durationSlow }
+                    }
+                }
             }
         }
+
+        Field {
+            Layout.fillWidth: true
+            ds: form.ds
+            label: accounts.passwordRepeatLabel
+            text: accounts.passwordRepeat
+            // The mismatch is only worth saying once something has been typed to mismatch with.
+            error: accounts.passwordRepeat.length > 0 && !accounts.passwordsMatch
+                ? accounts.passwordsDifferText
+                : ""
+            echoPassword: true
+            onEdited: function (value) { accounts.passwordRepeat = value; }
+        }
+
+        ComputerNameField {
+            Layout.fillWidth: true
+            ds: form.ds
+        }
     }
 
-    Item {
-        Kirigami.FormData.isSection: true
-    }
+    // Not a binding on `checked`, for the reason every control in this family gives: C++ is the
+    // source of truth — it is what publish() reads — and the Connections below puts back what it
+    // says. Since plan/28 the box is drawn rather than a QQC2.CheckBox, because the style would
+    // paint Breeze's; the state still lives in exactly one place.
+    RowLayout {
+        Layout.fillWidth: true
+        spacing: form.ds.space2
 
-    ComputerNameField {}
+        Rectangle {
+            id: autoLoginBox
+
+            property bool checked: accounts.autoLogin
+
+            Layout.alignment: Qt.AlignVCenter
+            implicitWidth: 20
+            implicitHeight: 20
+            radius: form.ds.radiusSm
+            color: autoLoginBox.checked ? form.ds.accent : form.ds.surfaceCard
+            border.width: form.ds.borderWidthStrong
+            border.color: autoLoginBox.checked ? form.ds.accent : form.ds.borderStrong
+
+            Text {
+                anchors.centerIn: parent
+                visible: autoLoginBox.checked
+                text: "✓"
+                color: form.ds.accentOn
+                font.family: form.ds.fontSans
+                font.pixelSize: form.ds.textXs
+                font.weight: form.ds.weightBold
+            }
+
+            Connections {
+                target: accounts
+                function onAutoLoginChanged() {
+                    autoLoginBox.checked = accounts.autoLogin;
+                }
+            }
+        }
+
+        Text {
+            Layout.fillWidth: true
+            text: accounts.autoLoginLabel
+            color: form.ds.textBody
+            wrapMode: Text.WordWrap
+            font.family: form.ds.fontSans
+            font.pixelSize: form.ds.textBase
+        }
+
+        // ONE HIT TARGET FOR BOX AND LABEL (plan/27 §7): the words beside a mark are words
+        // somebody clicks. It covers the whole row rather than sitting beside either.
+        HoverHandler { cursorShape: Qt.PointingHandCursor }
+        TapHandler { onTapped: accounts.autoLogin = !accounts.autoLogin }
+
+        Accessible.role: Accessible.CheckBox
+        Accessible.name: accounts.autoLoginLabel
+        Accessible.checked: accounts.autoLogin
+        Accessible.onToggleAction: accounts.autoLogin = !accounts.autoLogin
+    }
 }

@@ -9,11 +9,10 @@
 #include "utils/Logger.h"
 #include "utils/Retranslator.h"
 
-#include <QSortFilterProxyModel>
+#include <QAbstractItemModel>
 
 GreetingConfig::GreetingConfig( QObject* parent )
     : QObject( parent )
-    , m_filtermodel( new QSortFilterProxyModel( this ) )
 {
     // The macro connects the slot AND runs it once, which is what gives warningMessage() a value
     // before anything reads it.
@@ -28,9 +27,17 @@ GreetingConfig::GreetingConfig( QObject* parent )
         // without restarting the installer — but only if the sentence above the list is recomputed
         // when it happens. This is the connection that does that.
         connect( model, &Calamares::RequirementsModel::satisfiedMandatoryChanged, this, [ this ]( bool )
-                 { retranslate(); } );
+                 { markChecked(); retranslate(); } );
         connect( model, &Calamares::RequirementsModel::satisfiedRequirementsChanged, this, [ this ]( bool )
-                 { retranslate(); } );
+                 { markChecked(); retranslate(); } );
+
+        // THE MODEL IS RESET, NOT UPDATED, when a round of checks lands: addRequirementsList()
+        // calls beginResetModel(). Neither verdict signal fires when the answer has not moved —
+        // a second round that agrees with the first emits nothing — so the page would sit on its
+        // spinner forever on a machine that passed everything the first time. This is the signal
+        // that always fires, and it is what `checked` is really watching.
+        connect( model, &QAbstractItemModel::modelReset, this, [ this ]
+                 { markChecked(); retranslate(); } );
     }
     else
     {
@@ -46,17 +53,38 @@ GreetingConfig::requirementsModel() const
 }
 
 QAbstractItemModel*
-GreetingConfig::unsatisfiedRequirements() const
+GreetingConfig::requirementsModelForQml() const
 {
-    if ( !m_filtermodel->sourceModel() )
+    return requirementsModel();
+}
+
+void
+GreetingConfig::markChecked()
+{
+    if ( m_checked )
     {
-        // Upstream's filter, kept exactly: the Satisfied role is a bool, and a proxy asked to
-        // match the fixed string "false" against it keeps the rows that failed.
-        m_filtermodel->setFilterRole( Calamares::RequirementsModel::Roles::Satisfied );
-        m_filtermodel->setFilterFixedString( QStringLiteral( "false" ) );
-        m_filtermodel->setSourceModel( requirementsModel() );
+        return;
     }
-    return m_filtermodel;
+    m_checked = true;
+    emit checkedChanged( true );
+}
+
+QString
+GreetingConfig::pageTitle() const
+{
+    // NOT translatable: it is a product name and a version number, and both come out of
+    // config/calamares/branding/installer/branding.desc.
+    const auto* branding = Calamares::Branding::instance();
+    return branding ? branding->versionedName() : QString();
+}
+
+QString
+GreetingConfig::pageLede() const
+{
+    const auto* branding = Calamares::Branding::instance();
+    return tr( "This program will ask you a few questions and then install %1 on this computer. "
+               "Everything already on the disk you choose will be erased." )
+        .arg( branding ? branding->productName() : QString() );
 }
 
 void
@@ -74,6 +102,7 @@ GreetingConfig::retranslate()
         : tr( "This computer can install %1." ).arg( name );
 
     emit warningMessageChanged( m_warningMessage );
+    emit retranslated();
 }
 
 #include "moc_GreetingConfig.cpp"

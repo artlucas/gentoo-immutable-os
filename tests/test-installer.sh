@@ -534,28 +534,37 @@ assert_true "PasswordCheck names its own context rather than QObject's" \
 assert_false "...and no QObject::tr is left in it" \
     bash -c "grep -vE '^[[:space:]]*(//|/\*|\*)' '$OVL_ACCOUNTS/files/PasswordCheck.cpp' |
              grep -q 'QObject::tr'"
-# THE ERROR GLUED TO ITS FIELD (plan/27 §6). A Kirigami.FormLayout gives every child its own row
-# and its own gap, which put the red message a row — and the meter's row — away from the field it
-# answered. Field and message now share one spacing-0 form row, the shape ComputerNameField has
-# always had.
-assert_true "the password field and its message share one spacing-0 form row" \
-    bash -c "grep -A3 'Kirigami.FormData.label: accounts.passwordLabel' '$OVL_ACCOUNTS/files/qml/LocalForm.qml' |
-             grep -qE '^[[:space:]]*spacing: 0$'"
-assert_true "...and so do the repeat field and its mismatch message" \
-    bash -c "grep -A3 'Kirigami.FormData.label: accounts.passwordRepeatLabel' '$OVL_ACCOUNTS/files/qml/LocalForm.qml' |
-             grep -qE '^[[:space:]]*spacing: 0$'"
+# THE ERROR GLUED TO ITS FIELD (plan/27 §6), and since plan/28 it cannot come unglued. A
+# Kirigami.FormLayout gave every child its own row and its own gap, which put the red message a
+# row — and the meter's row — away from the field it answered; the fix was one spacing-0 form row
+# per field, which worked and had to be remembered at every new field. The shared Field object
+# carries label, value, error and hint as ONE item, so there is no longer a layout that could
+# separate them and no rule left to remember. What these assert is that the forms use it.
+assert_false "no form builds its own field out of a Kirigami.FormLayout row any more" \
+    grep -rq 'Kirigami.FormData.label' "$OVL_ACCOUNTS/files/qml"
+assert_true "the password field carries its own error message" \
+    bash -c "grep -A5 'label: accounts.passwordLabel' '$OVL_ACCOUNTS/files/qml/LocalForm.qml' |
+             grep -q 'error: accounts.passwordMessage'"
+assert_true "...and the repeat field carries its own mismatch message" \
+    bash -c "grep -A5 'label: accounts.passwordRepeatLabel' '$OVL_ACCOUNTS/files/qml/LocalForm.qml' |
+             grep -q 'accounts.passwordsDifferText'"
 
-# PasswordField IS KIRIGAMI'S, AND THERE IS NO OTHER. QtQuick.Controls has no type of that name,
-# so a `QQC2.PasswordField` is not a control with the wrong look — it is a type error, and the
-# whole component tree fails to load with it. DomainForm instantiates unconditionally in
-# Accounts.qml, so that one line took the entire page down: the QQuickWidget painted its clear
-# colour, which is white, and the accounts page came up blank in every mode. The QML travels
-# inside the .so as a resource and nothing compiles it at build time, so this reaches a VM
-# untouched by the compiler that built the module around it — which is what this check is for.
+# A PASSWORD FIELD MUST MASK, AND THE WAY IT DOES IT IS ONE PROPERTY. QtQuick.Controls has no
+# `PasswordField` at all, so a `QQC2.PasswordField` is not a control with the wrong look — it is
+# a type error, and the whole component tree fails to load with it. DomainForm instantiates
+# unconditionally in Accounts.qml, so that one line took the entire page down: the QQuickWidget
+# painted its clear colour, which is white, and the accounts page came up blank in every mode.
+# Kirigami.PasswordField was the answer then; the shared Field's `echoPassword` is the answer now,
+# and the same class of mistake — a field that silently shows what it is typing — is what these
+# two assertions are about. The QML travels inside the .so as a resource and nothing compiles it
+# at build time, so a type error reaches a VM untouched by the compiler that built the module
+# around it; section 6i's qmllint pass is the other half of this net.
 assert_false "no QQC2.PasswordField: QtQuick.Controls has no such type" \
     grep -rq 'QQC2\.PasswordField' "$OVL_ACCOUNTS/files/qml"
-assert_true "the domain form's three password fields are Kirigami's" \
-    bash -c "[[ \$(grep -c 'Kirigami.PasswordField {' '$OVL_ACCOUNTS/files/qml/DomainForm.qml') -eq 3 ]]"
+assert_true "the domain form's three password fields mask what is typed into them" \
+    bash -c "[[ \$(grep -c 'echoPassword: true' '$OVL_ACCOUNTS/files/qml/DomainForm.qml') -eq 3 ]]"
+assert_true "...and so do the local form's two" \
+    bash -c "[[ \$(grep -c 'echoPassword: true' '$OVL_ACCOUNTS/files/qml/LocalForm.qml') -eq 2 ]]"
 
 # The sequence must not name the stock modules that cannot work here. Each of these would fail
 # or, worse, half-succeed: localecfg runs `locale-gen` in a target that has none; unpackfs looks
@@ -783,27 +792,36 @@ QML="$LANG_SRC/qml/Language.qml"
 # page's selection bugs were one property handled in one direction, and both of them COMPILE, RUN
 # and look like a working page:
 #
-#   - the highlight is `ListView.isCurrentItem`, so it follows the VIEW's currentIndex. A delegate
-#     whose onClicked wrote straight to `language.currentIndex` changed the language — the window
+#   - the highlight is the VIEW's isCurrentItem, so it follows the VIEW's currentIndex. A delegate
+#     whose tap handler wrote straight to `language.currentIndex` changed the language — the window
 #     really did retranslate — and left the highlight where the keyboard had put it. The first row
 #     therefore looked selected no matter which one you clicked.
 #   - QQuickItemView::componentComplete() selects row 0 for itself unless currentIndex was
 #     explicitly cleared, and `onCurrentIndexChanged` then pushed that 0 into C++ — throwing away
 #     the English that setConfigurationMap() had chosen. The installer opened in German, because
 #     German is what config/languages.conf lists first.
-assert_true "a click moves the VIEW's currentIndex, which is what draws the highlight" \
-    grep -qE '^\s*onClicked: list\.currentIndex = row\.index$' "$QML"
+#
+# THE VIEW IS A GridView SINCE plan/28 and was a ListView before it, which is why these match on
+# the mechanism rather than on a type name: two columns is a design decision and the bugs above
+# are not. What may NOT change is that it stays a view at all — QQuickItemView is where
+# currentIndex, the 2-D arrow keys and Home/End come from, on a page some of whose users cannot
+# read the labels on anything else. A Repeater in a GridLayout draws the same picture and has
+# none of it, so that substitution is the one this asserts against.
+assert_true "the languages are drawn by a view, not a Repeater — arrow keys depend on it" \
+    grep -qE '^\s*(Grid|List)View \{$' "$QML"
+assert_true "a tap moves the VIEW's currentIndex, which is what draws the highlight" \
+    grep -qE '^\s*onTapped: grid\.currentIndex = cell\.index$' "$QML"
 assert_false "no delegate writes the C++ index directly — that is the bug that froze the highlight" \
-    grep -qE 'onClicked:.*language\.currentIndex' "$QML"
-assert_true "the ListView clears its currentIndex so componentComplete() cannot select row 0" \
+    grep -qE '(onTapped|onClicked):.*language\.currentIndex' "$QML"
+assert_true "the view clears its currentIndex so componentComplete() cannot select row 0" \
     grep -qE '^\s*currentIndex: -1$' "$QML"
 assert_true "the view is seeded from C++ once the component is complete" \
-    grep -qE '^\s*Component\.onCompleted: list\.currentIndex = language\.currentIndex$' "$QML"
+    grep -qE '^\s*Component\.onCompleted: grid\.currentIndex = language\.currentIndex$' "$QML"
 assert_true "a view-driven change is pushed back to C++" \
-    grep -qE '^\s*onCurrentIndexChanged: language\.currentIndex = list\.currentIndex$' "$QML"
+    grep -qE '^\s*onCurrentIndexChanged: language\.currentIndex = grid\.currentIndex$' "$QML"
 assert_true "and C++ can drive the view back, for the indexes setCurrentIndex() refuses" \
     bash -c "sed -n '/Connections {/,/^                }/p' '$QML' |
-             grep -q 'list.currentIndex = language.currentIndex'"
+             grep -q 'grid.currentIndex = language.currentIndex'"
 # The C++ half of the default. bestIndexFor() answers -1 on the C locale this medium boots with, so
 # `en` is what the page must fall back to — never row 0, which is whatever the table lists first.
 assert_true "English is the fallback, not the first row of the table" \
@@ -918,30 +936,66 @@ assert_true "isBackEnabled() returns true, not stock welcome's false" \
 assert_false "the greeting module does not set the Qt Quick Controls style" \
     grep -rqE '^[^/*]*QQuickStyle::setStyle' "$GREET_SRC"
 
-# THE VENDORED BOX IS VENDORED, not adopted. checker/ is three files copied from Calamares' welcome
-# module; the value of that is that the diff against a future release is a header and one rename,
-# so each file has to say where it came from, and none of them may still refer to upstream's own
-# config class.
-for f in CheckerContainer ResultsListWidget ResultDelegate; do
-    assert_true "checker/$f records where it was vendored from" \
-        bash -c "grep -q 'VENDORED FROM CALAMARES' '$GREET_SRC/checker/$f.h' &&
-                 grep -q 'VENDORED FROM CALAMARES' '$GREET_SRC/checker/$f.cpp'"
-done
-assert_false "nothing in checker/ still includes upstream's Config.h" \
-    grep -rqE '#include "Config\.h"' "$GREET_SRC/checker"
-# The three things ResultsListWidget calls on the object it is handed. Renaming one of them in
-# GreetingConfig compiles here and fails only at link time in a container an hour into a build.
-for m in warningMessage requirementsModel unsatisfiedRequirements; do
-    assert_true "GreetingConfig still answers $m(), which the vendored box calls" \
-        grep -qE "^\s*(QString|Calamares::RequirementsModel\*|QAbstractItemModel\*) $m\(\) const" \
-            "$GREET_SRC/GreetingConfig.h"
-done
+# THE VENDORING IS OVER (plan/28). checker/ was three files copied from Calamares' welcome module,
+# on the argument that "they are not in libcalamaresui and no header of theirs is installed, so a
+# module that wants the box has to carry the source" (plan/23 §2). What was never true of the
+# MODEL — libcalamares/modulesystem/RequirementsModel.h IS installed — is what made the copies
+# unnecessary the moment the page became QML: a ListView binds the model directly.
+#
+# These assert the deletion rather than the copies, because a re-appearing checker/ would mean
+# somebody reintroduced the failures-only box the design replaced, and because a vendored tree
+# that nothing builds is the worst of both.
+assert_false "the vendored requirements box is gone, not merely unused" \
+    test -e "$GREET_SRC/checker"
+assert_false "...and so is the QWidget page that hosted it" \
+    bash -c "test -e '$GREET_SRC/GreetingPage.cpp' || test -e '$GREET_SRC/GreetingPage.h'"
+# Comment lines excluded: the note explaining why the include_directories() line went necessarily
+# names the directory it went with.
+assert_false "...and the CMakeLists builds neither" \
+    bash -c "grep -vE '^[[:space:]]*#' '$GREET_SRC/CMakeLists.txt' |
+             grep -qE 'checker/|GreetingPage\.cpp'"
 
-# NO SECOND LOGO. ResultsListWidget puts the branding's productWelcome image into the box, expanding,
-# as soon as every requirement passes — so a logo in the page header above it is the "logo sized to
-# fill whatever space is left over" that plan/22 opened by complaining about.
+# THE PAGE IS QML IN A QQuickWidget, like its four siblings, and it binds Calamares' own model.
+assert_true "the greeting page is QML hosted in a QQuickWidget" \
+    bash -c "grep -q 'new QQuickWidget()' '$GREET_SRC/GreetingViewStep.cpp' &&
+             grep -q 'qrc:/greeting/qml/Greeting.qml' '$GREET_SRC/GreetingViewStep.cpp'"
+assert_true "...with GreetingConfig as its context property" \
+    grep -q 'setContextProperty( QStringLiteral( "greeting" ), m_config )' "$GREET_SRC/GreetingViewStep.cpp"
+assert_true "...and the engine retranslated on a language change" \
+    grep -q 'engine()->retranslate()' "$GREET_SRC/GreetingViewStep.cpp"
+assert_true "the page binds Calamares' requirements model directly" \
+    bash -c "grep -q 'Q_PROPERTY( QAbstractItemModel\* requirements' '$GREET_SRC/GreetingConfig.h' &&
+             grep -q 'model: greeting.requirements' '$GREET_SRC/qml/Greeting.qml'"
+
+# EVERY CHECK IS LISTED, NOT ONLY THE FAILURES. The vendored box filtered the satisfied rows out,
+# which meant a machine that passed all six showed an empty space where six answers were — and no
+# way to see that `internet` is checked and deliberately not required. The proxy that did the
+# filtering is gone; this is the assertion that it does not come back.
+assert_false "no failures-only proxy filters the list any more" \
+    grep -q 'QSortFilterProxyModel' "$GREET_SRC/GreetingConfig.h"
+assert_true "a row says whether its check blocks the install or merely reports" \
+    bash -c "grep -q 'required property bool mandatory' '$GREET_SRC/qml/Greeting.qml' &&
+             grep -q 'greeting.requiredLabel' '$GREET_SRC/qml/Greeting.qml' &&
+             grep -q 'greeting.optionalLabel' '$GREET_SRC/qml/Greeting.qml'"
+
+# THE "NOT YET" STATE IS DRAWN, and it is not the same as "nothing is wrong". `satisfiedMandatory`
+# is false before anything has been measured, so a page that rendered that verdict straight away
+# would say "this computer cannot install" for the second the first scan takes.
+assert_true "the page waits for the first round of checks before reporting a verdict" \
+    bash -c "grep -q 'Q_PROPERTY( bool checked' '$GREET_SRC/GreetingConfig.h' &&
+             grep -q 'visible: !greeting.checked' '$GREET_SRC/qml/Greeting.qml'"
+# ...and `checked` is driven by modelReset, not by the verdict signals. Neither of those fires
+# when a second round agrees with the first, so a machine that passed everything immediately would
+# sit on its spinner for ever.
+assert_true "...driven by the model reset, which fires on every round" \
+    bash -c "sed -n '/GreetingConfig::GreetingConfig/,/^}/p' '$GREET_SRC/GreetingConfig.cpp' |
+             grep -q 'QAbstractItemModel::modelReset'"
+
+# NO SECOND LOGO. The branding's productWelcome image is the sidebar's, and a logo in this page's
+# header would be the "logo sized to fill whatever space is left over" that plan/22 opened by
+# complaining about.
 assert_false "the greeting page draws no logo of its own" \
-    grep -qE 'ProductLogo|ProductWelcome|imagePath' "$GREET_SRC/GreetingPage.cpp"
+    grep -rqE 'ProductLogo|ProductWelcome|imagePath' "$GREET_SRC"
 
 # ---- 6e. the disk page's source, and the job it hands the disk to (plan/24) ------------------
 DISK_JOB="$CAL/local-modules/disksetup/main.py"
@@ -1382,23 +1436,27 @@ assert not bad, "; ".join(bad)
 assert_false "the QML carries no qsTr() call of its own" \
     grep -q 'qsTr("' "$APPS_QML"
 
-# THE LABEL IS PART OF THE CONTROL (plan/27 §7). The three mode rows put their text beside bare
-# radio buttons and the custom rows beside checkboxes, and a QQC2 control without `text:` does
-# not extend its hit area to a sibling label — so each label block is a MouseArea that does what
-# the control's own click does. Four of them: three modes, one per app row.
-assert_true "every label block is a click target beside its control" \
-    bash -c "grep -c 'cursorShape: Qt.PointingHandCursor' '$APPS_QML' | grep -qx 4"
-assert_true "...each mode's click answers the same question its radio does" \
-    bash -c "grep -A4 'cursorShape: Qt.PointingHandCursor' '$APPS_QML' | grep -q 'apps.mode = \"typical\"'"
-# The custom row leads with a name and a sentence: the Flathub id stays the key C++ and the job
+# THE LABEL IS PART OF THE CONTROL (plan/27 §7, and since plan/28 literally so). A QQC2 control
+# without `text:` does not extend its hit area to a sibling label, so the three mode rows and the
+# app rows each needed a MouseArea beside a bare radio or checkbox to make their words clickable.
+# The repaint removed that whole class of bug instead of re-styling it: the card IS the control,
+# with `background`, `indicator` and `contentItem` all replaced, so the words are inside the hit
+# area, inside the keyboard target and inside the accessible object. What must not come back is a
+# bare mark with the words outside it — which is what these two assertions pin.
+assert_true "the mode cards and app tiles are the controls, drawn whole" \
+    bash -c "grep -c '^ *indicator: null$' '$APPS_QML' | grep -qx 2"
+assert_false "...so no label needs a MouseArea to become clickable" \
+    grep -qE '^\s*MouseArea \{' "$APPS_QML"
+assert_true "...and a mode card still answers the question its radio does" \
+    grep -q 'onClicked: apps.mode = card.modeId' "$APPS_QML"
+# The app tile leads with a name and a sentence: the Flathub id stays the key C++ and the job
 # exchange, and stops being the text the row is read by.
 assert_false "no label draws the Flathub identifier any more" \
-    grep -q 'text: appRow.modelData.id' "$APPS_QML"
+    grep -qE 'text: app(Row|Box)\.modelData\.id' "$APPS_QML"
 assert_true "...the description sits under the name instead" \
-    grep -q 'text: appRow.modelData.description' "$APPS_QML"
-assert_true "...and a click on it toggles the checkbox it belongs to" \
-    bash -c "grep -A6 'cursorShape: Qt.PointingHandCursor' '$APPS_QML' |
-             grep -q 'apps.setSelected('"
+    grep -q 'text: appBox.modelData.description' "$APPS_QML"
+assert_true "...and toggling the tile is what changes the selection" \
+    grep -q 'onToggled: apps.setSelected(appBox.modelData.id, checked)' "$APPS_QML"
 
 # The module is `apps`, everywhere the siblings are: built by that name, sidebar named by the
 # page's one noun, QML inside the .so.
@@ -1408,6 +1466,195 @@ assert_true "...and the sidebar says Applications" \
     bash -c "sed -n '/^AppsViewStep::prettyName/,/^}/p' '$APPS_SRC/AppsViewStep.cpp' | grep -q 'tr( \"Applications\" )'"
 assert_true "...and the QML travels inside the .so rather than being installed a second time" \
     grep -q 'qt6_add_resources(${APPS_TARGET}' "$APPS_SRC/CMakeLists.txt"
+
+# ---- 6g. the design system's tokens (plan/28) ------------------------------------------------
+# The installer paints the Immos Design System, and the whole palette arrives through ONE file.
+# Three ways that can come apart, none of which fails a build:
+#
+#   1. A MODULE FORGETS TO NAME IT. stage 20 stages Theme.qml into every module whose CMakeLists
+#      asks for it, which means naming it IS the opt-in. A module that instantiates Theme{} and
+#      does not list the file gets a QML type error at load and renders a blank page — the exact
+#      failure every CMakeLists' "a resource cannot be half-installed" note is about. Stage 20
+#      cannot catch it (it only sees what the build files ask for); this can.
+#   2. A COLOUR IS INVENTED. Anything in Theme.qml that is not in the design system is a shade
+#      somebody liked, and by the time it is noticed it is on nine pages. Every literal has to be
+#      in config/branding/README.md's provenance table, which is the same bargain
+#      test-splash-assets.sh strikes with the splash colours.
+#   3. THE LIGHT/DARK NESTING INVERTS. surface-card is WHITE and surface-page is the GREY in the
+#      light theme, and every inset panel in the installer is "page on card". Swap them — which is
+#      what transcribing the dark palette by mistake does — and every panel vanishes into its
+#      background while still rendering perfectly.
+THEME_QML="$CAL/qml/Theme.qml"
+assert_file "$THEME_QML" "the design system's tokens have one canonical copy"
+
+# NOT a singleton, and this is the decision being pinned rather than a style preference: a QML
+# singleton needs a qmldir beside it and an import path registered on the engine, which is the
+# second QML search order that every module's CMakeLists refuses in writing.
+assert_false "Theme.qml is not a QML singleton (that would need an import path)" \
+    grep -q 'pragma Singleton' "$THEME_QML"
+assert_false "...and there is no qmldir beside it" \
+    test -e "$CAL/qml/qmldir"
+
+# The light-theme nesting, asserted as the two values rather than as prose.
+assert_true "surfaceCard is white (light theme, not dark)" \
+    grep -qE 'readonly property color surfaceCard: *white' "$THEME_QML"
+assert_true "...and surfacePage is the grey it sits on" \
+    grep -qE 'readonly property color surfacePage: *basalt50' "$THEME_QML"
+assert_true "the teal accent is the design system's --accent" \
+    grep -qE 'readonly property color accent: *"#0e9c8a"' "$THEME_QML"
+
+# Archivo is not packaged in Gentoo and the substitution is deliberate (config/branding/README.md).
+# Asserted because "display headings stopped being bold" is how somebody would 'fix' it by pointing
+# fontDisplay at a family the medium does not carry, which fontconfig answers silently.
+assert_true "fontDisplay is the documented IBM Plex substitution for Archivo" \
+    grep -qE 'readonly property string fontDisplay: *"IBM Plex Sans"' "$THEME_QML"
+assert_false "...and no font property asks for Archivo, which the medium does not carry" \
+    grep -qE 'property string font[A-Za-z]*: *"Archivo"' "$THEME_QML"
+
+# The shared input is the second file in that directory, and it is shared for the same reason.
+assert_file "$CAL/qml/Field.qml" "the design system's labelled input is shared, not copied per form"
+assert_false "...and says none of its own words — every string is passed in" \
+    grep -q 'qsTr("' "$CAL/qml/Field.qml"
+
+# Every module that has QML must compile the shared files in with it.
+THEME_MODULES=0
+for d in "$REPO_ROOT"/config/portage/overlay/distro-base/distro-calamares-*/files; do
+    [[ -d $d/qml ]] || continue
+    THEME_MODULES=$(( THEME_MODULES + 1 ))
+    m="$(basename -- "$(dirname -- "$d")")"
+    assert_true "$m compiles qml/Theme.qml into its own resource" \
+        grep -q 'qml/Theme\.qml' "$d/CMakeLists.txt"
+    # A module that USES a shared component must also compile it in. Naming the file is the
+    # opt-in, so the two have to agree or the page loads with a QML type error and renders blank
+    # — which is the failure every CMakeLists in this tree has a paragraph about.
+    for shared in "$CAL"/qml/*.qml; do
+        sc="$(basename -- "$shared" .qml)"
+        [[ $sc == Theme ]] && continue
+        if grep -rqE "^[[:space:]]*$sc \{" "$d/qml"; then
+            assert_true "$m instantiates $sc and compiles qml/$sc.qml in with it" \
+                grep -qF "qml/$sc.qml" "$d/CMakeLists.txt"
+        fi
+    done
+    # ...and the page must OWN its token object rather than hold an id for it, so that passing it
+    # to a child can be qualified. `ds: ds` binds a child's property to itself (the child's own
+    # `ds` shadows the page's in the right-hand side's scope): a binding loop, an undefined theme,
+    # and a page painted in whatever null evaluates to. Neither qmllint nor a grep for colours
+    # would see it; this does.
+    assert_false "$m never passes its token object to a child unqualified" \
+        grep -rqE '^[[:space:]]*ds: ds$' "$d/qml"
+    # The repository must NOT carry the copies: they are staged by stage 20 into the rendered
+    # overlay, and a checked-in copy is a second source of truth that drifts silently.
+    for shared in "$CAL"/qml/*.qml; do
+        assert_false "...and does not carry a checked-in copy of $(basename -- "$shared")" \
+            test -e "$d/qml/$(basename -- "$shared")"
+    done
+done
+assert_true "at least one module carries QML at all" test "$THEME_MODULES" -gt 0
+
+# EVERY PAGE TAKES ITSELF OUT OF BREEZE, and this is the sweep that catches the one that did not.
+# Kirigami resolves its colours from the platform theme unless `inherit` is cleared, so a page
+# that forgets the line renders perfectly — in whatever Plasma theme the live session is running,
+# beside eight pages that are painting the brand. Nothing else fails; there is no log line. The
+# page file is the one named after its module, which is the convention every module here follows.
+for d in "$REPO_ROOT"/config/portage/overlay/distro-base/distro-calamares-*/files; do
+    [[ -d $d/qml ]] || continue
+    m="$(basename -- "$(dirname -- "$d")")"
+    page="$d/qml/$(python3 -c 'import sys; print(sys.argv[1].rsplit("-",1)[1].capitalize())' "$m").qml"
+    assert_file "$page" "$m's page file is named after its module"
+    assert_true "...and takes itself out of the desktop theme" \
+        grep -qE '^\s*Kirigami\.Theme\.inherit: false$' "$page"
+    assert_true "...and owns the token object it paints from" \
+        grep -qE '^\s*readonly property Theme ds: Theme \{\}$' "$page"
+    # There is no Custom in Kirigami's ColorSet enum — the first repaint set one, it evaluated to
+    # undefined, and both pages would have rendered in the wrong palette in silence.
+    # (The ASSIGNMENT, not the word: the comment above the block in each page says what Custom
+    # was and why it is gone, and a grep for the word would fail on the explanation.)
+    assert_false "...without assigning a colour set that does not exist" \
+        grep -qE '^\s*Kirigami\.Theme\.colorSet:.*Custom' "$page"
+done
+
+# Stage 20 is the only thing that puts those files where the CMakeLists expect them.
+STAGE20="$REPO_ROOT/scripts/stages/20-builder-setup.sh"
+assert_true "stage 20 stages the shared QML into the rendered overlay" \
+    grep -q 'SHARED_QML_SRC=' "$STAGE20"
+assert_true "...driven by which CMakeLists name which file, not by a hand-kept list" \
+    grep -q 'grep -qF "qml/$base" "$cml"' "$STAGE20"
+assert_true "...and refuses a build where they reached no module at all" \
+    grep -q 'SHARED_QML_N > 0' "$STAGE20"
+
+# Provenance: every colour in the token object is one the design system published.
+THEME_UNDOCUMENTED=""
+while read -r c; do
+    grep -qi -- "$c" "$REPO_ROOT/config/branding/README.md" || THEME_UNDOCUMENTED+=" $c"
+done < <(grep -oiE '#[0-9a-f]{6}' "$THEME_QML" | tr 'A-F' 'a-f' | sort -u)
+assert_eq "" "$THEME_UNDOCUMENTED" \
+    "every colour literal in Theme.qml is recorded in config/branding/README.md"
+
+# ---- 6h. no qsTr() in any installer QML (plan/27 §1) -----------------------------------------
+# The builder's lupdate is built WITHOUT QML support, so a qsTr() in a .qml is extracted by
+# nothing, reaches no .ts file, and renders English in every language — with the page working
+# perfectly in the one language nobody needed it to. Disk.qml has carried this as a comment since
+# plan/27; a comment does not fail a build. Every user-visible string belongs on the module's
+# Config object as a tr()'d Q_PROPERTY, which is what the per-page property sweeps below check.
+QSTR_OFFENDERS=""
+while IFS= read -r -d '' f; do
+    grep -q 'qsTr("' "$f" && QSTR_OFFENDERS+=" ${f#"$REPO_ROOT"/}"
+done < <(find "$REPO_ROOT"/config/portage/overlay/distro-base/distro-calamares-*/files/qml \
+              -name '*.qml' -print0 2>/dev/null)
+assert_eq "" "$QSTR_OFFENDERS" \
+    "no installer QML calls qsTr() — the builder's lupdate cannot see it (plan/27 §1)"
+
+# ---- 6i. the QML actually parses, and resolves what it references (plan/28) -------------------
+# THE CHECK THAT FOUND A BUG THE MOMENT IT WAS WRITTEN. The first repaint set
+#
+#     Kirigami.Theme.colorSet: Kirigami.Theme.Custom
+#
+# on two pages. There is no `Custom` in Kirigami's ColorSet enum — it is
+# View/Window/Button/Selection/Tooltip/Complementary/Header — so the expression was undefined, the
+# assignment was accepted in silence, and the pages would have rendered perfectly in the wrong
+# palette. That is the exact shape of failure this whole plan is about, and no grep-based
+# assertion above would ever have seen it.
+#
+# qmllint comes from dev-qt/qtdeclarative, which is in the BUILDER and not on a developer's host,
+# so this runs in the builder image when there is one and skips when there is not — the same
+# bargain section 7 makes with PyYAML and test-splash-assets.sh makes with rsvg-convert. It is a
+# read-only container over a copy of the QML; it builds nothing.
+#
+# `unqualified` is filtered out and must be: `language`, `disk`, `accounts` and `apps` are context
+# properties injected by C++ at run time, so qmllint cannot know they exist and says so once per
+# binding. The property-sweep assertions above are what check those, and they check them better.
+#
+# Theme.qml is copied in beside each page because that is where stage 20 puts it — a lint that
+# could not resolve the token object would report every `theme.` reference and drown the signal.
+if command -v docker >/dev/null 2>&1 && docker image inspect "${I_DISTRO_ID}-builder:latest" >/dev/null 2>&1; then
+    QMLDIR="$TMP/qmllint"
+    for m in language accounts disk apps greeting; do
+        src="$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-$m/files/qml"
+        [[ -d $src ]] || continue
+        mkdir -p "$QMLDIR/$m"
+        cp "$src"/*.qml "$QMLDIR/$m/"
+        cp "$REPO_ROOT"/config/calamares/qml/*.qml "$QMLDIR/$m/"
+    done
+    QML_SHARED_PRUNE=()
+    for shared in "$REPO_ROOT"/config/calamares/qml/*.qml; do
+        QML_SHARED_PRUNE+=( ! -name "$(basename -- "$shared")" )
+    done
+    QML_TARGETS=()
+    while IFS= read -r -d '' f; do QML_TARGETS+=( "/q/${f#"$QMLDIR"/}" ); done \
+        < <(find "$QMLDIR" -name '*.qml' "${QML_SHARED_PRUNE[@]}" -print0 | sort -z)
+    # The shared files are linted once, through whichever module comes first alphabetically —
+    # they are byte-identical copies, so linting them five times says the same thing five times.
+    for shared in "$REPO_ROOT"/config/calamares/qml/*.qml; do
+        QML_TARGETS+=( "/q/accounts/$(basename -- "$shared")" )
+    done
+    QML_OUT="$(docker run --rm --entrypoint /usr/lib64/qt6/bin/qmllint \
+                   -v "$QMLDIR":/q:ro "${I_DISTRO_ID}-builder:latest" \
+                   "${QML_TARGETS[@]}" 2>&1 \
+               | grep -E '^(Error|Warning):' | grep -v '\[unqualified\]' || true)"
+    assert_eq "" "$QML_OUT" "every installer .qml parses and resolves what it references"
+else
+    echo "  (no ${I_DISTRO_ID}-builder image — skipping the qmllint pass)"
+fi
 
 # ---- 7. YAML is YAML ------------------------------------------------------------------------
 # Calamares parses these with yaml-cpp and reports a parse error as a startup failure, so a
@@ -1439,10 +1686,11 @@ assert_eq "1" "${#installer_users[@]}" "exactly one profile emerges @installer"
 assert_eq "${#installer_users[@]}" "${#live_users[@]}" \
     "every profile that emerges @installer is a live profile"
 
-# The set names six atoms: Calamares, and the five view modules this project plugs into it — the
+# The set names seven atoms: Calamares, the five view modules this project plugs into it — the
 # accounts page (plan/21), the language page (plan/22), the greeting page (plan/23), the disk page
-# (plan/24) and the applications page (plan/25). Everything else in the ~25-package tail is
-# resolved, and a set that starts listing transitive deps stops describing intent.
+# (plan/24) and the applications page (plan/25) — and one typeface. Everything else in the
+# ~25-package tail is resolved, and a set that starts listing transitive deps stops describing
+# intent.
 #
 # The count is asserted rather than the names, and it is a NUMBER on purpose: adding an atom here is
 # exactly the change that should have to be argued for in a diff, because @installer is the one set
@@ -1450,9 +1698,14 @@ assert_eq "${#installer_users[@]}" "${#live_users[@]}" \
 # a SPLIT of the third rather than new weight. The fifth is argued in plan/24 and is a REPLACEMENT:
 # it takes a stock module out of the sequence rather than adding a page, and it drops this
 # installer's last use of KPMcore with it. The sixth is argued in plan/25 and is the first that
-# replaces NOTHING — a new question, with no stock module that ever asked it.
-assert_eq "6" "$(grep -cvE '^[[:space:]]*(#|$)' "$REPO_ROOT/config/portage/sets/installer")" \
-    "@installer names exactly six atoms"
+# replaces NOTHING — a new question, with no stock module that ever asked it. The seventh is
+# argued in plan/28 and is the first that is not a module at all: media-fonts/ibm-plex, because
+# the pages set their type by family NAME and a name fontconfig cannot resolve is substituted
+# silently — the installer renders, and simply stops looking like the design system.
+assert_eq "7" "$(grep -cvE '^[[:space:]]*(#|$)' "$REPO_ROOT/config/portage/sets/installer")" \
+    "@installer names exactly seven atoms"
+assert_true "...and the seventh is the typeface the pages name" \
+    grep -qx 'media-fonts/ibm-plex' "$REPO_ROOT/config/portage/sets/installer"
 for atom in app-admin/calamares distro-base/distro-calamares-accounts \
             distro-base/distro-calamares-greeting distro-base/distro-calamares-language \
             distro-base/distro-calamares-disk distro-base/distro-calamares-apps; do

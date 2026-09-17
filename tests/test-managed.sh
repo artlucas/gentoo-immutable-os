@@ -617,8 +617,15 @@ for line in lines[start + 1:]:
     if stripped.startswith('text:'):
         break
 EOF"
-assert_true "...and a ground of its own, transparent until the row is hovered or chosen" \
-    bash -c "grep -A8 'background: Rectangle' '$PAGE/qml/Accounts.qml' | grep -q '\"transparent\"'"
+# ...AND A GROUND OF ITS OWN, drawn from the design system rather than from the style. The
+# original form of this assertion required the row to be literally "transparent" at rest, because
+# what it was defending against was Fusion filling every delegate with palette.base — an opaque
+# white slab per row over the page's own ground. Since plan/28 the card is a visible box at rest
+# (a 1px border on the page's own surface colour), so "transparent" is the wrong test for the
+# right property: what matters is that the background is HAND-BUILT and takes its colour from the
+# token object, which is a thing no Qt Quick Controls style can reach into.
+assert_true "...and a ground of its own, drawn from the design system rather than the style" \
+    bash -c "grep -A6 'background: Rectangle' '$PAGE/qml/Accounts.qml' | grep -qE 'color: choice\.checked \? ds\.'"
 
 # ...AND EVERY Q_PROPERTY MUST BE ABLE TO CHANGE, or the page freezes silently. This page has no
 # OK button of its own: it drives Calamares' Next entirely through property notifications, so a

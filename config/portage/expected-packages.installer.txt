@@ -349,6 +349,7 @@ llvm-core/llvm
 llvm-core/llvm-common
 media-fonts/font-util
 media-fonts/hack
+media-fonts/ibm-plex
 media-fonts/liberation-fonts
 media-fonts/noto
 media-fonts/noto-cjk

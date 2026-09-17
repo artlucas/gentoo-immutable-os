@@ -62,6 +62,13 @@ LanguageModel::data( const QModelIndex& index, int role ) const
         return e.id;
     case LocaleRole:
         return e.locale;
+    case LocaleShortRole:
+    {
+        // section(), not a regex: the shape is always <lang>_<TERRITORY>.<CODESET>, stage 40
+        // writes it, and a locale with no dot in it simply keeps all of itself.
+        const int dot = e.locale.indexOf( QLatin1Char( '.' ) );
+        return dot < 0 ? e.locale : e.locale.left( dot );
+    }
     default:
         return {};
     }
@@ -70,7 +77,11 @@ LanguageModel::data( const QModelIndex& index, int role ) const
 QHash< int, QByteArray >
 LanguageModel::roleNames() const
 {
-    return { { LabelRole, "label" }, { NameRole, "name" }, { IdRole, "languageId" }, { LocaleRole, "locale" } };
+    return { { LabelRole, "label" },
+             { NameRole, "name" },
+             { IdRole, "languageId" },
+             { LocaleRole, "locale" },
+             { LocaleShortRole, "localeShort" } };
 }
 
 void
@@ -255,9 +266,19 @@ LanguageConfig::retranslate()
 }
 
 QString
-LanguageConfig::headerWord() const
+LanguageConfig::pageTitle() const
 {
-    return tr( "Language" );
+    // The product's name, from branding, rather than baked into the source string: the same
+    // versionedName()/productName() pair the greeting page reads, so a rebrand moves one file.
+    const auto* branding = Calamares::Branding::instance();
+    return tr( "Welcome to %1" ).arg( branding ? branding->productName() : QString() );
+}
+
+QString
+LanguageConfig::pageLede() const
+{
+    return tr( "Pick the language you want to use while installing. This becomes the system "
+               "language, and you can change it later in Settings." );
 }
 
 QString

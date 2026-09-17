@@ -1,7 +1,7 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * Mode 3: Active Directory (plan/18, plan/21 §1).
+ * Mode 3: Active Directory (plan/18, plan/21 §1; repainted in plan/28).
  *
  * TWO THINGS THIS FORM HAS THAT CALAMARES' OWN AD CHECKBOX COULD NOT.
  *
@@ -18,95 +18,108 @@
  * `Check domain` is advisory and never blocks: a failed join cannot brick this mode, because the
  * local administrator is created either way (plan/18 §7.4).
  *
- * WHY THIS ONE FORM IS TWO COLUMNS AND THE OTHER TWO ARE NOT.
+ * WHAT plan/28 CHANGED IN THE LAYOUT, AND WHAT IT KEPT.
  *
- * It is the only mode that asks for two accounts at once — a domain to join and a local
- * administrator to keep. Measured, by rendering this file against the medium's own Qt, Kirigami
- * and qqc2-desktop-style in the viewport Calamares gives a view module — 710x536, the 900x600
- * branding window less the 190px sidebar and the 64px navigation bar (CalamaresWindow.cpp:503
- * and :509):
+ * The two panels are still two panels, and for the reason they always were: this is the only mode
+ * that asks for two accounts at once, and reading them side by side is the thing the old checkbox
+ * could not say — these are two separate answers, and you are giving both. Left is the domain and
+ * the machine's relationship to it; right is the account that survives the domain being
+ * unreachable.
  *
- *     one column    490px at rest, 590px with Advanced open  → the disclosure brings back the
- *                                                              scrollbar on its own
- *     two columns   331px at rest, 481px in the worst state anyone can reach: Advanced open, a
- *                   failed domain check and three validation errors at once
+ * What went is Kirigami.FormLayout, and with it the measurement that used to live here. Those
+ * numbers were about a layout whose labels sat to the LEFT of their fields, in a column as wide
+ * as the longest one, with a `wideMode` flip that had to be defended with explicit field widths
+ * or every row doubled in height. The design system puts labels ABOVE their fields, so a column
+ * is as wide as its fields and nothing flips. `twoColumns` stays, in pixels rather than gridUnits
+ * now that the type is not the unit of layout: below the threshold the two panels stack, which is
+ * still the right failure.
  *
- * Local and managed are 258px and 261px in one column, and that is why they stay that way: a
- * two-column form with four fields in it is a layout looking for a problem, and this one splits
- * along a seam that was already there.
+ * The panels are the design system's insets — grey on the page's white — which is also what now
+ * says "these are two groups" without a heading having to carry it alone.
  *
- * The split is not cosmetic. Left is the domain and the machine's relationship to it; right is the
- * account that survives the domain being unreachable. Reading them side by side is the thing the
- * old checkbox could not say: these are two separate answers, and you are giving both.
- *
- * `twoColumns` falls back to one column below 32 gridUnits, which is font size, not pixels — a
- * large-text or small-screen medium stacks instead of clipping, and then scrolls, which is the
- * right failure. Field widths are `Layout.preferredWidth` rather than the control's own implicit
- * width so that Kirigami.FormLayout's `wideMode` test (`width >= lay.wideImplicitWidth`,
- * FormLayout.qml:75) still passes inside a half-width column: without it the labels jump above
- * their fields and each row costs twice the height the split just saved.
+ * No qsTr() anywhere in this file: every word is an AccountsConfig tr() property (plan/27 §1).
+ * The placeholders are proper nouns and shapes, kept as literals.
  */
 import QtQuick
 import QtQuick.Layouts
-import QtQuick.Controls as QQC2
-import org.kde.kirigami as Kirigami
 
 ColumnLayout {
     id: form
 
-    spacing: Kirigami.Units.largeSpacing
+    required property Theme ds
 
-    readonly property bool twoColumns: form.width >= Kirigami.Units.gridUnit * 32
-    readonly property int fieldWidth: Kirigami.Units.gridUnit * 9
+    spacing: form.ds.space5
+
+    // Two panels side by side need room for two 40px fields and their labels; below that they
+    // stack and the page scrolls, which is the right failure rather than clipping.
+    readonly property bool twoColumns: form.width >= 640
 
     GridLayout {
         Layout.fillWidth: true
         columns: form.twoColumns ? 2 : 1
-        columnSpacing: Kirigami.Units.gridUnit
-        rowSpacing: Kirigami.Units.largeSpacing
+        columnSpacing: form.ds.space5 - 2
+        rowSpacing: form.ds.space5 - 2
 
         // ---- left: the domain ------------------------------------------------------------
-        ColumnLayout {
+        Rectangle {
             Layout.fillWidth: true
             // Equal halves. Two fillWidth items in a GridLayout share the surplus in proportion
             // to their preferred widths, so equal (and small) preferred widths is what makes the
-            // columns the same size regardless of which one has the longer labels in it.
+            // columns the same size regardless of what is in them.
             Layout.preferredWidth: 1
             Layout.alignment: Qt.AlignTop
-            spacing: Kirigami.Units.largeSpacing
+            implicitHeight: domainBody.implicitHeight + 2 * form.ds.space6
+            radius: form.ds.radiusLg
+            color: form.ds.surfacePage
+            border.width: form.ds.borderWidth
+            border.color: form.ds.borderSubtle
 
-            Kirigami.Heading {
-                level: 4
-                text: accounts.domainHeading
-            }
+            ColumnLayout {
+                id: domainBody
 
-            Kirigami.FormLayout {
-                Layout.fillWidth: true
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.margins: form.ds.space6
+                spacing: form.ds.space5 - 2
 
-                QQC2.TextField {
-                    Kirigami.FormData.label: accounts.domainNameLabel
+                Text {
                     Layout.fillWidth: true
-                    Layout.preferredWidth: form.fieldWidth
+                    text: accounts.domainHeading.toUpperCase()
+                    color: form.ds.textMuted
+                    elide: Text.ElideRight
+                    font.family: form.ds.fontMono
+                    font.pixelSize: 11
+                    font.letterSpacing: form.ds.tracking(form.ds.trackingCaps, 11)
+                }
+
+                Field {
+                    Layout.fillWidth: true
+                    ds: form.ds
+                    label: accounts.domainNameLabel
                     text: accounts.domainName
-                    onTextEdited: accounts.domainName = text
-                    placeholderText: "corp.example.com"
+                    placeholder: "corp.example.com"
+                    mono: true
+                    onEdited: function (value) { accounts.domainName = value; }
                 }
 
-                QQC2.TextField {
-                    Kirigami.FormData.label: accounts.joinAccountLabel
+                Field {
                     Layout.fillWidth: true
-                    Layout.preferredWidth: form.fieldWidth
+                    ds: form.ds
+                    label: accounts.joinAccountLabel
                     text: accounts.joinUser
-                    onTextEdited: accounts.joinUser = text
-                    placeholderText: "Administrator"
+                    placeholder: "Administrator"
+                    mono: true
+                    onEdited: function (value) { accounts.joinUser = value; }
                 }
 
-                Kirigami.PasswordField {
-                    Kirigami.FormData.label: accounts.joinPasswordLabel
+                Field {
                     Layout.fillWidth: true
-                    Layout.preferredWidth: form.fieldWidth
+                    ds: form.ds
+                    label: accounts.joinPasswordLabel
                     text: accounts.joinPassword
-                    onTextEdited: accounts.joinPassword = text
+                    echoPassword: true
+                    onEdited: function (value) { accounts.joinPassword = value; }
                 }
 
                 // What Calamares' own page called the IP field, and it does one small specific
@@ -114,209 +127,249 @@ ColumnLayout {
                 // for a domain controller that is reachable when DNS is not yet. The label lost
                 // the word "address" when this became a half-width column; the placeholder says
                 // what goes in it, which is where that word was doing more good anyway.
-                QQC2.TextField {
-                    Kirigami.FormData.label: accounts.dcLabel
+                Field {
                     Layout.fillWidth: true
-                    Layout.preferredWidth: form.fieldWidth
+                    ds: form.ds
+                    label: accounts.dcLabel
                     text: accounts.dcAddress
-                    onTextEdited: accounts.dcAddress = text
-                    placeholderText: accounts.dcPlaceholder
-                }
-            }
-
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: Kirigami.Units.smallSpacing
-
-                QQC2.Button {
-                    text: accounts.checkDomainLabel
-                    icon.name: "network-connect"
-                    enabled: !accounts.verifyRunning
-                    onClicked: accounts.verifyDomain()
+                    placeholder: accounts.dcPlaceholder
+                    mono: true
+                    onEdited: function (value) { accounts.dcAddress = value; }
                 }
 
-                QQC2.BusyIndicator {
-                    running: accounts.verifyRunning
-                    visible: running
-                    implicitWidth: Kirigami.Units.gridUnit * 1.5
-                    implicitHeight: implicitWidth
-                }
-            }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: form.ds.space3
 
-            Kirigami.InlineMessage {
-                Layout.fillWidth: true
-                visible: accounts.verifyOk || accounts.verifyFailed
-                // Information, not Error, when the check fails: the install will finish either
-                // way, and an alarm here would say the opposite of what the sentence below it
-                // says.
-                type: accounts.verifyOk ? Kirigami.MessageType.Positive : Kirigami.MessageType.Information
-                text: accounts.verifyMessage
+                    Button {
+                        ds: form.ds
+                        variant: "secondary"
+                        size: "sm"
+                        label: accounts.checkDomainLabel
+                        enabled: !accounts.verifyRunning
+                        onClicked: accounts.verifyDomain()
+                    }
+
+                    Row {
+                        visible: accounts.verifyRunning
+                        spacing: 4
+
+                        Repeater {
+                            model: 3
+
+                            Rectangle {
+                                required property int index
+
+                                width: 6
+                                height: 6
+                                radius: 3
+                                color: form.ds.accent
+
+                                SequentialAnimation on opacity {
+                                    running: accounts.verifyRunning
+                                    loops: Animation.Infinite
+
+                                    PauseAnimation { duration: index * 160 }
+                                    NumberAnimation { to: 1.0; duration: 160 }
+                                    NumberAnimation { to: 0.25; duration: 160 }
+                                    PauseAnimation { duration: (2 - index) * 160 }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Info, not danger, when the check fails: the install will finish either way, and
+                // an alarm here would say the opposite of what the sentence beside it says.
+                Rectangle {
+                    Layout.fillWidth: true
+                    implicitHeight: verifyText.implicitHeight + 2 * form.ds.space3
+                    visible: accounts.verifyOk || accounts.verifyFailed
+                    radius: form.ds.radiusMd
+                    color: accounts.verifyOk ? form.ds.statusSuccessBg : form.ds.statusInfoBg
+                    border.width: form.ds.borderWidth
+                    border.color: accounts.verifyOk
+                        ? form.ds.mix(form.ds.statusSuccess, form.ds.statusSuccessBg, 0.3)
+                        : form.ds.mix(form.ds.statusInfo, form.ds.statusInfoBg, 0.3)
+
+                    Text {
+                        id: verifyText
+
+                        anchors.fill: parent
+                        anchors.margins: form.ds.space3
+                        text: accounts.verifyMessage
+                        color: form.ds.textBody
+                        wrapMode: Text.WordWrap
+                        font.family: form.ds.fontSans
+                        font.pixelSize: form.ds.textSm
+                    }
+                }
             }
         }
 
         // ---- right: the way back in ------------------------------------------------------
-        ColumnLayout {
+        Rectangle {
             Layout.fillWidth: true
             Layout.preferredWidth: 1
             Layout.alignment: Qt.AlignTop
-            spacing: Kirigami.Units.largeSpacing
+            implicitHeight: adminBody.implicitHeight + 2 * form.ds.space6
+            radius: form.ds.radiusLg
+            color: form.ds.surfacePage
+            border.width: form.ds.borderWidth
+            border.color: form.ds.borderSubtle
 
-            Kirigami.Heading {
-                level: 4
-                text: accounts.adminHeading
-            }
+            ColumnLayout {
+                id: adminBody
 
-            QQC2.Label {
-                Layout.fillWidth: true
-                wrapMode: Text.WordWrap
-                opacity: 0.75
-                font: Kirigami.Theme.smallFont
-                text: accounts.adminIntroText
-            }
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.margins: form.ds.space6
+                spacing: form.ds.space5 - 2
 
-            Kirigami.FormLayout {
-                Layout.fillWidth: true
-
-                // The glued field-and-error rows LocalForm explains (plan/27 §6): one form row,
-                // spacing 0, the message the field's immediately following sibling.
-                ColumnLayout {
-                    Kirigami.FormData.label: accounts.loginNameLabel
-
-                    spacing: 0
-
-                    QQC2.TextField {
-                        id: adminLogin
-
-                        Layout.fillWidth: true
-                        Layout.preferredWidth: form.fieldWidth
-                        text: accounts.loginName
-                        onTextEdited: accounts.loginName = text
-                    }
-
-                    QQC2.Label {
-                        visible: accounts.loginNameMessage.length > 0
-                        text: accounts.loginNameMessage
-                        wrapMode: Text.WordWrap
-                        Layout.fillWidth: true
-                        color: Kirigami.Theme.negativeTextColor
-                        font: Kirigami.Theme.smallFont
-                    }
+                Text {
+                    Layout.fillWidth: true
+                    text: accounts.adminHeading.toUpperCase()
+                    color: form.ds.textMuted
+                    elide: Text.ElideRight
+                    font.family: form.ds.fontMono
+                    font.pixelSize: 11
+                    font.letterSpacing: form.ds.tracking(form.ds.trackingCaps, 11)
                 }
 
+                Text {
+                    Layout.fillWidth: true
+                    text: accounts.adminIntroText
+                    color: form.ds.textMuted
+                    wrapMode: Text.WordWrap
+                    font.family: form.ds.fontSans
+                    font.pixelSize: form.ds.textSm
+                    lineHeight: form.ds.leadingNormal
+                    lineHeightMode: Text.ProportionalHeight
+                }
+
+                Field {
+                    Layout.fillWidth: true
+                    ds: form.ds
+                    label: accounts.loginNameLabel
+                    text: accounts.loginName
+                    error: accounts.loginNameMessage
+                    mono: true
+                    onEdited: function (value) { accounts.loginName = value; }
+                }
+
+                // The meter belongs to the field it scores, in the same cell — see LocalForm.
                 ColumnLayout {
-                    Kirigami.FormData.label: accounts.passwordLabel
+                    Layout.fillWidth: true
+                    spacing: form.ds.space2
 
-                    spacing: 0
-
-                    Kirigami.PasswordField {
-                        id: adminPassword
-
+                    Field {
                         Layout.fillWidth: true
-                        Layout.preferredWidth: form.fieldWidth
+                        ds: form.ds
+                        label: accounts.passwordLabel
                         text: accounts.password
-                        onTextEdited: accounts.password = text
+                        error: accounts.passwordMessage
+                        echoPassword: true
+                        onEdited: function (value) { accounts.password = value; }
                     }
 
-                    QQC2.Label {
-                        visible: accounts.passwordMessage.length > 0
-                        text: accounts.passwordMessage
-                        wrapMode: Text.WordWrap
+                    Rectangle {
                         Layout.fillWidth: true
-                        color: Kirigami.Theme.negativeTextColor
-                        font: Kirigami.Theme.smallFont
-                    }
-
-                    QQC2.ProgressBar {
-                        Layout.fillWidth: true
-                        Layout.topMargin: Kirigami.Units.smallSpacing
-                        from: 0
-                        to: 100
-                        value: accounts.passwordScore
+                        implicitHeight: 8
                         visible: accounts.password.length > 0
+                        radius: form.ds.radiusPill
+                        color: form.ds.surfaceSunken
+
+                        Rectangle {
+                            width: parent.width * Math.max(0, Math.min(100, accounts.passwordScore)) / 100
+                            height: parent.height
+                            radius: form.ds.radiusPill
+                            color: accounts.passwordScore >= 70
+                                ? form.ds.statusSuccess
+                                : (accounts.passwordScore >= 40 ? form.ds.statusWarning
+                                                                : form.ds.statusDanger)
+
+                            Behavior on width {
+                                NumberAnimation { duration: form.ds.durationSlow }
+                            }
+                        }
                     }
                 }
 
-                ColumnLayout {
-                    Kirigami.FormData.label: accounts.passwordRepeatLabel
-
-                    spacing: 0
-
-                    Kirigami.PasswordField {
-                        Layout.fillWidth: true
-                        Layout.preferredWidth: form.fieldWidth
-                        text: accounts.passwordRepeat
-                        onTextEdited: accounts.passwordRepeat = text
-                    }
-
-                    QQC2.Label {
-                        visible: accounts.passwordRepeat.length > 0 && !accounts.passwordsMatch
-                        text: accounts.passwordsDifferText
-                        wrapMode: Text.WordWrap
-                        Layout.fillWidth: true
-                        color: Kirigami.Theme.negativeTextColor
-                        font: Kirigami.Theme.smallFont
-                    }
+                Field {
+                    Layout.fillWidth: true
+                    ds: form.ds
+                    label: accounts.passwordRepeatLabel
+                    text: accounts.passwordRepeat
+                    error: accounts.passwordRepeat.length > 0 && !accounts.passwordsMatch
+                        ? accounts.passwordsDifferText
+                        : ""
+                    echoPassword: true
+                    onEdited: function (value) { accounts.passwordRepeat = value; }
                 }
             }
         }
     }
 
     // ---- below both columns ---------------------------------------------------------------
-    // Advanced is full width rather than inside the domain column because its labels are the
-    // longest on the page: in a half-width column they would force the narrow-mode flip described
-    // above, and each of these three rows would cost twice the height the split just saved.
-    QQC2.Button {
+    // Advanced is full width rather than inside the domain panel because its labels are the
+    // longest on the page and there are three of them: in a half-width panel they would be the
+    // thing that decided the split.
+    Button {
         id: advancedToggle
-        checkable: true
-        flat: true
-        text: accounts.advancedLabel
-        icon.name: checked ? "go-down-symbolic" : "go-next-symbolic"
+
+        property bool open: false
+
+        ds: form.ds
+        variant: "ghost"
+        size: "sm"
+        label: accounts.advancedLabel
+        onClicked: advancedToggle.open = !advancedToggle.open
     }
 
-    Kirigami.FormLayout {
+    GridLayout {
         Layout.fillWidth: true
-        visible: advancedToggle.checked
+        visible: advancedToggle.open
+        columns: form.twoColumns ? 2 : 1
+        columnSpacing: form.ds.space5 - 2
+        rowSpacing: form.ds.space5 - 2
 
-        QQC2.TextField {
-            Kirigami.FormData.label: accounts.computerOuLabel
+        Field {
             Layout.fillWidth: true
-            Layout.preferredWidth: form.fieldWidth
+            ds: form.ds
+            label: accounts.computerOuLabel
             text: accounts.computerOu
-            onTextEdited: accounts.computerOu = text
-            placeholderText: "OU=Laptops,DC=corp,DC=example,DC=com"
+            placeholder: "OU=Laptops,DC=corp,DC=example,DC=com"
+            mono: true
+            onEdited: function (value) { accounts.computerOu = value; }
         }
 
-        QQC2.TextField {
-            Kirigami.FormData.label: accounts.adminGroupLabel
+        Field {
             Layout.fillWidth: true
-            Layout.preferredWidth: form.fieldWidth
+            ds: form.ds
+            label: accounts.adminGroupLabel
             text: accounts.adminGroup
-            onTextEdited: accounts.adminGroup = text
-            placeholderText: "Domain Admins"
+            placeholder: "Domain Admins"
+            onEdited: function (value) { accounts.adminGroup = value; }
         }
 
-        QQC2.TextField {
-            Kirigami.FormData.label: accounts.computerAccountLabel
+        Field {
             Layout.fillWidth: true
-            Layout.preferredWidth: form.fieldWidth
+            ds: form.ds
+            label: accounts.computerAccountLabel
             text: accounts.computerName
-            onTextEdited: accounts.computerName = text
-            placeholderText: accounts.computerAccountPlaceholder
+            placeholder: accounts.computerAccountPlaceholder
+            mono: true
+            onEdited: function (value) { accounts.computerName = value; }
         }
     }
 
-    Kirigami.Separator {
-        Layout.fillWidth: true
-    }
-
-    // The machine's own name, and it belongs to neither column: it is the hostname in every mode,
+    // The machine's own name, and it belongs to neither panel: it is the hostname in every mode,
     // it is what the computer account defaults to above, and putting it under one of the two
     // accounts would have implied it was part of that account.
-    Kirigami.FormLayout {
+    ComputerNameField {
         Layout.fillWidth: true
-
-        ComputerNameField {
-            Layout.preferredWidth: form.fieldWidth
-        }
+        Layout.maximumWidth: form.twoColumns ? (form.width - (form.ds.space5 - 2)) / 2 : form.width
+        ds: form.ds
     }
 }

@@ -396,14 +396,11 @@
     </message>
 </context>
 <context>
-    <name>CheckerContainer</name>
-    <message>
-        <source>Gathering system information…</source>
-        <translation>Сбор информации о системе…</translation>
-    </message>
-</context>
-<context>
     <name>DiskConfig</name>
+    <message>
+        <source>Not eligible</source>
+        <translation>Не подходит</translation>
+    </message>
     <message>
         <source>unformatted</source>
         <translation>не отформатирован</translation>
@@ -593,23 +590,36 @@
 <context>
     <name>GreetingConfig</name>
     <message>
+        <source>This program will ask you a few questions and then install %1 on this computer. Everything already on the disk you choose will be erased.</source>
+        <translation>Программа задаст несколько вопросов и затем установит %1 на этот компьютер. Все данные на выбранном диске будут удалены.</translation>
+    </message>
+    <message>
+        <source>Gathering system information…</source>
+        <translation>Сбор информации о системе…</translation>
+    </message>
+    <message>
+        <source>Checking requirements again in a few seconds…</source>
+        <translation>Повторная проверка требований через несколько секунд…</translation>
+    </message>
+    <message>
+        <source>OK</source>
+        <translation>OK</translation>
+    </message>
+    <message>
+        <source>Required</source>
+        <translation>Обязательно</translation>
+    </message>
+    <message>
+        <source>Optional</source>
+        <translation>Необязательно</translation>
+    </message>
+    <message>
         <source>This computer can install %1.</source>
         <translation>Этот компьютер подходит для установки %1.</translation>
     </message>
     <message>
         <source>This computer cannot install %1.</source>
         <translation>Этот компьютер не подходит для установки %1.</translation>
-    </message>
-</context>
-<context>
-    <name>GreetingPage</name>
-    <message>
-        <source>Install medium</source>
-        <translation>Установочный носитель</translation>
-    </message>
-    <message>
-        <source>This program will ask you a few questions and then install %1 on this computer. Everything already on the disk you choose will be erased.</source>
-        <translation>Программа задаст несколько вопросов и затем установит %1 на этот компьютер. Все данные на выбранном диске будут удалены.</translation>
     </message>
 </context>
 <context>
@@ -622,8 +632,12 @@
 <context>
     <name>LanguageConfig</name>
     <message>
-        <source>Language</source>
-        <translation>Язык</translation>
+        <source>Welcome to %1</source>
+        <translation>Добро пожаловать в %1</translation>
+    </message>
+    <message>
+        <source>Pick the language you want to use while installing. This becomes the system language, and you can change it later in Settings.</source>
+        <translation>Выберите язык, который вы хотите использовать при установке. Он станет языком системы, и его можно изменить позже в настройках.</translation>
     </message>
 </context>
 <context>
@@ -756,13 +770,6 @@
     <message>
         <source>no screen found</source>
         <translation>экран не найден</translation>
-    </message>
-</context>
-<context>
-    <name>ResultsListWidget</name>
-    <message>
-        <source>Checking requirements again in a few seconds…</source>
-        <translation>Повторная проверка требований через несколько секунд…</translation>
     </message>
 </context>
 </TS>

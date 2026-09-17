@@ -10,7 +10,7 @@
  * everything that matters here — Units, Theme, FormLayout, InlineMessage, PasswordField — and the
  * desktop style comes from qqc2-desktop-style, asked for once in AccountsViewStep's constructor.
  * That is load-bearing rather than cosmetic: Kirigami picks its platform integration plugin from
- * the style's name, and that plugin is what initialises the icon theme, so under any other style
+ * the style's name, and that plugin is what initialises the icon ds, so under any other style
  * this page has no icons at all (plan/21 §1b, measured in a VM).
  *
  * No qsTr() in this file, and none anywhere in this module's QML (plan/27 §1): the builder's
@@ -96,10 +96,44 @@ Item {
     ]
     readonly property var chosen: root.modes.find(function (m) { return m.mode === accounts.mode }) || null
 
+    // THE PAGE PAINTS THE DESIGN SYSTEM, NOT THE DESKTOP THEME (plan/28). Without this block
+    // Kirigami resolves these out of Breeze and the page is whichever Plasma ds the live
+    // session happens to run. It matters for the controls this page does not draw itself — the
+    // scroll bar and the two dialogs; the rest reads `ds` directly.
+    //
+    // `inherit: false` AND NOTHING ELSE IS THE SWITCH. There is no Kirigami.Theme.Custom colour
+    // set — the ColorSet enum is View/Window/Button/Selection/Tooltip/Complementary/Header — and
+    // naming one would have evaluated to undefined and been assigned silently, which is this
+    // whole plan's failure mode wearing a different hat.
+    Kirigami.Theme.inherit: false
+    Kirigami.Theme.backgroundColor: ds.surfaceCard
+    Kirigami.Theme.alternateBackgroundColor: ds.surfacePage
+    Kirigami.Theme.textColor: ds.textBody
+    Kirigami.Theme.disabledTextColor: ds.textSubtle
+    Kirigami.Theme.highlightColor: ds.accent
+    Kirigami.Theme.highlightedTextColor: ds.accentOn
+    Kirigami.Theme.hoverColor: ds.accentSoft
+    Kirigami.Theme.focusColor: ds.accent
+    Kirigami.Theme.activeTextColor: ds.accentStrong
+    Kirigami.Theme.linkColor: ds.textLink
+    Kirigami.Theme.positiveTextColor: ds.statusSuccess
+    Kirigami.Theme.neutralTextColor: ds.statusWarning
+    Kirigami.Theme.negativeTextColor: ds.statusDanger
+
+    // ONE Theme FOR THE PAGE AND ITS THREE FORMS. Each form takes it as a property rather than
+    // instantiating its own — not for the allocation, which is nothing, but so that there is
+    // exactly one object to look at when a colour is wrong.
+    // The page OWNS the token object rather than merely holding an id for it, and that
+    // is what makes `ds: root.ds` below say what it means. Passed down as `ds: ds` it
+    // would resolve the right-hand side in the CHILD's scope, where the child's own `ds`
+    // property shadows this one — a binding loop, an undefined theme, and a page drawn
+    // in whatever a null token object evaluates to.
+    readonly property Theme ds: Theme {}
+
     // Calamares' window paints nothing behind this widget, so the page paints its own ground.
     Rectangle {
         anchors.fill: parent
-        color: Kirigami.Theme.backgroundColor
+        color: ds.surfaceCard
     }
 
     // The mode buttons' exclusivity lives HERE rather than in a binding on each button's
@@ -131,7 +165,10 @@ Item {
         Item {
             id: sheet
 
-            readonly property int margin: Kirigami.Units.largeSpacing
+            // The design system's content padding: 36 down the page, 44 in from the sides. It is
+            // asymmetric, so `margin` became two.
+            readonly property int margin: ds.space8 + ds.space1
+            readonly property int sideMargin: ds.space10 + ds.space1
 
             width: scroll.availableWidth
             implicitHeight: column.implicitHeight + 2 * margin
@@ -139,29 +176,46 @@ Item {
             ColumnLayout {
                 id: column
 
-                x: sheet.margin
+                x: sheet.sideMargin
                 y: sheet.margin
-                width: sheet.width - 2 * sheet.margin
-                spacing: Kirigami.Units.largeSpacing
+                width: Math.min(sheet.width - 2 * sheet.sideMargin, ds.contentMaxWidth)
+                spacing: ds.space6
 
                 // ======== screen one: the choice ========================================
                 ColumnLayout {
                     Layout.fillWidth: true
                     visible: accounts.onChooser
-                    spacing: Kirigami.Units.largeSpacing
+                    // The design system's card gutter. The heading and its lede are one block
+                    // inside it, with the tighter gap of their own, so that the two sentences
+                    // read as one unit and the cards below do not.
+                    spacing: ds.space3
 
-                    Kirigami.Heading {
+                    ColumnLayout {
                         Layout.fillWidth: true
-                        level: 2
-                        wrapMode: Text.WordWrap
-                        text: accounts.chooserHeading
-                    }
+                        Layout.bottomMargin: ds.space3
+                        spacing: ds.space2
 
-                    QQC2.Label {
-                        Layout.fillWidth: true
-                        wrapMode: Text.WordWrap
-                        opacity: 0.75
-                        text: accounts.chooserWarning
+                        Text {
+                            Layout.fillWidth: true
+                            text: accounts.chooserHeading
+                            color: ds.textStrong
+                            wrapMode: Text.WordWrap
+                            font.family: ds.fontDisplay
+                            font.pixelSize: ds.textHeading
+                            font.weight: ds.weightBold
+                            font.letterSpacing: ds.tracking(ds.trackingTight, ds.textHeading)
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: accounts.chooserWarning
+                            color: ds.textMuted
+                            wrapMode: Text.WordWrap
+                            font.family: ds.fontSans
+                            font.pixelSize: ds.textMd
+                            lineHeight: ds.leadingNormal
+                            lineHeightMode: Text.ProportionalHeight
+                        }
                     }
 
                     Repeater {
@@ -191,89 +245,124 @@ Item {
                             Layout.fillWidth: true
                             visible: choice.modelData.offered
                             hoverEnabled: true
-                            // Roomier than the style's own delegate padding, because this tinted
-                            // box is a click target holding three lines, and the height is there:
-                            // the chooser measures 255px of a 536px viewport.
-                            padding: Kirigami.Units.largeSpacing
+                            // The design system's card padding. This box is a click target
+                            // holding three lines, and the height is there: the chooser measures
+                            // 255px of a 536px viewport.
+                            padding: ds.space5 - 2
                             QQC2.ButtonGroup.group: modeGroup
                             onToggled: if (checked) { accounts.mode = choice.modelData.mode }
 
+                            HoverHandler {
+                                id: choiceHover
+                                cursorShape: Qt.PointingHandCursor
+                            }
+
                             // `text` IS SET even though the contentItem below draws the title
-                            // itself and no style draws `text` outside a contentItem, because the
-                            // indicator's x asks about it: Basic and Fusion read
-                            // `control.text ? leftPadding : leftPadding + (availableWidth - width) / 2`,
-                            // so an empty text parks the bullet in the middle of the row — which
-                            // is what rendering it under those styles showed. (The desktop style
-                            // asks `contentItem.width > 0` instead and is left either way.) It is
-                            // also the accessible name; the subtitle has to be given separately.
+                            // itself and no style draws `text` outside a contentItem. It used to
+                            // be load-bearing for the indicator's x — Basic and Fusion park an
+                            // empty-text bullet in the middle of the row — and since plan/28 the
+                            // indicator is gone entirely, so what it is now is the accessible
+                            // name. The subtitle still has to be given separately.
                             text: choice.modelData.title
                             Accessible.description: choice.modelData.subtitle
 
-                            // The row's own ground: transparent unless it is hovered, focused or
-                            // chosen, so the page's background shows through instead of a slab.
-                            // The chosen row is tinted as well as bulleted, because on a screen
-                            // whose whole purpose is one decision, the decision should be visible
-                            // from across the room.
+                            // THE CARD IS THE CONTROL (plan/28). background, indicator and
+                            // contentItem are all replaced, so the whole card is the hit area,
+                            // the keyboard target and the accessible object. The chosen card is
+                            // washed as well as bulleted, because on a screen whose whole purpose
+                            // is one decision, the decision should be visible from across the
+                            // room — and the design favours a border over a fill for everything
+                            // else, which is why hover moves the border and not the ground.
                             background: Rectangle {
-                                radius: Kirigami.Units.cornerRadius
-                                color: choice.checked
-                                    ? Qt.alpha( Kirigami.Theme.highlightColor, 0.15 )
-                                    : ( choice.hovered ? Qt.alpha( Kirigami.Theme.hoverColor, 0.25 )
-                                                       : "transparent" )
-                                border.width: choice.checked || choice.visualFocus ? 1 : 0
-                                border.color: choice.visualFocus ? Kirigami.Theme.focusColor
-                                                                 : Kirigami.Theme.highlightColor
+                                radius: ds.radiusLg
+                                color: choice.checked ? ds.accentWash : ds.surfaceCard
+                                border.width: ds.borderWidth
+                                border.color: choice.checked || choice.visualFocus
+                                    ? ds.accent
+                                    : (choiceHover.hovered ? ds.borderStrong : ds.borderSubtle)
+
+                                Behavior on border.color {
+                                    ColorAnimation { duration: ds.durationBase }
+                                }
                             }
+
+                            // Drawn inside contentItem below, at the design system's 20px with a
+                            // 2px ring, rather than left where the style puts it.
+                            indicator: null
 
                             // Kirigami's RadioSubtitleDelegate is the near-miss this replaces: it
                             // elides its subtitle instead of wrapping it, and there is a third
                             // line here. `needs` is what this choice will ask of you before the
                             // install can continue — the sentence somebody wants BEFORE choosing,
                             // not after.
+                            // Kirigami's RadioSubtitleDelegate is the near-miss this replaces: it
+                            // elides its subtitle instead of wrapping it, and there is a third
+                            // line here. `needs` is what this choice will ask of you before the
+                            // install can continue — the sentence somebody wants BEFORE choosing,
+                            // not after.
                             contentItem: RowLayout {
-                                spacing: Kirigami.Units.largeSpacing
+                                spacing: ds.space3
 
-                                // The indicator's footprint. Every style draws the indicator at
-                                // the control's leftPadding and leaves room for it by padding the
-                                // label it also supplies — a label this replaces, so the room has
-                                // to be made here or the bullet lands on top of the icon.
-                                Item {
-                                    implicitWidth: choice.indicator ? choice.indicator.width : 0
-                                    implicitHeight: 1
+                                Rectangle {
+                                    Layout.alignment: Qt.AlignTop
+                                    Layout.topMargin: 2
+                                    implicitWidth: 20
+                                    implicitHeight: 20
+                                    radius: width / 2
+                                    color: "transparent"
+                                    border.width: ds.borderWidthStrong
+                                    border.color: choice.checked ? ds.accent : ds.borderStrong
+
+                                    Rectangle {
+                                        anchors.centerIn: parent
+                                        width: 10
+                                        height: width
+                                        radius: width / 2
+                                        visible: choice.checked
+                                        color: ds.accent
+                                    }
                                 }
 
                                 Kirigami.Icon {
                                     source: choice.modelData.icon
-                                    implicitWidth: Kirigami.Units.iconSizes.large
-                                    implicitHeight: Kirigami.Units.iconSizes.large
-                                    Layout.alignment: Qt.AlignVCenter
+                                    implicitWidth: 24
+                                    implicitHeight: 24
+                                    Layout.alignment: Qt.AlignTop
                                 }
 
                                 ColumnLayout {
                                     Layout.fillWidth: true
-                                    spacing: 0
+                                    spacing: 5
 
-                                    QQC2.Label {
+                                    Text {
                                         Layout.fillWidth: true
                                         text: choice.modelData.title
-                                        font.bold: true
+                                        color: ds.textStrong
                                         wrapMode: Text.WordWrap
+                                        font.family: ds.fontSans
+                                        font.pixelSize: ds.textBase
+                                        font.weight: ds.weightSemibold
                                     }
 
-                                    QQC2.Label {
+                                    Text {
                                         Layout.fillWidth: true
                                         text: choice.modelData.subtitle
+                                        color: ds.textMuted
                                         wrapMode: Text.WordWrap
-                                        opacity: 0.7
+                                        font.family: ds.fontSans
+                                        font.pixelSize: ds.textSm
+                                        lineHeight: ds.leadingSnug
+                                        lineHeightMode: Text.ProportionalHeight
                                     }
 
-                                    QQC2.Label {
+                                    Text {
                                         Layout.fillWidth: true
-                                        Layout.topMargin: Kirigami.Units.smallSpacing
+                                        Layout.topMargin: ds.space1
                                         text: choice.modelData.needs
+                                        color: ds.textSubtle
                                         wrapMode: Text.WordWrap
-                                        opacity: 0.55
-                                        font: Kirigami.Theme.smallFont
+                                        font.family: ds.fontSans
+                                        font.pixelSize: ds.textXs
                                     }
                                 }
                             }
@@ -285,45 +374,37 @@ Item {
                 ColumnLayout {
                     Layout.fillWidth: true
                     visible: accounts.onFields
-                    spacing: Kirigami.Units.largeSpacing
+                    spacing: ds.space6
 
                     // The header says which choice these fields belong to, because on this screen
                     // the choice itself is off-screen. It is a label, not a control: the window's
                     // own Back is the one way back to the chooser, so there is exactly one thing
                     // to press and no second button that has to be kept doing the same thing.
-                    RowLayout {
+                    ColumnLayout {
                         Layout.fillWidth: true
-                        spacing: Kirigami.Units.largeSpacing
+                        spacing: ds.space2
 
-                        Kirigami.Icon {
-                            source: root.chosen ? root.chosen.icon : ""
-                            implicitWidth: Kirigami.Units.iconSizes.medium
-                            implicitHeight: Kirigami.Units.iconSizes.medium
-                        }
-
-                        ColumnLayout {
+                        Text {
                             Layout.fillWidth: true
-                            spacing: 0
-
-                            Kirigami.Heading {
-                                Layout.fillWidth: true
-                                level: 2
-                                wrapMode: Text.WordWrap
-                                text: root.chosen ? root.chosen.title : ""
-                            }
-
-                            QQC2.Label {
-                                Layout.fillWidth: true
-                                wrapMode: Text.WordWrap
-                                opacity: 0.7
-                                font: Kirigami.Theme.smallFont
-                                text: root.chosen ? root.chosen.subtitle : ""
-                            }
+                            text: root.chosen ? root.chosen.title : ""
+                            color: ds.textStrong
+                            wrapMode: Text.WordWrap
+                            font.family: ds.fontDisplay
+                            font.pixelSize: ds.textHeading
+                            font.weight: ds.weightBold
+                            font.letterSpacing: ds.tracking(ds.trackingTight, ds.textHeading)
                         }
-                    }
 
-                    Kirigami.Separator {
-                        Layout.fillWidth: true
+                        Text {
+                            Layout.fillWidth: true
+                            text: root.chosen ? root.chosen.subtitle : ""
+                            color: ds.textMuted
+                            wrapMode: Text.WordWrap
+                            font.family: ds.fontSans
+                            font.pixelSize: ds.textMd
+                            lineHeight: ds.leadingNormal
+                            lineHeightMode: Text.ProportionalHeight
+                        }
                     }
 
                     // Each form is `visible` on the mode and nothing else. There is no "shown but
@@ -333,16 +414,19 @@ Item {
                     LocalForm {
                         Layout.fillWidth: true
                         visible: accounts.isLocalMode
+                        ds: root.ds
                     }
 
                     ManagedForm {
                         Layout.fillWidth: true
                         visible: accounts.isManagedMode
+                        ds: root.ds
                     }
 
                     DomainForm {
                         Layout.fillWidth: true
                         visible: accounts.isDomainMode
+                        ds: root.ds
                     }
                 }
             }

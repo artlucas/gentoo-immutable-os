@@ -92,5 +92,11 @@ endif()
 qt6_add_resources(${LANGUAGE_TARGET} "language_qml"
     PREFIX "/language"
     FILES
+        # The design system's tokens (plan/28). NOT in this directory in the repository —
+        # config/calamares/qml/Theme.qml is the one copy, and scripts/stages/20-builder-setup.sh
+        # stages it here for every module whose CMakeLists names it, which is this line. Naming it
+        # is therefore how a module opts in; a page that instantiates Theme{} without this line
+        # fails to load with a QML type error and renders blank.
+        qml/Theme.qml
         qml/Language.qml
 )

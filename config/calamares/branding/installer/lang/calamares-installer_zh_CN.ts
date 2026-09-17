@@ -392,14 +392,11 @@
     </message>
 </context>
 <context>
-    <name>CheckerContainer</name>
-    <message>
-        <source>Gathering system information…</source>
-        <translation>正在收集系统信息…</translation>
-    </message>
-</context>
-<context>
     <name>DiskConfig</name>
+    <message>
+        <source>Not eligible</source>
+        <translation>不可用</translation>
+    </message>
     <message>
         <source>unformatted</source>
         <translation>未格式化</translation>
@@ -583,23 +580,36 @@
 <context>
     <name>GreetingConfig</name>
     <message>
+        <source>This program will ask you a few questions and then install %1 on this computer. Everything already on the disk you choose will be erased.</source>
+        <translation>本程序将询问几个问题，然后在这台计算机上安装 %1。所选磁盘上的所有内容都将被清除。</translation>
+    </message>
+    <message>
+        <source>Gathering system information…</source>
+        <translation>正在收集系统信息…</translation>
+    </message>
+    <message>
+        <source>Checking requirements again in a few seconds…</source>
+        <translation>几秒钟后再次检查要求…</translation>
+    </message>
+    <message>
+        <source>OK</source>
+        <translation>正常</translation>
+    </message>
+    <message>
+        <source>Required</source>
+        <translation>必需</translation>
+    </message>
+    <message>
+        <source>Optional</source>
+        <translation>可选</translation>
+    </message>
+    <message>
         <source>This computer can install %1.</source>
         <translation>这台计算机可以安装 %1。</translation>
     </message>
     <message>
         <source>This computer cannot install %1.</source>
         <translation>这台计算机无法安装 %1。</translation>
-    </message>
-</context>
-<context>
-    <name>GreetingPage</name>
-    <message>
-        <source>Install medium</source>
-        <translation>安装介质</translation>
-    </message>
-    <message>
-        <source>This program will ask you a few questions and then install %1 on this computer. Everything already on the disk you choose will be erased.</source>
-        <translation>本程序将询问几个问题，然后在这台计算机上安装 %1。所选磁盘上的所有内容都将被清除。</translation>
     </message>
 </context>
 <context>
@@ -612,8 +622,12 @@
 <context>
     <name>LanguageConfig</name>
     <message>
-        <source>Language</source>
-        <translation>语言</translation>
+        <source>Welcome to %1</source>
+        <translation>欢迎使用 %1</translation>
+    </message>
+    <message>
+        <source>Pick the language you want to use while installing. This becomes the system language, and you can change it later in Settings.</source>
+        <translation>选择安装时使用的语言。它将成为系统语言，之后可以在设置中更改。</translation>
     </message>
 </context>
 <context>
@@ -746,13 +760,6 @@
     <message>
         <source>no screen found</source>
         <translation>未找到屏幕</translation>
-    </message>
-</context>
-<context>
-    <name>ResultsListWidget</name>
-    <message>
-        <source>Checking requirements again in a few seconds…</source>
-        <translation>几秒钟后再次检查要求…</translation>
     </message>
 </context>
 </TS>

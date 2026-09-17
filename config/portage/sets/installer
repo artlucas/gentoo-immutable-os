@@ -137,3 +137,27 @@ distro-base/distro-calamares-disk
 # Named only by this profile, like the other four: on a desktop image it would install a
 # Calamares plugin into a system with no Calamares.
 distro-base/distro-calamares-apps
+
+# ---- the installer's typeface (plan/28) ---------------------------------------------------------
+# IBM Plex, and it is on this medium for one reason: the Calamares pages set their type by NAME.
+# config/calamares/qml/Theme.qml asks for "IBM Plex Sans" and "IBM Plex Mono" because that is what
+# the Immos Design System specifies, and a font family Qt cannot resolve does not fail — fontconfig
+# substitutes something, every page renders, and the installer simply stops looking like the
+# design. There is no assertion downstream that can catch that; the atom is the assertion.
+#
+# USE=ttf at the ebuild default, which is exclusive with otf (REQUIRED_USE). Either would do; ttf
+# is what every other font on this medium is, so it is the one that needs no explanation.
+#
+# ARCHIVO IS NOT HERE, AND THAT IS THE COMPROMISE. The design system's display face is Archivo,
+# which Gentoo does not package at all. The only Archivo in this repository is the wordmark in
+# config/branding/wordmark.svg, outlined once by hand precisely so the build needs no font binary
+# (config/branding/README.md, "Regenerating the wordmark"). Packaging a second font — with a
+# network SRC_URI — so that nine headings could be set in it was weighed and refused; Theme.qml's
+# fontDisplay is IBM Plex Sans and the weight carries the emphasis instead. That substitution is
+# recorded in Theme.qml and in config/branding/README.md, not left for the next reader to notice.
+#
+# NOT on the desktop or console profiles. Those images have no Calamares and therefore no page
+# that names these families, and 150 MiB of typeface for nothing is the same trade the installer
+# tail makes and the product refuses. stage 50 §3n cuts this atom down further even here: the
+# package ships twelve families and the installer renders two.
+media-fonts/ibm-plex

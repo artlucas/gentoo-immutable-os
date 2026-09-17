@@ -9,32 +9,21 @@
  * shows, and in domain mode it is the default for the computer account's name. The page this one
  * replaces had two of these — the users page's hostname and the managed page's "Name for this
  * computer" — with nothing reconciling them.
+ *
+ * Since plan/28 it is a thin wrapper over the shared Field: mono, because a host name is an
+ * identifier and the design system sets identifiers in the mono face. The wrapper survives the
+ * repaint because what it is for was never the markup — it is the one place three forms agree
+ * about one GlobalStorage key.
  */
 import QtQuick
 import QtQuick.Layouts
-import QtQuick.Controls as QQC2
-import org.kde.kirigami as Kirigami
 
-ColumnLayout {
+Field {
     id: field
 
-    Kirigami.FormData.label: accounts.computerNameLabel
-
-    spacing: 0
-
-    QQC2.TextField {
-        id: input
-        Layout.fillWidth: true
-        text: accounts.hostname
-        onTextEdited: accounts.hostname = text
-    }
-
-    QQC2.Label {
-        Layout.fillWidth: true
-        visible: accounts.hostnameMessage.length > 0
-        text: accounts.hostnameMessage
-        wrapMode: Text.WordWrap
-        color: Kirigami.Theme.negativeTextColor
-        font: Kirigami.Theme.smallFont
-    }
+    label: accounts.computerNameLabel
+    text: accounts.hostname
+    error: accounts.hostnameMessage
+    mono: true
+    onEdited: function (value) { accounts.hostname = value; }
 }

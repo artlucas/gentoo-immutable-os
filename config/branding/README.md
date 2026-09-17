@@ -80,13 +80,56 @@ Do not change the zoom in one place only — `tests/test-splash-assets.sh` asser
 
 ## Design provenance
 
-Immos Design System handoff → `project/templates/bootsplash/Bootsplash.dc.html`,
+Two handoffs from the Immos Design System, and they resolve the same tokens to **different
+themes**. That is deliberate and it is the thing to understand before changing either.
+
+**The boot splash** → `project/templates/bootsplash/Bootsplash.dc.html`,
 `project/components/feedback/Spinner.jsx` (animation "B · Layer pulse"),
 `project/assets/logomark.svg`, `project/tokens/{colors,semantic,theme-palettes}.css`.
 
-Resolved token values (dark theme, teal accent): background `#0a0d11` (`--surface-sunken`),
+Resolved token values (**dark** theme, teal accent): background `#0a0d11` (`--surface-sunken`),
 logomark `#0e9c8a` (`--accent`), wordmark `#f6f7f9` (`--text-strong`), status text `#66707f`
 (`--text-subtle`).
+
+**The installer** (plan/28) → `project/Immos Installer.dc.html` and the same token files, resolved
+to the **light** theme with the teal accent. It is transcribed into
+`config/calamares/qml/Theme.qml`, and the table below is the second copy of those values —
+`tests/test-installer.sh` requires every colour literal in that file to appear here, so a shade
+invented on one page fails the offline suite rather than shipping unexplained.
+
+| token | value | token | value |
+|---|---|---|---|
+| `--surface-page` | `#f6f7f9` | `--text-strong` | `#161b21` |
+| `--surface-card` | `#ffffff` | `--text-body` | `#363e4a` |
+| `--surface-sunken` | `#eceef2` | `--text-muted` | `#66707f` |
+| `--surface-raised` | `#ffffff` | `--text-subtle` | `#8b94a3` |
+| `--surface-inverse` | `#161b21` | `--text-link` | `#0a7e70` |
+| `--border-subtle` | `#d8dde4` | `--accent-tint` | `#c3ede6` |
+| `--border-default` | `#b9c0cc` | `--accent-soft` | `#5accbb` |
+| `--border-strong` | `#8b94a3` | `--accent` | `#0e9c8a` |
+| `--divider` | `#d8dde4` | `--accent-hover` | `#0a7e70` |
+| `--status-success` | `#158048` on `#d9f2e3` | `--accent-strong` | `#0a645a` |
+| `--status-warning` | `#b47f0e` on `#fbeecb` | `--accent-on` | `#ffffff` |
+| `--status-danger` | `#bd2c2c` on `#fbdedd` | `--basalt-300` | `#b9c0cc` |
+| `--status-info` | `#2159c1` on `#dbe7fb` | `--basalt-500` | `#66707f` |
+
+`--surface-overlay` is `rgba(13,17,22,0.45)` and is written as a `Qt.rgba()` call rather than a
+hex literal, which is why it is not in the table's shape.
+
+**The two grounds.** `logo.png` and `slide.png` are composed by `make-splash-assets.py` from the
+same `build_block()` as the boot splash, but they are flattened onto the **installer's**
+`--surface-page` rather than the splash's `#0a0d11` — because they are pasted into a light window
+and a dark rectangle behind the logomark is exactly what "no visible edge" was supposed to
+prevent. So the claim above that all consumers share one layout function still holds; what they no
+longer share is the colour underneath. `--bg` is the argument that says which, it defaults to the
+splash's dark, and `tests/test-splash-assets.sh` pins both.
+
+**Archivo is substituted, not shipped.** The design system's display face is Archivo. Gentoo does
+not package it, and the only Archivo in this repository is the outlined wordmark below — which
+exists so that the build needs no font binary at all. Rather than add a font package with a
+network `SRC_URI` for the sake of nine headings, `Theme.qml`'s `fontDisplay` is **IBM Plex Sans**
+and weight carries the emphasis. `media-fonts/ibm-plex` is on the installer medium and nowhere
+else (`config/portage/sets/installer`), and stage 50 §3n keeps only the Sans and Mono families.
 
 ## Regenerating the wordmark
 

@@ -88,6 +88,13 @@ public:
      *  selection as well as on the language, and setCurrentIndex() re-emits retranslated() for
      *  it the way rescan() always has for the headline. */
     Q_PROPERTY( QString checkAgainLabel READ checkAgainLabel NOTIFY retranslated )
+    /*! The badge a row that cannot be installed onto wears (plan/28). Until the page was
+     *  repainted, "blocked" was drawn as nothing but reduced opacity — which says "unavailable"
+     *  to somebody who already suspects it and says nothing at all to anybody else, least of all
+     *  to a screen reader. It is the one word this page gained from the design system's row
+     *  layout, and installable rows deliberately get no badge in return: the installer does not
+     *  rank disks, and a "Recommended" chip would be an opinion it has not got. */
+    Q_PROPERTY( QString notEligibleLabel READ notEligibleLabel NOTIFY retranslated )
     Q_PROPERTY( QString noDisksText READ noDisksText NOTIFY retranslated )
     Q_PROPERTY( QString noDisksMinimumText READ noDisksMinimumText NOTIFY retranslated )
     Q_PROPERTY( QString layoutSummaryLabel READ layoutSummaryLabel NOTIFY retranslated )
@@ -126,6 +133,7 @@ public:
     // The words (plan/27 §1), inline for the same reason the headline is not: they are one line
     // each, and out-of-line getters would bury them. confirmSubtitle is the one composition.
     QString checkAgainLabel() const { return tr( "Check again" ); }
+    QString notEligibleLabel() const { return tr( "Not eligible" ); }
     QString noDisksText() const { return tr( "No disks were found at all." ); }
     QString noDisksMinimumText() const
     {

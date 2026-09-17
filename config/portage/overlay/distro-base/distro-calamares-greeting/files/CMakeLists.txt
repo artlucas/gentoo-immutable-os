@@ -17,11 +17,11 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(Calamares REQUIRED)
-# No Qml, Quick, QuickWidgets or QuickControls2, and that is the shape of this page rather than an
-# omission: it is widgets all the way down (GreetingPage.h says why). Network is here because
-# Requirements.cpp's internet check goes through Calamares::Network::Manager, which is
-# libcalamares' wrapper over QNetworkAccessManager.
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network)
+# Qml/Quick/QuickWidgets/QuickControls2 since plan/28: the page is QML in a QQuickWidget now, like
+# its four siblings, and the three vendored widget files that used to draw the requirements box
+# are gone with the QWidget. Network stays because Requirements.cpp's internet check goes through
+# Calamares::Network::Manager, which is libcalamares' wrapper over QNetworkAccessManager.
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network Qml Quick QuickWidgets QuickControls2)
 
 # KF6::CoreAddons is named in Calamares::calamares' INTERFACE_LINK_LIBRARIES, so linking against
 # Calamares drags it in — but nothing DEFINES that imported target unless someone looks for it,
@@ -32,18 +32,15 @@ find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network)
 # found". Same finding as the sibling modules'; same one-line fix.
 find_package(KF6CoreAddons REQUIRED)
 
-# The plugin includes "Branding.h", "viewpages/ViewStep.h", "modulesystem/Requirement.h" and
-# "widgets/WaitingWidget.h" by their in-tree paths, which is how every Calamares module spells
-# them; Calamares_INCLUDE_DIRS is what makes those resolve from an installed prefix.
+# The plugin includes "Branding.h", "viewpages/ViewStep.h" and "modulesystem/Requirement.h" by
+# their in-tree paths, which is how every Calamares module spells them; Calamares_INCLUDE_DIRS is
+# what makes those resolve from an installed prefix.
+#
+# The include_directories(${CMAKE_CURRENT_SOURCE_DIR}) that used to be here went with checker/: it
+# existed because a quoted #include searches the INCLUDING file's directory first, so
+# checker/ResultsListWidget.h asking for "GreetingConfig.h" looked in checker/ and found nothing.
+# No source in this module is in a subdirectory any more.
 include_directories(${Calamares_INCLUDE_DIRS})
-
-# THIS DIRECTORY, and it is not redundant. checker/ is upstream's layout, kept (plan/23 §2), and a
-# quoted #include searches the INCLUDING file's directory first — so checker/ResultsListWidget.h
-# asking for "GreetingConfig.h" looks in checker/ and finds nothing. calamares_add_plugin() does not
-# supply it either: CalamaresAddLibrary.cmake calls include_directories(${CMAKE_CURRENT_LIST_DIR}),
-# and inside a function body that variable is the directory of the .cmake file that DEFINED the
-# function, not the one calling it.
-include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
 # greeting.conf, the packaged fallback, does not install itself. calamares_add_plugin() globs
 # *.conf out of this directory and then guards the install on `if(INSTALL_CONFIG)` — an option
@@ -63,16 +60,43 @@ calamares_add_plugin(greeting
     SOURCES
         GreetingViewStep.cpp
         GreetingConfig.cpp
-        GreetingPage.cpp
         Requirements.cpp
-        checker/CheckerContainer.cpp
-        checker/ResultsListWidget.cpp
-        checker/ResultDelegate.cpp
     LINK_LIBRARIES
         Calamares::calamares
         Calamares::calamaresui
         Qt6::Gui
         Qt6::Widgets
         Qt6::Network
+        Qt6::Qml
+        Qt6::Quick
+        Qt6::QuickWidgets
+        Qt6::QuickControls2
     SHARED_LIB
+)
+
+# The target name is calamares_add_plugin's, not ours: CalamaresAddPlugin.cmake builds it as
+# "calamares_${TYPE}_${NAME}". Asserting it rather than assuming it means an upstream rename fails
+# HERE, with this message, instead of at qt6_add_resources with CMake's own "add_library called
+# with incorrect number of arguments".
+set(GREETING_TARGET calamares_viewmodule_greeting)
+if(NOT TARGET ${GREETING_TARGET})
+    message(FATAL_ERROR
+        "calamares_add_plugin did not create ${GREETING_TARGET}; upstream's target-naming "
+        "convention has changed and the resource call below needs the new name")
+endif()
+
+# THE QML TRAVELS INSIDE THE .so, for the reason plan/21 §2 records: loading it by name out of the
+# branding component directory or /usr/share/calamares/qml is a second install path and a second
+# search order, and a page that renders blank if either is wrong, with nothing in the log. A
+# resource cannot be half-installed.
+qt6_add_resources(${GREETING_TARGET} "greeting_qml"
+    PREFIX "/greeting"
+    FILES
+        # The design system's tokens (plan/28). NOT in this directory in the repository —
+        # config/calamares/qml/Theme.qml is the one copy, and scripts/stages/20-builder-setup.sh
+        # stages it here for every module whose CMakeLists names it, which is this line. Naming it
+        # is therefore how a module opts in; a page that instantiates Theme{} without this line
+        # fails to load with a QML type error and renders blank.
+        qml/Theme.qml
+        qml/Greeting.qml
 )

@@ -680,6 +680,55 @@ if [[ $PROFILE_ROLE == live ]]; then
   fi
 fi
 
+# ---- 3n. IBM Plex: keep the two faces the installer renders (plan/28) -------------------
+#
+# media-fonts/ibm-plex is on the installer medium and nowhere else (config/portage/sets/installer)
+# because the Calamares pages set their type from the design system: IBM Plex Sans for the UI and
+# IBM Plex Mono for device paths, sizes and version strings. The package ships twelve families —
+# Serif, Condensed, the variable Roman/Italic pair, and the Arabic, Devanagari, Hebrew, Korean and
+# two Thai scripts — of which this image renders exactly two. The rest is around 150 MiB of TTF
+# for glyphs no page asks for.
+#
+# THE RULE IS STATED POSITIVELY, which is the whole point: everything that is not IBMPlexSans-* or
+# IBMPlexMono-* goes. Listing the families to DELETE would be a list that silently stops matching
+# the day upstream adds a thirteenth script — the failure mode section 3i's comment warns about —
+# whereas a keep-list can only ever fail in the direction that is loud, because the assertion
+# below requires both kept families to still be there afterwards.
+#
+# NOT the CJK question. media-fonts/noto-cjk is a separate atom with its own INCLUDE_CJK_FONTS
+# switch, and it is what renders 日本語 on the language page. Plex's own Korean family is dropped
+# here because Noto already covers that script for every application on the medium, not because
+# the medium stopped caring about it.
+#
+# fonts.dir and fonts.scale are left as font.eclass wrote them. They are X11 core-font indexes,
+# fontconfig does not read them, and an entry naming a deleted file is inert — rewriting them
+# would mean running mkfontscale in the target for no visible effect.
+IBM_PLEX_DIR="$T/usr/share/fonts/ibm-plex"
+if [[ -d $IBM_PLEX_DIR ]]; then
+  plex_dropped=0
+  while IFS= read -r -d '' f; do
+    b="$(basename -- "$f")"
+    case $b in
+      IBMPlexSans-*|IBMPlexMono-*) continue ;;
+    esac
+    rm -f -- "$f"
+    plex_dropped=$(( plex_dropped + 1 ))
+  done < <(find "$IBM_PLEX_DIR" -maxdepth 1 -type f \( -name '*.ttf' -o -name '*.otf' \) -print0)
+
+  # Both halves are asserted, and they fail for opposite reasons. Zero deletions means the
+  # filenames changed shape and this section has quietly become a no-op that still claims 150 MiB.
+  # Zero survivors means the keep-patterns stopped matching and the installer just lost its
+  # typeface — which renders as Calamares falling back to whatever fontconfig picks, on every page.
+  plex_kept="$(find "$IBM_PLEX_DIR" -maxdepth 1 -type f -name 'IBMPlex[SM]*' | wc -l)"
+  (( plex_dropped > 0 )) || die "no IBM Plex face matched the drop rule in $IBM_PLEX_DIR. The
+  package installs twelve families and this image renders two, so matching none means the
+  filenames are not IBMPlex<Family>-<Weight>.ttf any more and this section is saving nothing."
+  (( plex_kept > 0 )) || die "the IBM Plex prune removed every face in $IBM_PLEX_DIR. The installer
+  sets its type to 'IBM Plex Sans' and 'IBM Plex Mono' by name (config/calamares/qml/Theme.qml),
+  so it would come up in whatever fontconfig substitutes, on every page, with nothing in the log."
+  log "installer medium: dropped $plex_dropped IBM Plex face(s), kept $plex_kept (Sans and Mono)"
+fi
+
 # ---- 4. THE ASSERTIONS (build fails if any trips) ------------------------------------
 fail=0
 violation() { warn "PRUNE VIOLATION: $*"; fail=1; }

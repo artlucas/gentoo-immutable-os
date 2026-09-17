@@ -47,6 +47,13 @@ public:
         IdRole,
         /*! The glibc locale this row installs (de_DE.UTF-8). */
         LocaleRole,
+        /*! The same locale with the encoding cut off (de_DE), which is what the row DRAWS under
+         *  the native name (plan/28). Every locale in config/languages.conf is UTF-8, so the
+         *  suffix is nine identical characters carrying no information — and this is a mono line
+         *  in a 2-up grid, where the width it costs is width the native name does not get. A role
+         *  rather than a .replace() in the QML: it is a fact about the entry, and the page should
+         *  not be deciding what a locale name looks like. */
+        LocaleShortRole,
     };
 
     struct Entry
@@ -94,10 +101,21 @@ public:
      *  what went wrong when the two were allowed to differ. */
     Q_PROPERTY( int currentIndex READ currentIndex WRITE setCurrentIndex NOTIFY currentIndexChanged )
 
-    /*! The word "Language", in the language currently highlighted. It is the only text on the
-     *  page — see plan/22 §1b — and it is a property rather than a qsTr() in the QML so that it
-     *  changes with the selection rather than only with the engine's retranslate. */
-    Q_PROPERTY( QString headerWord READ headerWord NOTIFY retranslated )
+    /*! The page's heading and its opening sentence (plan/28).
+     *
+     *  THESE EXIST AGAINST AN ARGUMENT THIS FILE USED TO MAKE, and the argument was not wrong: a
+     *  sentence of English above a language picker explains nothing to the people the screen is
+     *  for, and a list of nine languages written in those languages explains itself to everybody
+     *  who can see it. What overrode it is that the installer now paints one design end to end,
+     *  and every other page opens with a heading and a lede; a first page that opened with a bare
+     *  list would read as a page that had not finished loading.
+     *
+     *  Both are retranslated with everything else, so the moment the highlight moves they are in
+     *  the newly chosen language — which is the half of the old objection that could be answered.
+     *  tr() on the Config, never qsTr() in the QML: the builder's lupdate cannot see QML at all
+     *  (plan/27 §1). */
+    Q_PROPERTY( QString pageTitle READ pageTitle NOTIFY retranslated )
+    Q_PROPERTY( QString pageLede READ pageLede NOTIFY retranslated )
 
     explicit LanguageConfig( QObject* parent = nullptr );
 
@@ -107,7 +125,14 @@ public:
     int currentIndex() const { return m_currentIndex; }
     void setCurrentIndex( int index );
 
-    QString headerWord() const;
+    /* headerWord() was here: tr("Language"), drawn above the list as the page's only text.
+     * plan/28 replaced it with pageTitle/pageLede, which say more in the same place, and a
+     * property nothing reads is a translated string that eight catalogues would go on carrying
+     * for a label that is not on screen. Its entry was removed from those catalogues with it —
+     * check 4 in scripts/lib/check-translations.py requires every <source> to still exist in the
+     * sources, so leaving it behind would have failed the build rather than merely rotting. */
+    QString pageTitle() const;
+    QString pageLede() const;
 
     /*! What the summary page shows. */
     QString prettyStatus() const;

@@ -392,14 +392,11 @@
     </message>
 </context>
 <context>
-    <name>CheckerContainer</name>
-    <message>
-        <source>Gathering system information…</source>
-        <translation>システム情報を取得しています…</translation>
-    </message>
-</context>
-<context>
     <name>DiskConfig</name>
+    <message>
+        <source>Not eligible</source>
+        <translation>選択できません</translation>
+    </message>
     <message>
         <source>unformatted</source>
         <translation>未フォーマット</translation>
@@ -583,23 +580,36 @@
 <context>
     <name>GreetingConfig</name>
     <message>
+        <source>This program will ask you a few questions and then install %1 on this computer. Everything already on the disk you choose will be erased.</source>
+        <translation>このプログラムはいくつかの質問をした後、このコンピューターに %1 をインストールします。選択したディスク上のデータはすべて消去されます。</translation>
+    </message>
+    <message>
+        <source>Gathering system information…</source>
+        <translation>システム情報を取得しています…</translation>
+    </message>
+    <message>
+        <source>Checking requirements again in a few seconds…</source>
+        <translation>数秒後に要件を再確認します…</translation>
+    </message>
+    <message>
+        <source>OK</source>
+        <translation>問題なし</translation>
+    </message>
+    <message>
+        <source>Required</source>
+        <translation>必須</translation>
+    </message>
+    <message>
+        <source>Optional</source>
+        <translation>任意</translation>
+    </message>
+    <message>
         <source>This computer can install %1.</source>
         <translation>このコンピューターに %1 をインストールできます。</translation>
     </message>
     <message>
         <source>This computer cannot install %1.</source>
         <translation>このコンピューターに %1 をインストールできません。</translation>
-    </message>
-</context>
-<context>
-    <name>GreetingPage</name>
-    <message>
-        <source>Install medium</source>
-        <translation>インストールメディア</translation>
-    </message>
-    <message>
-        <source>This program will ask you a few questions and then install %1 on this computer. Everything already on the disk you choose will be erased.</source>
-        <translation>このプログラムはいくつかの質問をした後、このコンピューターに %1 をインストールします。選択したディスク上のデータはすべて消去されます。</translation>
     </message>
 </context>
 <context>
@@ -612,8 +622,12 @@
 <context>
     <name>LanguageConfig</name>
     <message>
-        <source>Language</source>
-        <translation>言語</translation>
+        <source>Welcome to %1</source>
+        <translation>%1 へようこそ</translation>
+    </message>
+    <message>
+        <source>Pick the language you want to use while installing. This becomes the system language, and you can change it later in Settings.</source>
+        <translation>インストール中に使用する言語を選んでください。これがシステムの言語になります。あとから設定で変更できます。</translation>
     </message>
 </context>
 <context>
@@ -746,13 +760,6 @@
     <message>
         <source>no screen found</source>
         <translation>画面が見つかりません</translation>
-    </message>
-</context>
-<context>
-    <name>ResultsListWidget</name>
-    <message>
-        <source>Checking requirements again in a few seconds…</source>
-        <translation>数秒後に要件を再確認します…</translation>
     </message>
 </context>
 </TS>

@@ -4,11 +4,17 @@
 #include "GreetingViewStep.h"
 
 #include "GreetingConfig.h"
-#include "GreetingPage.h"
 #include "Requirements.h"
 
 #include "modulesystem/ModuleManager.h"
 #include "modulesystem/RequirementsModel.h"
+#include "utils/Logger.h"
+#include "utils/Retranslator.h"
+
+#include <QQmlContext>
+#include <QQmlEngine>
+#include <QQuickStyle>
+#include <QQuickWidget>
 
 CALAMARES_PLUGIN_FACTORY_DEFINITION( GreetingViewStepFactory, registerPlugin< GreetingViewStep >(); )
 
@@ -17,9 +23,22 @@ GreetingViewStep::GreetingViewStep( QObject* parent )
     , m_requirements( new Requirements( this ) )
     , m_config( new GreetingConfig( this ) )
 {
-    // NO QQuickStyle::setStyle() HERE, and its absence is deliberate rather than forgotten: this
-    // page draws no QML, and the call belongs to whichever module loads FIRST — the language
-    // module — because Qt ignores it once anything has imported Qt Quick Controls.
+    // NO QQuickStyle::setStyle() HERE, and its absence is deliberate rather than forgotten: the
+    // call belongs to whichever module loads FIRST — the language module — because Qt ignores it
+    // once anything has imported Qt Quick Controls. That was true when this page drew no QML at
+    // all and is no less true now that it does; a second call here would look like it was doing
+    // something and would be dead code.
+    if ( QQuickStyle::name() != QStringLiteral( "org.kde.desktop" ) )
+    {
+        cWarning() << "greeting: Qt Quick Controls style is" << QQuickStyle::name()
+                   << "- this page expects org.kde.desktop for its icons, colours and metrics.";
+    }
+
+    // QML BINDINGS DO NOT RETRANSLATE BY THEMSELVES: a QTranslator swap posts
+    // QEvent::LanguageChange, which re-evals QObject::tr() consumers, while a binding onto one is
+    // only re-evaluated when the engine is told to. Same line, same reason, as every QML module
+    // in this installer.
+    CALAMARES_RETRANSLATE( if ( m_widget && m_widget->engine() ) { m_widget->engine()->retranslate(); } );
 
     auto* manager = Calamares::ModuleManager::instance();
     auto* model = manager ? manager->requirementsModel() : nullptr;
@@ -56,7 +75,12 @@ GreetingViewStep::widget()
 {
     if ( !m_widget )
     {
-        m_widget = new GreetingPage( m_config );
+        m_widget = new QQuickWidget();
+        m_widget->setResizeMode( QQuickWidget::SizeRootObjectToView );
+        m_widget->rootContext()->setContextProperty( QStringLiteral( "greeting" ), m_config );
+        // qrc:, not a file path — the QML is a resource compiled into this plugin, so there is no
+        // second install path and no search order to get wrong (plan/21 §2).
+        m_widget->setSource( QUrl( QStringLiteral( "qrc:/greeting/qml/Greeting.qml" ) ) );
     }
     return m_widget;
 }

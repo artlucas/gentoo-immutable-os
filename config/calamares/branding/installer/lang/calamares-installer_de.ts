@@ -394,14 +394,11 @@
     </message>
 </context>
 <context>
-    <name>CheckerContainer</name>
-    <message>
-        <source>Gathering system information…</source>
-        <translation>Sammle Systeminformationen…</translation>
-    </message>
-</context>
-<context>
     <name>DiskConfig</name>
+    <message>
+        <source>Not eligible</source>
+        <translation>Nicht geeignet</translation>
+    </message>
     <message>
         <source>unformatted</source>
         <translation>unformatiert</translation>
@@ -588,23 +585,36 @@
 <context>
     <name>GreetingConfig</name>
     <message>
+        <source>This program will ask you a few questions and then install %1 on this computer. Everything already on the disk you choose will be erased.</source>
+        <translation>Dieses Programm stellt Ihnen einige Fragen und installiert dann %1 auf diesem Computer. Alle Daten auf der gewählten Festplatte werden gelöscht.</translation>
+    </message>
+    <message>
+        <source>Gathering system information…</source>
+        <translation>Sammle Systeminformationen…</translation>
+    </message>
+    <message>
+        <source>Checking requirements again in a few seconds…</source>
+        <translation>In ein paar Sekunden werden die Anforderungen erneut geprüft…</translation>
+    </message>
+    <message>
+        <source>OK</source>
+        <translation>OK</translation>
+    </message>
+    <message>
+        <source>Required</source>
+        <translation>Erforderlich</translation>
+    </message>
+    <message>
+        <source>Optional</source>
+        <translation>Optional</translation>
+    </message>
+    <message>
         <source>This computer can install %1.</source>
         <translation>Auf diesem Computer kann %1 installiert werden.</translation>
     </message>
     <message>
         <source>This computer cannot install %1.</source>
         <translation>Auf diesem Computer kann %1 nicht installiert werden.</translation>
-    </message>
-</context>
-<context>
-    <name>GreetingPage</name>
-    <message>
-        <source>Install medium</source>
-        <translation>Installationsmedium</translation>
-    </message>
-    <message>
-        <source>This program will ask you a few questions and then install %1 on this computer. Everything already on the disk you choose will be erased.</source>
-        <translation>Dieses Programm stellt Ihnen einige Fragen und installiert dann %1 auf diesem Computer. Alle Daten auf der gewählten Festplatte werden gelöscht.</translation>
     </message>
 </context>
 <context>
@@ -617,8 +627,12 @@
 <context>
     <name>LanguageConfig</name>
     <message>
-        <source>Language</source>
-        <translation>Sprache</translation>
+        <source>Welcome to %1</source>
+        <translation>Willkommen bei %1</translation>
+    </message>
+    <message>
+        <source>Pick the language you want to use while installing. This becomes the system language, and you can change it later in Settings.</source>
+        <translation>Wählen Sie die Sprache, die Sie während der Installation verwenden möchten. Sie wird zur Systemsprache und lässt sich später in den Einstellungen ändern.</translation>
     </message>
 </context>
 <context>
@@ -751,13 +765,6 @@
     <message>
         <source>no screen found</source>
         <translation>kein Bildschirm gefunden</translation>
-    </message>
-</context>
-<context>
-    <name>ResultsListWidget</name>
-    <message>
-        <source>Checking requirements again in a few seconds…</source>
-        <translation>In ein paar Sekunden werden die Anforderungen erneut geprüft…</translation>
     </message>
 </context>
 </TS>

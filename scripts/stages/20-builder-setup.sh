@@ -111,6 +111,48 @@ if [[ -d $OVERLAY_SRC ]]; then
   done < <(find "$OVERLAY_DST" -name '*.ebuild' -print0)
   OVERLAY_N="$(find "$OVERLAY_DST" -name '*.ebuild' | wc -l)"
   log "overlay: rendered $OVERLAY_N ebuild(s) into ::$DISTRO_ID"
+
+  # ---- the shared installer QML, fanned out into every page that draws it (plan/28) --------
+  #
+  # config/calamares/qml/ holds the pieces every Calamares page shares — Theme.qml, the design
+  # system's tokens, and Field.qml, its labelled text input. Each has ONE copy in the repository.
+  # Every view module compiles its QML into its own .so as a Qt resource (see the long note above
+  # qt6_add_resources in any of their CMakeLists.txt), so a file shared between pages cannot be
+  # shared at RUN time without introducing exactly the second install path and second search order
+  # those notes exist to refuse. It is shared at BUILD time instead: copied into each module's
+  # rendered files/qml/, where that module's own qt6_add_resources call already names it.
+  #
+  # THE LIST OF TARGETS IS DERIVED, NOT KEPT, and so is the list of files. A module gets every
+  # shared file its CMakeLists names and nothing else — so a module added later is covered by the
+  # line it had to write anyway, a shared file added later needs no change here at all, and a
+  # hand-maintained array cannot fall out of step with the build files. What this cannot catch is
+  # a module that SHOULD name one and does not; that is a property of the checkout rather than of
+  # the build, and tests/test-installer.sh checks it.
+  #
+  # Into the RENDERED overlay, not the checkout: /repo is mounted read-only, and a copy left in
+  # config/portage/overlay would show up as an untracked file after every build.
+  SHARED_QML_SRC="$REPO/config/calamares/qml"
+  [[ -d $SHARED_QML_SRC ]] || die "config/calamares/qml is missing. It holds the design system's
+  token object and the shared input every installer page instantiates, so its absence is not a
+  missing style — it is nine pages that fail to load with a QML type error and render blank."
+  SHARED_QML_N=0
+  while IFS= read -r -d '' cml; do
+    for shared in "$SHARED_QML_SRC"/*.qml; do
+      [[ -f $shared ]] || continue
+      base="$(basename -- "$shared")"
+      grep -qF "qml/$base" "$cml" || continue
+      shared_dst="$(dirname -- "$cml")/qml/$base"
+      ensure_dir "$(dirname -- "$shared_dst")"
+      cp -- "$shared" "$shared_dst" \
+        || die "overlay: could not stage $base into ${shared_dst#"$OVERLAY_DST"/}"
+      SHARED_QML_N=$(( SHARED_QML_N + 1 ))
+    done
+  done < <(find "$OVERLAY_DST" -name CMakeLists.txt -print0)
+  (( SHARED_QML_N > 0 )) || die "no rendered CMakeLists.txt names any file from
+  config/calamares/qml, so the design system's tokens would reach no page at all. Either the
+  overlay render dropped the build files, or the installer modules were changed to stop compiling
+  the shared QML in."
+  log "overlay: staged $SHARED_QML_N shared QML file(s) across the installer modules"
 else
   OVERLAY_DST=""
   warn "config/portage/overlay is missing — the System Settings module and the installer page

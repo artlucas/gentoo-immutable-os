@@ -21,6 +21,12 @@
  * WHAT IT OWNS. The six requirement checks, because a requirement is contributed by whichever
  * module is in the sequence (Module::checkRequirements) and this is the module that draws the
  * verdict. They moved here from the language module with the screen that displayed them.
+ *
+ * SINCE plan/28 THE PAGE IS QML, like its four siblings, and the three files this module vendored
+ * from Calamares' welcome module (files/checker/) are gone with the QWidget that used them. What
+ * paid for that vendoring — "they are not in libcalamaresui and no header of theirs is installed"
+ * (plan/23 §2) — was never true of the MODEL: libcalamares/modulesystem/RequirementsModel.h is an
+ * installed header, so a QML ListView binds it directly and the box is ours to draw.
  */
 #pragma once
 
@@ -33,7 +39,7 @@
 #include <QVariantMap>
 
 class GreetingConfig;
-class GreetingPage;
+class QQuickWidget;
 class Requirements;
 
 class PLUGINDLLEXPORT GreetingViewStep : public Calamares::ViewStep
@@ -63,7 +69,7 @@ public:
 private:
     Requirements* m_requirements;
     GreetingConfig* m_config;
-    GreetingPage* m_widget = nullptr;
+    QQuickWidget* m_widget = nullptr;
 };
 
 CALAMARES_PLUGIN_FACTORY_DECLARATION( GreetingViewStepFactory )
