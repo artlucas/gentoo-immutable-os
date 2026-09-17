@@ -1144,6 +1144,24 @@ if profile_has_set installer; then
     b="$(basename -- "$f")"; cal_install "$f" "$TARGET/etc/calamares/branding/installer/${b%.in}"
   done
 
+  # ---- the design system's tokens, for the two panels that are not modules (plan/28) ---------
+  #
+  # calamares-sidebar.qml and calamares-navigation.qml are loaded BY FILENAME out of this
+  # directory by CalamaresWindow — they belong to no view module, so there is no .so to compile a
+  # Qt resource into and none of stage 20's fan-out reaches them. Theme.qml is staged beside them
+  # instead, where QML's implicit local-directory import finds it: a component in the same
+  # directory as the file that uses it needs no import statement and no import path.
+  #
+  # THE SAME FILE THE MODULES GET. One copy in config/calamares/qml/, two staging paths — stage
+  # 20's into the rendered overlay and this one — because the two consumers are compiled and
+  # interpreted respectively. A panel painted from a second copy of these values is the drift the
+  # single source exists to prevent.
+  CAL_THEME_SRC="$REPO/config/calamares/qml/Theme.qml"
+  [[ -f $CAL_THEME_SRC ]] || die "config/calamares/qml/Theme.qml is missing, and the window's own
+  two panels instantiate it — the sidebar and the navigation bar would fail to load with a QML
+  type error and the window would come up with a blank rail and no buttons."
+  cal_install "$CAL_THEME_SRC" "$TARGET/etc/calamares/branding/installer/Theme.qml"
+
   # ---- our own pages, in the user's language (plan/22 §4) ------------------------------------
   #
   # Calamares installs a BRANDING translator on QCoreApplication and reloads it on every language
@@ -1300,8 +1318,28 @@ if profile_has_set installer; then
   # Every raster artefact in this build comes out of one build_block(): the user sees this
   # sidebar a minute after watching that splash, so they must be the same pixels rather than two
   # drawings of one logo.
+  #
+  # ...ON A DIFFERENT GROUND, and that is the one thing these two artefacts do not share with the
+  # splash (plan/28). The installer is the design system's LIGHT theme; the splash is dark because
+  # a firmware-time splash is dark. A block flattened onto #0a0d11 in a #f6f7f9 sidebar is a dark
+  # rectangle, which is exactly what "the PNG has no visible edge" was promising not to be.
+  #
+  # THIS VALUE APPEARS IN THREE PLACES AND HAS TO AGREE IN ALL THREE: here, as
+  # SidebarBackground in config/calamares/branding/installer/branding.desc.in, and as
+  # --surface-page in config/calamares/qml/Theme.qml. tests/test-installer.sh compares them, so a
+  # change in one is a failed offline suite rather than a logo with an edge nobody notices until
+  # a VM boot.
+  INSTALLER_SURFACE_PAGE="#f6f7f9"
+  # ...AND THE WORDMARK HAS TO BE RE-INKED WITH IT. config/branding/wordmark.svg fills its glyph
+  # paths with #f6f7f9 — the DARK theme's --text-strong, which was every consumer's ground when it
+  # was outlined — so on the light sidebar it is the ground colour and the wordmark is simply not
+  # there. This is --text-strong of the LIGHT theme, and it is Theme.qml's value, compared by the
+  # offline suite like the one above. The generator refuses outright if the two ever match.
+  INSTALLER_TEXT_STRONG="#161b21"
   python3 "$REPO/config/branding/make-splash-assets.py" \
     --asset-dir "$BRANDING_PNG" \
+    --bg "$INSTALLER_SURFACE_PAGE" \
+    --ink "$INSTALLER_TEXT_STRONG" \
     --logo  "$TARGET/etc/calamares/branding/installer/logo.png" \
     --slide "$TARGET/etc/calamares/branding/installer/slide.png" \
     || die "installer: branding image generation failed"
@@ -1350,6 +1388,36 @@ if profile_has_set installer; then
   # ksplashqml fall back to Breeze without a word in the journal. One package carries both, the
   # id in kdeglobals is the same one everywhere, and the layout is the only thing this profile
   # adds to it. See config/plasma/kdeglobals.in.
+  # ---- the palette for the surfaces no QML reaches (plan/28) --------------------------------
+  #
+  # Nine of the installer's ten steps are QML pages painting the design system out of Theme.qml,
+  # and the window's two panels do the same. What is left is Qt WIDGETS that Calamares draws
+  # itself and branding cannot reach: the exec step's progress page, the error dialog, and
+  # Calamares' own About box. Those resolve through KColorScheme, which reads [Colors:*] groups
+  # out of kdeglobals — so the groups are appended to the file section 2d already rendered.
+  #
+  # APPENDED, NOT RENDERED OVER. /etc/xdg/kdeglobals is written for every profile with a desktop
+  # and carries the LookAndFeelPackage id the splash resolves through; this adds groups to it on
+  # the installer profile alone and touches nothing that was there. The product image never gets
+  # them: its user picks a scheme in System Settings, and an image shipping a hard-coded palette
+  # in /etc/xdg would be overriding a choice that is not the distribution's to make. A live
+  # medium that exists to host one application for ten minutes is the one case where it is.
+  [[ -f $TARGET/etc/xdg/kdeglobals ]] \
+    || die "installer: /etc/xdg/kdeglobals has not been written — section 2d is supposed to have
+  rendered it before this runs, and the installer's palette is appended to it rather than
+  replacing it."
+  cal_install "$REPO/config/plasma/colors-installer.in" "$WORK/colors-installer"
+  printf '\n' >> "$TARGET/etc/xdg/kdeglobals"
+  cat -- "$WORK/colors-installer" >> "$TARGET/etc/xdg/kdeglobals"
+  rm -f -- "$WORK/colors-installer"
+  # Read back, because an append that silently produced nothing is a medium whose installer looks
+  # like Breeze on one page in ten and nowhere else — the hardest kind of mismatch to notice.
+  grep -qx '\[Colors:Selection\]' "$TARGET/etc/xdg/kdeglobals" \
+    || die "verify: /etc/xdg/kdeglobals carries no [Colors:Selection] group, so Calamares' own
+  widgets — the progress page, the error dialog, the About box — would resolve their palette from
+  Breeze while every page around them paints the design system."
+  log "installer: the design system's palette appended to /etc/xdg/kdeglobals"
+
   LNF_ID="$DISTRO_ID"
   LNF_DIR="$TARGET/usr/share/plasma/look-and-feel/$LNF_ID"
   [[ -f $LNF_DIR/metadata.json ]] \

@@ -1,0 +1,144 @@
+# The live medium's palette, for the surfaces no QML reaches (plan/28).
+#
+# WHAT THIS IS FOR, AND WHAT IT IS NOT. Nine of the installer's ten steps are QML pages that
+# paint the Immos Design System from config/calamares/qml/Theme.qml, and the two window panels
+# beside them do the same. What is left is Qt WIDGETS that Calamares draws itself and branding
+# cannot reach: the exec step's progress page, the error dialog, and Calamares' own About box.
+# Those resolve their colours from KColorScheme, which reads the [Colors:*] groups below.
+#
+# APPENDED TO /etc/xdg/kdeglobals ON THE INSTALLER PROFILE ONLY, by stage 40. The product image
+# never sees this file: it has no Calamares, its user picks their own scheme in System Settings,
+# and an image that shipped a hard-coded palette in /etc/xdg would be overriding a choice that is
+# not the distribution's to make. A live medium that exists to host one application for ten
+# minutes is the one case where it is.
+#
+# NOT A .colors FILE PLUS `ColorScheme=`. That key is a LABEL: System Settings writes the groups
+# below into kdeglobals when a scheme is applied, and KColorScheme reads the groups, not the
+# name. A medium that named a scheme without carrying its groups would come up in Breeze with a
+# settings dialog claiming otherwise.
+#
+# THE VALUES ARE Theme.qml's, and tests/test-installer.sh compares them literally. Where the
+# design system has no token for something KColorScheme insists on — the "Complementary" set, the
+# link and visited-link colours in every set — the nearest token is used and said so here rather
+# than a shade being invented.
+
+[General]
+# The label only, for a settings dialog that asks. The groups below are what is read.
+ColorScheme=@DISTRO_NAME@
+# IBM Plex, which is on this medium and nowhere else (config/portage/sets/installer). The widget
+# surfaces should not be the one part of the installer still set in Noto.
+font=IBM Plex Sans,10,-1,5,400,0,0,0,0,0,0,0,0,0,0,1
+menuFont=IBM Plex Sans,10,-1,5,400,0,0,0,0,0,0,0,0,0,0,1
+smallestReadableFont=IBM Plex Sans,8,-1,5,400,0,0,0,0,0,0,0,0,0,0,1
+toolBarFont=IBM Plex Sans,10,-1,5,400,0,0,0,0,0,0,0,0,0,0,1
+fixed=IBM Plex Mono,10,-1,5,400,0,0,0,0,0,0,0,0,0,0,1
+
+[WM]
+activeBackground=246,247,249
+activeForeground=22,27,33
+inactiveBackground=236,238,242
+inactiveForeground=102,112,127
+
+# --surface-page under --text-body: the window ground, which is what a dialog and the progress
+# page are painted on.
+[Colors:Window]
+BackgroundNormal=246,247,249
+BackgroundAlternate=236,238,242
+ForegroundNormal=54,62,74
+ForegroundInactive=139,148,163
+ForegroundActive=10,100,90
+ForegroundLink=10,126,112
+ForegroundVisited=10,100,90
+ForegroundNegative=189,44,44
+ForegroundNeutral=180,127,14
+ForegroundPositive=21,128,72
+DecorationFocus=14,156,138
+DecorationHover=14,156,138
+
+# --surface-card under --text-strong: list views and text areas, the white the pages sit on.
+[Colors:View]
+BackgroundNormal=255,255,255
+BackgroundAlternate=246,247,249
+ForegroundNormal=22,27,33
+ForegroundInactive=139,148,163
+ForegroundActive=10,100,90
+ForegroundLink=10,126,112
+ForegroundVisited=10,100,90
+ForegroundNegative=189,44,44
+ForegroundNeutral=180,127,14
+ForegroundPositive=21,128,72
+DecorationFocus=14,156,138
+DecorationHover=14,156,138
+
+[Colors:Button]
+BackgroundNormal=255,255,255
+BackgroundAlternate=236,238,242
+ForegroundNormal=22,27,33
+ForegroundInactive=139,148,163
+ForegroundActive=10,100,90
+ForegroundLink=10,126,112
+ForegroundVisited=10,100,90
+ForegroundNegative=189,44,44
+ForegroundNeutral=180,127,14
+ForegroundPositive=21,128,72
+DecorationFocus=14,156,138
+DecorationHover=14,156,138
+
+# --accent under --accent-on: the selection, which is also what paints a progress bar's fill.
+[Colors:Selection]
+BackgroundNormal=14,156,138
+BackgroundAlternate=10,126,112
+ForegroundNormal=255,255,255
+ForegroundInactive=236,238,242
+ForegroundActive=255,255,255
+ForegroundLink=255,255,255
+ForegroundVisited=236,238,242
+ForegroundNegative=251,222,221
+ForegroundNeutral=251,238,203
+ForegroundPositive=217,242,227
+DecorationFocus=14,156,138
+DecorationHover=14,156,138
+
+[Colors:Tooltip]
+BackgroundNormal=22,27,33
+BackgroundAlternate=35,42,51
+ForegroundNormal=246,247,249
+ForegroundInactive=185,192,204
+ForegroundActive=90,204,187
+ForegroundLink=90,204,187
+ForegroundVisited=90,204,187
+ForegroundNegative=236,106,106
+ForegroundNeutral=232,184,74
+ForegroundPositive=78,194,126
+DecorationFocus=14,156,138
+DecorationHover=14,156,138
+
+# --surface-inverse: the one set the design system has no token pair for, so it is the inverse
+# surface with the inverse text on it rather than a colour chosen here.
+[Colors:Complementary]
+BackgroundNormal=22,27,33
+BackgroundAlternate=35,42,51
+ForegroundNormal=246,247,249
+ForegroundInactive=185,192,204
+ForegroundActive=90,204,187
+ForegroundLink=90,204,187
+ForegroundVisited=90,204,187
+ForegroundNegative=236,106,106
+ForegroundNeutral=232,184,74
+ForegroundPositive=78,194,126
+DecorationFocus=14,156,138
+DecorationHover=14,156,138
+
+[Colors:Header]
+BackgroundNormal=255,255,255
+BackgroundAlternate=246,247,249
+ForegroundNormal=22,27,33
+ForegroundInactive=139,148,163
+ForegroundActive=10,100,90
+ForegroundLink=10,126,112
+ForegroundVisited=10,100,90
+ForegroundNegative=189,44,44
+ForegroundNeutral=180,127,14
+ForegroundPositive=21,128,72
+DecorationFocus=14,156,138
+DecorationHover=14,156,138

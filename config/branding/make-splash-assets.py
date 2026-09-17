@@ -69,8 +69,48 @@ STATUS_RIGHT = "status-right.png"
 
 # --surface-sunken, dark theme: what splash.c fills the screen with, what the Plasma splash
 # paints its window with, and what the sprite tiles are composited over so their antialiased
-# edges land exactly on it.
+# edges land exactly on it. Every BOOT-TIME artefact uses this and nothing else.
 BG = (0x0A, 0x0D, 0x11)
+
+# ONE LAYOUT FUNCTION, TWO GROUNDS (plan/28). Everything here is composed from build_block() and
+# every boot-time artefact is flattened onto BG above — but the INSTALLER is the design system's
+# light theme from its first screen to its last, so a logo composited on #0a0d11 would be a dark
+# rectangle in a pale sidebar. `--bg` is how the caller says which, and it applies to --logo and
+# --slide only.
+#
+# BG IS STILL THE DEFAULT, deliberately: build_slide() has a second caller — the Plasma splash's
+# preview for System Settings — that belongs to the dark theme, so a default of "light" would
+# have silently repainted a splash preview to match an installer. Stage 40 passes --bg once, at
+# the installer's own invocation, and tests/test-splash-assets.sh pins both ends.
+
+
+# The ink the wordmark is BAKED WITH: config/branding/wordmark.svg fills its glyph paths with
+# --text-strong of the DARK theme, because that is the ground every consumer had when it was
+# outlined. On the installer's light --surface-page it is the ground, and the wordmark
+# disappears — which is not a contrast problem to tune but the same colour twice.
+WORDMARK_INK = (0xF6, 0xF7, 0xF9)
+
+
+def recolour(img: Image.Image, rgb: tuple[int, int, int]) -> Image.Image:
+    """Replace an RGBA image's colour and keep its alpha exactly.
+
+    The wordmark's antialiasing lives in the alpha channel — the glyph edges are partial coverage
+    of one flat fill — so swapping the RGB and leaving alpha alone re-inks it without touching a
+    single edge. The same trick reshade_slab() uses, minus the LUT, because there is one colour
+    here and not three faces.
+    """
+    out = Image.new("RGBA", img.size, rgb + (0,))
+    out.putalpha(img.getchannel("A"))
+    return out
+
+
+def parse_bg(text: str) -> tuple[int, int, int]:
+    """#rrggbb -> (r, g, b). Strict on purpose: a mistyped colour that fell back to a default
+    would produce an artefact that is merely wrong rather than a build that stops."""
+    value = text.strip().lstrip("#")
+    if len(value) != 6 or any(c not in "0123456789abcdefABCDEF" for c in value):
+        sys.exit(f"make-splash-assets: --bg must be #rrggbb, got {text!r}")
+    return (int(value[0:2], 16), int(value[2:4], 16), int(value[4:6], 16))
 
 # The scales the sprite container carries. splash.c picks 2 for panels 2000px tall or more and
 # 1 otherwise, falling back sensibly if a scale is missing — so this list is a size/coverage
@@ -239,11 +279,18 @@ class Block:
         return self.image.size
 
 
-def build_block(theme: Path, scale: float, background: tuple[int, int, int]) -> Block:
+def build_block(theme: Path, scale: float, background: tuple[int, int, int],
+                word_ink: tuple[int, int, int] = WORDMARK_INK) -> Block:
     """The centred column: [logomark box] + [gap] + [wordmark], flattened onto `background`.
 
     This is the single source of the splash's layout. Every raster artefact this script emits is
     this function's output, whole or in pieces; nothing else positions the mark.
+
+    `word_ink` exists because the wordmark is the one element whose colour is baked into an SVG
+    rather than derived here — see WORDMARK_INK. The SLABS need no equivalent: they are the teal
+    --accent, which reads on both of this project's grounds, and reshade_slab() already owns
+    their shading. The LAYOUT does not vary with either argument, which is what lets the boot
+    splash and the installer keep sharing this function (plan/28).
     """
     factor = scale / ASSET_ZOOM
 
@@ -255,6 +302,8 @@ def build_block(theme: Path, scale: float, background: tuple[int, int, int]) -> 
         for s in slabs
     ]
     word = load(theme, WORDMARK, factor)
+    if word_ink != WORDMARK_INK:
+        word = recolour(word, word_ink)
 
     box_px = round(MARK_BOX * scale)
     gap_px = round(GAP * scale)
@@ -392,7 +441,9 @@ def build_bmp(theme: Path, output: Path, scale: float) -> None:
     print(f"make-splash-assets: {output} ({canvas.width}x{canvas.height}, scale {scale})")
 
 
-def build_logo(theme: Path, output: Path, scale: float) -> None:
+def build_logo(theme: Path, output: Path, scale: float,
+               background: tuple[int, int, int] = BG,
+               word_ink: tuple[int, int, int] = WORDMARK_INK) -> None:
     """The installer's sidebar logo (plan/16).
 
     Another consumer of build_block(), and it is here rather than in a new script for the same
@@ -400,17 +451,21 @@ def build_logo(theme: Path, output: Path, scale: float) -> None:
     seconds ago, so the two have to be the same block of pixels, not two drawings of one logo
     that drift apart the first time either is touched.
 
-    Flattened onto BG (--surface-sunken) rather than left transparent, and the Calamares branding
-    sets SidebarBackground to the same value — so the PNG has no visible edge against the sidebar
-    at any scale, and no alpha for a Qt style to composite differently than expected.
+    Flattened onto `background` rather than left transparent, and the Calamares branding sets
+    SidebarBackground to the same value — so the PNG has no visible edge against the sidebar at
+    any scale, and no alpha for a Qt style to composite differently than expected. Since plan/28
+    that value is the LIGHT --surface-page rather than the splash's dark --surface-sunken: the
+    installer and the boot splash share a layout function and no longer share a ground.
     """
-    canvas = build_block(theme, scale, BG).image
+    canvas = build_block(theme, scale, background, word_ink).image
     output.parent.mkdir(parents=True, exist_ok=True)
     canvas.save(output, format="PNG")
     print(f"make-splash-assets: {output} ({canvas.width}x{canvas.height}, scale {scale})")
 
 
-def build_slide(theme: Path, output: Path, scale: float, size: tuple[int, int]) -> None:
+def build_slide(theme: Path, output: Path, scale: float, size: tuple[int, int],
+                background: tuple[int, int, int] = BG,
+                word_ink: tuple[int, int, int] = WORDMARK_INK) -> None:
     """The installer's progress-page slide (plan/16).
 
     The only consumer that needs a CANVAS rather than a tight block: Calamares' SlideshowPictures
@@ -419,11 +474,12 @@ def build_slide(theme: Path, output: Path, scale: float, size: tuple[int, int]) 
     900x600 window the branding asks for, with the sidebar's 190px taken off, and stays centred
     if the user maximises.
 
-    Painted on BG, the same --surface-sunken the sidebar and the boot splash use, so it reads as
-    a deliberate brand panel rather than as a stray dark rectangle on the page background.
+    Painted on `background`, the same ground the sidebar's logo uses, so it reads as a deliberate
+    brand panel rather than as a stray rectangle on the page. Since plan/28 that is the light
+    --surface-page; see build_logo().
     """
-    block = build_block(theme, scale, BG).image
-    canvas = Image.new("RGB", size, BG)
+    block = build_block(theme, scale, background, word_ink).image
+    canvas = Image.new("RGB", size, background)
     canvas.paste(block, ((size[0] - block.width) // 2, (size[1] - block.height) // 2))
     output.parent.mkdir(parents=True, exist_ok=True)
     canvas.save(output, format="PNG")
@@ -559,6 +615,21 @@ def main() -> None:
     ap.add_argument("--sprites", type=Path, help="write the KMS splash tile container here")
     ap.add_argument("--logo", type=Path, help="write the installer's branding logo PNG here")
     ap.add_argument("--slide", type=Path, help="write the installer's progress-page slide here")
+    ap.add_argument(
+        "--bg",
+        default=None,
+        help="#rrggbb ground for --logo and --slide (default: the dark --surface-sunken the "
+             "boot splash uses). The boot-time artefacts are NOT affected: their ground is that "
+             "same value and is not a parameter.",
+    )
+    ap.add_argument(
+        "--ink",
+        default=None,
+        help="#rrggbb for the WORDMARK in --logo and --slide (default: the colour it is baked "
+             "with in wordmark.svg, which is the dark theme's --text-strong). Pass it with --bg: "
+             "a light ground needs a dark wordmark or the two are the same colour and the "
+             "wordmark is simply not there.",
+    )
     ap.add_argument("--theme", type=Path,
                     help="write the Plasma splash theme's generated contents (images/ and "
                          "Design.qml) into here")
@@ -597,12 +668,23 @@ def main() -> None:
     if args.logo_scale <= 0:
         sys.exit("make-splash-assets: --logo-scale must be positive")
 
+    # Parsed once, here, so a bad --bg stops the run before any artefact is written rather than
+    # after the two boot-time ones are already on disk.
+    installer_bg = parse_bg(args.bg) if args.bg else BG
+    installer_ink = parse_bg(args.ink) if args.ink else WORDMARK_INK
+    # The failure this refuses is the one the offline suite found: a light ground with the
+    # wordmark left at its baked light ink paints the wordmark in the ground colour, so the logo
+    # is a logomark with a blank space under it and nothing in the build says so.
+    if installer_ink == installer_bg:
+        sys.exit("make-splash-assets: --ink and --bg are the same colour, so the wordmark would "
+                 "be invisible. A light --bg needs a dark --ink.")
+
     if args.sprites:
         build_sprites(args.asset_dir, args.sprites)
     if args.bmp:
         build_bmp(args.asset_dir, args.bmp, args.scale)
     if args.logo:
-        build_logo(args.asset_dir, args.logo, args.logo_scale)
+        build_logo(args.asset_dir, args.logo, args.logo_scale, installer_bg, installer_ink)
     if args.slide:
         try:
             w, h = (int(v) for v in args.slide_size.lower().split("x", 1))
@@ -610,7 +692,8 @@ def main() -> None:
             sys.exit(f"make-splash-assets: --slide-size must be WxH, got {args.slide_size!r}")
         if w < 1 or h < 1:
             sys.exit("make-splash-assets: --slide-size must be positive")
-        build_slide(args.asset_dir, args.slide, args.logo_scale, (w, h))
+        build_slide(args.asset_dir, args.slide, args.logo_scale, (w, h), installer_bg,
+                    installer_ink)
     if args.theme:
         build_theme(args.svg_dir, args.theme)
 

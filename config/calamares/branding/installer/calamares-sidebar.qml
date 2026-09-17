@@ -1,8 +1,8 @@
 /* The installer's left sidebar — Calamares v3.4.2's own src/calamares/calamares-sidebar.qml,
-   COPIED rather than invented, with the ONE change this file exists for (plan/26 §5): the step
-   names are left-aligned with a margin instead of centred. Keeping the copy close to upstream is
-   the same bet the greeting module's vendored checker files make: when a future Calamares ships
-   a different sidebar, the diff that matters here is a header and one anchor.
+   COPIED rather than invented, and since plan/28 repainted from the design system rather than
+   from branding.desc's four style: keys. Keeping the copy close to upstream is the same bet the
+   greeting module's vendored checker files made, and lost: when a future Calamares ships a
+   different sidebar the diff that matters here is now a header and a drawing, not one anchor.
 
    Loaded BY FILENAME CONVENTION, named by nothing in branding.desc: CalamaresWindow asks for
    "calamares-sidebar.qml" through searchQmlFile(QmlSearch::Both), which looks in the branding
@@ -11,9 +11,11 @@
    all (the widget flavour's centred text is hard-coded in ProgressTreeDelegate.cpp and cannot
    be reached from branding).
 
-   The colours come from branding.desc's style: map through Branding.styleString below — the
-   same dark surface and teal current-step as the widget flavour had, so the change reads as
-   alignment and nothing else.
+   THE COLOURS COME FROM Theme.qml, WHICH IS IN THIS DIRECTORY AT BUILD TIME. The view modules
+   compile the token object into their own .so as a resource; this panel is not a module and has
+   no resource, so stage 40 stages config/calamares/qml/Theme.qml beside this file and QML's
+   implicit local-directory import finds it. branding.desc's style: map is still correct and is
+   still what the WIDGET flavours read — see the note above it.
 
    "About" and "Debug" below are qsTranslate() into a NAMED context, CalamaresSidebar, whose
    entries are hand-maintained in the branding .ts files — the language page's LanguageNames
@@ -43,45 +45,108 @@ import QtQuick.Layouts 1.3
 
 Rectangle {
     id: sideBar;
-    color: Branding.styleString( Branding.SidebarBackground );
+
+    readonly property Theme ds: Theme {}
+
+    color: ds.surfacePage;
     anchors.fill: parent;
+
+    // The seam between the rail and the page, which the design system draws as a 1px border
+    // rather than a change of tone: both surfaces are pale and the boundary has to be stated.
+    Rectangle {
+        anchors.right: parent.right;
+        anchors.top: parent.top;
+        anchors.bottom: parent.bottom;
+        width: 1;
+        color: ds.borderSubtle;
+    }
 
     ColumnLayout {
         anchors.fill: parent;
+        anchors.topMargin: ds.space6;
+        anchors.bottomMargin: ds.space5;
+        anchors.leftMargin: ds.space4;
+        anchors.rightMargin: ds.space4;
         spacing: 0;
 
+        // LEFT-ALIGNED AND LOCKUP-SHAPED, not a centred square. The image is logo.png, composed
+        // by make-splash-assets.py from the same block as the boot splash and flattened onto this
+        // panel's own ground, so it has no edge to see. `fillMode: PreserveAspectFit` with only a
+        // height set is what lets a wordmark-shaped block stay wordmark-shaped.
         Image {
-            Layout.topMargin: 12;
-            Layout.bottomMargin: 12;
-            Layout.alignment: Qt.AlignHCenter | Qt.AlignTop
             id: logo;
-            width: 80;
-            height: width;  // square
+
+            Layout.leftMargin: ds.space2;
+            Layout.bottomMargin: ds.space6;
+            Layout.alignment: Qt.AlignLeft | Qt.AlignTop;
+            height: 32;
+            fillMode: Image.PreserveAspectFit;
             source: "file:/" + Branding.imagePath(Branding.ProductLogo);
-            sourceSize.width: width;
-            sourceSize.height: height;
+            sourceSize.height: height * 2;   // for a HiDPI panel; the file is larger than 32px
         }
 
         Repeater {
             model: ViewManager
-            Rectangle {
-                Layout.leftMargin: 6;
-                Layout.rightMargin: 6;
-                Layout.fillWidth: true;
-                height: 35;
-                radius: 6;
-                color: Branding.styleString( index == ViewManager.currentStepIndex ? Branding.SidebarBackgroundCurrent : Branding.SidebarBackground );
 
-                // THE ONE CHANGE (plan/26 §5): anchored left with a margin, not centred —
-                // anchors.left + anchors.leftMargin instead of anchors.horizontalCenter, on the
-                // same vertical centring the stock file uses. 12 within a row already inset 6
-                // reads as moderate padding on a 190px sidebar.
-                Text {
-                    anchors.verticalCenter: parent.verticalCenter;
-                    anchors.left: parent.left;
-                    anchors.leftMargin: 12;
-                    color: Branding.styleString( index == ViewManager.currentStepIndex ? Branding.SidebarTextCurrent : Branding.SidebarText );
-                    text: display;
+            Rectangle {
+                id: stepRow;
+
+                required property int index;
+                required property string display;
+
+                readonly property bool current: stepRow.index === ViewManager.currentStepIndex;
+                readonly property bool done: stepRow.index < ViewManager.currentStepIndex;
+
+                Layout.fillWidth: true;
+                Layout.bottomMargin: 1;
+                height: 34;
+                radius: ds.radiusMd;
+                color: stepRow.current ? ds.accentWash : "transparent";
+
+                RowLayout {
+                    anchors.fill: parent;
+                    anchors.leftMargin: ds.space2 + 2;
+                    anchors.rightMargin: ds.space2 + 2;
+                    spacing: ds.space3 - 1;
+
+                    // The mark: a ring for the step you are on, a filled tick for the ones behind
+                    // you, an empty outline for the ones ahead. It is the one part of the row that
+                    // says WHERE you are without depending on the text being legible.
+                    Rectangle {
+                        Layout.alignment: Qt.AlignVCenter;
+                        implicitWidth: 16;
+                        implicitHeight: 16;
+                        radius: width / 2;
+                        color: stepRow.done ? ds.accent : "transparent";
+                        border.width: 2;
+                        border.color: stepRow.current || stepRow.done ? ds.accent : ds.borderDefault;
+
+                        Text {
+                            anchors.centerIn: parent;
+                            visible: stepRow.done;
+                            text: "✓";
+                            color: ds.accentOn;
+                            font.family: ds.fontSans;
+                            font.pixelSize: 9;
+                            font.weight: ds.weightBold;
+                        }
+                    }
+
+                    // LEFT-ALIGNED, which is the one change this file originally existed for
+                    // (plan/26 §5): ProgressTreeDelegate.cpp centres every step name with a
+                    // hard-coded Qt::AlignHCenter that no branding file can reach, and this
+                    // installer's steps read better from the left.
+                    Text {
+                        Layout.fillWidth: true;
+                        verticalAlignment: Text.AlignVCenter;
+                        elide: Text.ElideRight;
+                        text: stepRow.display;
+                        color: stepRow.current ? ds.textStrong
+                                               : (stepRow.done ? ds.textBody : ds.textSubtle);
+                        font.family: ds.fontSans;
+                        font.pixelSize: ds.textSm;
+                        font.weight: stepRow.current ? ds.weightSemibold : ds.weightRegular;
+                    }
                 }
             }
         }
@@ -90,64 +155,74 @@ Rectangle {
             Layout.fillHeight: true;
         }
 
-        Rectangle {
-            id: metaArea
+        // THE TWO META BUTTONS, as the design system's `ghost` variant: no fill until hover, no
+        // border, the label in the body colour. They used to be two accent-filled halves of a bar
+        // across the foot of the rail, which read as the primary action on the screen.
+        RowLayout {
             Layout.fillWidth: true;
-            height: 35
-            Layout.alignment: Qt.AlignHCenter | Qt.AlignBottom
-            color: Branding.styleString( Branding.SidebarBackground );
-            visible: true;
+            spacing: ds.space1;
 
             Rectangle {
-                id: aboutArea
-                height: 35
-                width: parent.width / 2;
-                anchors.left: parent.left
-                color: Branding.styleString( Branding.SidebarBackgroundCurrent );
-                visible: true;
+                id: aboutButton;
+
+                implicitWidth: aboutLabel.implicitWidth + 2 * ds.space3;
+                implicitHeight: ds.controlHeightSm;
+                radius: ds.radiusMd;
+                color: aboutHover.hovered ? ds.surfaceSunken : "transparent";
 
                 MouseArea {
-                    id: mouseAreaAbout
-                    anchors.fill: parent;
-                    cursorShape: Qt.PointingHandCursor
-                    hoverEnabled: true
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter;
-                        anchors.horizontalCenter: parent.horizontalCenter;
-                        x: parent.x + 4;
-                        text: qsTranslate("CalamaresSidebar", "About")
-                        color: Branding.styleString( Branding.SidebarTextCurrent );
-                        font.pointSize : 9
-                    }
+                    id: aboutHover;
 
-                    onClicked: debug.about()
+                    anchors.fill: parent;
+                    cursorShape: Qt.PointingHandCursor;
+                    hoverEnabled: true;
+                    onClicked: debug.about();
+                }
+
+                Text {
+                    id: aboutLabel;
+
+                    anchors.centerIn: parent;
+                    text: qsTranslate("CalamaresSidebar", "About");
+                    color: ds.textBody;
+                    font.family: ds.fontSans;
+                    font.pixelSize: ds.textSm;
+                    font.weight: ds.weightSemibold;
                 }
             }
 
             Rectangle {
-                id: debugArea
-                height: 35
-                width: parent.width / 2;
-                anchors.right: parent.right
-                color: Branding.styleString( Branding.SidebarBackgroundCurrent );
-                visible: debug.enabled
+                id: debugButton;
+
+                visible: debug.enabled;
+                implicitWidth: debugLabel.implicitWidth + 2 * ds.space3;
+                implicitHeight: ds.controlHeightSm;
+                radius: ds.radiusMd;
+                color: debugHover.hovered ? ds.surfaceSunken : "transparent";
 
                 MouseArea {
-                    id: mouseAreaDebug
-                    anchors.fill: parent;
-                    cursorShape: Qt.PointingHandCursor
-                    hoverEnabled: true
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter;
-                        anchors.horizontalCenter: parent.horizontalCenter;
-                        x: parent.x + 4;
-                        text: qsTranslate("CalamaresSidebar", "Debug")
-                        color: Branding.styleString( Branding.SidebarTextCurrent );
-                        font.pointSize : 9
-                    }
+                    id: debugHover;
 
-                    onClicked: debug.toggle()
+                    anchors.fill: parent;
+                    cursorShape: Qt.PointingHandCursor;
+                    hoverEnabled: true;
+                    onClicked: debug.toggle();
                 }
+
+                Text {
+                    id: debugLabel;
+
+                    anchors.centerIn: parent;
+                    text: qsTranslate("CalamaresSidebar", "Debug");
+                    color: ds.textBody;
+                    font.family: ds.fontSans;
+                    font.pixelSize: ds.textSm;
+                    font.weight: ds.weightSemibold;
+                }
+            }
+
+            Item {
+                Layout.fillWidth: true;
             }
         }
     }

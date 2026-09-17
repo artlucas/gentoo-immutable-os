@@ -6,8 +6,14 @@
 # config/branding/make-splash-assets.py --logo, from the same compose_block() that produces the
 # boot splash's stub bitmap and its KMS sprite tiles. Three consumers, one layout function: the
 # user sees this sidebar within a minute of watching that splash, so the two must be the same
-# block of pixels rather than two drawings of one logo that drift apart. The PNG is flattened
-# onto #0a0d11 and SidebarBackground below is the same value, so it has no visible edge.
+# block of pixels rather than two drawings of one logo that drift apart.
+#
+# ONE LAYOUT FUNCTION, TWO GROUNDS, since plan/28. The installer is the design system's LIGHT
+# theme and the boot splash is still dark, so logo.png and slide.png are flattened onto
+# --surface-page (#f6f7f9) while the splash keeps #0a0d11 — `--bg` is the argument that says
+# which, stage 40 passes it for those two artefacts only, and tests/test-splash-assets.sh pins
+# both. SidebarBackground below is that same #f6f7f9, so the PNG still has no visible edge; the
+# thing that changed is which colour "no visible edge" means.
 ---
 componentName:  installer
 
@@ -15,7 +21,14 @@ welcomeStyleCalamares:  false
 welcomeExpandingLogo:   true
 
 windowExpanding:    normal
-windowSize:         900px,600px
+# 1024x640 since plan/28, from 900x600. The design system's pages are two- and three-column
+# grids — the applications page is three app-set cards across, the accounts page puts the domain
+# and its local fallback side by side — and at 900px wide, less the 190px sidebar, none of them
+# had the room. 1024 is also the floor the `screen` requirement already checks for
+# (Calamares::windowMinimumWidth), so this cannot ask for a window wider than a medium the
+# greeting page is willing to install from. Every page scrolls and every grid collapses to one
+# column under its own threshold, so a smaller screen stacks rather than clips.
+windowSize:         1024px,640px
 windowPlacement:    center
 # QML, not widget, for one reason (plan/26 §5): the widget sidebar centres every step name in
 # ProgressTreeDelegate.cpp — a hard-coded Qt::AlignHCenter inside app-admin/calamares that no
@@ -25,7 +38,12 @@ windowPlacement:    center
 # same file as upstream's, with the step text left-aligned and given a margin. The bottom
 # navigation bar stays widget; it was never the problem.
 sidebar:            qml
-navigation:         widget
+# QML for BOTH panels since plan/28. The navigation bar was widget because "it was never the
+# problem" — it is now, for the same reason the sidebar was: a widget bar draws Breeze's buttons
+# in Breeze's metrics, beside nine pages that draw the design system's. calamares-navigation.qml
+# is loaded from this directory by the same filename convention and the same searchQmlFile() call
+# as the sidebar, and it is upstream's file with its three Buttons redrawn.
+navigation:         qml
 
 strings:
     productName:         "@DISTRO_NAME@"
@@ -48,14 +66,22 @@ images:
     productLogo:         "logo.png"
     productWelcome:      "logo.png"
 
-# The design system's dark surface, resolved from project/tokens: --surface-sunken #0a0d11,
-# --accent #0e9c8a, --text-strong #f6f7f9. See config/branding/README.md, which is where these
-# values are recorded rather than invented.
+# THE LIGHT SURFACE, since plan/28, and these four keys invert with the theme. They were the
+# design system's DARK palette — the only branded surface in the installer when the other nine
+# steps were Breeze — and the whole installer is the light palette now. Resolved from
+# project/tokens: --surface-page #f6f7f9, --text-body #363e4a, --text-strong #161b21, and the
+# accent wash (color-mix(in srgb, --accent 14%, --surface-card)) for the current step. See
+# config/branding/README.md, which is where these values are recorded rather than invented.
+#
+# NOTHING BUT THE WIDGET FALLBACKS READS THESE ANY MORE. Both panels are QML and both instantiate
+# Theme.qml, which stage 40 stages into this directory — so the keys are here for the flavours
+# this branding does not select, and they are kept correct so that selecting one is a change of
+# shape rather than a change of colour.
 style:
-    SidebarBackground:        "#0a0d11"
-    SidebarText:              "#f6f7f9"
-    SidebarTextCurrent:       "#0a0d11"
-    SidebarBackgroundCurrent: "#0e9c8a"
+    SidebarBackground:        "#f6f7f9"
+    SidebarText:              "#363e4a"
+    SidebarTextCurrent:       "#161b21"
+    SidebarBackgroundCurrent: "#ddf1ef"
 
 # MANDATORY, and it is the only key in this file that is. Branding.cpp reads it through get(),
 # which throws YAML::KeyNotFound for a missing key, and the constructor turns that into

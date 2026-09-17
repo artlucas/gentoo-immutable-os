@@ -364,25 +364,78 @@ for f in "${BRAND_FILES[@]}"; do
     fi
 done
 
-# THE SIDEBAR READS FROM THE LEFT (plan/26 §5). The widget flavour hard-codes centred step names
-# in upstream's ProgressTreeDelegate — unreachable from branding — so the QML flavour is used and
-# the branding component ships the sidebar QML itself (searchQmlFile looks in the branding
-# directory before the compiled-in stock copy). Both halves are asserted: the flavour switched,
-# and the shipped file is the left-aligned one.
+# BOTH WINDOW PANELS ARE QML (plan/26 §5 for the sidebar, plan/28 for the bar under it). The
+# widget flavours draw Breeze's metrics — and, for the sidebar, hard-code centred step names in
+# upstream's ProgressTreeDelegate, unreachable from branding — beside nine pages that draw the
+# design system's. The branding component ships both files itself, because searchQmlFile looks in
+# the branding directory before the compiled-in stock copy.
 assert_true "branding.desc switches the sidebar to QML" \
     grep -qE '^sidebar:[[:space:]]+qml$' "$BRAND"
-assert_true "...and only the sidebar — the bottom bar stays widget" \
-    grep -qE '^navigation:[[:space:]]+widget$' "$BRAND"
+assert_true "...and the navigation bar with it" \
+    grep -qE '^navigation:[[:space:]]+qml$' "$BRAND"
 SIDEBAR_QML="$CAL/branding/installer/calamares-sidebar.qml"
+NAV_QML="$CAL/branding/installer/calamares-navigation.qml"
 assert_file "$SIDEBAR_QML" "the branding component carries its own calamares-sidebar.qml"
-assert_true "...whose step text is left-aligned with a margin" \
-    bash -c "grep -q 'anchors.left: parent.left' '$SIDEBAR_QML' &&
-             grep -q 'anchors.leftMargin: 12' '$SIDEBAR_QML'"
-assert_false "...and no step text is centred any more" \
+assert_file "$NAV_QML" "...and its own calamares-navigation.qml"
+assert_false "no step text is centred any more" \
     bash -c "sed -n '/Repeater {/,/^        }/p' '$SIDEBAR_QML' |
              grep -v '^[[:space:]]*//' | grep -q 'horizontalCenter'"
-assert_true "...and the colours still come from the branding style, not the copy" \
-    grep -q 'Branding.styleString' "$SIDEBAR_QML"
+
+# THE PANELS PAINT THE DESIGN SYSTEM, AND THEY GET IT THE ONLY WAY THEY CAN. They belong to no
+# view module, so there is no .so to compile a Qt resource into and stage 20's fan-out does not
+# reach them: stage 40 stages Theme.qml beside them instead, where QML's implicit
+# local-directory import finds it. Miss that and both panels fail to load with a type error —
+# a window with a blank rail and no buttons.
+for panel in "$SIDEBAR_QML" "$NAV_QML"; do
+    assert_true "$(basename -- "$panel") owns a token object" \
+        grep -qE '^\s*readonly property Theme ds: Theme \{\}$' "$panel"
+done
+assert_true "stage 40 stages Theme.qml into the branding component for them" \
+    grep -q 'cal_install "$CAL_THEME_SRC" "$TARGET/etc/calamares/branding/installer/Theme.qml"' \
+        "$REPO_ROOT/scripts/stages/40-configure.sh"
+
+# THE SAME COLOUR IN THREE PLACES, AND THEY HAVE TO AGREE. The sidebar's ground is
+# --surface-page; branding.desc states it for the widget flavours, Theme.qml states it for the
+# QML ones, and stage 40 passes it to make-splash-assets.py as the ground logo.png is FLATTENED
+# ONTO. A disagreement between the first two is a mismatched rail; a disagreement with the third
+# is a logo with a visible rectangle round it, which is the exact thing branding.desc's oldest
+# comment promises will not happen.
+BRAND_SIDEBAR_BG="$(grep -oE 'SidebarBackground:[[:space:]]+"#[0-9a-fA-F]{6}"' "$BRAND" |
+                    grep -oE '#[0-9a-fA-F]{6}')"
+THEME_SURFACE_PAGE="$(grep -oE 'readonly property color basalt50: +"#[0-9a-fA-F]{6}"' "$CAL/qml/Theme.qml" |
+                      grep -oE '#[0-9a-fA-F]{6}')"
+STAGE40_BG="$(grep -oE 'INSTALLER_SURFACE_PAGE="#[0-9a-fA-F]{6}"' \
+                  "$REPO_ROOT/scripts/stages/40-configure.sh" | grep -oE '#[0-9a-fA-F]{6}')"
+assert_eq "$THEME_SURFACE_PAGE" "$BRAND_SIDEBAR_BG" \
+    "branding.desc's SidebarBackground is Theme.qml's --surface-page"
+assert_eq "$THEME_SURFACE_PAGE" "$STAGE40_BG" \
+    "...and so is the ground stage 40 flattens logo.png onto"
+assert_true "...which stage 40 actually passes to the generator" \
+    grep -q -- '--bg "$INSTALLER_SURFACE_PAGE"' "$REPO_ROOT/scripts/stages/40-configure.sh"
+
+# AND THE WORDMARK'S INK, which is the half of this that the offline suite found rather than
+# predicted. config/branding/wordmark.svg fills its glyphs with the DARK theme's --text-strong,
+# because that was every consumer's ground when it was outlined — so on the light sidebar the
+# wordmark IS the ground and the logo is a logomark with a blank space under it. Nothing about
+# the build says so; the mark still renders, the canvas is still the right size.
+THEME_TEXT_STRONG="$(grep -oE 'readonly property color basalt900: +"#[0-9a-fA-F]{6}"' "$CAL/qml/Theme.qml" |
+                     grep -oE '#[0-9a-fA-F]{6}')"
+STAGE40_INK="$(grep -oE 'INSTALLER_TEXT_STRONG="#[0-9a-fA-F]{6}"' \
+                   "$REPO_ROOT/scripts/stages/40-configure.sh" | grep -oE '#[0-9a-fA-F]{6}')"
+assert_eq "$THEME_TEXT_STRONG" "$STAGE40_INK" \
+    "the wordmark's ink is Theme.qml's --text-strong"
+assert_true "...and stage 40 passes it alongside the ground" \
+    grep -q -- '--ink "$INSTALLER_TEXT_STRONG"' "$REPO_ROOT/scripts/stages/40-configure.sh"
+assert_true "...and the generator refuses an ink that equals its ground" \
+    grep -q 'if installer_ink == installer_bg:' "$REPO_ROOT/config/branding/make-splash-assets.py"
+# ...and the BOOT splash is not dragged along with it. One layout function, two grounds: --bg
+# defaults to the dark --surface-sunken precisely so that build_slide()'s second caller, the
+# Plasma splash preview, keeps the theme it belongs to.
+assert_true "the generator still defaults to the boot splash's dark ground" \
+    grep -qE '^    installer_bg = parse_bg\(args\.bg\) if args\.bg else BG$' \
+        "$REPO_ROOT/config/branding/make-splash-assets.py"
+assert_false "...and the Plasma splash preview is not given the installer's" \
+    bash -c "grep -A3 'previews/splash.png' '$REPO_ROOT/scripts/stages/40-configure.sh' | grep -q -- '--bg'"
 # The sidebar's own two words ask the catalogue BY NAME (plan/27 §3): qsTranslate with an explicit
 # CalamaresSidebar context, because the context a plain qsTr would use is unspellable without a
 # QML-aware lupdate to discover it. The context is hand-maintained in the .ts files, the
@@ -1655,6 +1708,70 @@ if command -v docker >/dev/null 2>&1 && docker image inspect "${I_DISTRO_ID}-bui
 else
     echo "  (no ${I_DISTRO_ID}-builder image — skipping the qmllint pass)"
 fi
+
+# ---- 6j. the palette for the widgets Calamares draws itself (plan/28) ------------------------
+# The exec step's progress page, the error dialog and the About box are Qt widgets that branding
+# cannot reach; they resolve through KColorScheme, which reads [Colors:*] out of kdeglobals. The
+# groups are appended on this profile only — so the failure this guards is an installer that
+# paints the design system on nine pages and Breeze on the tenth, which is worse than not having
+# started.
+COLORS_SRC="$REPO_ROOT/config/plasma/colors-installer.in"
+assert_file "$COLORS_SRC" "the installer session carries a palette for its widget surfaces"
+STAGE40="$REPO_ROOT/scripts/stages/40-configure.sh"
+assert_true "stage 40 appends it to kdeglobals rather than replacing the file" \
+    grep -qF 'cat -- "$WORK/colors-installer" >> "$TARGET/etc/xdg/kdeglobals"' "$STAGE40"
+assert_true "...and reads the result back, because a silent no-op is the failure" \
+    grep -qF "grep -qx '\[Colors:Selection\]'" "$STAGE40"
+# ...and ONLY on this profile. The product image's user picks a scheme in System Settings, and a
+# hard-coded palette in /etc/xdg would override a choice that is not the distribution's to make.
+assert_true "...inside the installer-only section of stage 40" \
+    bash -c "python3 - <<'EOF'
+import pathlib, sys
+s = pathlib.Path('$REPO_ROOT/scripts/stages/40-configure.sh').read_text()
+append = s.index('colors-installer')
+marker = s.index('config/calamares is missing')   # the installer section's own guard
+sys.exit(0 if append > marker else 'the palette is appended outside the installer section')
+EOF"
+
+# THE PALETTE AND THE TOKENS ARE THE SAME COLOURS. KColorScheme wants r,g,b; Theme.qml states
+# #rrggbb; a mismatch is a progress page in a slightly different white from the page above it,
+# which is the kind of thing that is obvious in a screenshot and invisible in a diff.
+assert_true "the palette's window, view, selection and text are Theme.qml's own" \
+    bash -c "python3 - <<'EOF'
+import pathlib, re, sys
+
+theme = pathlib.Path('$CAL/qml/Theme.qml').read_text()
+colors = pathlib.Path('$COLORS_SRC').read_text()
+
+def token(name):
+    m = re.search(r'readonly property color %s: +\"(#[0-9a-fA-F]{6})\"' % name, theme)
+    assert m, 'Theme.qml has no %s' % name
+    h = m.group(1).lstrip('#')
+    return '%d,%d,%d' % (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
+
+def group(name):
+    m = re.search(r'\[%s\]\n((?:[A-Za-z].*\n)+)' % re.escape(name), colors)
+    assert m, 'the palette has no [%s]' % name
+    return dict(l.split('=', 1) for l in m.group(1).strip().splitlines())
+
+bad = []
+checks = [
+    ('Colors:Window',    'BackgroundNormal', 'basalt50'),   # --surface-page
+    ('Colors:Window',    'ForegroundNormal', 'basalt700'),  # --text-body
+    ('Colors:View',      'BackgroundNormal', 'white'),      # --surface-card
+    ('Colors:View',      'ForegroundNormal', 'basalt900'),  # --text-strong
+    ('Colors:Selection', 'BackgroundNormal', 'accent'),
+    ('Colors:Selection', 'ForegroundNormal', 'accentOn'),
+]
+for g, key, name in checks:
+    want, got = token(name), group(g).get(key)
+    if want != got:
+        bad.append('[%s] %s is %s, Theme.qml says %s (%s)' % (g, key, got, want, name))
+sys.exit('; '.join(bad) if bad else 0)
+EOF"
+# The typeface too: the widget surfaces should not be the one part of the installer still in Noto.
+assert_true "...and the palette sets the same typeface the pages ask for" \
+    bash -c "grep -q '^font=IBM Plex Sans,' '$COLORS_SRC' && grep -q '^fixed=IBM Plex Mono,' '$COLORS_SRC'"
 
 # ---- 7. YAML is YAML ------------------------------------------------------------------------
 # Calamares parses these with yaml-cpp and reports a parse error as a startup failure, so a

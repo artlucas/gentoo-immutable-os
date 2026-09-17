@@ -358,6 +358,90 @@ PYEOF
         else
             echo "  (gcc absent — skipping the splash.c blit check; stage 40 compiles it)"
         fi
+
+        # ---- ONE LAYOUT FUNCTION, TWO GROUNDS (plan/28) ------------------------------------
+        #
+        # The installer is the design system's LIGHT theme and the boot splash is dark, so
+        # logo.png and slide.png are flattened onto --surface-page while everything that runs
+        # before a desktop exists keeps --surface-sunken. `--bg` is how the caller says which,
+        # and BOTH ends of it matter:
+        #
+        #   * it has to WORK, or stage 40 passes a colour that changes nothing and the sidebar
+        #     gets a dark rectangle where the logo should have no edge at all;
+        #   * it has to DEFAULT to the dark ground, because build_slide() has a second caller —
+        #     the Plasma splash's preview for System Settings — which belongs to the dark theme
+        #     and passes no --bg. A default of "light" would have repainted a splash preview to
+        #     match an installer, in silence.
+        #
+        # The corner pixel is the ground by construction: build_block() pastes a centred mark
+        # onto a flat canvas, so (0,0) is never ink.
+        python3 "$GEN" --asset-dir "$DST" --logo "$TMP/logo-default.png" \
+            > /dev/null 2>&1 || _fail "the generator fails with no --bg"
+        python3 "$GEN" --asset-dir "$DST" --bg '#f6f7f9' --ink '#161b21' \
+            --logo "$TMP/logo-light.png" \
+            --slide "$TMP/slide-light.png" --slide-size 640x360 \
+            > /dev/null 2>&1 || _fail "the generator fails with --bg and --ink"
+        assert_true "--logo defaults to the boot splash's dark ground" \
+            python3 -c 'import sys
+from PIL import Image
+px = Image.open(sys.argv[1]).convert("RGB").getpixel((0, 0))
+assert px == (0x0A, 0x0D, 0x11), px' "$TMP/logo-default.png"
+        assert_true "...and --bg repaints it for the installer" \
+            python3 -c 'import sys
+from PIL import Image
+px = Image.open(sys.argv[1]).convert("RGB").getpixel((0, 0))
+assert px == (0xF6, 0xF7, 0xF9), px' "$TMP/logo-light.png"
+        assert_true "...and the progress-page slide with it" \
+            python3 -c 'import sys
+from PIL import Image
+im = Image.open(sys.argv[1]).convert("RGB")
+assert im.size == (640, 360), im.size
+assert im.getpixel((0, 0)) == (0xF6, 0xF7, 0xF9), im.getpixel((0, 0))' "$TMP/slide-light.png"
+        # THE MARK IS IN THE SAME PLACE EITHER WAY — only what is behind it moved, which is the
+        # property "one layout function, two grounds" is a claim about. Compared as the bounding
+        # box of everything that is NOT the ground: the two canvases cannot be diffed directly
+        # (every transparent pixel differs, by construction) but the ink must occupy the same
+        # rectangle to the pixel, or the block really did get composed twice.
+        assert_true "the mark sits in the same place on both grounds" \
+            python3 -c 'import sys
+from PIL import Image, ImageChops
+
+def ink_box(path):
+    im = Image.open(path).convert("RGB")
+    ground = Image.new("RGB", im.size, im.getpixel((0, 0)))
+    return im.size, ImageChops.difference(im, ground).getbbox()
+
+dark, light = ink_box(sys.argv[1]), ink_box(sys.argv[2])
+assert dark[1] is not None, "the dark logo has no ink on it at all"
+assert dark == light, (dark, light)' "$TMP/logo-default.png" "$TMP/logo-light.png"
+        # A malformed --bg stops the run rather than falling back to a default, because an
+        # artefact built on a mistyped colour is merely wrong and a build that stops is not.
+        assert_false "a malformed --bg is refused rather than defaulted" \
+            python3 "$GEN" --asset-dir "$DST" --bg 'f6f7f' --logo "$TMP/logo-bad.png"
+        python3 "$GEN" --asset-dir "$DST" --bg '#f6f7f9' --ink '#363e4a' \
+            --logo "$TMP/logo-light-alt.png" > /dev/null 2>&1 \
+            || _fail "the generator fails with a second --ink"
+
+        # THE WORDMARK IS BAKED #f6f7f9 — the DARK theme's --text-strong, which was every
+        # consumer's ground when config/branding/wordmark.svg was outlined. Put on the
+        # INSTALLER's light --surface-page with that ink kept, it is the ground colour: the logo
+        # becomes a logomark with a blank space under it, and nothing in a build says so. The
+        # offline suite found exactly that, which is why the generator now refuses it outright
+        # rather than leaving it to be noticed in a VM.
+        assert_false "a wordmark the same colour as its ground is refused" \
+            python3 "$GEN" --asset-dir "$DST" --bg '#f6f7f9' --ink '#f6f7f9' \
+                --logo "$TMP/logo-invisible.png"
+        assert_true "...and re-inking really does change the wordmark's pixels" \
+            python3 -c 'import sys
+from PIL import Image, ImageChops
+a = Image.open(sys.argv[1]).convert("RGB")
+b = Image.open(sys.argv[2]).convert("RGB")
+# Same ground, different ink: the SLABS are the teal accent and must not move, so the difference
+# has to be confined to the wordmark — the lower part of the block, below the mark box.
+diff = ImageChops.difference(a, b).getbbox()
+assert diff is not None, "re-inking changed nothing"
+assert diff[1] > a.height // 2, ("the difference reaches into the logomark", diff)' \
+                "$TMP/logo-light.png" "$TMP/logo-light-alt.png"
     else
         echo "  (Pillow absent — skipping the generate pass; builder/Dockerfile installs it)"
     fi

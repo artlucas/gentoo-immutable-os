@@ -124,6 +124,18 @@ prevent. So the claim above that all consumers share one layout function still h
 longer share is the colour underneath. `--bg` is the argument that says which, it defaults to the
 splash's dark, and `tests/test-splash-assets.sh` pins both.
 
+**...and the wordmark is re-inked with it,** which is the half of that nobody predicted.
+`wordmark.svg` fills its glyph paths with `#f6f7f9` — `--text-strong` of the **dark** theme,
+because that was every consumer's ground when it was outlined. On the installer's light
+`--surface-page` that is the ground colour, so the logo becomes a logomark with a blank space
+under it, and nothing about the build says so: the canvas is the right size and the mark still
+renders. `--ink` is the argument, `recolour()` swaps the RGB and keeps the alpha (so no glyph edge
+moves), and the generator now **refuses outright** when `--ink` equals `--bg`. The slabs need no
+equivalent: they are the teal `--accent`, which reads on both grounds.
+
+The offline suite found this, not a VM — `tests/test-splash-assets.sh` compares the bounding box
+of everything that is not the ground, on both grounds, and they did not match.
+
 **Archivo is substituted, not shipped.** The design system's display face is Archivo. Gentoo does
 not package it, and the only Archivo in this repository is the outlined wordmark below — which
 exists so that the build needs no font binary at all. Rather than add a font package with a
