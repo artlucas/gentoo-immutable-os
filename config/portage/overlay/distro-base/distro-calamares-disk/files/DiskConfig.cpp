@@ -429,6 +429,10 @@ DiskConfig::setCurrentIndex( int index )
     emit currentIndexChanged();
     emit planChanged();
     emit nextEnabledChanged();
+    // And retranslated(), though nothing translated: confirmSubtitle is a string property that
+    // follows the selection as well as the language, and this is its change signal — the same
+    // loosening rescan() makes for the headline.
+    emit retranslated();
 }
 
 void
@@ -607,6 +611,22 @@ DiskConfig::selectedDiskTitle() const
     // things the row shows side by side, so the dialog cannot name the disk differently from the
     // list above it.
     return DiskModel::rowTitle( e ) + QLatin1String( " (" ) + e.node + QLatin1Char( ')' );
+}
+
+QString
+DiskConfig::confirmSubtitle() const
+{
+    // The whole line, composed here rather than in the QML: the disk by the name the row used,
+    // then the loss summary — the same two sentences the page below the dialog already says, so
+    // the dialog cannot introduce a second name for the disk — with the generic sentence for the
+    // case where there is nothing composed to say (plan/27 §1).
+    const QString title = selectedDiskTitle();
+    const QString loss = lossSummary();
+    if ( !title.isEmpty() && !loss.isEmpty() )
+    {
+        return tr( "%1 — %2" ).arg( title, loss );
+    }
+    return tr( "Everything on the selected disk will be erased." );
 }
 
 QString

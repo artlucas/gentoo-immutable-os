@@ -79,6 +79,25 @@ public:
     /*! "32 GB", for the empty state's sentence. One number, from build.conf. */
     Q_PROPERTY( QString minimumSizeText READ minimumSizeText NOTIFY retranslated )
 
+    /*! The rest of the page's words (plan/27 §1): every string Disk.qml shows is a tr()'d
+     *  property, because the builder's lupdate is built without QML support and a qsTr() in the
+     *  QML has never reached the branding catalogue — the treatment plan/25 §4 established for
+     *  the applications page. confirmSubtitle composes the confirmation dialog's line from
+     *  selectedDiskTitle and lossSummary in C++ — a format string with two substituted strings
+     *  is three translations' worth of moving parts for one property — so it depends on the
+     *  selection as well as on the language, and setCurrentIndex() re-emits retranslated() for
+     *  it the way rescan() always has for the headline. */
+    Q_PROPERTY( QString checkAgainLabel READ checkAgainLabel NOTIFY retranslated )
+    Q_PROPERTY( QString noDisksText READ noDisksText NOTIFY retranslated )
+    Q_PROPERTY( QString noDisksMinimumText READ noDisksMinimumText NOTIFY retranslated )
+    Q_PROPERTY( QString layoutSummaryLabel READ layoutSummaryLabel NOTIFY retranslated )
+    Q_PROPERTY( QString encryptLabel READ encryptLabel NOTIFY retranslated )
+    Q_PROPERTY( QString notYetAvailableText READ notYetAvailableText NOTIFY retranslated )
+    Q_PROPERTY( QString confirmTitle READ confirmTitle NOTIFY retranslated )
+    Q_PROPERTY( QString confirmSubtitle READ confirmSubtitle NOTIFY retranslated )
+    Q_PROPERTY( QString cancelLabel READ cancelLabel NOTIFY retranslated )
+    Q_PROPERTY( QString confirmAcceptLabel READ confirmAcceptLabel NOTIFY retranslated )
+
     /*! The bar: a list of { label, sizeText, bytes } in on-disk order, or empty when nothing is
      *  selected. The QML gives them colours; the sizes and the order are the layout's. */
     Q_PROPERTY( QVariantList plan READ plan NOTIFY planChanged )
@@ -104,6 +123,23 @@ public:
     QString headline() const;
     QString subheadline() const;
     QString minimumSizeText() const;
+    // The words (plan/27 §1), inline for the same reason the headline is not: they are one line
+    // each, and out-of-line getters would bury them. confirmSubtitle is the one composition.
+    QString checkAgainLabel() const { return tr( "Check again" ); }
+    QString noDisksText() const { return tr( "No disks were found at all." ); }
+    QString noDisksMinimumText() const
+    {
+        return tr( "Plug in a disk of at least %1 and choose Check again. These are the disks "
+                   "this computer has now:" )
+            .arg( minimumSizeText() );
+    }
+    QString layoutSummaryLabel() const { return tr( "The disk will be set up like this" ); }
+    QString encryptLabel() const { return tr( "Encrypt this disk" ); }
+    QString notYetAvailableText() const { return tr( "Not yet available" ); }
+    QString confirmTitle() const { return tr( "Erase this disk?" ); }
+    QString confirmSubtitle() const;
+    QString cancelLabel() const { return tr( "Cancel" ); }
+    QString confirmAcceptLabel() const { return tr( "Erase and install" ); }
     QString selectedDiskTitle() const;
     QVariantList plan() const;
     QString lossSummary() const;

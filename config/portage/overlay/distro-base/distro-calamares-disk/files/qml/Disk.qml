@@ -8,7 +8,10 @@
  * ApplicationWindow would be a second window that never appears and a Kirigami page assumes a
  * page stack that is not there.
  *
- * qsTr(), never i18n() — there is no KLocalizedContext on this engine (plan/19 §7.2).
+ * No qsTr() in this file (plan/27 §1): the builder's lupdate is built without QML support, so a
+ * qsTr() here never reached the branding catalogue and rendered English in every language. Every
+ * word is a tr()'d DiskConfig property instead — and never i18n(), for there is no
+ * KLocalizedContext on this engine either (plan/19 §7.2).
  *
  * `disk` is the DiskConfig context property. Everything on this page is a binding onto it; the
  * only state held here is the ListView's own highlight, and that is pushed into C++ and pulled
@@ -101,7 +104,7 @@ Item {
                 Layout.alignment: Qt.AlignTop
                 flat: true
                 icon.name: "view-refresh"
-                text: qsTr("Check again")
+                text: disk.checkAgainLabel
                 onClicked: disk.rescan()
             }
         }
@@ -121,8 +124,8 @@ Item {
             visible: disk.installableCount === 0
             type: Kirigami.MessageType.Warning
             text: disk.diskCount === 0
-                ? qsTr("No disks were found at all.")
-                : qsTr("Plug in a disk of at least %1 and choose Check again. These are the disks this computer has now:").arg(disk.minimumSizeText)
+                ? disk.noDisksText
+                : disk.noDisksMinimumText
         }
 
         // ---- the disks ------------------------------------------------------------------
@@ -328,7 +331,7 @@ Item {
             }
 
             QQC2.Label {
-                text: qsTr("The disk will be set up like this")
+                text: disk.layoutSummaryLabel
                 font.bold: true
             }
 
@@ -452,13 +455,13 @@ Item {
                 }
 
                 QQC2.Label {
-                    text: qsTr("Encrypt this disk")
+                    text: disk.encryptLabel
                 }
 
                 QQC2.Label {
                     Layout.fillWidth: true
                     visible: !disk.encryptionAvailable
-                    text: qsTr("Not yet available")
+                    text: disk.notYetAvailableText
                     opacity: 0.7
                     font: Kirigami.Theme.smallFont
                 }
@@ -486,24 +489,22 @@ Item {
     Kirigami.PromptDialog {
         id: confirmDialog
 
-        title: qsTr("Erase this disk?")
-        // The disk by the name the row used, then the loss summary — the same two sentences the
-        // page below the dialog already says, so the dialog cannot introduce a second name for
-        // the disk. lossSummary is C++ tr(), so it translates; the title and the buttons are
-        // qsTr(), which on this builder does not (plan/25 §7's lupdate limit).
-        subtitle: disk.selectedDiskTitle.length > 0 && disk.lossSummary.length > 0
-                      ? qsTr("%1 — %2").arg( disk.selectedDiskTitle ).arg( disk.lossSummary )
-                      : qsTr("Everything on the selected disk will be erased.")
+        title: disk.confirmTitle
+        // The disk by the name the row used, then the loss summary — composed whole in C++
+        // (confirmSubtitle), so the same two sentences the page below the dialog already says
+        // cannot diverge from it in a second language, and every word of this dialog follows
+        // the catalogue (plan/27 §1).
+        subtitle: disk.confirmSubtitle
         standardButtons: Kirigami.Dialog.NoButton
         customFooterActions: [
             Kirigami.Action {
                 icon.name: "dialog-cancel"
-                text: qsTr("Cancel")
+                text: disk.cancelLabel
                 onTriggered: confirmDialog.close()
             },
             Kirigami.Action {
                 icon.name: "data-warning"
-                text: qsTr("Erase and install")
+                text: disk.confirmAcceptLabel
                 onTriggered: {
                     confirmDialog.close();
                     disk.acceptConfirmation();

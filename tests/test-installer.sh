@@ -1047,7 +1047,8 @@ assert_true "disks that cannot be used are listed and disabled, not filtered out
 # The encryption control is drawn and disabled. Hiding it would mean the first person to ask about
 # encryption has to ask whether it was forgotten (plan/24 §7).
 assert_true "the encryption control exists, disabled, with a reason" \
-    bash -c "grep -q 'Encrypt this disk' '$DISK_QML' && grep -q 'Not yet available' '$DISK_QML'"
+    bash -c "grep -q 'Encrypt this disk' '$DISK_SRC/DiskConfig.h' &&
+             grep -q 'Not yet available' '$DISK_SRC/DiskConfig.h'"
 assert_true "...and nothing in this module can turn it on" \
     bash -c "grep -q 'bool encryptionAvailable() const { return false; }' '$DISK_SRC/DiskConfig.h'"
 assert_false "...and no encryption is implemented behind it" \
@@ -1058,10 +1059,20 @@ assert_false "...and no encryption is implemented behind it" \
 # thing it explains.
 assert_false "the disk module does not set the Qt Quick Controls style" \
     grep -rqE '^[^/*]*QQuickStyle::setStyle' "$DISK_SRC"
-# ...and the QML engine is retranslated, or every qsTr() on this page stays in the language the
-# installer started in.
+# ...and the QML engine is retranslated, or every string bound from a C++ property stays in the
+# language the installer started in.
 assert_true "the view step retranslates its QML engine on a language change" \
     grep -q 'engine()->retranslate()' "$DISK_SRC/DiskViewStep.cpp"
+# THE DISK PAGE'S WORDS ARE C++ PROPERTIES TOO (plan/27 §1) — the same treatment the applications
+# page established: no qsTr() call is left in the QML, the erase dialog asks its question in
+# catalogue words, and its subtitle is composed whole in C++ so the two sentences the page says
+# cannot diverge from the dialog's copy of them in a second language.
+assert_false "no qsTr() call is left in the disk QML" \
+    grep -q 'qsTr("' "$DISK_QML"
+assert_true "the erase dialog's words live on DiskConfig, where lupdate can see them" \
+    grep -q 'tr( "Erase this disk?" )' "$DISK_SRC/DiskConfig.h"
+assert_true "...and its subtitle is composed whole in C++, selection and language both" \
+    grep -q 'DiskConfig::confirmSubtitle' "$DISK_SRC/DiskConfig.cpp"
 
 # A Qt context IS a class name, and check-translations.py check 5 resolves one to the file whose
 # stem matches. DiskModel says its own strings, so it has to be its own file or every one of them
