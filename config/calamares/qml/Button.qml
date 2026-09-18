@@ -145,7 +145,11 @@ Item {
 
                 anchors.verticalCenter: parent.verticalCenter
                 visible: button.icon === "refresh"
-                width: visible ? Math.round(button._fontSize * 1.15) : 0
+                // 1.3x the label, not the 1.15 this started at: the arrowhead is ~2px across at
+                // 16px and rasterises to a faint spike, and the mark stops reading as an arrow.
+                // Rendered offscreen at 16/18/24/48/120 to pick the smallest size that still
+                // reads — see the commit.
+                width: visible ? Math.round(button._fontSize * 1.3) : 0
                 height: width
 
                 // The ink never changes on hover — every variant's foreground is constant across
@@ -167,11 +171,12 @@ Item {
                     const u = width / 24;
                     const cx = 12 * u;
                     const cy = 12 * u;
-                    const r = 7 * u;
-                    // 0 is east and the angle runs clockwise on screen, so this sweeps 295
-                    // degrees and leaves a 65-degree gap centred on 3 o'clock.
-                    const a0 = 0.18 * Math.PI;
-                    const a1 = 1.82 * Math.PI;
+                    const r = 6.4 * u;
+                    // 0 is east and the angle runs clockwise on screen, so this sweeps 248
+                    // degrees and leaves the rest as the gap, on the right. The ring is smaller
+                    // than the box because the head has to fit inside it.
+                    const a0 = 0.34 * Math.PI;
+                    const a1 = 1.72 * Math.PI;
 
                     ctx.strokeStyle = iconCanvas.ink;
                     ctx.lineWidth = 2 * u;
@@ -190,13 +195,17 @@ Item {
                     const nx = -ty;
                     const ny = tx;
 
+                    // Pulled back along the tangent so the triangle's base sits ON the stroke's
+                    // end rather than past it: a head that starts where the line stops reads as
+                    // a line with a lump on it.
+                    const bx = px - tx * 1.3 * u;
+                    const by = py - ty * 1.3 * u;
+
                     ctx.fillStyle = iconCanvas.ink;
                     ctx.beginPath();
-                    ctx.moveTo(px + tx * 3.4 * u, py + ty * 3.4 * u);
-                    ctx.lineTo(px - tx * 0.6 * u + nx * 2.7 * u,
-                               py - ty * 0.6 * u + ny * 2.7 * u);
-                    ctx.lineTo(px - tx * 0.6 * u - nx * 2.7 * u,
-                               py - ty * 0.6 * u - ny * 2.7 * u);
+                    ctx.moveTo(bx + tx * 4.8 * u, by + ty * 4.8 * u);
+                    ctx.lineTo(bx + nx * 3.4 * u, by + ny * 3.4 * u);
+                    ctx.lineTo(bx - nx * 3.4 * u, by - ny * 3.4 * u);
                     ctx.closePath();
                     ctx.fill();
                 }
