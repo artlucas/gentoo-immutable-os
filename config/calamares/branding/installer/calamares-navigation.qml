@@ -122,6 +122,21 @@ Rectangle {
     readonly property bool quitIsPrimary:
         ViewManager.quitVisible && ViewManager.quitEnabled && !ViewManager.nextEnabled;
 
+    /* EVERY LABEL IN THIS BAR IS A WIDGET LABEL, and a widget label carries a mnemonic.
+       ViewManager hands out "&Back", "&Next", "&Cancel", "&Install now" — the ampersand marks the
+       Alt- shortcut letter, QWidget eats it and draws an underline, and a QML Text has no such
+       convention and draws the ampersand. The bar came up reading "&Cancel  &Back  &Next", which
+       is what upstream's sample does too; upstream's sample is a sample.
+       Qt's escape for a literal ampersand in a mnemonic string is "&&", so that has to survive as
+       one "&" rather than being eaten with the rest — hence the placeholder rather than a single
+       pass of replace(). No translation in config/calamares/branding/installer/lang uses one
+       today, and this costs one line to be right if one ever does.
+       NOT A CANDIDATE FOR retranslateWindowPanels(): these are ViewManager Q_PROPERTYs with NOTIFY
+       signals, so the bindings re-run on a language change by themselves. See the header. */
+    function plainLabel(s) {
+        return s ? s.replace(/&&/g, "\u0001").replace(/&/g, "").replace(/\u0001/g, "&") : "";
+    }
+
     RowLayout {
         id: buttonBar;
 
@@ -137,7 +152,7 @@ Rectangle {
         // installer the button beside Next on the summary page writes to somebody's disk.
         NavButton {
             variant: "ghost";
-            label: ViewManager.quitLabel;
+            label: navigationBar.plainLabel(ViewManager.quitLabel);
             active: ViewManager.quitEnabled;
             visible: ViewManager.quitVisible && !navigationBar.quitIsPrimary;
             onClicked: ViewManager.quit();
@@ -149,7 +164,7 @@ Rectangle {
 
         NavButton {
             variant: "secondary";
-            label: ViewManager.backLabel;
+            label: navigationBar.plainLabel(ViewManager.backLabel);
             active: ViewManager.backEnabled;
             visible: ViewManager.backAndNextVisible;
             onClicked: ViewManager.back();
@@ -157,7 +172,7 @@ Rectangle {
 
         NavButton {
             variant: "primary";
-            label: ViewManager.nextLabel;
+            label: navigationBar.plainLabel(ViewManager.nextLabel);
             active: ViewManager.nextEnabled;
             visible: ViewManager.backAndNextVisible && !navigationBar.quitIsPrimary;
             onClicked: ViewManager.next();
@@ -167,7 +182,7 @@ Rectangle {
         // on quitIsPrimary. Only one of the two is ever visible.
         NavButton {
             variant: "primary";
-            label: ViewManager.quitLabel;
+            label: navigationBar.plainLabel(ViewManager.quitLabel);
             active: true;
             visible: navigationBar.quitIsPrimary;
             onClicked: ViewManager.quit();

@@ -390,6 +390,20 @@ for panel in "$SIDEBAR_QML" "$NAV_QML"; do
     assert_true "$(basename -- "$panel") owns a token object" \
         grep -qE '^\s*readonly property Theme ds: Theme \{\}$' "$panel"
 done
+# EVERY ViewManager LABEL IN THE NAVIGATION BAR IS STRIPPED OF ITS MNEMONIC, and the booted
+# medium is what asked for this assertion: the bar came up reading "&Cancel  &Back  &Next".
+# ViewManager's labels are WIDGET labels — "&Back" marks Alt-B — and a QWidget eats the ampersand
+# and underlines the letter, while a QML Text has no such convention and draws the ampersand.
+# Upstream's calamares-navigation.qml, which this file was copied from, has the same bug; it is
+# titled "Sample of QML navigation". Nothing offline catches a wrong STRING in a label, so what is
+# pinned here is the shape: no ViewManager *Label may reach a NavButton without going through
+# plainLabel().
+NAV_RAW_LABELS="$(grep -cE 'label:[[:space:]]*ViewManager\.[A-Za-z]*Label' "$NAV_QML" || true)"
+assert_eq "0" "$NAV_RAW_LABELS" \
+    "no navigation label binds ViewManager's mnemonic text straight into a QML Text"
+assert_true "the navigation bar strips widget mnemonics from its labels" \
+    grep -qE '^\s*function plainLabel\(' "$NAV_QML"
+
 assert_true "stage 40 stages Theme.qml into the branding component for them" \
     grep -q 'cal_install "$CAL_THEME_SRC" "$TARGET/etc/calamares/branding/installer/Theme.qml"' \
         "$REPO_ROOT/scripts/stages/40-configure.sh"
