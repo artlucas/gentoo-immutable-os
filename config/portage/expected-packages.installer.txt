@@ -231,8 +231,12 @@ gui-libs/libdecor
 immos-base/immos-calamares-accounts
 immos-base/immos-calamares-apps
 immos-base/immos-calamares-disk
+immos-base/immos-calamares-done
 immos-base/immos-calamares-greeting
+immos-base/immos-calamares-keymap
 immos-base/immos-calamares-language
+immos-base/immos-calamares-location
+immos-base/immos-calamares-review
 kde-apps/baloo-widgets
 kde-apps/dolphin
 kde-apps/kio-extras

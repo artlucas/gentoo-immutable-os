@@ -1,7 +1,18 @@
-# The last page (plan/16 §5.3, "Keep").
+# The last page (plan/16 §5.3, replaced in plan/28 §6).
+#
+# It is `done` on disk and "Finish" in the sidebar: a plugin called `finished` would collide
+# file-for-file with app-admin/calamares' own module. The two keys below are UPSTREAM'S, by
+# upstream's names and with upstream's aliases, because the page changed hands and the
+# configuration contract did not.
+#
+# `notifyOnFinished` is gone with the module that read it. It was false here and always had been —
+# a D-Bus desktop notification about an installer that is the only application on the screen has
+# no second window to be seen from — so the replacement does not implement it at all, which drops
+# a QtDBus dependency and a code path nothing here exercised.
 ---
 # The reboot checkbox is offered, unchecked. Unchecked deliberately: the user has to REMOVE THE
-# INSTALL MEDIUM before rebooting, and a pre-ticked box invites them not to.
+# INSTALL MEDIUM before rebooting, and a pre-ticked box invites them not to. The page says so, in
+# a line that appears only once the box IS ticked.
 #
 # That instruction is not politeness. The installed root partition carries PARTLABEL=root_@VERSION@
 # and the installed var carries PARTLABEL=var — identical to the labels on the stick this
@@ -13,4 +24,3 @@
 # possible outcome, and it is the bad one.
 restartNowMode:     user-unchecked
 restartNowCommand:  "systemctl -i reboot"
-notifyOnFinished:   false

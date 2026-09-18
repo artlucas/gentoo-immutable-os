@@ -762,4 +762,124 @@
         <translation>未找到屏幕</translation>
     </message>
 </context>
+<context>
+    <name>ReviewViewStep</name>
+    <message>
+        <source>Summary</source>
+        <translation>摘要</translation>
+    </message>
+</context>
+<context>
+    <name>ReviewConfig</name>
+    <message>
+        <source>Ready to install</source>
+        <translation>准备安装</translation>
+    </message>
+    <message>
+        <source>Nothing has changed on your computer yet. This is the last step before the installer writes to the disk.</source>
+        <translation>目前尚未对这台计算机做出任何更改。这是安装程序写入磁盘前的最后一步。</translation>
+    </message>
+    <message>
+        <source>This erases %1 completely</source>
+        <translation>这将彻底清除 %1</translation>
+    </message>
+    <message>
+        <source>Every partition, file and operating system on that drive will be removed. Other drives are left alone.</source>
+        <translation>该驱动器上的所有分区、文件和操作系统都将被删除。其他驱动器不受影响。</translation>
+    </message>
+    <message>
+        <source>the selected disk</source>
+        <translation>所选磁盘</translation>
+    </message>
+</context>
+<context>
+    <name>DoneViewStep</name>
+    <message>
+        <source>Finish</source>
+        <translation>完成</translation>
+    </message>
+</context>
+<context>
+    <name>DoneConfig</name>
+    <message>
+        <source>%1 is installed</source>
+        <translation>%1 已安装完成</translation>
+    </message>
+    <message>
+        <source>Restart to sign in for the first time. Anything still downloading finishes after that.</source>
+        <translation>重新启动即可首次登录。仍在下载的内容会在之后完成。</translation>
+    </message>
+    <message>
+        <source>Restart now</source>
+        <translation>立即重启</translation>
+    </message>
+    <message>
+        <source>Remove the installation medium before the computer starts again.</source>
+        <translation>请在计算机再次启动前取出安装介质。</translation>
+    </message>
+</context>
+<context>
+    <name>LocationViewStep</name>
+    <message>
+        <source>Location</source>
+        <translation>位置</translation>
+    </message>
+</context>
+<context>
+    <name>LocationConfig</name>
+    <message>
+        <source>Where are you?</source>
+        <translation>您在哪里？</translation>
+    </message>
+    <message>
+        <source>Your location sets the clock and the date. The hardware clock is kept in UTC, and you can change this later in Settings.</source>
+        <translation>您的位置决定时钟和日期。硬件时钟保持为 UTC，之后可以在设置中更改。</translation>
+    </message>
+    <message>
+        <source>Region</source>
+        <translation>地区</translation>
+    </message>
+    <message>
+        <source>Zone</source>
+        <translation>时区</translation>
+    </message>
+</context>
+<context>
+    <name>KeymapViewStep</name>
+    <message>
+        <source>Keyboard</source>
+        <translation>键盘</translation>
+    </message>
+</context>
+<context>
+    <name>KeymapConfig</name>
+    <message>
+        <source>Set up your keyboard</source>
+        <translation>设置键盘</translation>
+    </message>
+    <message>
+        <source>Pick the layout printed on your keys. The preview below shows what they will type once the installed system starts.</source>
+        <translation>选择键帽上印刷的布局。下方预览显示安装好的系统启动后这些键会输入什么。</translation>
+    </message>
+    <message>
+        <source>Layout</source>
+        <translation>布局</translation>
+    </message>
+    <message>
+        <source>Variant</source>
+        <translation>变体</translation>
+    </message>
+    <message>
+        <source>Preview</source>
+        <translation>预览</translation>
+    </message>
+    <message>
+        <source>Default</source>
+        <translation>默认</translation>
+    </message>
+    <message>
+        <source>No keyboard layouts could be read from this medium, so the installed system will keep the layout this one booted with.</source>
+        <translation>无法从此介质读取键盘布局，因此安装好的系统将沿用此介质启动时使用的布局。</translation>
+    </message>
+</context>
 </TS>

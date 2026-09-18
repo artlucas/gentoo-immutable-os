@@ -767,4 +767,124 @@
         <translation>nenhuma tela encontrada</translation>
     </message>
 </context>
+<context>
+    <name>ReviewViewStep</name>
+    <message>
+        <source>Summary</source>
+        <translation>Resumo</translation>
+    </message>
+</context>
+<context>
+    <name>ReviewConfig</name>
+    <message>
+        <source>Ready to install</source>
+        <translation>Tudo pronto para instalar</translation>
+    </message>
+    <message>
+        <source>Nothing has changed on your computer yet. This is the last step before the installer writes to the disk.</source>
+        <translation>Nada foi alterado no seu computador ainda. Esta é a última etapa antes de o instalador gravar no disco.</translation>
+    </message>
+    <message>
+        <source>This erases %1 completely</source>
+        <translation>Isto apaga %1 por completo</translation>
+    </message>
+    <message>
+        <source>Every partition, file and operating system on that drive will be removed. Other drives are left alone.</source>
+        <translation>Todas as partições, arquivos e sistemas operacionais desse disco serão removidos. Os demais discos não são alterados.</translation>
+    </message>
+    <message>
+        <source>the selected disk</source>
+        <translation>o disco selecionado</translation>
+    </message>
+</context>
+<context>
+    <name>DoneViewStep</name>
+    <message>
+        <source>Finish</source>
+        <translation>Conclusão</translation>
+    </message>
+</context>
+<context>
+    <name>DoneConfig</name>
+    <message>
+        <source>%1 is installed</source>
+        <translation>%1 está instalado</translation>
+    </message>
+    <message>
+        <source>Restart to sign in for the first time. Anything still downloading finishes after that.</source>
+        <translation>Reinicie para entrar pela primeira vez. O que ainda estiver baixando termina depois disso.</translation>
+    </message>
+    <message>
+        <source>Restart now</source>
+        <translation>Reiniciar agora</translation>
+    </message>
+    <message>
+        <source>Remove the installation medium before the computer starts again.</source>
+        <translation>Remova a mídia de instalação antes de o computador iniciar novamente.</translation>
+    </message>
+</context>
+<context>
+    <name>LocationViewStep</name>
+    <message>
+        <source>Location</source>
+        <translation>Localização</translation>
+    </message>
+</context>
+<context>
+    <name>LocationConfig</name>
+    <message>
+        <source>Where are you?</source>
+        <translation>Onde você está?</translation>
+    </message>
+    <message>
+        <source>Your location sets the clock and the date. The hardware clock is kept in UTC, and you can change this later in Settings.</source>
+        <translation>Sua localização define o relógio e a data. O relógio do hardware é mantido em UTC e você pode alterar isso depois nas Configurações.</translation>
+    </message>
+    <message>
+        <source>Region</source>
+        <translation>Região</translation>
+    </message>
+    <message>
+        <source>Zone</source>
+        <translation>Zona</translation>
+    </message>
+</context>
+<context>
+    <name>KeymapViewStep</name>
+    <message>
+        <source>Keyboard</source>
+        <translation>Teclado</translation>
+    </message>
+</context>
+<context>
+    <name>KeymapConfig</name>
+    <message>
+        <source>Set up your keyboard</source>
+        <translation>Configure seu teclado</translation>
+    </message>
+    <message>
+        <source>Pick the layout printed on your keys. The preview below shows what they will type once the installed system starts.</source>
+        <translation>Escolha o layout impresso nas suas teclas. A pré-visualização abaixo mostra o que elas digitarão quando o sistema instalado iniciar.</translation>
+    </message>
+    <message>
+        <source>Layout</source>
+        <translation>Layout</translation>
+    </message>
+    <message>
+        <source>Variant</source>
+        <translation>Variante</translation>
+    </message>
+    <message>
+        <source>Preview</source>
+        <translation>Pré-visualização</translation>
+    </message>
+    <message>
+        <source>Default</source>
+        <translation>Padrão</translation>
+    </message>
+    <message>
+        <source>No keyboard layouts could be read from this medium, so the installed system will keep the layout this one booted with.</source>
+        <translation>Não foi possível ler nenhum layout de teclado desta mídia, então o sistema instalado manterá o layout com que ela foi iniciada.</translation>
+    </message>
+</context>
 </TS>

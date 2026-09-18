@@ -8,11 +8,16 @@
 # below: installing @DISTRO_NAME@ is not unpack-and-configure. There is no squashfs to rsync, no
 # package manager to run, no bootloader to generate and no fstab to write — the root filesystem
 # is an EROFS image that gets written to a partition byte-for-byte, and everything else was
-# decided at build time and is already inside it. So the stock modules that make sense here are
-# the ones that ASK THE USER SOMETHING (locale, keyboard) plus the ones that write per-machine
-# identity into /etc. Everything that touches a disk is ours, and so are the five pages: the
-# language list and the greeting (plan/22, plan/23), the disk (plan/24), the accounts question
-# (plan/21) and the applications question (plan/25).
+# decided at build time and is already inside it. So the stock modules that made sense here were
+# the ones that ASK THE USER SOMETHING plus the ones that write per-machine identity into /etc.
+#
+# SINCE plan/28 THERE ARE NO STOCK PAGES LEFT. Every screen in the sequence below is this
+# project's: the language list and the greeting (plan/22, plan/23), the disk (plan/24), the
+# accounts question (plan/21), the applications question (plan/25), and — new with the design
+# system — the location, the keyboard, the summary and the finished page (plan/28 §6). The stock
+# `locale` and `keyboard` modules were also JOBS, and those moved to `localesetup` and
+# `keyboardsetup` in the exec list. What is still upstream's is everything that writes identity
+# into /etc and the exec phase's own progress page.
 ---
 
 # `local` is <libdir>/calamares/modules — upstream's own modules, exactly as the ebuild installed
@@ -44,8 +49,22 @@ sequence:
   # with app-admin/calamares' own, and ModuleManager resolves a duplicate name by taking whichever
   # modules-search entry it reached first. The sidebar still says "Welcome".
   - greeting
-  - locale
-  - keyboard
+  # WHERE THE MACHINE IS, and since plan/28 §6 this is ours. It replaces the stock `locale`
+  # module, whose locale half asked a question the language page had already answered — through
+  # LCLocaleDialog, a list of raw locale codes behind a button with no key that relabels it.
+  # modules/locale.conf said this replacement was coming; modules/location.conf is what it became.
+  # The zone symlink is `localesetup`'s, below.
+  #
+  # `location` and not `locale`: a compiled viewmodule of that name would collide file-for-file
+  # with app-admin/calamares' own.
+  - location
+  # WHICH KEYBOARD, ours since plan/28 §6 for the same reason and one more: the stock page's
+  # preview is a QWidget that parses the xkb symbols files by hand, and libxkbcommon — which is on
+  # this medium already — answers the same question exactly. The target's KEYMAP and X11 config
+  # are `keyboardsetup`'s, below.
+  #
+  # `keymap` and not `keyboard`, the same collision.
+  - keymap
   # THE DISK, and since plan/24 this is ours too. It asks one question — which disk — and it is a
   # disk picker in its own right rather than the stock partition editor with its controls
   # configured away: rows that name the machine's disks by what is printed on them and what is on
@@ -73,7 +92,13 @@ sequence:
   # Offline the page forces its own second answer — nothing extra — and stays a page, because an
   # offline install is a supported path this installer was built around.
   - apps
-  - summary
+  # THE LAST SCREEN BEFORE THE ERASE, and ours since plan/28 §6. It asks every preceding step for
+  # its prettyStatus() and draws them as a table, then names the disk in the design system's
+  # danger tone — where the stock page rendered each step's prettyDescription() as a heading and a
+  # paragraph, in Breeze.
+  #
+  # `review` and not `summary`, the same collision as the two above.
+  - review
 - exec:
   # 1. The disk. Writes the GPT and creates the two filesystems there are to make, from
   #    scripts/lib/layout.sh — the pipeline's OWN layout function, installed on this medium as
@@ -89,11 +114,19 @@ sequence:
   #    /var, and put systemd-boot and the UKI on the ESP.
   - imagedeploy
   - imagebootloader
-  # 3. Identity, into the mounted target's /etc. Both of these are stock modules doing exactly
-  #    what they do on a mutable distro, and they work unmodified because imagedeploy mounted
-  #    an overlay on /etc: their writes land in the upper on /var (§5.2). No patching required.
-  - locale
-  - keyboard
+  # 3. Identity, into the mounted target's /etc. These two were stock modules — the JOB halves of
+  #    the `locale` and `keyboard` view steps — until plan/28 §6 replaced the pages those jobs
+  #    belonged to. They are ours now, in Python beside the four other job modules, and they work
+  #    for the reason the stock ones did: imagedeploy mounted an overlay on /etc, so their writes
+  #    land in the upper on /var (§5.2). No patching required.
+  #
+  #    `localesetup` re-symlinks /etc/localtime, which is all SetTimezoneJob ever did.
+  #    `keyboardsetup` writes /etc/vconsole.conf and /etc/X11/xorg.conf.d/00-keyboard.conf, and
+  #    resolves the console keymap through the TARGET's /usr/share/systemd/kbd-model-map — the
+  #    same file systemd-localed reads on the installed machine, where upstream used a copy
+  #    compiled into Calamares' own binary.
+  - localesetup
+  - keyboardsetup
   # 3b. The accounts page's decision, applied: the local administrator (useradd/chpasswd under
   #     chroot, which works for the same overlay reason), /etc/hostname and /etc/hosts, and then
   #     whichever of the two central-identity paths was chosen — the domain join, or moving the
@@ -121,7 +154,12 @@ sequence:
   - appsetup
   - umount
 - show:
-  - finished
+  # THE LAST PAGE, ours since plan/28 §6. It keeps upstream's two configuration keys by their own
+  # names — restartNowMode and restartNowCommand — and drops notifyOnFinished, which was false
+  # here and always had been.
+  #
+  # `done` and not `finished`, the same collision as the three above.
+  - done
 
 branding: installer
 

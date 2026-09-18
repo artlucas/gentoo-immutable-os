@@ -772,4 +772,124 @@
         <translation>экран не найден</translation>
     </message>
 </context>
+<context>
+    <name>ReviewViewStep</name>
+    <message>
+        <source>Summary</source>
+        <translation>Сводка</translation>
+    </message>
+</context>
+<context>
+    <name>ReviewConfig</name>
+    <message>
+        <source>Ready to install</source>
+        <translation>Всё готово к установке</translation>
+    </message>
+    <message>
+        <source>Nothing has changed on your computer yet. This is the last step before the installer writes to the disk.</source>
+        <translation>Пока на компьютере ничего не изменилось. Это последний шаг перед тем, как программа установки начнёт запись на диск.</translation>
+    </message>
+    <message>
+        <source>This erases %1 completely</source>
+        <translation>Диск %1 будет полностью очищен</translation>
+    </message>
+    <message>
+        <source>Every partition, file and operating system on that drive will be removed. Other drives are left alone.</source>
+        <translation>Все разделы, файлы и операционные системы на этом накопителе будут удалены. Другие накопители не затрагиваются.</translation>
+    </message>
+    <message>
+        <source>the selected disk</source>
+        <translation>выбранный диск</translation>
+    </message>
+</context>
+<context>
+    <name>DoneViewStep</name>
+    <message>
+        <source>Finish</source>
+        <translation>Готово</translation>
+    </message>
+</context>
+<context>
+    <name>DoneConfig</name>
+    <message>
+        <source>%1 is installed</source>
+        <translation>%1 установлена</translation>
+    </message>
+    <message>
+        <source>Restart to sign in for the first time. Anything still downloading finishes after that.</source>
+        <translation>Перезагрузитесь, чтобы войти в систему впервые. То, что ещё загружается, завершится после этого.</translation>
+    </message>
+    <message>
+        <source>Restart now</source>
+        <translation>Перезагрузить сейчас</translation>
+    </message>
+    <message>
+        <source>Remove the installation medium before the computer starts again.</source>
+        <translation>Извлеките установочный носитель до того, как компьютер запустится снова.</translation>
+    </message>
+</context>
+<context>
+    <name>LocationViewStep</name>
+    <message>
+        <source>Location</source>
+        <translation>Местоположение</translation>
+    </message>
+</context>
+<context>
+    <name>LocationConfig</name>
+    <message>
+        <source>Where are you?</source>
+        <translation>Где вы находитесь?</translation>
+    </message>
+    <message>
+        <source>Your location sets the clock and the date. The hardware clock is kept in UTC, and you can change this later in Settings.</source>
+        <translation>Местоположение задаёт время и дату. Аппаратные часы остаются в UTC, и это можно изменить позже в настройках.</translation>
+    </message>
+    <message>
+        <source>Region</source>
+        <translation>Регион</translation>
+    </message>
+    <message>
+        <source>Zone</source>
+        <translation>Зона</translation>
+    </message>
+</context>
+<context>
+    <name>KeymapViewStep</name>
+    <message>
+        <source>Keyboard</source>
+        <translation>Клавиатура</translation>
+    </message>
+</context>
+<context>
+    <name>KeymapConfig</name>
+    <message>
+        <source>Set up your keyboard</source>
+        <translation>Настройка клавиатуры</translation>
+    </message>
+    <message>
+        <source>Pick the layout printed on your keys. The preview below shows what they will type once the installed system starts.</source>
+        <translation>Выберите раскладку, напечатанную на ваших клавишах. Ниже показано, что они будут вводить после запуска установленной системы.</translation>
+    </message>
+    <message>
+        <source>Layout</source>
+        <translation>Раскладка</translation>
+    </message>
+    <message>
+        <source>Variant</source>
+        <translation>Вариант</translation>
+    </message>
+    <message>
+        <source>Preview</source>
+        <translation>Просмотр</translation>
+    </message>
+    <message>
+        <source>Default</source>
+        <translation>По умолчанию</translation>
+    </message>
+    <message>
+        <source>No keyboard layouts could be read from this medium, so the installed system will keep the layout this one booted with.</source>
+        <translation>С этого носителя не удалось прочитать ни одной раскладки, поэтому установленная система сохранит ту, с которой он загрузился.</translation>
+    </message>
+</context>
 </TS>

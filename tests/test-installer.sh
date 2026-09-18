@@ -455,13 +455,20 @@ assert_true "the language module knows this file by name, which is how the sideb
 SETTINGS="$RENDER/settings.conf"
 assert_file "$SETTINGS" "settings.conf rendered"
 mapfile -t OURS < <(find "$CAL/local-modules" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort)
-# SIX since plan/25, and the sixth is the first that replaces nothing: `appsetup` downloads what
-# the applications page chose, and no stock module ever asked that question. The five before it
-# are substitutions — disksetup took the exec half of the stock `partition` module when its page
-# was replaced (a view step owns its jobs()), accountsetup replaced managedenroll AND the stock
-# `users` module's jobs (plan/21), and imagedeploy, imagebootloader and imageidentity replaced
-# unpackfs+mount, bootloader, and a pile of per-image fixups nothing stock covers.
-(( ${#OURS[@]} == 6 )) || _fail "expected six local modules, found ${#OURS[@]}: ${OURS[*]}"
+# EIGHT since plan/28 §6, and the count is a number on purpose: a job module that appears without
+# being argued for is a job nobody reviewed.
+#
+# Six of them are substitutions for stock modules whose PAGES this project replaced — a view step
+# owns its jobs(), so replacing a page orphans whatever job was attached to it. disksetup took the
+# exec half of stock `partition` (plan/24); accountsetup replaced managedenroll AND the stock
+# `users` module's jobs (plan/21); localesetup and keyboardsetup took SetTimezoneJob and
+# SetKeyboardLayoutJob when plan/28 §6 replaced the `locale` and `keyboard` pages; imagedeploy and
+# imagebootloader replaced unpackfs+mount and bootloader.
+#
+# Two replace nothing at all: `appsetup` downloads what the applications page chose, and no stock
+# module ever asked that question; `imageidentity` is a pile of per-image fixups nothing stock
+# covers.
+(( ${#OURS[@]} == 8 )) || _fail "expected eight local modules, found ${#OURS[@]}: ${OURS[*]}"
 for m in "${OURS[@]}"; do
     d="$CAL/local-modules/$m"
     assert_file "$d/module.desc" "$m has a module descriptor"
@@ -677,12 +684,12 @@ assert_true "the exec sequence names appsetup" \
 # LAST of the show sequence. Everything before it describes the machine being built; this
 # describes what goes on top, so it belongs after the last machine question (accounts) and
 # immediately before the summary that repeats every answer back.
-assert_true "the applications page comes after accounts and before summary" \
+assert_true "the applications page comes after accounts and before the summary" \
     bash -c "
       seq=\$(sed -n '/^- show:/,/^- exec:/p' '$SETTINGS' | sed -nE 's/^[[:space:]]*-[[:space:]]+([a-z][a-z0-9_-]*)\$/\\1/p')
       idx() { printf '%s\\n' \"\$seq\" | grep -nxF \"\$1\" | cut -d: -f1; }
       [[ \$(idx accounts) -lt \$(idx apps) ]] &&
-      [[ \$(idx apps) -lt \$(idx summary) ]]"
+      [[ \$(idx apps) -lt \$(idx review) ]]"
 # The disk page must come BEFORE the accounts page, and not because either depends on the other:
 # the accounts page can spend minutes enrolling a managed machine against a real service (plan/21
 # §3), and asking somebody to do that before they know whether the installer can even use their
@@ -823,7 +830,28 @@ assert_true "the branding translations match the table and the module sources" \
         --source-dir "$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-greeting/files" \
         --source-dir "$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-accounts/files" \
         --source-dir "$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-disk/files" \
-        --source-dir "$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-apps/files"
+        --source-dir "$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-apps/files" \
+        --source-dir "$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-location/files" \
+        --source-dir "$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-keymap/files" \
+        --source-dir "$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-review/files" \
+        --source-dir "$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-done/files"
+
+# ...AND THE LIST OF SOURCE DIRECTORIES IS THE SAME LIST STAGE 40 PASSES. Two callers, one
+# implementation — but two argument lists, and a module missing from one of them is a module whose
+# strings are checked at build time and not here, or here and not at build time. Neither half
+# fails; the catalogue simply stops being checked for a page, which is how a whole context goes
+# stale unnoticed.
+assert_true "every module this stage 40 translates is checked here too" \
+    bash -c "python3 - <<'EOF'
+import pathlib, re, sys
+here = pathlib.Path('$REPO_ROOT/tests/test-installer.sh').read_text()
+stage = pathlib.Path('$REPO_ROOT/scripts/stages/40-configure.sh').read_text()
+pat = re.compile(r'--source-dir \"[^\"]*distro-calamares-([a-z]+)/files\"')
+mine = sorted(set(pat.findall(here)))
+theirs = sorted(set(pat.findall(stage)))
+assert mine == theirs, 'test checks %s; stage 40 checks %s' % (mine, theirs)
+assert mine, 'neither names any module at all'
+EOF"
 
 # THE THREE PSEUDO-CONTEXTS (plan/27 §2-§4): contexts whose sources no lupdate run can see —
 # LanguageNames out of languages.conf, AppsDescriptions out of apps.conf, CalamaresSidebar out of
@@ -1681,8 +1709,11 @@ assert_eq "" "$QSTR_OFFENDERS" \
 # could not resolve the token object would report every `theme.` reference and drown the signal.
 if command -v docker >/dev/null 2>&1 && docker image inspect "${I_DISTRO_ID}-builder:latest" >/dev/null 2>&1; then
     QMLDIR="$TMP/qmllint"
-    for m in language accounts disk apps greeting; do
-        src="$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-$m/files/qml"
+    # GLOBBED, not listed: a module added later is linted by existing here, which is the whole
+    # point of a check that catches type errors no compiler sees.
+    for d in "$REPO_ROOT"/config/portage/overlay/distro-base/distro-calamares-*/files; do
+        m="$(basename -- "$(dirname -- "$d")")"; m="${m#distro-calamares-}"
+        src="$d/qml"
         [[ -d $src ]] || continue
         mkdir -p "$QMLDIR/$m"
         cp "$src"/*.qml "$QMLDIR/$m/"
@@ -1773,6 +1804,344 @@ EOF"
 assert_true "...and the palette sets the same typeface the pages ask for" \
     bash -c "grep -q '^font=IBM Plex Sans,' '$COLORS_SRC' && grep -q '^fixed=IBM Plex Mono,' '$COLORS_SRC'"
 
+# ---- 6k. the four pages plan/28 §6 took back from upstream -----------------------------------
+#
+# WHAT MAKES THESE FOUR DIFFERENT FROM THE FIVE BEFORE THEM, and what these assertions are about:
+# each one replaces a STOCK module that is still installed, under its own name, on the same disk.
+# So the failure mode is not "the installer has no summary page" — it is settings.conf naming
+# `review`, ModuleManager finding no module of that name, silently dropping the step, and
+# upstream's `summary` sitting unused two directories away. Nothing logs it at a level anyone
+# reads, and the medium installs with one screen missing.
+for pair in location:locale keymap:keyboard review:summary done:finished; do
+    NEW="${pair%%:*}"; OLD="${pair#*:}"
+    SRC="$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-$NEW/files"
+    CLASS="$(python3 -c 'import sys; print(sys.argv[1].capitalize())' "$NEW")"
+
+    assert_dir_exists() { [[ -d $1 ]]; }
+    assert_true "$NEW is a module in the overlay" assert_dir_exists "$SRC"
+    # The plugin's NAME is what ModuleManager matches against the directory it was installed
+    # into, and calamares_add_plugin derives both from this one argument.
+    assert_true "...built as '$NEW', which is not the stock module's name" \
+        grep -qE "^calamares_add_plugin\($NEW\$" "$SRC/CMakeLists.txt"
+    assert_false "...and never as '$OLD', which would collide file-for-file with upstream's" \
+        grep -qE "^calamares_add_plugin\($OLD\$" "$SRC/CMakeLists.txt"
+    # The QML travels inside the .so, like its five siblings'.
+    assert_true "...with its QML compiled into the plugin rather than installed a second time" \
+        grep -q "qt6_add_resources(\${$(python3 -c 'import sys; print(sys.argv[1].upper())' "$NEW")_TARGET}" \
+            "$SRC/CMakeLists.txt"
+    assert_file "$SRC/${CLASS}ViewStep.cpp" "...and a view step named after it"
+    assert_file "$SRC/${CLASS}Config.cpp"   "...and a config object beside it"
+
+    # EVERY `<ctx>.<name>` IN THE QML RESOLVES TO SOMETHING C++ DECLARES. A typo'd binding in QML
+    # is not an error and not a warning: the expression evaluates to undefined and the control
+    # renders empty or invisible. This is the check that turns a silent blank into a failed build,
+    # and it is the same one the language, disk and applications pages have had since plan/25.
+    assert_true "$NEW: every QML binding resolves to a property or method C++ declares" \
+        python3 -c '
+import re, sys, pathlib
+d, ctx, cls = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+qml = (d / "qml" / (cls + ".qml")).read_text(encoding="utf-8")
+hdr = (d / (cls + "Config.h")).read_text(encoding="utf-8")
+used = sorted(set(re.findall(r"\b%s\.([A-Za-z_][A-Za-z0-9_]*)" % ctx, qml)))
+assert used, "the QML binds to nothing at all — is the context property still called %s?" % ctx
+known = set(re.findall(r"Q_PROPERTY\(\s*\S+\s+(\w+)\s+READ", hdr))
+known |= set(re.findall(r"\b(\w+)\s*\([^)]*\)\s*(?:const)?\s*[;{]", hdr))
+missing = [u for u in used if u not in known]
+assert not missing, "QML binds to %s, which %sConfig does not declare" % (", ".join(missing), cls)
+' "$SRC" "$NEW" "$CLASS"
+
+    # ...and every property either is CONSTANT or notifies a signal that something actually
+    # emits. A NOTIFY naming a signal nobody emits is a binding evaluated once and then never
+    # again — the page simply stops updating, which is indistinguishable from "nothing changed".
+    assert_true "$NEW: every Q_PROPERTY is CONSTANT or notifies an emitted signal" \
+        python3 -c '
+import re, sys, pathlib
+d, cls = pathlib.Path(sys.argv[1]), sys.argv[2]
+hdr = (d / (cls + "Config.h")).read_text(encoding="utf-8")
+cpp = (d / (cls + "Config.cpp")).read_text(encoding="utf-8")
+bad = []
+for decl in re.findall(r"Q_PROPERTY\((.*?)\)", hdr, re.S):
+    flat = " ".join(decl.split()); name = flat.split()[1]
+    if "CONSTANT" in flat:
+        continue
+    m = re.search(r"NOTIFY\s+(\w+)", flat)
+    if not m:
+        bad.append("%s is neither CONSTANT nor NOTIFY" % name)
+    elif not re.search(r"void\s+%s\s*\(" % m.group(1), hdr):
+        bad.append("%s notifies %s, which is not declared" % (name, m.group(1)))
+    elif not re.search(r"emit\s+%s\s*\(" % m.group(1), cpp):
+        bad.append("%s notifies %s, which nothing emits" % (name, m.group(1)))
+assert not bad, "; ".join(bad)
+' "$SRC" "$CLASS"
+
+    # The engine retranslate, whose absence leaves every binding in the language the installer
+    # started in. Every QML module in this installer carries this line.
+    assert_true "$NEW: the view step retranslates its QML engine on a language change" \
+        grep -q 'engine()->retranslate()' "$SRC/${CLASS}ViewStep.cpp"
+    # ...and the style call stays in the FIRST module, which is the language page's.
+    assert_false "$NEW: does not set the Qt Quick Controls style" \
+        grep -qE '^[^/*]*QQuickStyle::setStyle' "$SRC/${CLASS}ViewStep.cpp"
+done
+
+# THE SEQUENCE NAMES THE NEW MODULES AND NOT THE STOCK ONES. Both halves matter, and the second
+# more: a `- locale` left in the exec list runs upstream's SetTimezoneJob against a Config nobody
+# filled in, which writes the medium's own default over whatever the user answered — an install
+# that silently comes up in UTC with a page that said otherwise.
+for pair in location:locale keymap:keyboard review:summary done:finished \
+            localesetup:locale keyboardsetup:keyboard; do
+    NEW="${pair%%:*}"; OLD="${pair#*:}"
+    assert_true "the sequence names $NEW" \
+        grep -qE "^[[:space:]]*-[[:space:]]+$NEW\$" "$SETTINGS"
+    assert_false "...and no longer names the stock $OLD" \
+        grep -qE "^[[:space:]]*-[[:space:]]+$OLD\$" "$SETTINGS"
+done
+assert_true "stage 40 refuses a rendered settings.conf that still names one" \
+    grep -q 'for stale in locale:localesetup keyboard:keyboardsetup summary:review finished:done' \
+        "$REPO_ROOT/scripts/stages/40-configure.sh"
+
+# ---- 6l. the two jobs the replaced pages left behind -----------------------------------------
+#
+# A view step owns its jobs(), so replacing the stock `locale` and `keyboard` PAGES orphaned
+# SetTimezoneJob and SetKeyboardLayoutJob. These two took them over, in Python, beside the six job
+# modules this installer already had.
+for job in localesetup keyboardsetup; do
+    assert_file "$CAL/local-modules/$job/main.py"    "$job is a python job module"
+    assert_file "$CAL/local-modules/$job/module.desc" "...with a descriptor"
+    # ModuleManager matches module.desc's `name` against its DIRECTORY name and skips the module
+    # in silence when they differ — the failure class this whole file was written for.
+    assert_true "...whose name matches its directory" \
+        grep -qE "^name:[[:space:]]+\"$job\"" "$CAL/local-modules/$job/module.desc"
+    assert_true "...declared as a python job" \
+        bash -c "grep -qE '^type:[[:space:]]+\"job\"' '$CAL/local-modules/$job/module.desc' &&
+                 grep -qE '^interface:[[:space:]]+\"python\"' '$CAL/local-modules/$job/module.desc'"
+    assert_file "$RENDER/modules/$job.conf" "...and a rendered configuration"
+done
+
+# THE KEYS THE PAGES PUBLISH ARE THE KEYS THE JOBS READ, and this is the seam where a rename is
+# invisible: both sides compile, both sides run, and the job simply finds nothing and warns into a
+# log at the end of an install.
+assert_true "localesetup reads the location page's own keys" \
+    bash -c "grep -q 'locationRegion' '$CAL/local-modules/localesetup/main.py' &&
+             grep -q 'locationZone'   '$CAL/local-modules/localesetup/main.py' &&
+             grep -q 'locationRegion' '$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-location/files/LocationConfig.cpp'"
+assert_true "keyboardsetup reads the keymap page's own keys" \
+    bash -c "grep -q 'keyboardLayout'  '$CAL/local-modules/keyboardsetup/main.py' &&
+             grep -q 'keyboardVariant' '$CAL/local-modules/keyboardsetup/main.py' &&
+             grep -q 'keyboardLayout'  '$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-keymap/files/KeymapConfig.cpp'"
+
+# THE CONSOLE KEYMAP COMES FROM THE TARGET, not from a copy. Upstream resolves an X11 layout to a
+# console keymap through a kbd-model-map compiled into Calamares' own QRC — a snapshot of a table.
+# systemd ships that table, and systemd-localed reads it on the installed machine, so reading the
+# TARGET's copy is the one arrangement in which this job and localed cannot disagree. A table
+# vendored into this repo would be a third answer.
+assert_true "keyboardsetup resolves the console keymap from the target's own kbd-model-map" \
+    grep -q '/usr/share/systemd/kbd-model-map' "$CAL/local-modules/keyboardsetup/main.py"
+assert_false "...and this repo ships no copy of that table" \
+    bash -c "find '$REPO_ROOT/config' -name 'kbd-model-map*' | grep -q ."
+# A layout with no console equivalent is NOT a failed install: the graphical session reads the X11
+# file, which is written either way, and KEYMAP staying as the image shipped it is a defensible
+# outcome. Returning an error there would fail an install over a tty nobody is going to use.
+assert_true "...and a layout with no console keymap warns rather than failing the install" \
+    bash -c "sed -n '/no console keymap for X11 layout/,/return None/p' '$CAL/local-modules/keyboardsetup/main.py' |
+             grep -q 'return None'"
+
+# /etc/locale.conf HAS EXACTLY ONE WRITER (plan/22 §6). imageidentity writes it, and only for a
+# locale the image actually compiled; a second writer in localesetup would be the precise failure
+# that check exists to prevent — a LANG the target cannot load, which glibc answers with the C
+# locale rather than an error.
+assert_false "localesetup does not write /etc/locale.conf — imageidentity owns it" \
+    bash -c "grep -vE '^[[:space:]]*#' '$CAL/local-modules/localesetup/main.py' | grep -q 'locale.conf'"
+assert_true "...and imageidentity still does" \
+    grep -q '/etc/locale.conf' "$CAL/local-modules/imageidentity/main.py"
+
+# ---- 6m. inline components do not reach outward (plan/28) ------------------------------------
+#
+# An `component Foo: Item { ... }` inside a page is its OWN component, and an unqualified name
+# inside it does not resolve the way it does in the file around it: qmllint reports "ds is a
+# member of a parent element", which is a lookup up the parent CHAIN — the dynamic scoping that
+# `pragma ComponentBehavior: Bound` exists to discourage, and which every one of these files
+# declares at the top.
+#
+# WHAT IT COSTS WHEN IT FAILS is the reason this is a test and not a style note. A `ds.accent`
+# that resolves to undefined is a control drawn in no colour at all; a `QQC2.ButtonGroup.group:
+# modeGroup` that resolves to undefined is three radio cards in no group, all selectable at once,
+# on the page that decides what gets installed. Neither logs anything.
+#
+# So the rule is: an inline component declares what it needs as a required property and is handed
+# it. This checks the two names that were actually reached for — the token object and the button
+# group — inside every `component X:` body in the installer's QML.
+assert_true "no inline component reaches outside itself for the theme or a button group" \
+    python3 -c '
+import pathlib, re, sys
+
+bad = []
+for qml in sorted(pathlib.Path(sys.argv[1]).glob("distro-calamares-*/files/qml/*.qml")):
+    text = qml.read_text(encoding="utf-8")
+    # Each `component Name: Type {` opens a body that ends where the brace it opened closes.
+    for m in re.finditer(r"^(\s*)component\s+(\w+)\s*:", text, re.M):
+        indent, name = m.group(1), m.group(2)
+        rest = text[m.end():]
+        # The body ends at the first line indented no further than the declaration that closes
+        # a brace — good enough here, and far simpler than a QML parser, because every one of
+        # these files is written with four-space indentation throughout.
+        end = re.search(r"^%s\}" % re.escape(indent), rest, re.M)
+        body = rest[: end.start()] if end else rest
+        code = "\n".join(l for l in body.splitlines() if not l.strip().startswith("//"))
+        hits = sorted(set(re.findall(r"(?<![A-Za-z0-9_.])(ds\.\w+|modeGroup)", code)))
+        if hits:
+            bad.append("%s: component %s reaches for %s" % (qml.name, name, ", ".join(hits)))
+assert not bad, "; ".join(bad)
+' "$REPO_ROOT/config/portage/overlay/distro-base"
+
+# ---- 6n. keyboardsetup's console-keymap lookup, against a real table ---------------------------
+#
+# THIS IS THE ONE PIECE OF NEW LOGIC IN plan/28 §6 THAT IS NOT A BINDING OR A LAYOUT, and it is
+# the one whose failure is quietest: a wrong console keymap is a tty that types the wrong letters
+# on a machine whose graphical session is perfectly fine, which nobody discovers until they drop
+# to one.
+#
+# The table is systemd's /usr/share/systemd/kbd-model-map, and the job reads the TARGET's copy —
+# the same file localed reads on the installed machine. A developer host running systemd has the
+# same file, so this exercises the real parser against a real table rather than a fixture; where
+# it is absent the check skips, the same bargain the YAML pass makes with PyYAML.
+#
+# WHAT IT PINS is the shape of the answer, not systemd's data: an exact variant match beats a row
+# with no variant, an X11 name whose console name DIFFERS resolves to the console one, and a
+# layout the table does not mention returns nothing rather than guessing.
+KEYMAP_SRC="$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-keymap/files"
+KBD_MAP=/usr/share/systemd/kbd-model-map
+if [[ -r $KBD_MAP ]]; then
+    assert_true "keyboardsetup resolves X11 layouts to console keymaps the way the table says" \
+        python3 - "$REPO_ROOT/config/calamares/local-modules/keyboardsetup/main.py" "$KBD_MAP" <<'EOF'
+import importlib.util, pathlib, sys, tempfile, types
+
+# The module under test is imported from the TRACKED tree, and importing a file writes a
+# __pycache__ beside it — which is how a .pyc ends up in a commit. test-splash-assets.sh sets the
+# same flag for the same reason.
+sys.dont_write_bytecode = True
+
+main_py, table = sys.argv[1], pathlib.Path(sys.argv[2])
+
+# The job reads <root>/usr/share/systemd/kbd-model-map, so give it a root with just that in it.
+tmp = tempfile.mkdtemp()
+dst = pathlib.Path(tmp, "usr/share/systemd")
+dst.mkdir(parents=True)
+(dst / "kbd-model-map").write_bytes(table.read_bytes())
+
+# The module imports libcalamares at top level for its logging helpers; it is not importable
+# outside Calamares, so it is stubbed. Nothing under test touches anything else on it.
+lc = types.ModuleType("libcalamares")
+lc.utils = types.SimpleNamespace(debug=lambda *a: None, warning=lambda *a: None,
+                                 gettext_path=lambda: None, gettext_languages=lambda: ["en"])
+lc.globalstorage = types.SimpleNamespace(value=lambda k: None)
+lc.job = types.SimpleNamespace(configuration={})
+sys.modules["libcalamares"] = lc
+
+spec = importlib.util.spec_from_file_location("keyboardsetup", main_py)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+
+# Read the expectations OUT OF THE TABLE rather than hard-coding systemd's data: the point is the
+# parser, and a fixed answer here would fail the day systemd renames a keymap.
+rows = []
+for line in table.read_text(encoding="utf-8").splitlines():
+    line = line.strip()
+    if line and not line.startswith("#"):
+        f = line.split()
+        if len(f) >= 4:
+            rows.append((f[0], f[1].split(",")[0], f[3]))
+
+bad = []
+def check(layout, variant, want, why):
+    got = mod.console_keymap(tmp, layout, variant)
+    if got != want:
+        bad.append("%s/%s -> %r, expected %r (%s)" % (layout, variant or "-", got, want, why))
+
+# 1. An X11 layout with a plain row resolves to that row's console name — including the ones where
+#    the two names differ, which is the whole reason a table exists.
+plain = {}
+for console, xlayout, xvariant in rows:
+    if xvariant in ("", "-") and xlayout not in plain:
+        plain[xlayout] = console
+assert plain, "no variant-less rows in the table at all — has its format changed?"
+for xlayout, console in list(plain.items())[:12]:
+    check(xlayout, "", console, "plain row")
+differing = [x for x, c in plain.items() if x != c]
+assert differing, "no row in the table has a console name differing from its X11 name"
+check(differing[0], "", plain[differing[0]], "console name differs from the X11 name")
+
+# 2. An exact variant match beats the plain row for the same layout.
+for console, xlayout, xvariant in rows:
+    if xvariant not in ("", "-") and xlayout in plain and console != plain[xlayout]:
+        check(xlayout, xvariant, console, "exact variant beats the plain row")
+        break
+else:
+    assert False, "no layout in the table has both a plain row and a distinct variant row"
+
+# 3. A layout the table does not mention is None, not a guess.
+check("zzzz-not-a-layout", "", None, "unknown layout")
+# 4. ...and so is an unknown VARIANT of a known layout, falling back to the plain row.
+known = next(iter(plain))
+check(known, "zzzz-not-a-variant", plain[known], "unknown variant falls back to the plain row")
+
+assert not bad, "; ".join(bad)
+EOF
+else
+    echo "  ($KBD_MAP absent — skipping the console-keymap lookup check)"
+fi
+
+# ---- 6o. the xkb registry still has the shape KeymapConfig parses ------------------------------
+#
+# KeymapConfig::loadRegistry() reads /usr/share/X11/xkb/rules/evdev.xml with QXmlStreamReader and
+# forty lines of its own, rather than vendoring 300 lines of upstream's parser (plan/28 §6). What
+# that trades away is upstream's maintenance of the format, so the format is checked here: the
+# nesting the parser assumes is `<layoutList><layout><configItem><name|description>` with a
+# sibling `<variantList><variant><configItem><name|description>`, and a `<modelList>` and
+# `<optionList>` around it that use the SAME element names and must not be mistaken for layouts.
+#
+# A developer host with x11-misc/xkeyboard-config has the same file the medium does, so this reads
+# the real registry; where it is absent the check skips. It cannot run the C++ — what it pins is
+# the assumption the C++ is built on, which is the half that changes without anyone here touching
+# a line.
+XKB_RULES=/usr/share/X11/xkb/rules/evdev.xml
+if [[ -r $XKB_RULES ]] && python3 -c 'import xml.etree.ElementTree' 2>/dev/null; then
+    assert_true "the xkb registry nests layouts and variants the way KeymapConfig reads them" \
+        python3 - "$XKB_RULES" "$KEYMAP_SRC/KeymapConfig.cpp" <<'EOF'
+import sys, xml.etree.ElementTree as ET, pathlib, re
+
+root = ET.parse(sys.argv[1]).getroot()
+cpp = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8")
+
+# 1. The file the C++ names is the file being checked.
+assert '"/usr/share/X11/xkb/rules/evdev.xml"' in cpp, \
+    "KeymapConfig no longer names evdev.xml; this check is testing the wrong file"
+
+layouts = root.find("layoutList").findall("layout")
+assert len(layouts) > 20, "only %d layouts — the registry is not the list it used to be" % len(layouts)
+
+# 2. Every layout carries the two elements the parser reads, in a configItem of its own.
+for l in layouts:
+    assert l.find("configItem/name") is not None, "a layout with no configItem/name"
+    assert l.find("configItem/description") is not None, "a layout with no configItem/description"
+
+# 3. Variants live in a variantList SIBLING of that configItem, shaped the same way. At least one
+#    layout must have them, or the page's second dropdown is empty for everybody.
+withvars = [l for l in layouts if l.find("variantList") is not None]
+assert withvars, "no layout has a variantList at all"
+v = withvars[0].find("variantList").find("variant")
+assert v.find("configItem/name") is not None, "a variant with no configItem/name"
+
+# 4. THE TRAP THE PARSER HAS TO AVOID: modelList and optionList use the same element names, and
+#    they surround layoutList in the same document. The parser only appends on </layout>, so this
+#    asserts the thing that would break it — a <layout> element somewhere else in the file.
+assert root.find("modelList") is not None, "no modelList — the document shape has changed"
+strays = [e for e in root.iter("layout") if e not in layouts]
+assert not strays, "%d <layout> elements outside layoutList" % len(strays)
+EOF
+else
+    echo "  ($XKB_RULES absent — skipping the xkb registry shape check)"
+fi
+
 # ---- 7. YAML is YAML ------------------------------------------------------------------------
 # Calamares parses these with yaml-cpp and reports a parse error as a startup failure, so a
 # stray tab is a medium that does not install. Skipped rather than failed where PyYAML is absent,
@@ -1818,11 +2187,25 @@ assert_eq "${#installer_users[@]}" "${#live_users[@]}" \
 # replaces NOTHING — a new question, with no stock module that ever asked it. The seventh is
 # argued in plan/28 and is the first that is not a module at all: media-fonts/ibm-plex, because
 # the pages set their type by family NAME and a name fontconfig cannot resolve is substituted
-# silently — the installer renders, and simply stops looking like the design system.
-assert_eq "7" "$(grep -cvE '^[[:space:]]*(#|$)' "$REPO_ROOT/config/portage/sets/installer")" \
-    "@installer names exactly seven atoms"
-assert_true "...and the seventh is the typeface the pages name" \
+# silently — the installer renders, and simply stops looking like the design system. The last
+# four are plan/28 §6, and they are the end of the argument rather than four more of it: with
+# `location`, `keymap`, `review` and `done` in the set, NO PAGE IN THE SEQUENCE IS UPSTREAM'S.
+assert_eq "11" "$(grep -cvE '^[[:space:]]*(#|$)' "$REPO_ROOT/config/portage/sets/installer")" \
+    "@installer names exactly eleven atoms"
+assert_true "...one of which is the typeface the pages name" \
     grep -qx 'media-fonts/ibm-plex' "$REPO_ROOT/config/portage/sets/installer"
+# ...and every page in the show sequence comes from one of them. This is the assertion that says
+# "no stock pages left" in a way a future edit cannot quietly undo: a step added to settings.conf
+# without a module behind it in @installer is a step Calamares drops in silence.
+assert_true "every page in the sequence is a module this project builds" \
+    bash -c "
+      seq=\$(sed -n '/^- show:/,/^- exec:/p' '$SETTINGS' | sed -nE 's/^[[:space:]]*-[[:space:]]+([a-z][a-z0-9_-]*)\$/\\1/p')
+      seq=\"\$seq \$(sed -n '/^- exec:/,\$p' '$SETTINGS' | sed -n '/^- show:/,\$p' | sed -nE 's/^[[:space:]]*-[[:space:]]+([a-z][a-z0-9_-]*)\$/\\1/p')\"
+      missing=
+      for page in \$seq; do
+        grep -qx \"distro-base/distro-calamares-\$page\" '$REPO_ROOT/config/portage/sets/installer' || missing=\"\$missing \$page\"
+      done
+      [[ -z \$missing ]] || { echo \"pages with no module in @installer:\$missing\"; false; }"
 for atom in app-admin/calamares distro-base/distro-calamares-accounts \
             distro-base/distro-calamares-greeting distro-base/distro-calamares-language \
             distro-base/distro-calamares-disk distro-base/distro-calamares-apps; do

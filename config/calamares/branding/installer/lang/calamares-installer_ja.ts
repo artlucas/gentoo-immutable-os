@@ -762,4 +762,124 @@
         <translation>画面が見つかりません</translation>
     </message>
 </context>
+<context>
+    <name>ReviewViewStep</name>
+    <message>
+        <source>Summary</source>
+        <translation>概要</translation>
+    </message>
+</context>
+<context>
+    <name>ReviewConfig</name>
+    <message>
+        <source>Ready to install</source>
+        <translation>インストールの準備ができました</translation>
+    </message>
+    <message>
+        <source>Nothing has changed on your computer yet. This is the last step before the installer writes to the disk.</source>
+        <translation>この時点ではコンピューターにまだ何の変更も加えられていません。ディスクへの書き込みを始める前の最後の画面です。</translation>
+    </message>
+    <message>
+        <source>This erases %1 completely</source>
+        <translation>%1 は完全に消去されます</translation>
+    </message>
+    <message>
+        <source>Every partition, file and operating system on that drive will be removed. Other drives are left alone.</source>
+        <translation>そのドライブ上のすべてのパーティション、ファイル、オペレーティングシステムが削除されます。ほかのドライブはそのまま残ります。</translation>
+    </message>
+    <message>
+        <source>the selected disk</source>
+        <translation>選択したディスク</translation>
+    </message>
+</context>
+<context>
+    <name>DoneViewStep</name>
+    <message>
+        <source>Finish</source>
+        <translation>完了</translation>
+    </message>
+</context>
+<context>
+    <name>DoneConfig</name>
+    <message>
+        <source>%1 is installed</source>
+        <translation>%1 のインストールが完了しました</translation>
+    </message>
+    <message>
+        <source>Restart to sign in for the first time. Anything still downloading finishes after that.</source>
+        <translation>再起動すると初回サインインができます。ダウンロード中のものはその後に完了します。</translation>
+    </message>
+    <message>
+        <source>Restart now</source>
+        <translation>今すぐ再起動</translation>
+    </message>
+    <message>
+        <source>Remove the installation medium before the computer starts again.</source>
+        <translation>コンピューターが起動し直す前にインストールメディアを取り外してください。</translation>
+    </message>
+</context>
+<context>
+    <name>LocationViewStep</name>
+    <message>
+        <source>Location</source>
+        <translation>地域</translation>
+    </message>
+</context>
+<context>
+    <name>LocationConfig</name>
+    <message>
+        <source>Where are you?</source>
+        <translation>どちらにお住まいですか？</translation>
+    </message>
+    <message>
+        <source>Your location sets the clock and the date. The hardware clock is kept in UTC, and you can change this later in Settings.</source>
+        <translation>地域によって時刻と日付が決まります。ハードウェアクロックは UTC のまま保たれ、あとから設定で変更できます。</translation>
+    </message>
+    <message>
+        <source>Region</source>
+        <translation>地域</translation>
+    </message>
+    <message>
+        <source>Zone</source>
+        <translation>タイムゾーン</translation>
+    </message>
+</context>
+<context>
+    <name>KeymapViewStep</name>
+    <message>
+        <source>Keyboard</source>
+        <translation>キーボード</translation>
+    </message>
+</context>
+<context>
+    <name>KeymapConfig</name>
+    <message>
+        <source>Set up your keyboard</source>
+        <translation>キーボードを設定</translation>
+    </message>
+    <message>
+        <source>Pick the layout printed on your keys. The preview below shows what they will type once the installed system starts.</source>
+        <translation>キーに印字されている配列を選んでください。下のプレビューは、インストール後のシステムで各キーが何を入力するかを示します。</translation>
+    </message>
+    <message>
+        <source>Layout</source>
+        <translation>配列</translation>
+    </message>
+    <message>
+        <source>Variant</source>
+        <translation>バリアント</translation>
+    </message>
+    <message>
+        <source>Preview</source>
+        <translation>プレビュー</translation>
+    </message>
+    <message>
+        <source>Default</source>
+        <translation>標準</translation>
+    </message>
+    <message>
+        <source>No keyboard layouts could be read from this medium, so the installed system will keep the layout this one booted with.</source>
+        <translation>このメディアからキーボード配列を読み取れませんでした。インストールされるシステムは、このメディアが起動した配列をそのまま使います。</translation>
+    </message>
+</context>
 </TS>

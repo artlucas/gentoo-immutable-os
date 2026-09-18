@@ -161,3 +161,51 @@ distro-base/distro-calamares-apps
 # tail makes and the product refuses. stage 50 §3n cuts this atom down further even here: the
 # package ships twelve families and the installer renders two.
 media-fonts/ibm-plex
+
+# ---- the location page (plan/28 §6) -------------------------------------------------------------
+# Where the machine is, and the module that finally retired the stock `locale` page — whose locale
+# half asked a question the language page had already answered, through a dialog of raw locale
+# codes with no key that relabels it. modules/locale.conf recorded that this was coming; plan/22
+# §8 named it; this is it.
+#
+# It parses no tzdata and ships no table: libcalamares EXPORTS RegionsModel, ZonesModel and
+# RegionalZonesModel from an installed header, and Qt's QTimeZone answers the clock. That is the
+# same finding that retired the greeting page's vendored widgets — the thing worth copying was
+# already in the library.
+#
+# MANDATORY: it is the only page that asks where the machine is, and `localesetup` reads its
+# answer out of GlobalStorage. A medium without it installs a system whose clock is UTC.
+distro-base/distro-calamares-location
+
+# ---- the keyboard page (plan/28 §6) -------------------------------------------------------------
+# Which keyboard this is. It replaces the stock `keyboard` page, and it is the one module in this
+# set that gained a dependency rather than shedding one: x11-libs/libxkbcommon, because the key
+# preview asks that library what each keycode types under the chosen layout instead of parsing the
+# xkb symbols files and mapping keysym names to characters by hand — which is where most of
+# upstream's 600-line keyboardwidget goes.
+#
+# The layout LIST is read straight from x11-misc/xkeyboard-config's own registry. Both packages
+# are already on the medium as Plasma dependencies, so this atom adds a plugin and nothing else.
+#
+# MANDATORY: `keyboardsetup` reads its answer, and a medium without it installs a system whose
+# layout is `us`.
+distro-base/distro-calamares-keymap
+
+# ---- the summary page (plan/28 §6) --------------------------------------------------------------
+# The last screen before the erase. It asks every preceding step for its prettyStatus() and draws
+# a table, then names the disk — where the stock page rendered each step's prettyDescription() as
+# a heading and a paragraph, in Breeze.
+#
+# MANDATORY, and of the four pages plan/28 added this is the one whose absence is worst: the
+# installer would go from the applications page straight into a whole-disk erase with no screen in
+# between naming the disk.
+distro-base/distro-calamares-review
+
+# ---- the finished page (plan/28 §6) -------------------------------------------------------------
+# The installer's last page, and the only one that can restart the machine. It keeps upstream's
+# restartNowMode and restartNowCommand by their own names and drops notifyOnFinished, which was
+# false on this medium and always had been.
+#
+# MANDATORY: a medium without it finishes its exec phase and leaves the window sitting on a full
+# progress bar with nothing to press.
+distro-base/distro-calamares-done

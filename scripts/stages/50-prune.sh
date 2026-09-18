@@ -655,27 +655,29 @@ fi
 
 # ---- 3m. /usr/share/i18n/SUPPORTED, on the installer medium only (plan/22 §6) --------------
 #
-# THIS IS A DELETION THAT CHANGES A UI, not one that saves bytes — 22 KiB, which is nothing.
-# Calamares' locale module reads /usr/share/i18n/SUPPORTED FIRST and only falls back to
-# localeGenPath (modules/locale/Config.cpp:51). That file is glibc's list of every locale glibc
-# CAN build — roughly five hundred of them — while this image has compiled exactly the nine in
-# config/languages.conf. So the installer's locale dialog offered `en_CA.UTF-8` and hundreds of
-# others, of which the machine being installed could load nine; picking any of the rest got a
-# warning from `imageidentity` and LANG=en_US.UTF-8 anyway.
+# THIS USED TO BE A DELETION THAT CHANGED A UI. Calamares' `locale` module reads
+# /usr/share/i18n/SUPPORTED FIRST and only falls back to localeGenPath
+# (modules/locale/Config.cpp:51). That file is glibc's list of every locale glibc CAN build —
+# roughly five hundred — while this image compiles exactly the nine in config/languages.conf, so
+# the stock locale dialog offered `en_CA.UTF-8` and hundreds of others of which the machine being
+# installed could load nine. Removing the file made loadLocales() fall through to /etc/locale.gen,
+# which stage 40 writes from the same table, and the dialog then listed what the target could load.
 #
-# With the file gone, loadLocales() falls through to /etc/locale.gen — which stage 40 writes from
-# the same table — and the dialog lists exactly what the target can load. modules/locale.conf names
-# localeGenPath explicitly so the connection is greppable from the config rather than implied by a
-# default.
+# THE PAGE THAT READ IT IS GONE (plan/28 §6). `location` replaced the stock `locale` module and
+# asks for a place rather than a locale — the language page already chose the language — so
+# nothing on this medium consults SUPPORTED any more and the deletion changes no UI at all.
+#
+# IT STAYS, and the reason is now the plain one: 22 KiB of a list this image cannot act on, on a
+# medium that is booted once and thrown away. The line is kept rather than dropped because the
+# file has a way of becoming load-bearing again — anything that shells out to `locale -a`, or a
+# future page that offers formats, would find five hundred entries where the image has nine.
 #
 # LIVE PROFILES ONLY, and the distinction is not cosmetic: on an installed system this file is
-# glibc's own data and nothing here is entitled to an opinion about it. Only the medium running
-# Calamares has a page whose contents it changes.
+# glibc's own data and nothing here is entitled to an opinion about it.
 if [[ $PROFILE_ROLE == live ]]; then
   if [[ -e $T/usr/share/i18n/SUPPORTED ]]; then
-    log "live profile ($BUILD_PROFILE): removing /usr/share/i18n/SUPPORTED so the installer's
-  locale dialog lists the nine locales this image compiled instead of the five hundred glibc
-  could (plan/22 §6)"
+    log "live profile ($BUILD_PROFILE): removing /usr/share/i18n/SUPPORTED — this image compiled
+  nine locales and that file lists five hundred it cannot load (plan/22 §6, plan/28 §6)"
     rm -f -- "$T/usr/share/i18n/SUPPORTED"
   fi
 fi

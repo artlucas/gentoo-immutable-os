@@ -206,15 +206,25 @@ Item {
                     component ModeCard: QQC2.RadioButton {
                         id: card
 
+                        // `ds` AND THE GROUP ARE PASSED IN, NOT REACHED FOR. An inline component
+                        // is its own component: an unqualified name inside one resolves through
+                        // the parent CHAIN, which qmllint reports as "a member of a parent
+                        // element" and which `pragma ComponentBehavior: Bound` exists to
+                        // discourage. Handing them in as required properties makes the dependency
+                        // a declaration instead of a lookup — and a lookup that silently returns
+                        // undefined is a radio in no group, which is three cards that can all be
+                        // selected at once.
+                        required property Theme ds
+                        required property var group
                         required property string modeId
                         required property string cardTitle
                         required property string cardBody
 
-                        QQC2.ButtonGroup.group: modeGroup
+                        QQC2.ButtonGroup.group: card.group
 
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        padding: ds.space4
+                        padding: card.ds.space4
                         spacing: 0
 
                         // `checked` is assigned imperatively by the control and its group, which
@@ -244,15 +254,15 @@ Item {
                         }
 
                         background: Rectangle {
-                            radius: ds.radiusLg
-                            color: card.checked ? ds.accentWash : ds.surfaceCard
-                            border.width: ds.borderWidth
+                            radius: card.ds.radiusLg
+                            color: card.checked ? card.ds.accentWash : card.ds.surfaceCard
+                            border.width: card.ds.borderWidth
                             border.color: card.checked || card.visualFocus
-                                ? ds.accent
-                                : (cardHover.hovered ? ds.borderStrong : ds.borderSubtle)
+                                ? card.ds.accent
+                                : (cardHover.hovered ? card.ds.borderStrong : card.ds.borderSubtle)
 
                             Behavior on border.color {
-                                ColorAnimation { duration: ds.durationBase }
+                                ColorAnimation { duration: card.ds.durationBase }
                             }
                         }
 
@@ -262,11 +272,11 @@ Item {
                         indicator: null
 
                         contentItem: ColumnLayout {
-                            spacing: ds.space2
+                            spacing: card.ds.space2
 
                             RowLayout {
                                 Layout.fillWidth: true
-                                spacing: ds.space2 + 2
+                                spacing: card.ds.space2 + 2
 
                                 // 18px with a 2px ring, the design system's mark at the size the
                                 // mockup's application cards use it.
@@ -276,8 +286,8 @@ Item {
                                     implicitHeight: 18
                                     radius: width / 2
                                     color: "transparent"
-                                    border.width: ds.borderWidthStrong
-                                    border.color: card.checked ? ds.accent : ds.borderStrong
+                                    border.width: card.ds.borderWidthStrong
+                                    border.color: card.checked ? card.ds.accent : card.ds.borderStrong
 
                                     Rectangle {
                                         anchors.centerIn: parent
@@ -285,18 +295,18 @@ Item {
                                         height: width
                                         radius: width / 2
                                         visible: card.checked
-                                        color: ds.accent
+                                        color: card.ds.accent
                                     }
                                 }
 
                                 Text {
                                     Layout.fillWidth: true
                                     text: card.cardTitle
-                                    color: ds.textStrong
+                                    color: card.ds.textStrong
                                     wrapMode: Text.WordWrap
-                                    font.family: ds.fontSans
-                                    font.pixelSize: ds.textSm
-                                    font.weight: ds.weightSemibold
+                                    font.family: card.ds.fontSans
+                                    font.pixelSize: card.ds.textSm
+                                    font.weight: card.ds.weightSemibold
                                 }
                             }
 
@@ -306,11 +316,11 @@ Item {
                             Text {
                                 Layout.fillWidth: true
                                 text: card.cardBody
-                                color: ds.textMuted
+                                color: card.ds.textMuted
                                 wrapMode: Text.WordWrap
-                                font.family: ds.fontSans
-                                font.pixelSize: ds.textXs
-                                lineHeight: ds.leadingSnug
+                                font.family: card.ds.fontSans
+                                font.pixelSize: card.ds.textXs
+                                lineHeight: card.ds.leadingSnug
                                 lineHeightMode: Text.ProportionalHeight
                             }
                         }
@@ -319,6 +329,8 @@ Item {
                     ModeCard {
                         id: typicalRadio
 
+                        ds: root.ds
+                        group: modeGroup
                         modeId: "typical"
                         cardTitle: apps.typicalTitle
                         cardBody: apps.typicalNames
@@ -332,6 +344,8 @@ Item {
                     ModeCard {
                         id: noneRadio
 
+                        ds: root.ds
+                        group: modeGroup
                         modeId: "none"
                         cardTitle: apps.noneTitle
                         cardBody: apps.noneSubtitle
@@ -343,6 +357,8 @@ Item {
                     ModeCard {
                         id: customRadio
 
+                        ds: root.ds
+                        group: modeGroup
                         modeId: "custom"
                         cardTitle: apps.customTitle
                         cardBody: apps.customSubtitle

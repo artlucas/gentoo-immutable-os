@@ -41,6 +41,10 @@ SOURCES=(
   "config/portage/overlay/distro-base/distro-calamares-accounts/files"
   "config/portage/overlay/distro-base/distro-calamares-disk/files"
   "config/portage/overlay/distro-base/distro-calamares-apps/files"
+  "config/portage/overlay/distro-base/distro-calamares-location/files"
+  "config/portage/overlay/distro-base/distro-calamares-keymap/files"
+  "config/portage/overlay/distro-base/distro-calamares-review/files"
+  "config/portage/overlay/distro-base/distro-calamares-done/files"
 )
 
 # The .ts list is the TABLE's, both ways: a language with no file gets one, and a file for a

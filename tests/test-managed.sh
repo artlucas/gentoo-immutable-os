@@ -476,16 +476,21 @@ while IFS= read -r eb; do
     assert_false "$(basename "$eb") has no unrendered token left in it" \
         grep -q '@[A-Z][A-Z0-9_]*@' "$eb"
 done < <(find "$OVL_DST" -name '*.ebuild')
-# Six since plan/25: the managed-mode KCM, the accounts page, the language page, the greeting page,
-# the disk page and the applications page. A count rather than a set, so adding a seventh has to be
-# argued for in a diff — this repository's ebuild repository exists for the handful of things that
-# must be compiled against the target's own Qt6/KF6, and it is not a place to keep packages that
-# could be files in config/rootfs. (The fourth was a SPLIT of the third rather than a new
-# capability: a Calamares view step is one entry in the sidebar, so the language page's two screens
-# had to become two modules. The fifth is a REPLACEMENT: it takes the stock partition module out of
-# both sequences. The sixth replaces nothing — no stock module ever asked which applications to
-# add.)
-assert_eq "6" "$EB_N" "the overlay renders exactly its six ebuilds"
+# TEN since plan/28 §6: the managed-mode KCM, and the nine Calamares pages this installer draws —
+# language, greeting, location, keyboard, disk, accounts, applications, summary, finished. A count
+# rather than a set, so adding an eleventh has to be argued for in a diff: this repository's ebuild
+# repository exists for the handful of things that must be compiled against the target's own
+# Qt6/KF6, and it is not a place to keep packages that could be files in config/rootfs.
+#
+# How it got here, because the number only means something with the history attached. The fourth
+# was a SPLIT of the third rather than a new capability: a Calamares view step is one entry in the
+# sidebar, so the language page's two screens had to become two modules. The fifth is a
+# REPLACEMENT — it takes the stock partition module out of both sequences. The sixth replaces
+# nothing: no stock module ever asked which applications to add. The last four are plan/28 §6, and
+# they are all replacements: with `location`, `keymap`, `review` and `done` built, NO PAGE IN THE
+# INSTALLER'S SEQUENCE IS UPSTREAM'S — which is the end of a line of argument rather than four
+# more of it.
+assert_eq "10" "$EB_N" "the overlay renders exactly its ten ebuilds"
 # EAPI 8 and no SRC_URI: the sources are in files/, which is what makes these buildable with
 # --network none and what removes the need for a Manifest.
 while IFS= read -r eb; do

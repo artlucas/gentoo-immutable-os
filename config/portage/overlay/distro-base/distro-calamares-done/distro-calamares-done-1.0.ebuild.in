@@ -1,0 +1,85 @@
+# Copyright 2026 @DISTRO_NAME@
+# Distributed under the terms of the GNU General Public License v3
+
+EAPI=8
+
+inherit cmake
+
+DESCRIPTION="Calamares view module: the @DISTRO_NAME@ installer's finished page"
+HOMEPAGE="@HOME_URL@"
+# No SRC_URI — see the sibling ebuilds and ../../README.md.
+S="${WORKDIR}/${P}"
+
+# GPL-3 rather than GPL-2+: this links against libcalamares, which is GPL-3-or-later, so the
+# combined work cannot be distributed under anything weaker.
+LICENSE="GPL-3"
+SLOT="0"
+KEYWORDS="amd64"
+
+# Everything the long note in distro-calamares-accounts' ebuild says about DEPEND applies here
+# unchanged and is not repeated: app-admin/calamares is a DEPEND because DEPEND is what portage
+# installs into ESYSROOT, ESYSROOT here is the BUILDER root rather than the target, and most of
+# this list is not "what the code includes" but "what CalamaresConfig.cmake re-finds when
+# find_package(Calamares) runs" — qtsvg, qttools[linguist] and yaml-cpp among them.
+#
+# This module's own additions are qtdeclarative and nothing else. The one thing it runs is the
+# configured restartNowCommand, through QProcess from qtbase, and only when the box on the page is
+# ticked — every row it draws is another view step's prettyStatus(), taken through Calamares' own
+# ViewManager.
+DEPEND="
+	>=app-admin/calamares-3.4.0
+	>=dev-qt/qtbase-6.7.0:6[gui,widgets]
+	>=dev-qt/qtdeclarative-6.7.0:6
+	>=dev-qt/qtsvg-6.7.0:6
+	>=dev-qt/qttools-6.7.0:6[linguist]
+	>=kde-frameworks/kcoreaddons-6.9.0:6
+	dev-cpp/yaml-cpp:0=
+"
+# NOT ${DEPEND}, and for the two reasons the accounts ebuild gives. qttools is a CONFIGURE-time
+# requirement only — nothing links against it. kirigami and qqc2-desktop-style are the opposite:
+# they appear in no #include and no link line, and the page does not render without them, because
+# `import org.kde.kirigami` is resolved by the QML engine at runtime out of /usr/lib64/qt6/qml and
+# QQuickStyle asks for org.kde.desktop. Both are already on the medium as Plasma dependencies, so
+# naming them costs no atom and makes a future prune fail here instead of on a blank page.
+RDEPEND="
+	>=app-admin/calamares-3.4.0
+	>=dev-qt/qtbase-6.7.0:6[gui,widgets]
+	>=dev-qt/qtdeclarative-6.7.0:6
+	>=dev-qt/qtsvg-6.7.0:6
+	>=kde-frameworks/kcoreaddons-6.9.0:6
+	>=kde-frameworks/kirigami-6.9.0:6
+	>=kde-frameworks/qqc2-desktop-style-6.9.0:6
+	dev-cpp/yaml-cpp:0=
+"
+BDEPEND="
+	>=dev-qt/qtbase-6.7.0:6
+	virtual/pkgconfig
+"
+
+# This package is ONLY for the installer profile. On a target image it would install a Calamares
+# module into a system that has no Calamares — harmless, and still wrong, because the package
+# audit would then have to explain why an installer plugin is on a desktop.
+src_unpack() {
+	mkdir -p "${S}" || die
+	cp -r "${FILESDIR}"/. "${S}"/ || die
+}
+
+src_configure() {
+	local mycmakeargs=(
+		# Calamares' own build sets this; out of tree it has to be asked for by name, or
+		# calamares_add_plugin installs into ${CMAKE_INSTALL_LIBDIR}/calamares/modules relative
+		# to a prefix that is not the one Calamares itself used.
+		-DCMAKE_INSTALL_LIBDIR="$(get_libdir)"
+	)
+	cmake_src_configure
+}
+
+pkg_postinst() {
+	elog "This module is MANDATORY. It is the installer's last page and the only one that can"
+	elog "restart the machine; a medium without it would finish its exec phase and leave the"
+	elog "window sitting on a full progress bar with nothing to press."
+	elog
+	elog "It is called 'done' rather than 'finished' because calamares_add_plugin installs a"
+	elog "viewmodule into <libdir>/calamares/modules/<name>/, so that name would collide"
+	elog "file-for-file with app-admin/calamares' own module and be blocked by portage."
+}

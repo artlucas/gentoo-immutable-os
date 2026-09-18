@@ -108,6 +108,20 @@ Rectangle {
         }
     }
 
+    // QUIT IS THE PRIMARY ACTION ON EXACTLY ONE SCREEN, and the last one is it. Calamares keeps
+    // Back and Next visible on the finished page and disables both — there is nothing after it —
+    // so the only live control in this bar is Quit, relabelled by the ViewManager ("Done", or
+    // whatever the translation says). Drawn as a ghost button at the far left, beside two dead
+    // buttons at the right, that reads as the least important thing on the screen instead of the
+    // only thing left to press.
+    //
+    // So: when Next cannot be pressed and Quit can, Quit moves to the right end and takes the
+    // primary fill. TWO INSTANCES rather than a reparenting, because a Layout child that changes
+    // ends is a Layout that re-runs on every property change of ViewManager, and `visible` is
+    // what a RowLayout already understands.
+    readonly property bool quitIsPrimary:
+        ViewManager.quitVisible && ViewManager.quitEnabled && !ViewManager.nextEnabled;
+
     RowLayout {
         id: buttonBar;
 
@@ -125,7 +139,7 @@ Rectangle {
             variant: "ghost";
             label: ViewManager.quitLabel;
             active: ViewManager.quitEnabled;
-            visible: ViewManager.quitVisible;
+            visible: ViewManager.quitVisible && !navigationBar.quitIsPrimary;
             onClicked: ViewManager.quit();
         }
 
@@ -145,8 +159,18 @@ Rectangle {
             variant: "primary";
             label: ViewManager.nextLabel;
             active: ViewManager.nextEnabled;
-            visible: ViewManager.backAndNextVisible;
+            visible: ViewManager.backAndNextVisible && !navigationBar.quitIsPrimary;
             onClicked: ViewManager.next();
+        }
+
+        // The same action as the ghost button above, at the other end of the bar — see the note
+        // on quitIsPrimary. Only one of the two is ever visible.
+        NavButton {
+            variant: "primary";
+            label: ViewManager.quitLabel;
+            active: true;
+            visible: navigationBar.quitIsPrimary;
+            onClicked: ViewManager.quit();
         }
     }
 }

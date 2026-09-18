@@ -18,9 +18,12 @@ is **the installer's own**, one for one:
 
 and its Account step even has the picker → detail shape `AccountsViewStep` already implements. So
 this is not a redesign of the flow. It is: every page paints the design system, and the four steps
-still owned by upstream stop being a second design.
+still owned by upstream stop being upstream's.
 
-## 1. One token object, nine copies, no second install path
+When it is done, nine of the ten steps are modules this project builds and the tenth is the exec
+phase's own progress page. There is no stock page left in the sequence.
+
+## 1. One token object, ten copies, no second install path
 
 `config/calamares/qml/Theme.qml` is the design system transcribed into a plain `QtObject`: the
 light palette with the teal accent, the 4px spacing grid, the radius and type scales, the motion
@@ -34,7 +37,10 @@ that renders blank if either is wrong, with nothing in the log. A resource canno
 half-installed. So the sharing happens at **build** time — stage 20 copies each file from
 `config/calamares/qml/` into the rendered `files/qml/` of every module whose `CMakeLists` names
 it, and stage 40 copies `Theme.qml` once more into the branding component, for the two window
-panels that belong to no module and have no resource at all.
+panels that belong to no module and have no resource at all. Nine modules plus the branding
+directory is ten copies of `Theme.qml`; stage 20 reports the total it staged (thirteen, counting
+`Field.qml` once and `Button.qml` three times) so that a module silently dropping out of the
+fan-out shows up as a number that moved.
 
 The fan-out list is **derived from the build files**, not kept beside them: naming the file is the
 opt-in, so a module added later is covered by the line it had to write anyway. What that cannot
@@ -160,35 +166,88 @@ faces is dropped. The rule is stated **positively** — everything that is not `
 `IBMPlexMono-*` goes — because a drop-list silently stops matching the day upstream adds a
 thirteenth script, while a keep-list can only fail in the direction that is loud.
 
-## 6. What this plan did not do
+## 6. The four pages that were still upstream's
 
-The four steps still owned by upstream — `locale`, `keyboard`, `summary`, `finished` — are
-**recoloured, not rebuilt**. They follow the palette in §4 and nothing else; their structure is
-still Calamares'. Replacing them means four new view modules and two new job modules, and
-`config/calamares/modules/locale.conf` has been asking for the first of those since plan/22 §8:
+`locale`, `keyboard`, `summary` and `finished` were the last stock pages in the sequence. They are
+now `location`, `keymap`, `review` and `done` — nine overlay modules where there were five, and no
+page in the installer that upstream drew.
 
-> *"removing the last of them means replacing this page — a separate module and a separate
-> decision, since timezone is what this page is really for."*
+None of them is called what it replaces, and the reason is the same one every sibling ebuild
+records: `calamares_add_plugin` installs a viewmodule into `<libdir>/calamares/modules/<name>/`, so
+a plugin named `summary` collides file-for-file with app-admin/calamares' own and is blocked by
+Portage — and `ModuleManager` resolves a duplicate name by taking whichever `modules-search` entry
+it reached first. The stock modules are **not** deleted from the image: they arrive with Calamares,
+nothing in the sequence names them, and a Calamares whose own modules directory had been pruned is
+a Calamares no upstream bug report applies to. Stage 40 refuses a rendered `settings.conf` that
+still names one, because a `- locale` left in the exec list would run upstream's `SetTimezoneJob`
+against a Config nobody filled in — an install that silently comes up in UTC with a page that said
+otherwise.
 
-The groundwork is in place for it. `libcalamares/locale/TimeZone.h` exports `RegionsModel`,
-`ZonesModel` and `RegionalZonesModel`, and `locale/Global.h` exports the `insertGS()` that writes
-the `localeConf` map `imageidentity` already consumes — so a custom location page needs no tzdata
-parsing. `ViewManager.h` and `viewpages/ViewStep.h` are installed, so a custom summary page can
-read the preceding steps' `prettyStatus()`. The keyboard page is the hard one: layout and variant
-enumeration is **not** in libcalamares, so it would mean vendoring
-`keyboardwidget/keyboardglobal.{cpp,h}` — the bargain this plan just finished unwinding for the
-greeting page.
+**`location`.** `modules/locale.conf` has been asking for this since plan/22 §8 — *"removing the
+last of them means replacing this page … since timezone is what this page is really for"* — and
+the page takes that at its word: it asks for a **place**, and the locale half is gone. The language
+page already chose the language and `imageidentity` already writes `/etc/locale.conf` from it while
+refusing a locale the image cannot load, so the stock page's `LCLocaleDialog` was asking the same
+question worse, in raw locale codes, behind a button with no key that relabels it.
 
-The Install step stays upstream's `ExecutionViewStep`, which the branding slideshow already
-covers.
+It parses no tzdata: `libcalamares/locale/TimeZone.h` **exports** `RegionsModel`, `ZonesModel` and
+`RegionalZonesModel`, and Qt's `QTimeZone` answers the clock. That is the same finding that retired
+the greeting page's vendored widgets — the thing worth copying was already in the library.
+
+Four controls the hand-off draws are deliberately absent, and the module header says so at length:
+Formats and Measurement would offer locales the image did not compile (the bug plan/22 §6 spent a
+page fixing), and automatic time and the 24-hour clock are settings nothing in this pipeline writes
+to the installed system. A switch with no wiring behind it is a promise the first boot breaks.
+
+**`keymap`.** Two things had to be rebuilt and they were rebuilt differently. The layout list is
+read here from `xkeyboard-config`'s own `evdev.xml` with `QXmlStreamReader` — forty lines, against
+300 of somebody else's parser to copy. The preview is **not** a drawing of a keyboard: it asks
+libxkbcommon what each of thirty keycodes types under the chosen layout, where upstream parses the
+xkb symbols files, follows their includes, and maps keysym names to characters through a table of
+its own. That is where most of upstream's 600-line `keyboardwidget` goes, and every line of it is a
+second implementation of a library already on this medium.
+
+The hand-off's "type here to test" box is also absent, and for a reason worth stating: this page
+does not change the **live** session's layout — the medium runs `kwin_wayland --locale1`, so
+switching it means talking to systemd-localed over polkit and re-keying the machine the user is
+standing at — so a box to type in would be testing the layout they already have and agreeing with
+it no matter what the dropdowns said. The preview is the check.
+
+**`review`** asks every preceding step for its `prettyStatus()` and draws a label/value table, then
+names the disk in the danger tone. The stock page renders each step's `prettyDescription()` as a
+heading and a paragraph; what somebody needs on the last screen before a whole-disk erase is every
+decision they made, one line each, and the name of the disk.
+
+**`done`** keeps upstream's two configuration keys by their own names, with upstream's aliases, and
+drops `notifyOnFinished` — `false` on this medium and always had been, so the replacement does not
+implement it at all and a QtDBus dependency goes with it. Its table is the same rows `review`
+showed before the erase, in the same words: a finished page with its own vocabulary is a page that
+can describe an install differently from the page that proposed it, ten minutes apart.
+
+**The two jobs.** A view step owns its `jobs()`, so replacing the `locale` and `keyboard` pages
+orphaned `SetTimezoneJob` and `SetKeyboardLayoutJob`. `localesetup` and `keyboardsetup` took them
+over, in Python, beside the six job modules this installer already had. The second is the one worth
+reading: upstream resolves an X11 layout to a console keymap through a `kbd-model-map` compiled
+into Calamares' own binary — a snapshot of a table. systemd **ships** that table, and
+systemd-localed reads it on the installed machine, so `keyboardsetup` reads the **target's** copy
+and this repo ships none. A layout with no console equivalent warns rather than failing: the
+graphical session reads the X11 file, which is written either way, and failing an install over a
+tty nobody will use would be the wrong trade.
+
+The Install step stays upstream's `ExecutionViewStep`, which the branding slideshow already covers.
 
 ## 7. Verification
 
-`tests/run-tests.sh` is the gate, and it grew with the work rather than around it: 657 assertions
-in `test-installer` (from 591), including the `qmllint` pass, the per-page sweep for
-`Kirigami.Theme.inherit: false`, the ban on `qsTr()` in any installer QML, the three-way colour
-comparison in §3, and a check that every colour literal in `Theme.qml` appears in
-`config/branding/README.md`.
+`tests/run-tests.sh` is the gate, and it grew with the work rather than around it: 792 assertions
+in `test-installer` (from 591), including the `qmllint` pass over every installer `.qml`, the
+per-page sweep for `Kirigami.Theme.inherit: false`, the ban on `qsTr()` in any installer QML, the
+four-way colour comparison in §3, a check that every colour literal in `Theme.qml` appears in
+`config/branding/README.md`, and — for each of the four new modules — the property sweep that
+turns a typo'd QML binding from a silently blank control into a failed build.
+
+The C++ is compiled, not merely written: all four modules are built into the target root before
+this is called done, because 1,500 lines of new plugin that has never seen a compiler is not a
+thing to hand anybody.
 
 **What no offline test can see is the thing this plan is about.** A page that misses
 `inherit: false` renders perfectly, in the wrong palette, with nothing in the log. The per-page

@@ -153,12 +153,15 @@ fi
 # language the installer offers, so the locales this compiles below are exactly the locales the
 # language page can promise (plan/22 §2b).
 #
-# DATA LINES ONLY. No header, no provenance comment, however much one belongs here: Calamares' own
-# locale module reads this file as its list of available locales (modules/locale.conf names it as
-# localeGenPath), and loadLocales() strips a leading '#' and keeps the REST of the line as a locale
-# name. A comment mentioning "UTF-8" would survive its filter and arrive in the installer's locale
-# dialog as an entry. The provenance is recorded in config/languages.conf and in modules/locale.conf
-# instead, where nothing parses it.
+# DATA LINES ONLY, and the rule outlived the reason. Calamares' own `locale` module read this file
+# as its list of available locales — `localeGenPath`, which modules/locale.conf named explicitly —
+# and loadLocales() strips a leading '#' and keeps the REST of the line as a locale name, so a
+# comment mentioning "UTF-8" arrived in the installer's locale dialog as an entry. plan/28 §6
+# replaced that page with `location`, which asks for a place and reads no locale list at all, so
+# nothing in the installer parses this file any more.
+#
+# It stays data-only regardless, because the OTHER reader is glibc's own tooling and the format is
+# not ours to annotate. The provenance is in config/languages.conf, where nothing parses it.
 printf '%s\n' "${LOCALE_GEN//;/$'\n'}" > "$TARGET/etc/locale.gen"
 # The image's DEFAULT, deliberately still en_US regardless of how long the table above is: this is
 # what the medium itself boots with and what imageidentity keeps when the chosen locale turns out
@@ -1091,6 +1094,45 @@ if profile_has_set installer; then
       scripts/relock.sh ${DISTRO_ID}-base/${DISTRO_ID}-calamares-apps --profile installer"
   log "installer: the applications page is installed"
 
+  # ---- the four pages plan/28 §6 took back from upstream --------------------------------------
+  #
+  # ONE LOOP, because the four assertions are the same assertion. Each of these replaced a STOCK
+  # module that is still installed under its own name — `locale`, `keyboard`, `summary`,
+  # `finished` — so the failure this catches is not "the installer has no summary page" but
+  # something worse: settings.conf names `review`, ModuleManager finds no module of that name,
+  # silently drops the step, and the medium installs with one screen missing and upstream's
+  # equivalent sitting unused on the same disk.
+  #
+  # The stock modules are deliberately NOT deleted from the image. They arrive with
+  # app-admin/calamares, nothing in the sequence names them, and a Calamares whose own modules
+  # directory had been pruned would be a Calamares no upstream bug report applies to.
+  for page in location:"the location page" keymap:"the keyboard page" \
+              review:"the summary page" done:"the finished page"; do
+    _mod="${page%%:*}"; _what="${page#*:}"
+    compgen -G "$TARGET/usr/lib*/calamares/modules/$_mod/module.desc" >/dev/null \
+      || die "verify: ${_what} is not installed, so settings.conf would name a step Calamares
+  silently drops (plan/28 §6). It comes from ${DISTRO_ID}-base/${DISTRO_ID}-calamares-${_mod} in
+  config/portage/overlay, which reaches an image only through a re-resolved lock:
+      scripts/relock.sh ${DISTRO_ID}-base/${DISTRO_ID}-calamares-${_mod} --profile installer"
+  done
+  log "installer: the location, keyboard, summary and finished pages are installed"
+
+  # ...AND THE TWO JOBS THEY LEFT BEHIND THEM. The stock `locale` and `keyboard` modules were view
+  # steps AND jobs; replacing the pages orphaned the jobs, so `localesetup` and `keyboardsetup`
+  # took them over. These are python local-modules rather than plugins, checked further down with
+  # their four siblings — but the exec sequence naming them is checked HERE, because a sequence
+  # that still named `locale` would run a stock job whose Config nothing configured: an install
+  # that silently leaves the target on UTC and `us`.
+  for stale in locale:localesetup keyboard:keyboardsetup summary:review finished:done; do
+    _old="${stale%%:*}"; _new="${stale#*:}"
+    if grep -qE "^[[:space:]]*- ${_old}\$" "$TARGET/etc/calamares/settings.conf"; then
+      die "verify: settings.conf still names the stock '${_old}' module, which plan/28 §6
+  replaced with '${_new}'. Left in the sequence it would run with a Config nobody filled in and
+  write the medium's own defaults over whatever the user answered."
+    fi
+  done
+  log "installer: no stock page or job is left in the sequence"
+
   # INSTALLER_LANGUAGES — the `languages:` block for modules/language.conf — is built by
   # load_languages() in lib/common.sh, not here, because this stage is not the only thing that
   # renders that template: tests/test-installer.sh renders the whole Calamares tree offline, and a
@@ -1192,6 +1234,10 @@ if profile_has_set installer; then
     --source-dir "$REPO/config/portage/overlay/distro-base/distro-calamares-accounts/files" \
     --source-dir "$REPO/config/portage/overlay/distro-base/distro-calamares-disk/files" \
     --source-dir "$REPO/config/portage/overlay/distro-base/distro-calamares-apps/files" \
+    --source-dir "$REPO/config/portage/overlay/distro-base/distro-calamares-location/files" \
+    --source-dir "$REPO/config/portage/overlay/distro-base/distro-calamares-keymap/files" \
+    --source-dir "$REPO/config/portage/overlay/distro-base/distro-calamares-review/files" \
+    --source-dir "$REPO/config/portage/overlay/distro-base/distro-calamares-done/files" \
     || die "installer: the branding translations do not match config/languages.conf or the module
   sources (plan/22 §4). Nothing above this line is a runtime error in Qt — a mismatched source
   string is a page that stays English — which is why it is a build failure here."
