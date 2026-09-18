@@ -2142,6 +2142,50 @@ else
     echo "  ($XKB_RULES absent — skipping the xkb registry shape check)"
 fi
 
+# ---- 6p. no layout child sizes itself from the size the layout gave it (plan/28 §9) ---------
+#
+# THE BUG THIS EXISTS FOR STOPPED THE INSTALLER FROM STARTING, and nothing else offline said a
+# word about it. calamares-sidebar.qml's logo read:
+#
+#     height: 32;
+#     sourceSize.height: height * 2;   // for a HiDPI panel
+#
+# An Image inside a ColumnLayout does not own its height — the LAYOUT assigns it, computed from
+# the item's implicitHeight — and an Image takes its implicitHeight from sourceSize the moment
+# sourceSize is set. So the item asked to be twice as tall as the layout had just made it, on
+# every pass: 32, 64, 128, and the sidebar doubled until the window was 2.8 million pixels tall.
+# The backing store's QImage is width x height x 4 — 11.7 GB — and it failed to allocate; the
+# failed flush scheduled another repaint, which failed the same way. Calamares sat at 100% CPU
+# forever, having already logged "Window now visible" for a window that never drew a pixel. On a
+# booted medium that is an installer that does not start, with nothing in any log to say why.
+#
+# THE QML ENGINE DOES NOT CALL THIS A BINDING LOOP and never will: the cycle closes through
+# QQuickLayout's C++ rather than through the engine, so there is no warning at any logging level,
+# nothing in the session log, and qmllint (section 6i) sees a perfectly well-typed file. Refusing
+# the shape is the only way to catch it without booting.
+#
+# THE SHAPE: a property that FEEDS a layout's calculation — implicitWidth/implicitHeight,
+# sourceSize, Layout.preferred/minimum/maximum — bound to an expression that reads this item's own
+# BARE `width` or `height`, which is exactly what the layout writes back. Qualified reads are not
+# flagged and must not be: `parent.width`, `form.width` and `logo.implicitWidth` are somebody
+# else's number, imposed from outside, and cannot close a cycle onto this item. Comments are
+# stripped first, so the word "height" in the prose above a constant is not a failure.
+SIZE_LOOP_OFFENDERS=""
+while IFS= read -r -d '' f; do
+    hit="$(awk '
+        {
+            line = $0; sub(/\/\/.*/, "", line)
+            if (line ~ /^[[:space:]]*(implicitWidth|implicitHeight|sourceSize\.(width|height)|Layout\.(preferred|minimum|maximum)(Width|Height))[[:space:]]*:/) {
+                v = line; sub(/^[^:]*:/, "", v)
+                if (v ~ /(^|[^.A-Za-z0-9_])(width|height)([^A-Za-z0-9_]|$)/) print FNR
+            }
+        }' "$f")"
+    [ -n "$hit" ] && SIZE_LOOP_OFFENDERS+=" ${f#"$REPO_ROOT"/}:$(echo "$hit" | tr '\n' ',')"
+done < <(find "$REPO_ROOT"/config/portage/overlay/distro-base/distro-calamares-*/files/qml \
+              "$CAL/qml" "$CAL/branding/installer" -maxdepth 1 -name '*.qml' -print0 2>/dev/null)
+assert_eq "" "$SIZE_LOOP_OFFENDERS" \
+    "no installer QML feeds a layout an implicit size computed from its own width or height"
+
 # ---- 7. YAML is YAML ------------------------------------------------------------------------
 # Calamares parses these with yaml-cpp and reports a parse error as a startup failure, so a
 # stray tab is a medium that does not install. Skipped rather than failed where PyYAML is absent,

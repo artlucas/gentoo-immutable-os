@@ -73,16 +73,37 @@ Rectangle {
         // by make-splash-assets.py from the same block as the boot splash and flattened onto this
         // panel's own ground, so it has no edge to see. `fillMode: PreserveAspectFit` with only a
         // height set is what lets a wordmark-shaped block stay wordmark-shaped.
+        //
+        // NOTHING HERE READS `height`, AND THAT IS THE WHOLE POINT. This Image is a ColumnLayout
+        // child, so the LAYOUT owns its width and height — `height: 32` is a starting value the
+        // layout immediately overwrites with one it computes from implicitHeight. An Image takes
+        // its implicitHeight from sourceSize once sourceSize is set. So `sourceSize.height:
+        // height * 2` said: my implicit height is twice my height. The layout then set the height
+        // to the implicit height, the next pass doubled it again, and the sidebar grew by a factor
+        // of two per layout pass until the window was 2.8 million pixels tall. The backing store's
+        // QImage — width x height x 4, here 11.7 GB — failed to allocate, the flush that needed it
+        // failed, the failure scheduled another repaint, and Calamares sat at 100% CPU having
+        // logged "Window now visible" for a window nobody would ever see.
+        //
+        // The QML engine does not call that a binding loop and never will: the cycle runs through
+        // QQuickLayout's C++ and not through the engine, so no warning is printed at any logging
+        // level. What it looks like from the outside is an installer that does not start.
+        //
+        // The sizes below are a constant and a ratio of two constants. sourceSize fixes
+        // implicitWidth and implicitHeight to the file's own aspect, and Layout.preferred* are
+        // what a layout child is supposed to state, so there is no path back from the geometry the
+        // layout assigns to the geometry this item asks for.
         Image {
             id: logo;
 
             Layout.leftMargin: ds.space2;
             Layout.bottomMargin: ds.space6;
             Layout.alignment: Qt.AlignLeft | Qt.AlignTop;
-            height: 32;
+            Layout.preferredHeight: 32;
+            Layout.preferredWidth: Math.round(32 * logo.implicitWidth / Math.max(1, logo.implicitHeight));
             fillMode: Image.PreserveAspectFit;
             source: "file:/" + Branding.imagePath(Branding.ProductLogo);
-            sourceSize.height: height * 2;   // for a HiDPI panel; the file is larger than 32px
+            sourceSize.height: 64;   // 2 x the drawn height, for a HiDPI panel — a CONSTANT
         }
 
         Repeater {
