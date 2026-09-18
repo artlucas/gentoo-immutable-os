@@ -310,14 +310,55 @@ Item {
             visible: greeting.checked
             spacing: ds.space1
 
-            Text {
+            // THE VERDICT WEARS THE SAME MARK ITS EVIDENCE DOES. Every row in the list above
+            // carries a 22px status chip, and the sentence that concludes them carried none — so
+            // the one line on this page that says whether the install can happen at all was the
+            // only status on it drawn as plain text. It is the same chip, at the same size, in
+            // the same two tones: the success tint and a tick when the machine passes, the
+            // danger tint and an exclamation when it does not.
+            //
+            // BOTH VERDICTS, not just the good one. A tick that appears on success and leaves
+            // nothing behind on failure makes the failure case read as "not checked yet" — which
+            // is exactly the state the spinner above means, and the one this line replaces.
+            //
+            // The tick is a glyph and not a Canvas, unlike Done.qml's: at 22px this is the row
+            // chip, and the row chip has set its mark in the sans face since the page was
+            // written. Done.qml draws its at 34px inside a 72px disc, where a font's tick is a
+            // different shape at a size where the difference shows.
+            RowLayout {
                 Layout.fillWidth: true
-                text: greeting.warningMessage
-                color: ds.textStrong
-                wrapMode: Text.WordWrap
-                font.family: ds.fontSans
-                font.pixelSize: ds.textSm
-                font.weight: ds.weightSemibold
+                spacing: ds.space3 - 2
+
+                Rectangle {
+                    Layout.alignment: Qt.AlignTop
+                    implicitWidth: 22
+                    implicitHeight: 22
+                    radius: width / 2
+                    color: checksSatisfied.satisfied ? ds.statusSuccessBg : ds.statusDangerBg
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: checksSatisfied.satisfied ? "✓" : "!"
+                        color: checksSatisfied.satisfied ? ds.statusSuccess : ds.statusDanger
+                        font.family: ds.fontSans
+                        font.pixelSize: ds.textXs
+                        font.weight: ds.weightBold
+                    }
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    // The chip is 22 and the line is 14: centred on the text's first line rather
+                    // than on the paragraph, so a verdict that ever wraps keeps its mark beside
+                    // the words it marks instead of drifting down the block.
+                    Layout.topMargin: Math.round((22 - contentHeight) / 2)
+                    text: greeting.warningMessage
+                    color: ds.textStrong
+                    wrapMode: Text.WordWrap
+                    font.family: ds.fontSans
+                    font.pixelSize: ds.textSm
+                    font.weight: ds.weightSemibold
+                }
             }
 
             // The checker re-arms a five-second timer for as long as a mandatory requirement is

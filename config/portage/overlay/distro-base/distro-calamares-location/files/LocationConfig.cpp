@@ -48,10 +48,12 @@ LocationConfig::LocationConfig( QObject* parent )
 void
 LocationConfig::setConfigurationMap( const QVariantMap& configurationMap )
 {
-    // The default pin, before the user chooses. The medium's own configuration says Etc/UTC —
-    // what the image ships — so this is "unchanged" rather than a guess about where the machine
-    // is. GeoIP is deliberately not implemented: the stock module's geoip block is `style: none`
-    // in this medium's configuration and always has been, because asking the network where the
+    // The default pin, before the user chooses. location.conf names a PLACE (America/Toronto) and
+    // says at length why a guess beats Etc/UTC on a page; the fallback below is still the image's
+    // own clock, because a configuration that names nothing is not asking for a guess.
+    //
+    // GeoIP is deliberately not implemented: the stock module's geoip block is `style: none` in
+    // this medium's configuration and always has been, because asking the network where the
     // machine is, before the user has been told anything, is not this installer's manner.
     const QString region
         = Calamares::getString( configurationMap, QStringLiteral( "region" ) );
@@ -60,13 +62,26 @@ LocationConfig::setConfigurationMap( const QVariantMap& configurationMap )
     m_region = region.isEmpty() ? QStringLiteral( "Etc" ) : region;
     m_regionalZones->setRegion( m_region );
     m_zone = zone.isEmpty() ? QStringLiteral( "UTC" ) : zone;
+
+    // ASKED BEFORE CLAMPING, WHICH IS THE ONLY MOMENT THE ANSWER EXISTS. clampZone() replaces an
+    // unknown zone with the region's first, so a check made after it can only ever fail for a
+    // region with no zones at all — it reported "the configured default X/Y … the page opened on
+    // X/Y instead", naming the fallback twice and the configured value never. A default this
+    // module cannot honour now says so, and says what it did instead: with a named place rather
+    // than UTC in location.conf, the silent version of this is an installer that quietly picks
+    // some other city in the same region and looks like it meant to.
+    const bool defaultExists = m_zones->find( m_region, m_zone );
+    const QString wanted = m_region + QLatin1Char( '/' ) + m_zone;
+
     clampZone();
 
-    if ( !m_zones->find( m_region, m_zone ) )
+    if ( !defaultExists )
     {
-        cWarning() << "location: the configured default" << m_region << "/" << m_zone
+        cWarning() << "location: the configured default" << wanted
                    << "is not a zone this system's tzdata has; the page opened on"
-                   << m_region << "/" << m_zone << "instead.";
+                   << ( m_zone.isEmpty() ? QStringLiteral( "no zone" )
+                                         : m_region + QLatin1Char( '/' ) + m_zone )
+                   << "instead.";
     }
 
     emit locationChanged();

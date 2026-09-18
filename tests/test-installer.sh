@@ -2200,6 +2200,99 @@ done < <(find "$REPO_ROOT"/config/portage/overlay/distro-base/distro-calamares-*
 assert_eq "" "$SIZE_LOOP_OFFENDERS" \
     "no installer QML feeds a layout an implicit size computed from its own width or height"
 
+# ---- 6q. the four corrections plan/28's VM walk-through asked for -----------------------------
+#
+# Each of these is a thing that looked right in a screenshot and was wrong in front of somebody.
+
+# 1. THE VERDICT WEARS A STATUS MARK. Every row in the greeting page's list carries a 22px chip;
+# the sentence that concludes them carried none, so the one line that says whether this machine
+# can be installed at all was the only status on the page set as plain text. Both tones, not just
+# the good one: a tick that appears on success and leaves nothing behind on failure makes the
+# failure read as "not checked yet", which is the state the spinner above it already means.
+GREETING_QML="$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-greeting/files/qml/Greeting.qml"
+assert_true "the greeting verdict carries the same status chip its evidence rows do" \
+    grep -qE 'color: checksSatisfied\.satisfied \? ds\.statusSuccessBg : ds\.statusDangerBg' "$GREETING_QML"
+assert_true "...a tick when the machine passes, and a mark of its own when it does not" \
+    grep -qE 'text: checksSatisfied\.satisfied \? "✓" : "!"' "$GREETING_QML"
+# The chip reads the MODEL's verdict, through the same object the recheck line already uses. Two
+# answers to one question is how a page comes to disagree with the Next button beside it —
+# GreetingViewStep::isNextEnabled() reads satisfiedMandatory and this page must not hold a copy.
+assert_true "...and takes that verdict from the requirements model, not from a second count" \
+    grep -qE 'greeting\.requirements\.satisfiedMandatory' "$GREETING_QML"
+
+# 2. THE PLACE THIS INSTALLER OPENS ON. Etc/UTC was the honest answer to "where is this machine"
+# and the wrong default for a page: nothing here detects location, so the choice is between a pin
+# that is right for most people who boot this medium and one that is right for nobody.
+LOCATION_CONF="$CAL/modules/location.conf"
+assert_true "the location page opens on America/Toronto" \
+    bash -c "grep -qE '^region: +\"America\"' '$LOCATION_CONF' && grep -qE '^zone: +\"Toronto\"' '$LOCATION_CONF'"
+# The zone has to be one tzdata actually carries, or the page silently opens on whatever the
+# region's first zone happens to be. Checked against the host's own tzdata when there is one.
+if [[ -d /usr/share/zoneinfo ]]; then
+    assert_file "/usr/share/zoneinfo/America/Toronto" \
+        "...and that is a zone tzdata carries, not a city somebody typed"
+fi
+# THE MEDIUM'S OWN CLOCK IS NOT THE INSTALLED MACHINE'S. Stage 40 symlinks the live session's
+# /etc/localtime to UTC and still must: a live session that re-dated itself from a page the user
+# has not reached yet would be a surprise with nothing behind it. The target's symlink is
+# localesetup's, written in the exec phase from the keys above.
+assert_true "the live medium's own clock stays on UTC" \
+    grep -qE '^ln -sfn \.\./usr/share/zoneinfo/UTC "\$TARGET/etc/localtime"$' \
+        "$REPO_ROOT/scripts/stages/40-configure.sh"
+# A default this module cannot honour has to SAY so. The check used to be made after clampZone(),
+# which had already replaced an unknown zone with the region's first — so it could only ever fire
+# for a region with no zones at all, and it named the fallback twice and the configured value
+# never. With a named city rather than UTC in the configuration, the silent version of that is an
+# installer that quietly opens on some other place in the same region and looks deliberate.
+LOCATION_CPP="$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-location/files/LocationConfig.cpp"
+assert_true "an unhonourable default is detected BEFORE the clamp that would hide it" \
+    bash -c "awk '/const bool defaultExists/ { f = NR } /^ *clampZone\(\);/ { if (f && NR > f) { print \"ok\"; exit } }' '$LOCATION_CPP' | grep -q ok"
+
+# 3. NO MESSAGE MAY SIZE THE COLUMN IT SITS IN. LocalForm lays its fields out in a two-column
+# grid, and a grid column is at least as wide as the widest implicit width in it. A Text's
+# implicitWidth is its text on ONE line — wrapMode changes how it draws, not what it asks for —
+# so the moment libpwquality answered, the password cell demanded a column wide enough to set that
+# sentence unwrapped and the other column shrank to pay for it. Measured with the real component
+# under a real Qt: 254/448 before the message, 566/136 with it, and back again when it cleared.
+# The whole form rearranged itself while somebody was typing into it.
+FIELD_QML="$CAL/qml/Field.qml"
+FIELD_TEXTS="$(grep -cE '^    Text \{$' "$FIELD_QML")"
+FIELD_NEUTRAL="$(grep -cE '^        Layout\.preferredWidth: 0$' "$FIELD_QML")"
+assert_eq "2" "$FIELD_TEXTS" "the shared field has exactly two texts of its own: its label and its message"
+assert_eq "$FIELD_TEXTS" "$FIELD_NEUTRAL" \
+    "...and neither asks its layout for a width, so a message cannot resize the form"
+
+# 4. THE RELOAD MARK. "Check again" is the only do-that-once-more control in the installer and it
+# is on two pages, so it is one glyph on both — drawn, like every other mark here, because
+# Kirigami.Icon would resolve out of the Breeze icon theme in Breeze's colour, and U+21BB is not
+# in IBM Plex Sans (fontconfig would substitute a stranger's arrow for that one character).
+BUTTON_QML="$CAL/qml/Button.qml"
+assert_true "the shared button can carry a glyph" \
+    grep -qE '^    property string icon: ""$' "$BUTTON_QML"
+assert_true "...drawn on a Canvas rather than resolved from the desktop's icon theme" \
+    grep -qE '^            Canvas \{$' "$BUTTON_QML"
+# NARROWLY: the shared controls. Kirigami.Icon is right where the picture belongs to somebody
+# else — an application's own icon on the apps page, a drive's on the disk page — and wrong for a
+# mark that is part of this design system, which is every mark inside a control here. So the
+# assertion is about the control, not about the installer: Button.qml does not import Kirigami at
+# all, and therefore cannot grow an icon it did not draw.
+assert_false "the shared button draws its glyph rather than resolving one from a theme" \
+    grep -qE '^import org\.kde\.kirigami|icon\.name:' "$BUTTON_QML"
+# The glyph has to be in the button's WIDTH, or a button sized for its label alone clips the one
+# thing this change added. The row is what carries both now.
+assert_true "the button's width counts the glyph beside the label, not the label alone" \
+    grep -qE '^    implicitWidth: content\.implicitWidth \+ 2 \* button\._padding$' "$BUTTON_QML"
+for pair in disk:rescan apps:recheckInternet; do
+    m="${pair%%:*}"
+    q="$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-$m/files/qml/$(python3 -c 'import sys; print(sys.argv[1].capitalize())' "$m").qml"
+    assert_true "$m's Check again button carries the reload mark" \
+        grep -qE '^ +icon: "refresh"$' "$q"
+    # Both buttons are the SHARED one. A QQC2.Button here would be drawn by qqc2-desktop-style in
+    # Breeze's metrics whatever Kirigami.Theme says, and it is the icon that would give it away.
+    assert_true "...on the shared Button, so both pages get the same one" \
+        grep -qE '^ +label: '"$m"'\.checkAgainLabel$' "$q"
+done
+
 # ---- 7. YAML is YAML ------------------------------------------------------------------------
 # Calamares parses these with yaml-cpp and reports a parse error as a startup failure, so a
 # stray tab is a medium that does not install. Skipped rather than failed where PyYAML is absent,

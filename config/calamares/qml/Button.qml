@@ -36,6 +36,10 @@ Item {
     property string variant: "primary"
     /*! "sm" | "md" | "lg" */
     property string size: "md"
+    /*! The glyph drawn before the label, or "" for none. "refresh" is the only one, and that is
+     *  the whole vocabulary on purpose — see the Canvas below for why this is a name rather than
+     *  a source URL or an icon-theme string. */
+    property string icon: ""
     // NO `enabled` OF ITS OWN. Item already has one, a redeclaration shadows it, and a shadowed
     // `enabled` is the worst of both: the handlers below read this file's copy while everything
     // outside — focus, the accessibility tree, a parent disabling a whole panel — reads Item's.
@@ -65,7 +69,7 @@ Item {
         ? button.ds.accentOn
         : (button.variant === "secondary" ? button.ds.textStrong : button.ds.textBody)
 
-    implicitWidth: text.implicitWidth + 2 * button._padding
+    implicitWidth: content.implicitWidth + 2 * button._padding
     implicitHeight: button._height
     // The design system's disabled state: half opacity and a cursor that says so.
     opacity: button.enabled ? 1 : 0.5
@@ -120,15 +124,94 @@ Item {
             border.color: button.ds.mix(button.ds.accent, button.ds.surfaceCard, 0.4)
         }
 
-        Text {
-            id: text
+        Row {
+            id: content
 
             anchors.centerIn: parent
-            text: button.label
-            color: button._ink
-            font.family: button.ds.fontSans
-            font.pixelSize: button._fontSize
-            font.weight: button.ds.weightSemibold
+            spacing: button.ds.space2
+
+            // DRAWN, LIKE EVERY OTHER MARK IN THIS INSTALLER, and for the reason Done.qml's tick
+            // gives at length: Kirigami.Icon "view-refresh" resolves out of the Breeze icon theme,
+            // in Breeze's colour and Breeze's weight, which is the one thing a control in this
+            // design system may not be. A font glyph is the other obvious answer and is worse —
+            // U+21BB is not in IBM Plex Sans, so fontconfig would substitute some other family
+            // for that one character and the button would carry a stranger's arrow.
+            //
+            // The reload mark: an open ring with the gap at the right, and a filled head at the
+            // upper end pointing down into it. Laid out on a 24-unit grid and scaled, so the
+            // proportions hold at every button size.
+            Canvas {
+                id: iconCanvas
+
+                anchors.verticalCenter: parent.verticalCenter
+                visible: button.icon === "refresh"
+                width: visible ? Math.round(button._fontSize * 1.15) : 0
+                height: width
+
+                // The ink never changes on hover — every variant's foreground is constant across
+                // its states — but a variant CAN change under a binding, and a Canvas repaints
+                // only when it is told to. Cheaper than the class of bug where the glyph keeps
+                // the colour it was first painted in.
+                readonly property color ink: button._ink
+
+                onInkChanged: requestPaint()
+                onWidthChanged: requestPaint()
+
+                onPaint: {
+                    const ctx = getContext("2d");
+                    ctx.reset();
+                    if (width <= 0) {
+                        return;
+                    }
+
+                    const u = width / 24;
+                    const cx = 12 * u;
+                    const cy = 12 * u;
+                    const r = 7 * u;
+                    // 0 is east and the angle runs clockwise on screen, so this sweeps 295
+                    // degrees and leaves a 65-degree gap centred on 3 o'clock.
+                    const a0 = 0.18 * Math.PI;
+                    const a1 = 1.82 * Math.PI;
+
+                    ctx.strokeStyle = iconCanvas.ink;
+                    ctx.lineWidth = 2 * u;
+                    ctx.lineCap = "round";
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, r, a0, a1, false);
+                    ctx.stroke();
+
+                    // The head, at the far end of the stroke. `t` is the clockwise tangent there
+                    // and `n` its normal, so the triangle is built from the arc's own direction
+                    // rather than from angles measured a second time by hand.
+                    const px = cx + r * Math.cos(a1);
+                    const py = cy + r * Math.sin(a1);
+                    const tx = -Math.sin(a1);
+                    const ty = Math.cos(a1);
+                    const nx = -ty;
+                    const ny = tx;
+
+                    ctx.fillStyle = iconCanvas.ink;
+                    ctx.beginPath();
+                    ctx.moveTo(px + tx * 3.4 * u, py + ty * 3.4 * u);
+                    ctx.lineTo(px - tx * 0.6 * u + nx * 2.7 * u,
+                               py - ty * 0.6 * u + ny * 2.7 * u);
+                    ctx.lineTo(px - tx * 0.6 * u - nx * 2.7 * u,
+                               py - ty * 0.6 * u - ny * 2.7 * u);
+                    ctx.closePath();
+                    ctx.fill();
+                }
+            }
+
+            Text {
+                id: text
+
+                anchors.verticalCenter: parent.verticalCenter
+                text: button.label
+                color: button._ink
+                font.family: button.ds.fontSans
+                font.pixelSize: button._fontSize
+                font.weight: button.ds.weightSemibold
+            }
         }
     }
 }

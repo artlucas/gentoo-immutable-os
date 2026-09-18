@@ -54,8 +54,26 @@ ColumnLayout {
     // half Qt does not do for a hand-drawn control. 0.5 is the design system's disabled state.
     opacity: field.enabled ? 1 : 0.5
 
+    // A FIELD IS AS WIDE AS ITS LAYOUT SAYS AND NEVER AS WIDE AS ITS WORDS. Both Texts in this
+    // component take their width from the cell and contribute NOTHING back to it, which is what
+    // `Layout.preferredWidth: 0` means here — not "zero wide" (fillWidth takes the cell) but "do
+    // not ask for a width of your own".
+    //
+    // THE BUG THAT PUT THEM HERE. LocalForm lays its fields out in a two-column GridLayout, and a
+    // grid column is at least as wide as the widest implicit width in it. A Text's implicitWidth
+    // is its text on ONE line — wrapMode changes how it draws, not what it asks for — so the
+    // moment libpwquality answered "The password is shorter than 8 characters" the password cell
+    // asked for a column wide enough to set that sentence unwrapped, the grid granted as much of
+    // it as it could, and the OTHER column shrank to pay for it. Every field on the page moved,
+    // and moved back when the message cleared: the form visibly rearranged itself while somebody
+    // was typing into it.
+    //
+    // The label gets the same treatment for the same reason and one more: it already carries
+    // `elide`, which is a statement that this label may be clipped — a component cannot ask to be
+    // elided and also demand the width that would stop it being elided.
     Text {
         Layout.fillWidth: true
+        Layout.preferredWidth: 0
         visible: field.label.length > 0
         text: field.label
         color: field.ds.textStrong
@@ -148,6 +166,8 @@ ColumnLayout {
     // hint under a red border is advice about a problem it is not describing.
     Text {
         Layout.fillWidth: true
+        // See the label above: the message answers the field, it does not size it.
+        Layout.preferredWidth: 0
         visible: text.length > 0
         text: field.error.length > 0 ? field.error : field.hint
         color: field.error.length > 0 ? field.ds.statusDanger : field.ds.textMuted

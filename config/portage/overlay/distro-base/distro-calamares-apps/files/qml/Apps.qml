@@ -140,6 +140,11 @@ Item {
                 ds: root.ds
                 variant: "ghost"
                 size: "sm"
+                // The reload mark, drawn by the shared Button. "Check again" is an action whose
+                // whole meaning is "do that once more", and it is the only such control in the
+                // installer — the glyph says so before the sentence is read, and it is the same
+                // glyph on both pages because it is the same promise.
+                icon: "refresh"
                 label: apps.checkAgainLabel
                 onClicked: apps.recheckInternet()
             }
