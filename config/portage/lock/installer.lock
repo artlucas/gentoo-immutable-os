@@ -4,7 +4,7 @@
 # SNAPSHOT_SHA256: c61294000825031e58a38f60fadb603423c61430b841d73b87705f789d83944b
 # SNAPSHOT_DATE: 20260820
 # PROFILE: default/linux/amd64/23.0/desktop/plasma/systemd
-# PORTAGE_CONFIG_HASH: fe4ede1850d895e5e977fe9d5276850896b0eb96f9a0b40b81a9871ef58a8c91
+# PORTAGE_CONFIG_HASH: a2059dc99cea1ee8d063de61837c5e8e75ee39b60f2f5f8510d32ac9413efbe2
 # INCLUDE_CJK_FONTS: 1
 # INCLUDE_PRINTING: 1
 # INCLUDE_DISTROBOX: 0
@@ -254,8 +254,12 @@
 =immos-base/immos-calamares-accounts-1.0
 =immos-base/immos-calamares-apps-1.0
 =immos-base/immos-calamares-disk-1.0
+=immos-base/immos-calamares-done-1.0
 =immos-base/immos-calamares-greeting-1.0
+=immos-base/immos-calamares-keymap-1.0
 =immos-base/immos-calamares-language-1.0
+=immos-base/immos-calamares-location-1.0
+=immos-base/immos-calamares-review-1.0
 =kde-apps/baloo-widgets-26.04.3
 =kde-apps/dolphin-26.04.3
 =kde-apps/kio-extras-26.04.3
