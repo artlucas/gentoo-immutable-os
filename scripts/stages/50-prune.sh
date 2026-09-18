@@ -686,25 +686,39 @@ fi
 #
 # media-fonts/ibm-plex is on the installer medium and nowhere else (config/portage/sets/installer)
 # because the Calamares pages set their type from the design system: IBM Plex Sans for the UI and
-# IBM Plex Mono for device paths, sizes and version strings. The package ships twelve families —
+# IBM Plex Mono for device paths, sizes and version strings. The package ships eleven families —
 # Serif, Condensed, the variable Roman/Italic pair, and the Arabic, Devanagari, Hebrew, Korean and
-# two Thai scripts — of which this image renders exactly two. The rest is around 150 MiB of TTF
-# for glyphs no page asks for.
+# two Thai scripts — of which this image renders exactly two.
+#
+# MEASURED in the target root on 2026-09-18, because the first version of this section estimated
+# from the distfile and the estimate was wrong in both directions. The installed tree is 58 MiB,
+# not ~150: 41 MiB of it is the Korean family alone, and Sans and Mono together are 5. So this
+# saves about 53 MiB — real, and smaller than the comment used to claim.
+#
+# AND THE FILES ARE NOT WHERE THE FIRST VERSION LOOKED. font.eclass installs each family into a
+# subtree of its own, two more levels down than a flat fonts directory:
+#
+#     ibm-plex/IBM-Plex-Sans/fonts/complete/ttf/IBMPlexSans-Regular.ttf
+#     ibm-plex/IBM-Plex-Sans-KR/fonts/complete/ttf/{hinted,unhinted}/IBMPlexSansKR-Regular.ttf
+#
+# so the `find -maxdepth 1` this section shipped with matched nothing, deleted nothing, and tripped
+# the zero-deletions assertion below on the first build that ever ran it. That is the assertion
+# doing its job rather than a bug getting through: without it the medium would have carried all
+# 53 MiB while the log said the prune had happened.
 #
 # THE RULE IS STATED POSITIVELY, which is the whole point: everything that is not IBMPlexSans-* or
 # IBMPlexMono-* goes. Listing the families to DELETE would be a list that silently stops matching
-# the day upstream adds a thirteenth script — the failure mode section 3i's comment warns about —
+# the day upstream adds a twelfth script — the failure mode section 3i's comment warns about —
 # whereas a keep-list can only ever fail in the direction that is loud, because the assertion
-# below requires both kept families to still be there afterwards.
+# below requires both kept families to still be there afterwards. The HYPHEN is what makes the
+# keep-list precise, and it is doing more work than it looks: IBMPlexSansCondensed-Regular.ttf
+# does not match IBMPlexSans-*, and neither does IBMPlexSansArabic-, IBMPlexSansKR-,
+# IBMPlexSansThai- or IBMPlexSansVar-. Drop the hyphen and this prune keeps everything.
 #
 # NOT the CJK question. media-fonts/noto-cjk is a separate atom with its own INCLUDE_CJK_FONTS
 # switch, and it is what renders 日本語 on the language page. Plex's own Korean family is dropped
 # here because Noto already covers that script for every application on the medium, not because
 # the medium stopped caring about it.
-#
-# fonts.dir and fonts.scale are left as font.eclass wrote them. They are X11 core-font indexes,
-# fontconfig does not read them, and an entry naming a deleted file is inert — rewriting them
-# would mean running mkfontscale in the target for no visible effect.
 IBM_PLEX_DIR="$T/usr/share/fonts/ibm-plex"
 if [[ -d $IBM_PLEX_DIR ]]; then
   plex_dropped=0
@@ -715,16 +729,30 @@ if [[ -d $IBM_PLEX_DIR ]]; then
     esac
     rm -f -- "$f"
     plex_dropped=$(( plex_dropped + 1 ))
-  done < <(find "$IBM_PLEX_DIR" -maxdepth 1 -type f \( -name '*.ttf' -o -name '*.otf' \) -print0)
+  done < <(find "$IBM_PLEX_DIR" -type f \( -name '*.ttf' -o -name '*.otf' \) -print0)
+
+  # Each dropped family leaves its subtree behind holding fonts.dir, fonts.scale and
+  # encodings.dir — X11 core-font indexes that now name nothing at all. Remove any family
+  # directory with no font left in it and those go with it, which is why this section does not
+  # need to run mkfontscale in the target. The two KEPT families are untouched by both loops:
+  # nothing inside IBM-Plex-Sans or IBM-Plex-Mono matches the drop rule, so their own indexes
+  # are still accurate for every file still there.
+  while IFS= read -r d; do
+    if [[ -z $(find "$d" -type f \( -name '*.ttf' -o -name '*.otf' \) -print -quit) ]]; then
+      rm -rf -- "$d"
+    fi
+  done < <(find "$IBM_PLEX_DIR" -mindepth 1 -maxdepth 1 -type d)
 
   # Both halves are asserted, and they fail for opposite reasons. Zero deletions means the
-  # filenames changed shape and this section has quietly become a no-op that still claims 150 MiB.
-  # Zero survivors means the keep-patterns stopped matching and the installer just lost its
-  # typeface — which renders as Calamares falling back to whatever fontconfig picks, on every page.
-  plex_kept="$(find "$IBM_PLEX_DIR" -maxdepth 1 -type f -name 'IBMPlex[SM]*' | wc -l)"
+  # filenames or the directory layout changed shape and this section has quietly become a no-op
+  # that still claims 53 MiB — which is precisely what happened on 2026-09-18. Zero survivors
+  # means the keep-patterns stopped matching and the installer just lost its typeface, which
+  # renders as Calamares falling back to whatever fontconfig substitutes, on every page.
+  plex_kept="$(find "$IBM_PLEX_DIR" -type f -name 'IBMPlex[SM]*' | wc -l)"
   (( plex_dropped > 0 )) || die "no IBM Plex face matched the drop rule in $IBM_PLEX_DIR. The
-  package installs twelve families and this image renders two, so matching none means the
-  filenames are not IBMPlex<Family>-<Weight>.ttf any more and this section is saving nothing."
+  package installs eleven families and this image renders two, so matching none means the faces
+  are no longer <Family>/fonts/complete/ttf/IBMPlex<Family>-<Weight>.ttf and this section is
+  saving nothing."
   (( plex_kept > 0 )) || die "the IBM Plex prune removed every face in $IBM_PLEX_DIR. The installer
   sets its type to 'IBM Plex Sans' and 'IBM Plex Mono' by name (config/calamares/qml/Theme.qml),
   so it would come up in whatever fontconfig substitutes, on every page, with nothing in the log."
