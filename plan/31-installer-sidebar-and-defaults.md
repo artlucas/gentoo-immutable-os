@@ -35,7 +35,7 @@ It is all three and not just the Picker because two Fields whose hints wrap to a
 of lines have the same disagreement waiting in them — today both hints wrap to two lines and the
 two boxes happen to line up.
 
-## §2 The sidebar is 190px because Calamares says so
+## §2 The sidebar is 168px because Calamares says so
 
 `CalamaresWindow.cpp:503` builds the sidebar with
 
@@ -79,7 +79,7 @@ the ebuild, the CPV and the USE flags, and a user patch is none of those), the p
 be refreshed on every calamares bump, and a failed `eapply` would kill an image build over a
 sidebar's width. The failure mode of the call is the status quo: if a future Calamares stops
 building that panel from that file, the panel is not found, a warning is logged, and the sidebar
-is 190px with elided labels again.
+is back to the width Calamares gives it, with elided labels.
 
 `CalamaresApplication::initView()` constructs the window and *then* schedules `loadModules`, so by
 the time this module's view step is constructed the sidebar widget exists. The call is made there,

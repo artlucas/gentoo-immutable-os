@@ -60,8 +60,8 @@ static constexpr int kSidebarWidth = 224;
  * calamares bump, and an image build that dies on a failed eapply over a sidebar's width.
  *
  * THE FAILURE MODE IS THE STATUS QUO, AND IT IS LOGGED. If a future Calamares stops building that
- * panel from that file, nothing is found, the warning below says so, and the rail is 190px with
- * elided labels again — which is exactly where this started.
+ * panel from that file, nothing is found, the warning below says so, and the rail is back to the
+ * width Calamares gives it, with elided labels — which is exactly where this started.
  *
  * @returns true if a sidebar panel was found (and is now @c kSidebarWidth wide).
  */
