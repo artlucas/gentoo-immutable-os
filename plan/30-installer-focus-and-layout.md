@@ -109,7 +109,7 @@ So: **failures and warnings only, and no panel at all when there are none.**
 
 ## §3 The 12-hour clock
 
-`location.conf` gains `twelveHourClock: true`. It is not a `.in`: like `apps.conf`, there is no
+`location.conf` gains `twelveHour: true`. It is not a `.in`: like `apps.conf`, there is no
 build-time token in it, and a clock format is not a rebrand's business.
 
 - `LocationConfig::clockTime()` stops asking `QLocale` for a `ShortFormat` and formats to the
@@ -199,6 +199,15 @@ install; the clock reads `12:53 PM`; the dialog carries an AM/PM select that ope
 and is pre-filled from the current half of the day; the disk rows are tight and the page no longer
 scrolls; and the applications page carries all eight chips with their Breeze icons and no inner
 scroller.
+
+### The second build
+
+All three corrections were rebuilt and walked again. At 4:14 PM the set-time dialog opens on
+`04:14` with **PM** selected, where the first build would have shown `16:14`; the summary shows all
+six of its rows with no scrollbar anywhere, Language included; and the accounts chooser shows its
+three cards with none. The applications page still scrolls under "Choose individually" — six tiles
+and eight chips genuinely do not fit — and that is the full-page scroll the request asked for
+rather than the inner panel it asked to lose.
 
 One thing noted and not changed: a page with no controls of its own — Welcome is the only one —
 still has a tab stop on its `QQuickWidget`, which shows no ring because there is nothing in the
