@@ -583,6 +583,32 @@
     </message>
 </context>
 <context>
+    <name>DoneConfig</name>
+    <message>
+        <source>%1 is installed</source>
+        <translation>%1 está instalado</translation>
+    </message>
+    <message>
+        <source>Restart to sign in for the first time. Anything still downloading finishes after that.</source>
+        <translation>Reinicia para iniciar sesión por primera vez. Lo que aún se esté descargando terminará después.</translation>
+    </message>
+    <message>
+        <source>Restart now</source>
+        <translation>Reiniciar ahora</translation>
+    </message>
+    <message>
+        <source>Remove the installation medium before the computer starts again.</source>
+        <translation>Retira el medio de instalación antes de que el equipo vuelva a arrancar.</translation>
+    </message>
+</context>
+<context>
+    <name>DoneViewStep</name>
+    <message>
+        <source>Finish</source>
+        <translation>Fin</translation>
+    </message>
+</context>
+<context>
     <name>GreetingConfig</name>
     <message>
         <source>This program will ask you a few questions and then install %1 on this computer. Everything already on the disk you choose will be erased.</source>
@@ -622,6 +648,44 @@
     <message>
         <source>Welcome</source>
         <translation>Primeros pasos</translation>
+    </message>
+</context>
+<context>
+    <name>KeymapConfig</name>
+    <message>
+        <source>Set up your keyboard</source>
+        <translation>Configura tu teclado</translation>
+    </message>
+    <message>
+        <source>Pick the layout printed on your keys. The preview below shows what they will type once the installed system starts.</source>
+        <translation>Elige la distribución impresa en tus teclas. La vista previa de abajo muestra lo que escribirán cuando arranque el sistema instalado.</translation>
+    </message>
+    <message>
+        <source>Layout</source>
+        <translation>Distribución</translation>
+    </message>
+    <message>
+        <source>Variant</source>
+        <translation>Variante</translation>
+    </message>
+    <message>
+        <source>Preview</source>
+        <translation>Vista previa</translation>
+    </message>
+    <message>
+        <source>Default</source>
+        <translation>Predeterminada</translation>
+    </message>
+    <message>
+        <source>No keyboard layouts could be read from this medium, so the installed system will keep the layout this one booted with.</source>
+        <translation>No se han podido leer distribuciones de teclado desde este medio, así que el sistema instalado conservará la distribución con la que este arrancó.</translation>
+    </message>
+</context>
+<context>
+    <name>KeymapViewStep</name>
+    <message>
+        <source>Keyboard</source>
+        <translation>Teclado</translation>
     </message>
 </context>
 <context>
@@ -679,6 +743,124 @@
     <message>
         <source>Language</source>
         <translation>Idioma</translation>
+    </message>
+</context>
+<context>
+    <name>LocationConfig</name>
+    <message>
+        <source>Where are you?</source>
+        <translation>¿Dónde te encuentras?</translation>
+    </message>
+    <message>
+        <source>Your location sets the clock and the date. The hardware clock is kept in UTC, and you can change this later in Settings.</source>
+        <translation>Tu ubicación ajusta la hora y la fecha. El reloj del equipo se mantiene en UTC y puedes cambiarlo más adelante en Preferencias.</translation>
+    </message>
+    <message>
+        <source>Region</source>
+        <translation>Región</translation>
+    </message>
+    <message>
+        <source>Zone</source>
+        <translation>Zona</translation>
+    </message>
+    <message>
+        <source>Set the time automatically over the network</source>
+        <translation>Poner la hora automáticamente a través de la red</translation>
+    </message>
+    <message>
+        <source>The installed system keeps doing this. Turn it off to set the clock by hand.</source>
+        <translation>El sistema instalado seguirá haciéndolo. Desactívelo para poner el reloj a mano.</translation>
+    </message>
+    <message>
+        <source>Set date and time…</source>
+        <translation>Establecer fecha y hora…</translation>
+    </message>
+    <message>
+        <source>Set the date and time</source>
+        <translation>Establecer la fecha y la hora</translation>
+    </message>
+    <message>
+        <source>This sets this machine&apos;s clock now, in %1. The system you install starts from the same clock.</source>
+        <translation>Esto pone en hora el reloj de este equipo ahora, en %1. El sistema que instale partirá del mismo reloj.</translation>
+    </message>
+    <message>
+        <source>Date</source>
+        <translation>Fecha</translation>
+    </message>
+    <message>
+        <source>Time</source>
+        <translation>Hora</translation>
+    </message>
+    <message>
+        <source>Year-month-day, as in %1</source>
+        <translation>Año-mes-día, como en %1</translation>
+    </message>
+    <message>
+        <source>A 24-hour clock, as in %1</source>
+        <translation>Un reloj de 24 horas, como en %1</translation>
+    </message>
+    <message>
+        <source>Set</source>
+        <translation>Establecer</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Cancelar</translation>
+    </message>
+    <message>
+        <source>Checking the time server…</source>
+        <translation>Consultando el servidor de hora…</translation>
+    </message>
+    <message>
+        <source>The clock is set from the network.</source>
+        <translation>El reloj se pone en hora desde la red.</translation>
+    </message>
+    <message>
+        <source>The clock is set from %1.</source>
+        <translation>El reloj se pone en hora desde %1.</translation>
+    </message>
+    <message>
+        <source>No time server answered. Check the network, or set the clock by hand.</source>
+        <translation>Ningún servidor de hora respondió. Compruebe la red o ponga el reloj a mano.</translation>
+    </message>
+    <message>
+        <source>This machine&apos;s clock service did not answer, so the time cannot be set from here.</source>
+        <translation>El servicio de reloj de este equipo no respondió, así que la hora no se puede establecer desde aquí.</translation>
+    </message>
+    <message>
+        <source>The clock is set on this machine, not from the network.</source>
+        <translation>El reloj se pone en hora en este equipo, no desde la red.</translation>
+    </message>
+    <message>
+        <source>Turn off automatic time before setting the clock by hand.</source>
+        <translation>Desactive la hora automática antes de poner el reloj a mano.</translation>
+    </message>
+    <message>
+        <source>The date must be written year-month-day, as in %1.</source>
+        <translation>La fecha debe escribirse como año-mes-día, como en %1.</translation>
+    </message>
+    <message>
+        <source>The time must be written on a 24-hour clock, as in %1.</source>
+        <translation>La hora debe escribirse en un reloj de 24 horas, como en %1.</translation>
+    </message>
+    <message>
+        <source>There is no such time in %1.</source>
+        <translation>Esa hora no existe en %1.</translation>
+    </message>
+    <message>
+        <source>The clock could not be set.</source>
+        <translation>No se pudo establecer el reloj.</translation>
+    </message>
+    <message>
+        <source>The clock could not be set: %1</source>
+        <translation>No se pudo establecer el reloj: %1</translation>
+    </message>
+</context>
+<context>
+    <name>LocationViewStep</name>
+    <message>
+        <source>Location</source>
+        <translation>Ubicación</translation>
     </message>
 </context>
 <context>
@@ -768,13 +950,6 @@
     </message>
 </context>
 <context>
-    <name>ReviewViewStep</name>
-    <message>
-        <source>Summary</source>
-        <translation>Resumen</translation>
-    </message>
-</context>
-<context>
     <name>ReviewConfig</name>
     <message>
         <source>Ready to install</source>
@@ -798,93 +973,10 @@
     </message>
 </context>
 <context>
-    <name>DoneViewStep</name>
+    <name>ReviewViewStep</name>
     <message>
-        <source>Finish</source>
-        <translation>Fin</translation>
-    </message>
-</context>
-<context>
-    <name>DoneConfig</name>
-    <message>
-        <source>%1 is installed</source>
-        <translation>%1 está instalado</translation>
-    </message>
-    <message>
-        <source>Restart to sign in for the first time. Anything still downloading finishes after that.</source>
-        <translation>Reinicia para iniciar sesión por primera vez. Lo que aún se esté descargando terminará después.</translation>
-    </message>
-    <message>
-        <source>Restart now</source>
-        <translation>Reiniciar ahora</translation>
-    </message>
-    <message>
-        <source>Remove the installation medium before the computer starts again.</source>
-        <translation>Retira el medio de instalación antes de que el equipo vuelva a arrancar.</translation>
-    </message>
-</context>
-<context>
-    <name>LocationViewStep</name>
-    <message>
-        <source>Location</source>
-        <translation>Ubicación</translation>
-    </message>
-</context>
-<context>
-    <name>LocationConfig</name>
-    <message>
-        <source>Where are you?</source>
-        <translation>¿Dónde te encuentras?</translation>
-    </message>
-    <message>
-        <source>Your location sets the clock and the date. The hardware clock is kept in UTC, and you can change this later in Settings.</source>
-        <translation>Tu ubicación ajusta la hora y la fecha. El reloj del equipo se mantiene en UTC y puedes cambiarlo más adelante en Preferencias.</translation>
-    </message>
-    <message>
-        <source>Region</source>
-        <translation>Región</translation>
-    </message>
-    <message>
-        <source>Zone</source>
-        <translation>Zona</translation>
-    </message>
-</context>
-<context>
-    <name>KeymapViewStep</name>
-    <message>
-        <source>Keyboard</source>
-        <translation>Teclado</translation>
-    </message>
-</context>
-<context>
-    <name>KeymapConfig</name>
-    <message>
-        <source>Set up your keyboard</source>
-        <translation>Configura tu teclado</translation>
-    </message>
-    <message>
-        <source>Pick the layout printed on your keys. The preview below shows what they will type once the installed system starts.</source>
-        <translation>Elige la distribución impresa en tus teclas. La vista previa de abajo muestra lo que escribirán cuando arranque el sistema instalado.</translation>
-    </message>
-    <message>
-        <source>Layout</source>
-        <translation>Distribución</translation>
-    </message>
-    <message>
-        <source>Variant</source>
-        <translation>Variante</translation>
-    </message>
-    <message>
-        <source>Preview</source>
-        <translation>Vista previa</translation>
-    </message>
-    <message>
-        <source>Default</source>
-        <translation>Predeterminada</translation>
-    </message>
-    <message>
-        <source>No keyboard layouts could be read from this medium, so the installed system will keep the layout this one booted with.</source>
-        <translation>No se han podido leer distribuciones de teclado desde este medio, así que el sistema instalado conservará la distribución con la que este arrancó.</translation>
+        <source>Summary</source>
+        <translation>Resumen</translation>
     </message>
 </context>
 </TS>

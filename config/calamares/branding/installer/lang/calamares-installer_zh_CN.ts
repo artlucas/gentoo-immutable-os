@@ -578,6 +578,32 @@
     </message>
 </context>
 <context>
+    <name>DoneConfig</name>
+    <message>
+        <source>%1 is installed</source>
+        <translation>%1 已安装完成</translation>
+    </message>
+    <message>
+        <source>Restart to sign in for the first time. Anything still downloading finishes after that.</source>
+        <translation>重新启动即可首次登录。仍在下载的内容会在之后完成。</translation>
+    </message>
+    <message>
+        <source>Restart now</source>
+        <translation>立即重启</translation>
+    </message>
+    <message>
+        <source>Remove the installation medium before the computer starts again.</source>
+        <translation>请在计算机再次启动前取出安装介质。</translation>
+    </message>
+</context>
+<context>
+    <name>DoneViewStep</name>
+    <message>
+        <source>Finish</source>
+        <translation>完成</translation>
+    </message>
+</context>
+<context>
     <name>GreetingConfig</name>
     <message>
         <source>This program will ask you a few questions and then install %1 on this computer. Everything already on the disk you choose will be erased.</source>
@@ -617,6 +643,44 @@
     <message>
         <source>Welcome</source>
         <translation>欢迎</translation>
+    </message>
+</context>
+<context>
+    <name>KeymapConfig</name>
+    <message>
+        <source>Set up your keyboard</source>
+        <translation>设置键盘</translation>
+    </message>
+    <message>
+        <source>Pick the layout printed on your keys. The preview below shows what they will type once the installed system starts.</source>
+        <translation>选择键帽上印刷的布局。下方预览显示安装好的系统启动后这些键会输入什么。</translation>
+    </message>
+    <message>
+        <source>Layout</source>
+        <translation>布局</translation>
+    </message>
+    <message>
+        <source>Variant</source>
+        <translation>变体</translation>
+    </message>
+    <message>
+        <source>Preview</source>
+        <translation>预览</translation>
+    </message>
+    <message>
+        <source>Default</source>
+        <translation>默认</translation>
+    </message>
+    <message>
+        <source>No keyboard layouts could be read from this medium, so the installed system will keep the layout this one booted with.</source>
+        <translation>无法从此介质读取键盘布局，因此安装好的系统将沿用此介质启动时使用的布局。</translation>
+    </message>
+</context>
+<context>
+    <name>KeymapViewStep</name>
+    <message>
+        <source>Keyboard</source>
+        <translation>键盘</translation>
     </message>
 </context>
 <context>
@@ -674,6 +738,124 @@
     <message>
         <source>Language</source>
         <translation>语言</translation>
+    </message>
+</context>
+<context>
+    <name>LocationConfig</name>
+    <message>
+        <source>Where are you?</source>
+        <translation>您在哪里？</translation>
+    </message>
+    <message>
+        <source>Your location sets the clock and the date. The hardware clock is kept in UTC, and you can change this later in Settings.</source>
+        <translation>您的位置决定时钟和日期。硬件时钟保持为 UTC，之后可以在设置中更改。</translation>
+    </message>
+    <message>
+        <source>Region</source>
+        <translation>地区</translation>
+    </message>
+    <message>
+        <source>Zone</source>
+        <translation>时区</translation>
+    </message>
+    <message>
+        <source>Set the time automatically over the network</source>
+        <translation>通过网络自动设置时间</translation>
+    </message>
+    <message>
+        <source>The installed system keeps doing this. Turn it off to set the clock by hand.</source>
+        <translation>安装后的系统会继续这样做。关闭后可手动设置时钟。</translation>
+    </message>
+    <message>
+        <source>Set date and time…</source>
+        <translation>设置日期和时间…</translation>
+    </message>
+    <message>
+        <source>Set the date and time</source>
+        <translation>设置日期和时间</translation>
+    </message>
+    <message>
+        <source>This sets this machine&apos;s clock now, in %1. The system you install starts from the same clock.</source>
+        <translation>这会立即按 %1 设置本机的时钟。您安装的系统将从同一时钟开始。</translation>
+    </message>
+    <message>
+        <source>Date</source>
+        <translation>日期</translation>
+    </message>
+    <message>
+        <source>Time</source>
+        <translation>时间</translation>
+    </message>
+    <message>
+        <source>Year-month-day, as in %1</source>
+        <translation>年-月-日，例如 %1</translation>
+    </message>
+    <message>
+        <source>A 24-hour clock, as in %1</source>
+        <translation>24 小时制，例如 %1</translation>
+    </message>
+    <message>
+        <source>Set</source>
+        <translation>设置</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>取消</translation>
+    </message>
+    <message>
+        <source>Checking the time server…</source>
+        <translation>正在查询时间服务器…</translation>
+    </message>
+    <message>
+        <source>The clock is set from the network.</source>
+        <translation>时钟已通过网络设置。</translation>
+    </message>
+    <message>
+        <source>The clock is set from %1.</source>
+        <translation>时钟已由 %1 设置。</translation>
+    </message>
+    <message>
+        <source>No time server answered. Check the network, or set the clock by hand.</source>
+        <translation>没有时间服务器响应。请检查网络，或手动设置时钟。</translation>
+    </message>
+    <message>
+        <source>This machine&apos;s clock service did not answer, so the time cannot be set from here.</source>
+        <translation>本机的时钟服务没有响应，因此无法从这里设置时间。</translation>
+    </message>
+    <message>
+        <source>The clock is set on this machine, not from the network.</source>
+        <translation>时钟在本机上设置，而不是通过网络。</translation>
+    </message>
+    <message>
+        <source>Turn off automatic time before setting the clock by hand.</source>
+        <translation>请先关闭自动时间，再手动设置时钟。</translation>
+    </message>
+    <message>
+        <source>The date must be written year-month-day, as in %1.</source>
+        <translation>日期必须写成年-月-日，例如 %1。</translation>
+    </message>
+    <message>
+        <source>The time must be written on a 24-hour clock, as in %1.</source>
+        <translation>时间必须使用 24 小时制，例如 %1。</translation>
+    </message>
+    <message>
+        <source>There is no such time in %1.</source>
+        <translation>%1 没有这个时间。</translation>
+    </message>
+    <message>
+        <source>The clock could not be set.</source>
+        <translation>无法设置时钟。</translation>
+    </message>
+    <message>
+        <source>The clock could not be set: %1</source>
+        <translation>无法设置时钟：%1</translation>
+    </message>
+</context>
+<context>
+    <name>LocationViewStep</name>
+    <message>
+        <source>Location</source>
+        <translation>位置</translation>
     </message>
 </context>
 <context>
@@ -763,13 +945,6 @@
     </message>
 </context>
 <context>
-    <name>ReviewViewStep</name>
-    <message>
-        <source>Summary</source>
-        <translation>摘要</translation>
-    </message>
-</context>
-<context>
     <name>ReviewConfig</name>
     <message>
         <source>Ready to install</source>
@@ -793,93 +968,10 @@
     </message>
 </context>
 <context>
-    <name>DoneViewStep</name>
+    <name>ReviewViewStep</name>
     <message>
-        <source>Finish</source>
-        <translation>完成</translation>
-    </message>
-</context>
-<context>
-    <name>DoneConfig</name>
-    <message>
-        <source>%1 is installed</source>
-        <translation>%1 已安装完成</translation>
-    </message>
-    <message>
-        <source>Restart to sign in for the first time. Anything still downloading finishes after that.</source>
-        <translation>重新启动即可首次登录。仍在下载的内容会在之后完成。</translation>
-    </message>
-    <message>
-        <source>Restart now</source>
-        <translation>立即重启</translation>
-    </message>
-    <message>
-        <source>Remove the installation medium before the computer starts again.</source>
-        <translation>请在计算机再次启动前取出安装介质。</translation>
-    </message>
-</context>
-<context>
-    <name>LocationViewStep</name>
-    <message>
-        <source>Location</source>
-        <translation>位置</translation>
-    </message>
-</context>
-<context>
-    <name>LocationConfig</name>
-    <message>
-        <source>Where are you?</source>
-        <translation>您在哪里？</translation>
-    </message>
-    <message>
-        <source>Your location sets the clock and the date. The hardware clock is kept in UTC, and you can change this later in Settings.</source>
-        <translation>您的位置决定时钟和日期。硬件时钟保持为 UTC，之后可以在设置中更改。</translation>
-    </message>
-    <message>
-        <source>Region</source>
-        <translation>地区</translation>
-    </message>
-    <message>
-        <source>Zone</source>
-        <translation>时区</translation>
-    </message>
-</context>
-<context>
-    <name>KeymapViewStep</name>
-    <message>
-        <source>Keyboard</source>
-        <translation>键盘</translation>
-    </message>
-</context>
-<context>
-    <name>KeymapConfig</name>
-    <message>
-        <source>Set up your keyboard</source>
-        <translation>设置键盘</translation>
-    </message>
-    <message>
-        <source>Pick the layout printed on your keys. The preview below shows what they will type once the installed system starts.</source>
-        <translation>选择键帽上印刷的布局。下方预览显示安装好的系统启动后这些键会输入什么。</translation>
-    </message>
-    <message>
-        <source>Layout</source>
-        <translation>布局</translation>
-    </message>
-    <message>
-        <source>Variant</source>
-        <translation>变体</translation>
-    </message>
-    <message>
-        <source>Preview</source>
-        <translation>预览</translation>
-    </message>
-    <message>
-        <source>Default</source>
-        <translation>默认</translation>
-    </message>
-    <message>
-        <source>No keyboard layouts could be read from this medium, so the installed system will keep the layout this one booted with.</source>
-        <translation>无法从此介质读取键盘布局，因此安装好的系统将沿用此介质启动时使用的布局。</translation>
+        <source>Summary</source>
+        <translation>摘要</translation>
     </message>
 </context>
 </TS>

@@ -578,6 +578,32 @@
     </message>
 </context>
 <context>
+    <name>DoneConfig</name>
+    <message>
+        <source>%1 is installed</source>
+        <translation>%1 のインストールが完了しました</translation>
+    </message>
+    <message>
+        <source>Restart to sign in for the first time. Anything still downloading finishes after that.</source>
+        <translation>再起動すると初回サインインができます。ダウンロード中のものはその後に完了します。</translation>
+    </message>
+    <message>
+        <source>Restart now</source>
+        <translation>今すぐ再起動</translation>
+    </message>
+    <message>
+        <source>Remove the installation medium before the computer starts again.</source>
+        <translation>コンピューターが起動し直す前にインストールメディアを取り外してください。</translation>
+    </message>
+</context>
+<context>
+    <name>DoneViewStep</name>
+    <message>
+        <source>Finish</source>
+        <translation>完了</translation>
+    </message>
+</context>
+<context>
     <name>GreetingConfig</name>
     <message>
         <source>This program will ask you a few questions and then install %1 on this computer. Everything already on the disk you choose will be erased.</source>
@@ -617,6 +643,44 @@
     <message>
         <source>Welcome</source>
         <translation>ようこそ</translation>
+    </message>
+</context>
+<context>
+    <name>KeymapConfig</name>
+    <message>
+        <source>Set up your keyboard</source>
+        <translation>キーボードを設定</translation>
+    </message>
+    <message>
+        <source>Pick the layout printed on your keys. The preview below shows what they will type once the installed system starts.</source>
+        <translation>キーに印字されている配列を選んでください。下のプレビューは、インストール後のシステムで各キーが何を入力するかを示します。</translation>
+    </message>
+    <message>
+        <source>Layout</source>
+        <translation>配列</translation>
+    </message>
+    <message>
+        <source>Variant</source>
+        <translation>バリアント</translation>
+    </message>
+    <message>
+        <source>Preview</source>
+        <translation>プレビュー</translation>
+    </message>
+    <message>
+        <source>Default</source>
+        <translation>標準</translation>
+    </message>
+    <message>
+        <source>No keyboard layouts could be read from this medium, so the installed system will keep the layout this one booted with.</source>
+        <translation>このメディアからキーボード配列を読み取れませんでした。インストールされるシステムは、このメディアが起動した配列をそのまま使います。</translation>
+    </message>
+</context>
+<context>
+    <name>KeymapViewStep</name>
+    <message>
+        <source>Keyboard</source>
+        <translation>キーボード</translation>
     </message>
 </context>
 <context>
@@ -674,6 +738,124 @@
     <message>
         <source>Language</source>
         <translation>言語</translation>
+    </message>
+</context>
+<context>
+    <name>LocationConfig</name>
+    <message>
+        <source>Where are you?</source>
+        <translation>どちらにお住まいですか？</translation>
+    </message>
+    <message>
+        <source>Your location sets the clock and the date. The hardware clock is kept in UTC, and you can change this later in Settings.</source>
+        <translation>地域によって時刻と日付が決まります。ハードウェアクロックは UTC のまま保たれ、あとから設定で変更できます。</translation>
+    </message>
+    <message>
+        <source>Region</source>
+        <translation>地域</translation>
+    </message>
+    <message>
+        <source>Zone</source>
+        <translation>タイムゾーン</translation>
+    </message>
+    <message>
+        <source>Set the time automatically over the network</source>
+        <translation>ネットワークから時刻を自動的に設定する</translation>
+    </message>
+    <message>
+        <source>The installed system keeps doing this. Turn it off to set the clock by hand.</source>
+        <translation>インストール後のシステムでも同じ動作を続けます。手動で時計を合わせるにはオフにしてください。</translation>
+    </message>
+    <message>
+        <source>Set date and time…</source>
+        <translation>日付と時刻を設定…</translation>
+    </message>
+    <message>
+        <source>Set the date and time</source>
+        <translation>日付と時刻の設定</translation>
+    </message>
+    <message>
+        <source>This sets this machine&apos;s clock now, in %1. The system you install starts from the same clock.</source>
+        <translation>このコンピューターの時計を今すぐ %1 の時刻に設定します。インストールされるシステムも同じ時計から始まります。</translation>
+    </message>
+    <message>
+        <source>Date</source>
+        <translation>日付</translation>
+    </message>
+    <message>
+        <source>Time</source>
+        <translation>時刻</translation>
+    </message>
+    <message>
+        <source>Year-month-day, as in %1</source>
+        <translation>年-月-日 の形式（例: %1）</translation>
+    </message>
+    <message>
+        <source>A 24-hour clock, as in %1</source>
+        <translation>24 時間制（例: %1）</translation>
+    </message>
+    <message>
+        <source>Set</source>
+        <translation>設定</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>キャンセル</translation>
+    </message>
+    <message>
+        <source>Checking the time server…</source>
+        <translation>時刻サーバーを確認しています…</translation>
+    </message>
+    <message>
+        <source>The clock is set from the network.</source>
+        <translation>時計はネットワークから設定されています。</translation>
+    </message>
+    <message>
+        <source>The clock is set from %1.</source>
+        <translation>時計は %1 から設定されています。</translation>
+    </message>
+    <message>
+        <source>No time server answered. Check the network, or set the clock by hand.</source>
+        <translation>時刻サーバーから応答がありませんでした。ネットワークを確認するか、手動で時計を合わせてください。</translation>
+    </message>
+    <message>
+        <source>This machine&apos;s clock service did not answer, so the time cannot be set from here.</source>
+        <translation>このコンピューターの時刻サービスが応答しなかったため、ここから時刻を設定できません。</translation>
+    </message>
+    <message>
+        <source>The clock is set on this machine, not from the network.</source>
+        <translation>時計はネットワークではなく、このコンピューター上で設定されています。</translation>
+    </message>
+    <message>
+        <source>Turn off automatic time before setting the clock by hand.</source>
+        <translation>手動で時計を合わせる前に、自動時刻設定をオフにしてください。</translation>
+    </message>
+    <message>
+        <source>The date must be written year-month-day, as in %1.</source>
+        <translation>日付は年-月-日 の形式で入力してください（例: %1）。</translation>
+    </message>
+    <message>
+        <source>The time must be written on a 24-hour clock, as in %1.</source>
+        <translation>時刻は 24 時間制で入力してください（例: %1）。</translation>
+    </message>
+    <message>
+        <source>There is no such time in %1.</source>
+        <translation>%1 にその時刻は存在しません。</translation>
+    </message>
+    <message>
+        <source>The clock could not be set.</source>
+        <translation>時計を設定できませんでした。</translation>
+    </message>
+    <message>
+        <source>The clock could not be set: %1</source>
+        <translation>時計を設定できませんでした: %1</translation>
+    </message>
+</context>
+<context>
+    <name>LocationViewStep</name>
+    <message>
+        <source>Location</source>
+        <translation>地域</translation>
     </message>
 </context>
 <context>
@@ -763,13 +945,6 @@
     </message>
 </context>
 <context>
-    <name>ReviewViewStep</name>
-    <message>
-        <source>Summary</source>
-        <translation>概要</translation>
-    </message>
-</context>
-<context>
     <name>ReviewConfig</name>
     <message>
         <source>Ready to install</source>
@@ -793,93 +968,10 @@
     </message>
 </context>
 <context>
-    <name>DoneViewStep</name>
+    <name>ReviewViewStep</name>
     <message>
-        <source>Finish</source>
-        <translation>完了</translation>
-    </message>
-</context>
-<context>
-    <name>DoneConfig</name>
-    <message>
-        <source>%1 is installed</source>
-        <translation>%1 のインストールが完了しました</translation>
-    </message>
-    <message>
-        <source>Restart to sign in for the first time. Anything still downloading finishes after that.</source>
-        <translation>再起動すると初回サインインができます。ダウンロード中のものはその後に完了します。</translation>
-    </message>
-    <message>
-        <source>Restart now</source>
-        <translation>今すぐ再起動</translation>
-    </message>
-    <message>
-        <source>Remove the installation medium before the computer starts again.</source>
-        <translation>コンピューターが起動し直す前にインストールメディアを取り外してください。</translation>
-    </message>
-</context>
-<context>
-    <name>LocationViewStep</name>
-    <message>
-        <source>Location</source>
-        <translation>地域</translation>
-    </message>
-</context>
-<context>
-    <name>LocationConfig</name>
-    <message>
-        <source>Where are you?</source>
-        <translation>どちらにお住まいですか？</translation>
-    </message>
-    <message>
-        <source>Your location sets the clock and the date. The hardware clock is kept in UTC, and you can change this later in Settings.</source>
-        <translation>地域によって時刻と日付が決まります。ハードウェアクロックは UTC のまま保たれ、あとから設定で変更できます。</translation>
-    </message>
-    <message>
-        <source>Region</source>
-        <translation>地域</translation>
-    </message>
-    <message>
-        <source>Zone</source>
-        <translation>タイムゾーン</translation>
-    </message>
-</context>
-<context>
-    <name>KeymapViewStep</name>
-    <message>
-        <source>Keyboard</source>
-        <translation>キーボード</translation>
-    </message>
-</context>
-<context>
-    <name>KeymapConfig</name>
-    <message>
-        <source>Set up your keyboard</source>
-        <translation>キーボードを設定</translation>
-    </message>
-    <message>
-        <source>Pick the layout printed on your keys. The preview below shows what they will type once the installed system starts.</source>
-        <translation>キーに印字されている配列を選んでください。下のプレビューは、インストール後のシステムで各キーが何を入力するかを示します。</translation>
-    </message>
-    <message>
-        <source>Layout</source>
-        <translation>配列</translation>
-    </message>
-    <message>
-        <source>Variant</source>
-        <translation>バリアント</translation>
-    </message>
-    <message>
-        <source>Preview</source>
-        <translation>プレビュー</translation>
-    </message>
-    <message>
-        <source>Default</source>
-        <translation>標準</translation>
-    </message>
-    <message>
-        <source>No keyboard layouts could be read from this medium, so the installed system will keep the layout this one booted with.</source>
-        <translation>このメディアからキーボード配列を読み取れませんでした。インストールされるシステムは、このメディアが起動した配列をそのまま使います。</translation>
+        <source>Summary</source>
+        <translation>概要</translation>
     </message>
 </context>
 </TS>
