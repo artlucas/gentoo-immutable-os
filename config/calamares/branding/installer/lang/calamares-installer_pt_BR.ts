@@ -796,8 +796,16 @@
         <translation>Ano-mês-dia, como em %1</translation>
     </message>
     <message>
+        <source>Hours and minutes, as in %1</source>
+        <translation>Horas e minutos, como em %1</translation>
+    </message>
+    <message>
         <source>A 24-hour clock, as in %1</source>
         <translation>Um relógio de 24 horas, como em %1</translation>
+    </message>
+    <message>
+        <source>AM/PM</source>
+        <translation>AM/PM</translation>
     </message>
     <message>
         <source>Set</source>
@@ -840,8 +848,16 @@
         <translation>A data deve ser escrita como ano-mês-dia, como em %1.</translation>
     </message>
     <message>
+        <source>The time must be written hours:minutes, as in %1.</source>
+        <translation>A hora deve ser escrita como horas:minutos, como em %1.</translation>
+    </message>
+    <message>
         <source>The time must be written on a 24-hour clock, as in %1.</source>
         <translation>A hora deve ser escrita em um relógio de 24 horas, como em %1.</translation>
+    </message>
+    <message>
+        <source>The hour must be between 1 and 12 on a 12-hour clock, as in %1.</source>
+        <translation>Em um relógio de 12 horas, a hora deve estar entre 1 e 12, como em %1.</translation>
     </message>
     <message>
         <source>There is no such time in %1.</source>

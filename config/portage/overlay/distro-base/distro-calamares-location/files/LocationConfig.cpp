@@ -19,11 +19,23 @@
 
 namespace
 {
-/*! The two typed formats the set-time dialog uses. Fixed rather than QLocale's, for the reason
+/*! The typed formats the set-time dialog uses. Fixed rather than QLocale's, for the reason
  *  LocationConfig.h gives at length above editDate(): a date read back from a locale's short form
- *  is ambiguous in a way the field cannot ask about. */
+ *  is ambiguous in a way the field cannot ask about.
+ *
+ *  THE TIME HAS TWO OF THEM AND THE DIFFERENCE IS ONE LETTER'S CASE. "hh" is the hour on a
+ *  12-hour clock, zero-padded, 01 to 12; "HH" is 00 to 23. Neither carries AM or PM — that is a
+ *  separate control in the dialog and a separate argument across the boundary, so that the field
+ *  never has to parse a word in a language it was not told (plan/30 §3). */
 const char* const kEditDateFormat = "yyyy-MM-dd";
-const char* const kEditTimeFormat = "HH:mm";
+const char* const kEditTimeFormat24 = "HH:mm";
+const char* const kEditTimeFormat12 = "hh:mm";
+
+/*! What the clock on the page reads. `AP` is Qt's uppercase AM/PM marker, and QTime::toString
+ *  renders it through the default QLocale — so the two words follow the language the user chose
+ *  on the page before this one. */
+const char* const kClockFormat24 = "HH:mm";
+const char* const kClockFormat12 = "h:mm AP";
 
 /*! How long a timedatectl call is given. It is a D-Bus round trip to a service on this machine;
  *  five seconds is not a budget, it is a deadlock detector. */
@@ -113,6 +125,13 @@ LocationConfig::setConfigurationMap( const QVariantMap& configurationMap )
     // machine's clock during startup. LocationViewStep::onActivate() applies it.
     m_networkTime = Calamares::getBool( configurationMap, QStringLiteral( "networkTime" ), true );
     emit networkTimeChanged();
+
+    // HOW THE CLOCK READS, AND WHAT THE DIALOG TAKES (plan/30 §3). A key rather than a control
+    // for the reason the header gives: it is the distribution's answer and not a question put to
+    // the user. TRUE by default, which is a change of behaviour and not merely a default — the
+    // clock used to take its shape from QLocale, so it followed the language rather than the
+    // image. No signal: the property is CONSTANT and this runs before the page exists.
+    m_twelveHour = Calamares::getBool( configurationMap, QStringLiteral( "twelveHour" ), true );
 
     emit locationChanged();
     emit tick();
@@ -234,9 +253,13 @@ LocationConfig::clockTime() const
     const QByteArray id = ianaId( m_region, m_zone );
     const QDateTime now = id.isEmpty() ? QDateTime::currentDateTime()
                                        : QDateTime::currentDateTimeUtc().toTimeZone( QTimeZone( id ) );
-    // QLocale, not a format string of our own: whether the clock reads 13:45 or 1:45 PM is a
-    // property of the language the user chose on the page before this one, and Qt already knows.
-    return QLocale().toString( now.time(), QLocale::ShortFormat );
+    // A FORMAT STRING OF OUR OWN, NOT QLocale's ShortFormat (plan/30 §3). Qt does know whether
+    // the user's language writes 13:45 or 1:45 PM, and this page used to ask it — but that made
+    // the one screen in the installer where a build-time decision was overridden by the language
+    // picker, so a French install drew a 24-hour clock on an image that had decided otherwise.
+    // The WORDS are still Qt's: `AP` renders AM/PM through the default QLocale.
+    return now.time().toString( QString::fromLatin1( m_twelveHour ? kClockFormat12
+                                                                  : kClockFormat24 ) );
 }
 
 QString
@@ -498,7 +521,36 @@ LocationConfig::editTime() const
     const QDateTime now = id.isEmpty()
         ? QDateTime::currentDateTime()
         : QDateTime::currentDateTimeUtc().toTimeZone( QTimeZone( id ) );
-    return now.time().toString( QString::fromLatin1( kEditTimeFormat ) );
+    return now.time().toString(
+        QString::fromLatin1( m_twelveHour ? kEditTimeFormat12 : kEditTimeFormat24 ) );
+}
+
+int
+LocationConfig::editMeridiem() const
+{
+    if ( !m_twelveHour )
+    {
+        return -1;
+    }
+    const QByteArray id = ianaId( m_region, m_zone );
+    const QDateTime now = id.isEmpty()
+        ? QDateTime::currentDateTime()
+        : QDateTime::currentDateTimeUtc().toTimeZone( QTimeZone( id ) );
+    // Noon is PM and midnight is AM, which is what `hour() >= 12` says and what the "12 AM /
+    // 12 PM" confusion is about. Qt's own conversion below agrees with it.
+    return now.time().hour() >= 12 ? 1 : 0;
+}
+
+QString
+LocationConfig::amLabel() const
+{
+    return m_twelveHour ? QLocale().amText() : QString();
+}
+
+QString
+LocationConfig::pmLabel() const
+{
+    return m_twelveHour ? QLocale().pmText() : QString();
 }
 
 void
@@ -519,7 +571,7 @@ LocationConfig::setSetTimeError( const QString& message )
 }
 
 bool
-LocationConfig::applySystemTime( const QString& date, const QString& time )
+LocationConfig::applySystemTime( const QString& date, const QString& time, int meridiem )
 {
     // systemd refuses this outright while NTP is on, and says so in a sentence about D-Bus. The
     // button that opens this dialog is disabled in that state, so reaching here means something
@@ -537,12 +589,44 @@ LocationConfig::applySystemTime( const QString& date, const QString& time )
         setSetTimeError( tr( "The date must be written year-month-day, as in %1." ).arg( editDate() ) );
         return false;
     }
-    const QTime t = QTime::fromString( time.trimmed(), QString::fromLatin1( kEditTimeFormat ) );
+    QTime t = QTime::fromString(
+        time.trimmed(), QString::fromLatin1( m_twelveHour ? kEditTimeFormat12 : kEditTimeFormat24 ) );
     if ( !t.isValid() )
     {
-        setSetTimeError(
-            tr( "The time must be written on a 24-hour clock, as in %1." ).arg( editTime() ) );
+        setSetTimeError( m_twelveHour
+                             ? tr( "The time must be written hours:minutes, as in %1." ).arg( editTime() )
+                             : tr( "The time must be written on a 24-hour clock, as in %1." )
+                                   .arg( editTime() ) );
         return false;
+    }
+    if ( m_twelveHour )
+    {
+        // "hh" DOES NOT RANGE-CHECK. Qt parses 13 out of a "hh" field perfectly happily — the
+        // format character says how to PRINT an hour, not which hours exist — so "13:00" with PM
+        // chosen would have become 25:00, failed QTime's own validity check, and been reported as
+        // "the clock could not be set" with nothing said about the 13. A 12-hour field takes 1
+        // to 12 and says so.
+        if ( t.hour() < 1 || t.hour() > 12 )
+        {
+            setSetTimeError(
+                tr( "The hour must be between 1 and 12 on a 12-hour clock, as in %1." )
+                    .arg( editTime() ) );
+            return false;
+        }
+
+        // THE ONE PLACE 12 IS NOT 12. On a 12-hour clock the hours run 12, 1, 2 … 11 and then
+        // repeat, so 12 AM is hour 0 and 12 PM is hour 12, while every other hour is itself plus
+        // twelve in the afternoon. Written out rather than reached for with a %12, because a
+        // silent off-by-twelve here sets the machine half a day wrong and the page would go on
+        // showing exactly what the user typed.
+        const int typed = t.hour() % 12;              // 12 -> 0, 1..11 unchanged
+        const int hour = meridiem == 1 ? typed + 12 : typed;
+        t = QTime( hour, t.minute() );
+        if ( !t.isValid() )
+        {
+            setSetTimeError( tr( "The clock could not be set." ) );
+            return false;
+        }
     }
 
     // READ IN THE CHOSEN ZONE, WRITTEN IN THE MACHINE'S. The page shows a clock in the zone the

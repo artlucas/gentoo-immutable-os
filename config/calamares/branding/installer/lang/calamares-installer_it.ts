@@ -765,11 +765,11 @@
     </message>
     <message>
         <source>Set the time automatically over the network</source>
-        <translation>Imposta l'ora automaticamente tramite la rete</translation>
+        <translation>Imposta l&apos;ora automaticamente tramite la rete</translation>
     </message>
     <message>
         <source>The installed system keeps doing this. Turn it off to set the clock by hand.</source>
-        <translation>Il sistema installato continuerà a farlo. Disattivalo per impostare l'orologio a mano.</translation>
+        <translation>Il sistema installato continuerà a farlo. Disattivalo per impostare l&apos;orologio a mano.</translation>
     </message>
     <message>
         <source>Set date and time…</source>
@@ -777,11 +777,11 @@
     </message>
     <message>
         <source>Set the date and time</source>
-        <translation>Imposta la data e l'ora</translation>
+        <translation>Imposta la data e l&apos;ora</translation>
     </message>
     <message>
         <source>This sets this machine&apos;s clock now, in %1. The system you install starts from the same clock.</source>
-        <translation>Questo imposta ora l'orologio di questa macchina, in %1. Il sistema che installi partirà dallo stesso orologio.</translation>
+        <translation>Questo imposta ora l&apos;orologio di questa macchina, in %1. Il sistema che installi partirà dallo stesso orologio.</translation>
     </message>
     <message>
         <source>Date</source>
@@ -796,8 +796,16 @@
         <translation>Anno-mese-giorno, come in %1</translation>
     </message>
     <message>
+        <source>Hours and minutes, as in %1</source>
+        <translation>Ore e minuti, come in %1</translation>
+    </message>
+    <message>
         <source>A 24-hour clock, as in %1</source>
         <translation>Un orologio a 24 ore, come in %1</translation>
+    </message>
+    <message>
+        <source>AM/PM</source>
+        <translation>AM/PM</translation>
     </message>
     <message>
         <source>Set</source>
@@ -813,47 +821,55 @@
     </message>
     <message>
         <source>The clock is set from the network.</source>
-        <translation>L'orologio è impostato dalla rete.</translation>
+        <translation>L&apos;orologio è impostato dalla rete.</translation>
     </message>
     <message>
         <source>The clock is set from %1.</source>
-        <translation>L'orologio è impostato da %1.</translation>
+        <translation>L&apos;orologio è impostato da %1.</translation>
     </message>
     <message>
         <source>No time server answered. Check the network, or set the clock by hand.</source>
-        <translation>Nessun server orario ha risposto. Controlla la rete o imposta l'orologio a mano.</translation>
+        <translation>Nessun server orario ha risposto. Controlla la rete o imposta l&apos;orologio a mano.</translation>
     </message>
     <message>
         <source>This machine&apos;s clock service did not answer, so the time cannot be set from here.</source>
-        <translation>Il servizio orario di questa macchina non ha risposto, quindi l'ora non può essere impostata da qui.</translation>
+        <translation>Il servizio orario di questa macchina non ha risposto, quindi l&apos;ora non può essere impostata da qui.</translation>
     </message>
     <message>
         <source>The clock is set on this machine, not from the network.</source>
-        <translation>L'orologio è impostato su questa macchina, non dalla rete.</translation>
+        <translation>L&apos;orologio è impostato su questa macchina, non dalla rete.</translation>
     </message>
     <message>
         <source>Turn off automatic time before setting the clock by hand.</source>
-        <translation>Disattiva l'ora automatica prima di impostare l'orologio a mano.</translation>
+        <translation>Disattiva l&apos;ora automatica prima di impostare l&apos;orologio a mano.</translation>
     </message>
     <message>
         <source>The date must be written year-month-day, as in %1.</source>
         <translation>La data deve essere scritta anno-mese-giorno, come in %1.</translation>
     </message>
     <message>
+        <source>The time must be written hours:minutes, as in %1.</source>
+        <translation>L&apos;ora deve essere scritta ore:minuti, come in %1.</translation>
+    </message>
+    <message>
         <source>The time must be written on a 24-hour clock, as in %1.</source>
-        <translation>L'ora deve essere scritta su un orologio a 24 ore, come in %1.</translation>
+        <translation>L&apos;ora deve essere scritta su un orologio a 24 ore, come in %1.</translation>
+    </message>
+    <message>
+        <source>The hour must be between 1 and 12 on a 12-hour clock, as in %1.</source>
+        <translation>Su un orologio a 12 ore, l&apos;ora deve essere compresa tra 1 e 12, come in %1.</translation>
     </message>
     <message>
         <source>There is no such time in %1.</source>
-        <translation>Quest'ora non esiste in %1.</translation>
+        <translation>Quest&apos;ora non esiste in %1.</translation>
     </message>
     <message>
         <source>The clock could not be set.</source>
-        <translation>Non è stato possibile impostare l'orologio.</translation>
+        <translation>Non è stato possibile impostare l&apos;orologio.</translation>
     </message>
     <message>
         <source>The clock could not be set: %1</source>
-        <translation>Non è stato possibile impostare l'orologio: %1</translation>
+        <translation>Non è stato possibile impostare l&apos;orologio: %1</translation>
     </message>
 </context>
 <context>

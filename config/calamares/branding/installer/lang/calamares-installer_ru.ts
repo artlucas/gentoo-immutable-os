@@ -801,8 +801,16 @@
         <translation>Год-месяц-день, например %1</translation>
     </message>
     <message>
+        <source>Hours and minutes, as in %1</source>
+        <translation>Часы и минуты, например %1</translation>
+    </message>
+    <message>
         <source>A 24-hour clock, as in %1</source>
         <translation>24-часовой формат, например %1</translation>
+    </message>
+    <message>
+        <source>AM/PM</source>
+        <translation>До/после полудня</translation>
     </message>
     <message>
         <source>Set</source>
@@ -845,8 +853,16 @@
         <translation>Дату нужно записывать как год-месяц-день, например %1.</translation>
     </message>
     <message>
+        <source>The time must be written hours:minutes, as in %1.</source>
+        <translation>Время должно быть записано как часы:минуты, например %1.</translation>
+    </message>
+    <message>
         <source>The time must be written on a 24-hour clock, as in %1.</source>
         <translation>Время нужно записывать в 24-часовом формате, например %1.</translation>
+    </message>
+    <message>
+        <source>The hour must be between 1 and 12 on a 12-hour clock, as in %1.</source>
+        <translation>На 12-часовых часах час должен быть от 1 до 12, например %1.</translation>
     </message>
     <message>
         <source>There is no such time in %1.</source>

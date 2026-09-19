@@ -791,8 +791,16 @@
         <translation>年-月-日，例如 %1</translation>
     </message>
     <message>
+        <source>Hours and minutes, as in %1</source>
+        <translation>小时和分钟，如 %1</translation>
+    </message>
+    <message>
         <source>A 24-hour clock, as in %1</source>
         <translation>24 小时制，例如 %1</translation>
+    </message>
+    <message>
+        <source>AM/PM</source>
+        <translation>上午/下午</translation>
     </message>
     <message>
         <source>Set</source>
@@ -835,8 +843,16 @@
         <translation>日期必须写成年-月-日，例如 %1。</translation>
     </message>
     <message>
+        <source>The time must be written hours:minutes, as in %1.</source>
+        <translation>时间必须写成 时:分 的形式，如 %1。</translation>
+    </message>
+    <message>
         <source>The time must be written on a 24-hour clock, as in %1.</source>
         <translation>时间必须使用 24 小时制，例如 %1。</translation>
+    </message>
+    <message>
+        <source>The hour must be between 1 and 12 on a 12-hour clock, as in %1.</source>
+        <translation>在 12 小时制中，小时必须在 1 到 12 之间，如 %1。</translation>
     </message>
     <message>
         <source>There is no such time in %1.</source>

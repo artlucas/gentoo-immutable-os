@@ -32,8 +32,15 @@
  *   * Formats and Measurement are LC_TIME / LC_NUMERIC / LC_MEASUREMENT, and offering them for a
  *     locale the image did not compile is exactly the bug plan/22 §6 spent a page fixing. The
  *     image carries the nine locales in config/languages.conf and nothing else.
- *   * The 24-hour clock is a Plasma locale setting nothing in this pipeline writes. A switch with
- *     no wiring behind it is worse than no switch: it is a promise the first boot breaks.
+ *   * The 24-hour clock was on that second list, and on a DIFFERENT argument from the other two:
+ *     as the design draws it, it is a switch on this page that writes a Plasma locale setting on
+ *     the installed machine, and nothing in this pipeline writes one. That is still true and the
+ *     switch is still not here. What plan/30 added instead is a CONFIGURATION key — twelveHour in
+ *     modules/location.conf, on by default — because the page has its own clock on it and the
+ *     dialog has its own time field, and how THOSE read was never Plasma's business. It is the
+ *     distribution's answer, not a question put to the user, so it is a conf key and not a
+ *     control: a switch the user can move is the thing that would need wiring to outlive the
+ *     page, and a build-time default does not.
  *   * Automatic time WAS in that second list, on exactly that argument, until the wiring was
  *     built (plan/29). It is here now because all three of its ends exist: build.conf's
  *     NTP_SERVERS renders a FallbackNTP= drop-in that every profile ships, systemd-timesyncd is
@@ -90,6 +97,26 @@ class LocationConfig : public QObject
     Q_PROPERTY( QString clockTime READ clockTime NOTIFY tick )
     Q_PROPERTY( QString clockDate READ clockDate NOTIFY tick )
 
+    /*! Whether this page reads and takes a 12-hour clock (plan/30 §3). From
+     *  modules/location.conf, defaulting to TRUE — the distribution's answer and not the user's,
+     *  which is why it is a key and not a switch.
+     *
+     *  CONSTANT: it is read once in setConfigurationMap() and nothing can move it afterwards. A
+     *  NOTIFY with nothing to emit it is a signal the QML would connect to and wait on forever.
+     *
+     *  IT IS NOT A QLocale QUESTION, and that is the thing to hold on to. clockTime() used to ask
+     *  QLocale for a ShortFormat, on the argument that whether a clock reads 13:45 or 1:45 PM is a
+     *  property of the language chosen a page earlier and Qt already knows. Qt does know — it just
+     *  does not agree with the image: a French installer would draw a 24-hour clock on a
+     *  distribution that had decided otherwise, and the page would be the only screen in the
+     *  installer where a build-time decision was overridden by the keyboard layout's country. */
+    Q_PROPERTY( bool twelveHour READ twelveHour CONSTANT )
+    /*! The two words a 12-hour clock needs, from QLocale — so they follow the language the user
+     *  picked on the page before this one rather than being two more strings to translate nine
+     *  times. Empty, both of them, when the flag is off. */
+    Q_PROPERTY( QString amLabel READ amLabel NOTIFY retranslated )
+    Q_PROPERTY( QString pmLabel READ pmLabel NOTIFY retranslated )
+
     /*! Whether the clock is set from the network. WRITEABLE from QML, because checking the box
      *  IS the action: setNetworkTime() runs timedatectl and starts the watch. */
     Q_PROPERTY( bool networkTime READ networkTime WRITE setNetworkTime NOTIFY networkTimeChanged )
@@ -124,6 +151,11 @@ class LocationConfig : public QObject
      *  recomputed on every retranslate, which is also every midnight this page is open. */
     Q_PROPERTY( QString setTimeDateHint READ setTimeDateHint NOTIFY tick )
     Q_PROPERTY( QString setTimeTimeHint READ setTimeTimeHint NOTIFY tick )
+    /*! The label over the dialog's AM/PM select. It exists for a layout reason as much as a
+     *  reading one — see the note beside the control in Location.qml — and it is translated
+     *  rather than left as the two letters, because the languages that do not write "AM" have a
+     *  word for the same idea. */
+    Q_PROPERTY( QString setTimeMeridiemLabel READ setTimeMeridiemLabel NOTIFY retranslated )
     Q_PROPERTY( QString setTimeConfirm READ setTimeConfirm NOTIFY retranslated )
     Q_PROPERTY( QString setTimeCancel READ setTimeCancel NOTIFY retranslated )
 
@@ -179,9 +211,14 @@ public:
     QString setTimeDateHint() const { return tr( "Year-month-day, as in %1" ).arg( editDate() ); }
     QString setTimeTimeHint() const
     {
-        return tr( "A 24-hour clock, as in %1" ).arg( editTime() );
+        return m_twelveHour ? tr( "Hours and minutes, as in %1" ).arg( editTime() )
+                            : tr( "A 24-hour clock, as in %1" ).arg( editTime() );
     }
+    QString setTimeMeridiemLabel() const { return tr( "AM/PM" ); }
     QString setTimeConfirm() const { return tr( "Set" ); }
+    bool twelveHour() const { return m_twelveHour; }
+    QString amLabel() const;
+    QString pmLabel() const;
     QString setTimeCancel() const { return tr( "Cancel" ); }
 
     /*! The dialog's two fields, pre-filled with now IN THE CHOSEN ZONE.
@@ -195,11 +232,19 @@ public:
      */
     Q_INVOKABLE QString editDate() const;
     Q_INVOKABLE QString editTime() const;
+    /*! Which half of the day the pre-filled time is in: 0 for AM, 1 for PM, and -1 when the
+     *  12-hour flag is off. The dialog's select takes this as its starting index. */
+    Q_INVOKABLE int editMeridiem() const;
 
     /*! Sets this machine's clock from the dialog's two fields, which are read AS TIMES IN THE
      *  CHOSEN ZONE — the page shows a clock in that zone, so a person correcting it is correcting
      *  what they can see. Returns true on success; on failure setTimeError says what happened. */
-    Q_INVOKABLE bool applySystemTime( const QString& date, const QString& time );
+    /*! THE MERIDIEM CROSSES AS AN INDEX, NOT AS A WORD. The two labels come out of QLocale so
+     *  that they follow the user's language; a C++ side that then parsed the string it had just
+     *  handed out would be re-deriving, in one language, something it already knew — and would
+     *  break the day a translation of "PM" collided with something else. -1 means the flag is
+     *  off and `time` is already on a 24-hour clock. */
+    Q_INVOKABLE bool applySystemTime( const QString& date, const QString& time, int meridiem );
     /*! Clears setTimeError. Called when the dialog opens, so that yesterday's complaint is not
      *  the first thing in it. */
     Q_INVOKABLE void clearSetTimeError();
@@ -260,6 +305,9 @@ private:
     QString m_region;
     QString m_zone;
     QTimer* m_clock;
+
+    /*! modules/location.conf's `twelveHour`, defaulting to TRUE — see the Q_PROPERTY. */
+    bool m_twelveHour = true;
 
     bool m_networkTime = true;
     QString m_syncState = QStringLiteral( "off" );

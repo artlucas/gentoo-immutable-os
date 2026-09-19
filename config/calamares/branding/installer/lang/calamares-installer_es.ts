@@ -796,8 +796,16 @@
         <translation>Año-mes-día, como en %1</translation>
     </message>
     <message>
+        <source>Hours and minutes, as in %1</source>
+        <translation>Horas y minutos, como en %1</translation>
+    </message>
+    <message>
         <source>A 24-hour clock, as in %1</source>
         <translation>Un reloj de 24 horas, como en %1</translation>
+    </message>
+    <message>
+        <source>AM/PM</source>
+        <translation>a. m./p. m.</translation>
     </message>
     <message>
         <source>Set</source>
@@ -840,8 +848,16 @@
         <translation>La fecha debe escribirse como año-mes-día, como en %1.</translation>
     </message>
     <message>
+        <source>The time must be written hours:minutes, as in %1.</source>
+        <translation>La hora debe escribirse como horas:minutos, como en %1.</translation>
+    </message>
+    <message>
         <source>The time must be written on a 24-hour clock, as in %1.</source>
         <translation>La hora debe escribirse en un reloj de 24 horas, como en %1.</translation>
+    </message>
+    <message>
+        <source>The hour must be between 1 and 12 on a 12-hour clock, as in %1.</source>
+        <translation>En un reloj de 12 horas, la hora debe estar entre 1 y 12, como en %1.</translation>
     </message>
     <message>
         <source>There is no such time in %1.</source>

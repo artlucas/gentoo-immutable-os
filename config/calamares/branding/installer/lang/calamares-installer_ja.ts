@@ -791,8 +791,16 @@
         <translation>年-月-日 の形式（例: %1）</translation>
     </message>
     <message>
+        <source>Hours and minutes, as in %1</source>
+        <translation>時と分、%1 のように</translation>
+    </message>
+    <message>
         <source>A 24-hour clock, as in %1</source>
         <translation>24 時間制（例: %1）</translation>
+    </message>
+    <message>
+        <source>AM/PM</source>
+        <translation>午前/午後</translation>
     </message>
     <message>
         <source>Set</source>
@@ -835,8 +843,16 @@
         <translation>日付は年-月-日 の形式で入力してください（例: %1）。</translation>
     </message>
     <message>
+        <source>The time must be written hours:minutes, as in %1.</source>
+        <translation>時刻は「時:分」の形式で入力してください。%1 のように。</translation>
+    </message>
+    <message>
         <source>The time must be written on a 24-hour clock, as in %1.</source>
         <translation>時刻は 24 時間制で入力してください（例: %1）。</translation>
+    </message>
+    <message>
+        <source>The hour must be between 1 and 12 on a 12-hour clock, as in %1.</source>
+        <translation>12時間制では、時は 1 から 12 の間でなければなりません。%1 のように。</translation>
     </message>
     <message>
         <source>There is no such time in %1.</source>

@@ -2399,9 +2399,10 @@ assert_true "a hand-set time is converted out of the chosen zone before it is wr
 assert_true "...and refused outright while the network owns the clock" \
     grep -qE 'Turn off automatic time before setting the clock by hand' "$LOCATION_CPP"
 # The two typed fields take ONE format, not the locale's: 03/04/2026 is two different days on two
-# sides of an ocean and the field cannot ask which was meant.
+# sides of an ocean and the field cannot ask which was meant. The TIME grew a second form in
+# plan/30 §3 — see §6t — and the point survives it: both forms are fixed, and neither is QLocale's.
 assert_true "the dialog's fields take one unambiguous format" \
-    bash -c "grep -qE 'kEditDateFormat = \"yyyy-MM-dd\"' '$LOCATION_CPP' && grep -qE 'kEditTimeFormat = \"HH:mm\"' '$LOCATION_CPP'"
+    bash -c "grep -qE 'kEditDateFormat = \"yyyy-MM-dd\"' '$LOCATION_CPP' && grep -qE 'kEditTimeFormat24 = \"HH:mm\"' '$LOCATION_CPP'"
 # The dialog is the design system's, not Breeze's. The erase confirmation is the one
 # Kirigami.PromptDialog left in this installer and it is noted rather than defended.
 assert_false "the set-time dialog is not a second unbranded Breeze prompt" \
@@ -2438,6 +2439,62 @@ assert_true "...and takes the preset's enablement symlink with it" \
 assert_true "the image enables systemd-timesyncd in the first place" \
     grep -qx 'enable systemd-timesyncd.service' \
         "$REPO_ROOT/config/rootfs/usr/lib/systemd/system-preset/50-distro.preset.in"
+
+# ---- 6t. the clock's two shapes (plan/30 §3) --------------------------------------------------
+#
+# The page draws a clock and the dialog takes one, and until now the first was formatted by
+# QLocale and the second was 24-hour whatever the first said. Both read the same key now.
+
+for f in "$REPO_ROOT/config/calamares/modules/location.conf" \
+         "$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-location/files/location.conf"; do
+    assert_true "$(basename -- "$(dirname -- "$f")")/location.conf asks for a 12-hour clock" \
+        grep -qE '^twelveHour: true$' "$f"
+done
+assert_true "the page reads the key, defaulting to 12-hour" \
+    grep -q 'm_twelveHour = Calamares::getBool( configurationMap, QStringLiteral( "twelveHour" ), true );' \
+    "$LOCATION_CPP"
+# THE CLOCK STOPPED ASKING QLocale, which is the behaviour change under the feature: Qt knows
+# whether a language writes 13:45 or 1:45 PM, and this page must not let the language picker
+# override a build-time decision.
+assert_false "the clock is no longer formatted by the language picker" \
+    grep -q 'QLocale().toString( now.time()' "$LOCATION_CPP"
+assert_true "...but by the flag" \
+    bash -c "grep -q 'kClockFormat12 = \"h:mm AP\"' '$LOCATION_CPP' &&
+             grep -q 'kClockFormat24 = \"HH:mm\"' '$LOCATION_CPP'"
+# The two typed formats differ by ONE LETTER'S CASE, which is the kind of thing worth pinning.
+assert_true "the typed time has a 12-hour form and a 24-hour form" \
+    bash -c "grep -q 'kEditTimeFormat12 = \"hh:mm\"' '$LOCATION_CPP' &&
+             grep -q 'kEditTimeFormat24 = \"HH:mm\"' '$LOCATION_CPP'"
+# The words are QLocale's, so they are not nine more translations to keep.
+assert_true "AM and PM come from the language, not from a catalogue" \
+    bash -c "grep -q 'QLocale().amText()' '$LOCATION_CPP' &&
+             grep -q 'QLocale().pmText()' '$LOCATION_CPP'"
+# ...and therefore the index crosses the boundary, never the word.
+assert_true "the meridiem crosses as an index" \
+    bash -c "grep -q 'Q_INVOKABLE bool applySystemTime( const QString& date, const QString& time, int meridiem );' '$LOCATION_H' &&
+             grep -q 'setTimeDialog.meridiem = parseInt(key, 10);' '$LOCATION_QML'"
+assert_true "...and -1 means there is no meridiem to apply" \
+    grep -q 'property int meridiem: -1' "$LOCATION_QML"
+# 12 AM is hour 0 and 12 PM is hour 12; every other hour is itself plus twelve after noon. An
+# off-by-twelve here sets the machine half a day wrong and the page shows what was typed.
+assert_true "12 AM is midnight and 12 PM is noon" \
+    bash -c "grep -q 'const int typed = t.hour() % 12;' '$LOCATION_CPP' &&
+             grep -q 'const int hour = meridiem == 1 ? typed + 12 : typed;' '$LOCATION_CPP'"
+# "hh" does not range-check in Qt — it says how to PRINT an hour, not which hours exist.
+assert_true "a 12-hour field refuses an hour outside 1-12" \
+    grep -q 't.hour() < 1 || t.hour() > 12' "$LOCATION_CPP"
+# The select appears only on a 12-hour clock, and the grid keeps three columns either way.
+assert_true "the dialog shows an AM/PM select only on a 12-hour clock" \
+    bash -c "grep -q 'visible: location.twelveHour' '$LOCATION_QML' &&
+             grep -q 'columns: 3' '$LOCATION_QML'"
+# It is the page's own Picker, which is why that component had to move to the document root.
+assert_true "the select is the page's own hand-drawn combo" \
+    grep -qE '^    component Picker: ColumnLayout \{$' "$LOCATION_QML"
+# The hint under the field and the parse error both said "24-hour clock" in so many words.
+assert_true "the hint under the time field follows the flag" \
+    grep -q 'return m_twelveHour ? tr( "Hours and minutes, as in %1" )' "$LOCATION_H"
+assert_true "...and so does the complaint when it will not parse" \
+    grep -q 'The time must be written hours:minutes, as in %1.' "$LOCATION_CPP"
 
 # ---- 6s. the keyboard reaches every control, and says where it is (plan/30 §1) ---------------
 #

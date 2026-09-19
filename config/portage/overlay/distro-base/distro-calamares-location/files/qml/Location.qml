@@ -46,6 +46,150 @@ Item {
 
     readonly property Theme ds: Theme {}
 
+    // A SELECT, HAND-DRAWN, for the reason every control on these pages is: the desktop
+    // style paints Breeze's combo box whatever Kirigami.Theme says about colour. This is
+    // the design system's — a 40px field with a chevron — wrapped round a real
+    // QQC2.ComboBox so the popup, the keyboard and the accessibility are Qt's.
+    //
+    // DECLARED AT THE ROOT OF THE DOCUMENT, and it used to be declared inside the GridLayout
+    // that holds the region and zone pickers. It moved when the set-time dialog needed one too
+    // (plan/30 §3): an inline component's name is file-scoped, so the nested declaration would
+    // probably have resolved from inside the Popup as well — and 'probably' is the wrong word
+    // for a page whose failure mode is loading blank with nothing in the log.
+    component Picker: ColumnLayout {
+        id: picker
+
+        // `ds` AND THE GROUP ARE PASSED IN, NOT REACHED FOR. An inline component is its
+        // own component: an unqualified name inside one resolves through the parent
+        // CHAIN, which qmllint reports as "a member of a parent element" and which
+        // `pragma ComponentBehavior: Bound` exists to discourage. Handing them in as
+        // required properties makes the dependency a declaration instead of a lookup —
+        // and a lookup that silently returns undefined is a control drawn in no colour
+        // at all, which is this whole plan's failure mode.
+        required property Theme ds
+        required property string label
+        required property var model
+        required property string value
+
+        signal picked(string key)
+
+        Layout.fillWidth: true
+        spacing: picker.ds.space2
+
+        Text {
+            Layout.fillWidth: true
+            text: picker.label
+            color: picker.ds.textStrong
+            elide: Text.ElideRight
+            font.family: picker.ds.fontSans
+            font.pixelSize: picker.ds.textSm
+            font.weight: picker.ds.weightMedium
+        }
+
+        QQC2.ComboBox {
+            id: box
+
+            Layout.fillWidth: true
+            model: picker.model
+            textRole: "name"
+            valueRole: "key"
+
+            // NOT A BINDING ON currentIndex, for the reason every selection on these
+            // pages gives: a ComboBox assigns its own currentIndex when the user picks,
+            // which breaks one permanently. C++ is the source of truth, this pushes into
+            // it, and the Connections below put back whatever C++ accepted.
+            onActivated: picker.picked(box.valueAt(box.currentIndex))
+
+            function syncFromConfig() {
+                const want = box.indexOfValue(picker.value);
+                if (want >= 0 && want !== box.currentIndex) {
+                    box.currentIndex = want;
+                }
+            }
+
+            Component.onCompleted: box.syncFromConfig()
+            onModelChanged: box.syncFromConfig()
+            // AND WHEN THE VALUE ITSELF MOVES. The two pickers on the page are driven by
+            // C++ and covered by the Connections below; the set-time dialog's AM/PM
+            // select is driven by the dialog, which assigns `value` when it opens and has
+            // no locationChanged to ride on.
+            Connections {
+                target: picker
+                function onValueChanged() { box.syncFromConfig(); }
+            }
+
+            Connections {
+                target: location
+                function onLocationChanged() {
+                    box.syncFromConfig();
+                }
+            }
+
+            background: Rectangle {
+                implicitHeight: picker.ds.controlHeightMd
+                radius: picker.ds.radiusMd
+                color: picker.ds.surfaceCard
+                border.width: picker.ds.borderWidth
+                border.color: box.activeFocus || box.popup.visible
+                    ? picker.ds.accent
+                    : (box.hovered ? picker.ds.borderStrong : picker.ds.borderDefault)
+
+                Behavior on border.color {
+                    ColorAnimation { duration: picker.ds.durationBase }
+                }
+
+                // The installer's one focus ring, at the offset every other control
+                // draws it (plan/30 §1). The border already moves to the accent on
+                // focus — but it moves to the accent on an OPEN POPUP too, and it is
+                // the same accent the field shows while merely hovered on some pages,
+                // so the border alone cannot say "the keyboard is here".
+                Rectangle {
+                    anchors.fill: parent
+                    anchors.margins: -3
+                    visible: box.activeFocus
+                    radius: picker.ds.radiusMd + 3
+                    color: "transparent"
+                    border.width: 3
+                    border.color: picker.ds.mix(picker.ds.accent,
+                                                picker.ds.surfaceCard, 0.4)
+                }
+            }
+
+            contentItem: Text {
+                leftPadding: picker.ds.space3
+                rightPadding: picker.ds.space8
+                verticalAlignment: Text.AlignVCenter
+                text: box.displayText
+                color: picker.ds.textStrong
+                elide: Text.ElideRight
+                font.family: picker.ds.fontSans
+                font.pixelSize: picker.ds.textBase
+            }
+
+            indicator: Canvas {
+                x: box.width - width - picker.ds.space3
+                y: (box.height - height) / 2
+                width: 16
+                height: 16
+                // The design system's chevron, drawn rather than an icon name: a
+                // Kirigami.Icon would resolve Breeze's, in Breeze's colour.
+                onPaint: {
+                    const ctx = getContext("2d");
+                    ctx.reset();
+                    ctx.strokeStyle = picker.ds.textMuted;
+                    ctx.lineWidth = 2;
+                    ctx.lineCap = "round";
+                    ctx.lineJoin = "round";
+                    ctx.beginPath();
+                    ctx.moveTo(4, 6);
+                    ctx.lineTo(8, 10);
+                    ctx.lineTo(12, 6);
+                    ctx.stroke();
+                }
+            }
+        }
+    }
+
     Rectangle {
         anchors.fill: parent
         color: ds.surfaceCard
@@ -310,6 +454,8 @@ Item {
                             location.clearSetTimeError();
                             dateField.text = location.editDate();
                             timeField.text = location.editTime();
+                            // -1 on a 24-hour clock, which is what C++ reads as "no meridiem".
+                            setTimeDialog.meridiem = location.editMeridiem();
                             setTimeDialog.open();
                         }
                     }
@@ -342,136 +488,6 @@ Item {
             columns: 2
             columnSpacing: ds.space5 - 2
             rowSpacing: ds.space5 - 2
-
-            // A SELECT, HAND-DRAWN, for the reason every control on these pages is: the desktop
-            // style paints Breeze's combo box whatever Kirigami.Theme says about colour. This is
-            // the design system's — a 40px field with a chevron — wrapped round a real
-            // QQC2.ComboBox so the popup, the keyboard and the accessibility are Qt's.
-            component Picker: ColumnLayout {
-                id: picker
-
-                // `ds` AND THE GROUP ARE PASSED IN, NOT REACHED FOR. An inline component is its
-                // own component: an unqualified name inside one resolves through the parent
-                // CHAIN, which qmllint reports as "a member of a parent element" and which
-                // `pragma ComponentBehavior: Bound` exists to discourage. Handing them in as
-                // required properties makes the dependency a declaration instead of a lookup —
-                // and a lookup that silently returns undefined is a control drawn in no colour
-                // at all, which is this whole plan's failure mode.
-                required property Theme ds
-                required property string label
-                required property var model
-                required property string value
-
-                signal picked(string key)
-
-                Layout.fillWidth: true
-                spacing: picker.ds.space2
-
-                Text {
-                    Layout.fillWidth: true
-                    text: picker.label
-                    color: picker.ds.textStrong
-                    elide: Text.ElideRight
-                    font.family: picker.ds.fontSans
-                    font.pixelSize: picker.ds.textSm
-                    font.weight: picker.ds.weightMedium
-                }
-
-                QQC2.ComboBox {
-                    id: box
-
-                    Layout.fillWidth: true
-                    model: picker.model
-                    textRole: "name"
-                    valueRole: "key"
-
-                    // NOT A BINDING ON currentIndex, for the reason every selection on these
-                    // pages gives: a ComboBox assigns its own currentIndex when the user picks,
-                    // which breaks one permanently. C++ is the source of truth, this pushes into
-                    // it, and the Connections below put back whatever C++ accepted.
-                    onActivated: picker.picked(box.valueAt(box.currentIndex))
-
-                    function syncFromConfig() {
-                        const want = box.indexOfValue(picker.value);
-                        if (want >= 0 && want !== box.currentIndex) {
-                            box.currentIndex = want;
-                        }
-                    }
-
-                    Component.onCompleted: box.syncFromConfig()
-                    onModelChanged: box.syncFromConfig()
-
-                    Connections {
-                        target: location
-                        function onLocationChanged() {
-                            box.syncFromConfig();
-                        }
-                    }
-
-                    background: Rectangle {
-                        implicitHeight: picker.ds.controlHeightMd
-                        radius: picker.ds.radiusMd
-                        color: picker.ds.surfaceCard
-                        border.width: picker.ds.borderWidth
-                        border.color: box.activeFocus || box.popup.visible
-                            ? picker.ds.accent
-                            : (box.hovered ? picker.ds.borderStrong : picker.ds.borderDefault)
-
-                        Behavior on border.color {
-                            ColorAnimation { duration: picker.ds.durationBase }
-                        }
-
-                        // The installer's one focus ring, at the offset every other control
-                        // draws it (plan/30 §1). The border already moves to the accent on
-                        // focus — but it moves to the accent on an OPEN POPUP too, and it is
-                        // the same accent the field shows while merely hovered on some pages,
-                        // so the border alone cannot say "the keyboard is here".
-                        Rectangle {
-                            anchors.fill: parent
-                            anchors.margins: -3
-                            visible: box.activeFocus
-                            radius: picker.ds.radiusMd + 3
-                            color: "transparent"
-                            border.width: 3
-                            border.color: picker.ds.mix(picker.ds.accent,
-                                                        picker.ds.surfaceCard, 0.4)
-                        }
-                    }
-
-                    contentItem: Text {
-                        leftPadding: picker.ds.space3
-                        rightPadding: picker.ds.space8
-                        verticalAlignment: Text.AlignVCenter
-                        text: box.displayText
-                        color: picker.ds.textStrong
-                        elide: Text.ElideRight
-                        font.family: picker.ds.fontSans
-                        font.pixelSize: picker.ds.textBase
-                    }
-
-                    indicator: Canvas {
-                        x: box.width - width - picker.ds.space3
-                        y: (box.height - height) / 2
-                        width: 16
-                        height: 16
-                        // The design system's chevron, drawn rather than an icon name: a
-                        // Kirigami.Icon would resolve Breeze's, in Breeze's colour.
-                        onPaint: {
-                            const ctx = getContext("2d");
-                            ctx.reset();
-                            ctx.strokeStyle = picker.ds.textMuted;
-                            ctx.lineWidth = 2;
-                            ctx.lineCap = "round";
-                            ctx.lineJoin = "round";
-                            ctx.beginPath();
-                            ctx.moveTo(4, 6);
-                            ctx.lineTo(8, 10);
-                            ctx.lineTo(12, 6);
-                            ctx.stroke();
-                        }
-                    }
-                }
-            }
 
             Picker {
                 ds: root.ds
@@ -509,9 +525,17 @@ Item {
     QQC2.Popup {
         id: setTimeDialog
 
+        // The dialog's own state, and the ONLY state in this installer a dialog owns: the two
+        // fields are text and this is an index, and none of the three is C++'s until Set is
+        // pressed. -1 when the clock is 24-hour, which is what applySystemTime() reads as "the
+        // time you were handed is already on a 24-hour clock".
+        property int meridiem: -1
+
         x: Math.round((root.width - width) / 2)
         y: Math.round((root.height - height) / 2)
-        width: Math.min(root.width - 2 * ds.space8, 460)
+        // Wider when there are three controls in the row instead of two. 460 set two fields
+        // comfortably; splitting it three ways would set none of them.
+        width: Math.min(root.width - 2 * ds.space8, location.twelveHour ? 540 : 460)
         modal: true
         focus: true
         // NOT CloseOnPressOutside. A half-typed clock correction thrown away by a stray click on
@@ -561,7 +585,11 @@ Item {
             // fit the sentence unwrapped and take the width out of the other field.
             GridLayout {
                 Layout.fillWidth: true
-                columns: 2
+                // THREE, AND THE THIRD IS EMPTY ON A 24-HOUR CLOCK. A GridLayout does not lay out
+                // an invisible child at all, so the two fields simply take the width back — which
+                // is why this is a constant rather than `location.twelveHour ? 3 : 2`: a column
+                // count that moves is a layout that reflows, and there is nothing to reflow for.
+                columns: 3
                 columnSpacing: ds.space4
                 rowSpacing: ds.space4
 
@@ -585,6 +613,35 @@ Item {
                     label: location.setTimeTimeLabel
                     hint: location.setTimeTimeHint
                     onEdited: location.clearSetTimeError()
+                }
+
+                // THE AM/PM SELECT (plan/30 §3), and it is the page's own Picker so that the one
+                // hand-drawn combo box in this module is drawn once. It carries a label of its
+                // own for a layout reason rather than a copywriting one: a Field is a label over
+                // a box over a hint, and a bare combo beside one would sit level with the label
+                // instead of with the box it belongs next to.
+                //
+                // ITS MODEL IS TWO QLocale WORDS. amText()/pmText() follow the language the user
+                // chose on the page before this one, so they are not two more strings to
+                // translate nine times — and the value that crosses into C++ is the INDEX, never
+                // the word, so nothing has to parse a translation on the way back.
+                Picker {
+                    id: meridiemPicker
+
+                    Layout.preferredWidth: 1
+                    Layout.fillWidth: true
+                    visible: location.twelveHour
+                    ds: root.ds
+                    label: location.setTimeMeridiemLabel
+                    model: [
+                        { key: "0", name: location.amLabel },
+                        { key: "1", name: location.pmLabel }
+                    ]
+                    value: String(setTimeDialog.meridiem)
+                    onPicked: function (key) {
+                        setTimeDialog.meridiem = parseInt(key, 10);
+                        location.clearSetTimeError();
+                    }
                 }
             }
 
@@ -629,7 +686,8 @@ Item {
                     // malformed date would leave the clock wrong and the message on a page
                     // nobody is looking at any more.
                     onClicked: {
-                        if (location.applySystemTime(dateField.text, timeField.text)) {
+                        if (location.applySystemTime(dateField.text, timeField.text,
+                                                     setTimeDialog.meridiem)) {
                             setTimeDialog.close();
                         }
                     }
