@@ -125,3 +125,36 @@ existed should not quietly acquire different time servers than the systemd it sh
    check: the box ticked and a server named under it; unticking it and setting a time by hand, with
    the clock above changing to what was typed; and the same page with the VM's network detached,
    where the status line has to end at "No time server answered" rather than at "Checking…".
+
+## What the medium actually did
+
+Walked on the 0.3.0 installer image built clean from stage 10, 2026-09-18.
+
+**Ticked, with a network.** The page opened with the box ticked and the status line in the success
+colour: *"The clock is set from 2.pool.ntp.org."* The medium's own `timedatectl` agreed —
+`System clock synchronized: yes`, `NTP service: active`, and `show-timesync -p ServerName` returned
+`2.pool.ntp.org` at `207.34.48.31`. That server is in `build.conf`'s `NTP_SERVERS` and reached the
+daemon through the rendered `FallbackNTP=` drop-in, which is the whole chain in one reading.
+
+**Unticked.** The status line changed to *"The clock is set on this machine, not from the network."*
+and the Set-date-and-time button went from disabled to enabled. On the medium, `NTP service` had
+gone to `inactive`.
+
+**Set by hand, which is where the zone conversion is proved.** The dialog opened pre-filled with
+`2026-09-19` and `00:50` — the time in America/Toronto, matching the card's 12:50 AM, not the
+medium's UTC. Changing the date to `2026-09-25` and pressing Set closed the dialog and moved the
+card to *Friday, September 25, 2026*. The medium then read:
+
+    Local time: Fri 2026-09-25 04:53:13 UTC
+      RTC time: Fri 2026-09-25 04:53:14
+
+**04:53, not 00:53.** The user typed 00:53 in a zone four hours behind UTC and the machine's clock
+landed four hours ahead of what was typed, which is the conversion working. Had the typed string
+been handed to `timedatectl set-time` unconverted, the machine would read 00:53 UTC and the page
+would still have looked correct. The RTC line is the second half: systemd wrote it through, so the
+machine this medium installs onto starts from the corrected clock.
+
+**No network at all.** Booted with `-nic none`, the page showed *"Checking the time server…"* on
+arrival and, thirty seconds later, *"No time server answered. Check the network, or set the clock
+by hand."* in the danger colour. It resolves rather than sitting on "Checking…" forever, which is
+the failure this watch exists to make visible.
