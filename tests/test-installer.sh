@@ -2781,6 +2781,20 @@ assert_true "the step label still elides rather than overrunning the rail" \
     bash -c "sed -n '/LEFT-ALIGNED, which is the one change/,/^ *}$/p' '$SIDEBAR_QML' |
              grep -q 'elide: Text.ElideRight;'"
 
+# 2b. AND THE PAGE THAT PAID FOR THE 56PX. The disk page's lede went from one line to two in a
+# narrower column, the list lost 36px with it, and two disks that had fitted since plan/24 came
+# back behind a scrollbar — which is the shape plan/30 was asked to remove. The list is now as
+# tall as its rows and no taller, so it scrolls when a machine has twelve disks and not when it
+# has two. Measured offscreen before it was written: two rows give contentHeight 138 and a 138px
+# view, twenty give 1434 and a view capped at the page's 536.
+assert_true "the disk list is capped at the height of its own rows" \
+    grep -qE '^ +Layout\.maximumHeight: list\.contentHeight$' "$DISK_QML"
+# The surplus has to be given somewhere to go: a ColumnLayout handed more height than its
+# children asked for spreads it between them, which is the same mechanism as §1's.
+assert_true "...and the height it no longer takes lands in a filler, not between the rows" \
+    bash -c "sed -n '/THE SPARE HEIGHT, now that the list/,/^ *}$/p' '$DISK_QML' |
+             grep -q 'Layout.fillHeight: true'"
+
 # 3. THE CHOOSER SHOWS THE MODE IT IS ALREADY IN (plan/31 §3). AccountsConfig has selected Local
 # since plan/26 §2 — 6a asserts it — but the cards never read it, because the ButtonGroup above
 # them is deliberately the UI's own source of truth and a group starts with nothing checked. The

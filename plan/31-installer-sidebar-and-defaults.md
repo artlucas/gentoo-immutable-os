@@ -123,3 +123,48 @@ decides whether this machine can be installed.
 The rows lose their chip. The verdict keeps it. The comment above the verdict's chip, which reads
 "the verdict wears the same mark its evidence does", becomes wrong by this change and is rewritten
 rather than left to mislead: it is now the only mark on the page.
+
+## What the medium said
+
+Four passes on `out/immos-0.3.0-installer.img`, built from a wiped `immos-work` (682 packages, no
+compiler diagnostics): a probe pass for coordinates, a language pass, a full walk to the summary,
+and one `-nic none` boot for the Welcome panel.
+
+**The rail is 224px**, read off the picture rather than believed: the seam detector reports
+`(128, 351, 224)`. `Добро Пожаловать`, `Местоположение`, `Учётные записи`, `Zusammenfassung`,
+`Anwendungen`, `アプリケーション` and `インストール` all stand whole, and so do the two meta
+buttons — Japanese `このプログラムについて` is 155px of the 192 the rail now gives them, which at
+168 it did not have.
+
+**The set-time dialog lines up to the pixel.** Date, Time and AM/PM all top their boxes at y=403
+and their labels share rows 380–389; the AM/PM select reads PM at 6:37 PM with `06:37` in the
+field beside it. (The walk's click at the box's bottom border missed the popup, so the select's
+own popup is unverified in this round — plan/30 §3 verified it, and nothing in §1 touches it.)
+
+**The accounts chooser opens on Local**, accent border, accent wash and a filled radio, with Next
+already lit — which is what the C++ had been saying on its own since plan/26.
+
+**The Welcome panel's warning row carries no chip**: `internet — Network — not connected, not
+required`, the amber `Optional` badge at the other end, and the page's only mark is the verdict's
+tick beside "This computer can install Immutable OS 0.3.0."
+
+### And one thing the 56px cost
+
+**The disk list came back behind a scrollbar.** The page's lede is one line at 168px of rail and
+two at 224, the list is what gave up the 36px, and two disks stopped fitting in it — the exact
+shape plan/30 was asked to remove, reintroduced by this plan's own fix.
+
+The list had `Layout.fillHeight: true` and nothing else, so it was always as tall as the page's
+spare height and its scrollbar appeared the moment the content grew past that. It is now capped
+at `list.contentHeight`: as tall as its rows on a machine with two disks, scrolling on one with
+twelve, which is the only shape a scroller belongs in. The cap was measured offscreen with
+`qmllint`'s sibling `qml` before it was written — two rows give a 138px view, twenty give a view
+capped at the page's 536 with 1434 of content — because a ListView that is handed zero height
+creates no delegates and can sit at zero forever, and a binding from a view's height to its own
+content is exactly the shape that does it. Here the direction is safe: `contentHeight` follows
+the delegates, which follow the view's WIDTH.
+
+Every other page was checked for the same regression and none of them moved: the summary's six
+rows are still one line each with no scroller, the accounts chooser's three subtitles still fit
+on one line, the keyboard preview is unchanged, and the applications page scrolls as a whole page
+under "Choose individually" exactly as plan/30 left it.

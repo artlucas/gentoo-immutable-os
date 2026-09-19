@@ -218,6 +218,20 @@ Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.maximumWidth: ds.contentMaxWidth
+            // AS TALL AS ITS ROWS, AND NO TALLER (plan/31 §2). fillHeight alone handed this the
+            // whole of the page's spare height, so the view was always bigger than its content
+            // and the scrollbar appeared the moment the content grew past it — which is what the
+            // wider rail did: the lede went from one line to two, the list lost 36px, and two
+            // disks that had fitted since plan/24 arrived behind a scroller. With the cap the
+            // view is exactly its rows on a machine with two disks and scrolls on one with
+            // twelve, which is the only shape a scroller belongs in.
+            //
+            // NOT A BINDING LOOP, and the direction is what makes it safe: contentHeight is the
+            // sum of the delegates' heights, each of which depends on the view's WIDTH — the
+            // meta line wraps — and width comes from fillWidth, not from this. Measured
+            // offscreen before it was written: two rows give contentHeight 138 and a 138px view;
+            // twenty give 1434 and a view capped at the page's 536, scrolling.
+            Layout.maximumHeight: list.contentHeight
             contentWidth: availableWidth
             clip: true
 
@@ -714,6 +728,15 @@ Item {
                         color: ds.white
                     }
                 }
+            }
+
+            // THE SPARE HEIGHT, now that the list no longer swallows it. Without this the
+            // surplus is distributed between the items above — a ColumnLayout given more height
+            // than its children asked for spreads it, which is the same mechanism that put the
+            // AM/PM select a label low (plan/31 §1) — and the page would drift apart by however
+            // many pixels the disks left over.
+            Item {
+                Layout.fillHeight: true
             }
         }
     }
