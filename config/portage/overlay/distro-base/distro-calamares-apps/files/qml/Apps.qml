@@ -87,116 +87,132 @@ Item {
         id: modeGroup
     }
 
-    ColumnLayout {
+    // THE WHOLE PAGE SCROLLS, NOT A PANEL IN THE MIDDLE OF IT (plan/30 §5). The heading, the
+    // offline note and the "Check again" button were pinned while the choices and the list
+    // scrolled inside a box below them — so the page had two scroll positions, an inner scrollbar
+    // that started a few pixels down the screen, and a heading that stayed put while the thing it
+    // was asking about moved. This is the shape Accounts.qml already uses, down to the sheet Item
+    // that carries the margins.
+    //
+    // THE MARGIN IS THE CONTENT'S, NOT ScrollView.padding, and that is Accounts.qml's finding
+    // rather than a preference: qqc2-desktop-style's ScrollView binds topPadding, leftPadding,
+    // rightPadding and bottomPadding individually, and an assignment to the grouped `padding`
+    // property loses to those bindings in silence. Nothing else supplies one either — ViewManager
+    // applies widgetMargins only when the step's widget has a layout, and AppsViewStep::widget()
+    // returns a bare QQuickWidget.
+    QQC2.ScrollView {
+        id: scroll
+
         anchors.fill: parent
-        anchors.topMargin: ds.space8 + ds.space1      // 36, the mockup's content padding
-        anchors.bottomMargin: ds.space8 + ds.space1
-        anchors.leftMargin: ds.space10 + ds.space1    // 44
-        anchors.rightMargin: ds.space10 + ds.space1
-        spacing: ds.space5
+        // availableWidth already has the vertical scrollbar's width taken off, so the content
+        // reflows instead of being pushed under it.
+        contentWidth: availableWidth
+        clip: true
 
-        // ---- the question, and the one thing that can change it -------------------------
-        RowLayout {
-            Layout.fillWidth: true
-            Layout.maximumWidth: ds.contentMaxWidth
-            spacing: ds.space4
+        Item {
+            id: sheet
 
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: ds.space2
+            // The design system's content padding: 36 down the page, 44 in from the sides.
+            readonly property int margin: ds.space8 + ds.space1
+            readonly property int sideMargin: ds.space10 + ds.space1
 
-                Text {
-                    Layout.fillWidth: true
-                    // Not a qsTr() here: the headline carries the product name, a build fact, so
-                    // C++ chooses it — the same split as the disk page's.
-                    text: apps.headline
-                    color: ds.textStrong
-                    wrapMode: Text.WordWrap
-                    font.family: ds.fontDisplay
-                    font.pixelSize: ds.textHeading
-                    font.weight: ds.weightBold
-                    font.letterSpacing: ds.tracking(ds.trackingTight, ds.textHeading)
-                }
-
-                Text {
-                    Layout.fillWidth: true
-                    text: apps.subheadline
-                    color: ds.textMuted
-                    wrapMode: Text.WordWrap
-                    font.family: ds.fontSans
-                    font.pixelSize: ds.textMd
-                    lineHeight: ds.leadingNormal
-                    lineHeightMode: Text.ProportionalHeight
-                }
-            }
-
-            // Networks come up late, and the greeting page's verdict was taken at startup. This
-            // is the same re-ask the page does on every entry, for the person who plugged the
-            // cable in while reading the disk page. The SHARED button for the reason the disk
-            // page's own rescan gives: qqc2-desktop-style would draw Breeze's button whatever
-            // Kirigami.Theme says, leaving one control that did not look like the design.
-            Button {
-                Layout.alignment: Qt.AlignTop
-                ds: root.ds
-                variant: "ghost"
-                size: "sm"
-                // The reload mark, drawn by the shared Button. "Check again" is an action whose
-                // whole meaning is "do that once more", and it is the only such control in the
-                // installer — the glyph says so before the sentence is read, and it is the same
-                // glyph on both pages because it is the same promise.
-                icon: "refresh"
-                label: apps.checkAgainLabel
-                onClicked: apps.recheckInternet()
-            }
-        }
-
-        // ---- the state with nothing to add (the disk page's empty state, same shape) -------
-        // Informational, not a warning: an offline install is a supported, first-class path
-        // (greeting.conf's `required:` list deliberately omits internet), and the sentence says
-        // what to do later rather than what went wrong. The design system's `info` Alert rather
-        // than Kirigami.InlineMessage, which paints its own Breeze-coloured box.
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.maximumWidth: ds.contentMaxWidth
-            implicitHeight: offlineText.implicitHeight + 2 * ds.space3
-            visible: !apps.hasInternet
-            radius: ds.radiusMd
-            color: ds.statusInfoBg
-            border.width: ds.borderWidth
-            border.color: ds.mix(ds.statusInfo, ds.statusInfoBg, 0.3)
-
-            Text {
-                id: offlineText
-
-                anchors.fill: parent
-                anchors.margins: ds.space3
-                anchors.leftMargin: ds.space4
-                anchors.rightMargin: ds.space4
-                text: apps.offlineNote
-                color: ds.textBody
-                wrapMode: Text.WordWrap
-                font.family: ds.fontSans
-                font.pixelSize: ds.textSm
-                lineHeight: ds.leadingNormal
-                lineHeightMode: Text.ProportionalHeight
-            }
-        }
-
-        QQC2.ScrollView {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            Layout.maximumWidth: ds.contentMaxWidth
-            contentWidth: availableWidth
-            clip: true
+            width: scroll.availableWidth
+            implicitHeight: column.implicitHeight + 2 * margin
 
             ColumnLayout {
-                id: body
+                id: column
 
-                width: Math.min(root.width - 2 * (ds.space10 + ds.space1),
-                                ds.contentMaxWidth)
-                spacing: ds.space6
+                x: sheet.sideMargin
+                y: sheet.margin
+                width: Math.min(sheet.width - 2 * sheet.sideMargin, ds.contentMaxWidth)
+                spacing: ds.space5
 
-                // ---- the three answers, as the design system's three-up card grid ------------
+                RowLayout {
+                    Layout.fillWidth: true
+                    Layout.maximumWidth: ds.contentMaxWidth
+                    spacing: ds.space4
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: ds.space2
+
+                        Text {
+                            Layout.fillWidth: true
+                            // Not a qsTr() here: the headline carries the product name, a build fact, so
+                            // C++ chooses it — the same split as the disk page's.
+                            text: apps.headline
+                            color: ds.textStrong
+                            wrapMode: Text.WordWrap
+                            font.family: ds.fontDisplay
+                            font.pixelSize: ds.textHeading
+                            font.weight: ds.weightBold
+                            font.letterSpacing: ds.tracking(ds.trackingTight, ds.textHeading)
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: apps.subheadline
+                            color: ds.textMuted
+                            wrapMode: Text.WordWrap
+                            font.family: ds.fontSans
+                            font.pixelSize: ds.textMd
+                            lineHeight: ds.leadingNormal
+                            lineHeightMode: Text.ProportionalHeight
+                        }
+                    }
+
+                    // Networks come up late, and the greeting page's verdict was taken at startup. This
+                    // is the same re-ask the page does on every entry, for the person who plugged the
+                    // cable in while reading the disk page. The SHARED button for the reason the disk
+                    // page's own rescan gives: qqc2-desktop-style would draw Breeze's button whatever
+                    // Kirigami.Theme says, leaving one control that did not look like the design.
+                    Button {
+                        Layout.alignment: Qt.AlignTop
+                        ds: root.ds
+                        variant: "ghost"
+                        size: "sm"
+                        // The reload mark, drawn by the shared Button. "Check again" is an action whose
+                        // whole meaning is "do that once more", and it is the only such control in the
+                        // installer — the glyph says so before the sentence is read, and it is the same
+                        // glyph on both pages because it is the same promise.
+                        icon: "refresh"
+                        label: apps.checkAgainLabel
+                        onClicked: apps.recheckInternet()
+                    }
+                }
+
+                // ---- the state with nothing to add (the disk page's empty state, same shape) -------
+                // Informational, not a warning: an offline install is a supported, first-class path
+                // (greeting.conf's `required:` list deliberately omits internet), and the sentence says
+                // what to do later rather than what went wrong. The design system's `info` Alert rather
+                // than Kirigami.InlineMessage, which paints its own Breeze-coloured box.
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.maximumWidth: ds.contentMaxWidth
+                    implicitHeight: offlineText.implicitHeight + 2 * ds.space3
+                    visible: !apps.hasInternet
+                    radius: ds.radiusMd
+                    color: ds.statusInfoBg
+                    border.width: ds.borderWidth
+                    border.color: ds.mix(ds.statusInfo, ds.statusInfoBg, 0.3)
+
+                    Text {
+                        id: offlineText
+
+                        anchors.fill: parent
+                        anchors.margins: ds.space3
+                        anchors.leftMargin: ds.space4
+                        anchors.rightMargin: ds.space4
+                        text: apps.offlineNote
+                        color: ds.textBody
+                        wrapMode: Text.WordWrap
+                        font.family: ds.fontSans
+                        font.pixelSize: ds.textSm
+                        lineHeight: ds.leadingNormal
+                        lineHeightMode: Text.ProportionalHeight
+                    }
+                }
+
                 GridLayout {
                     Layout.fillWidth: true
                     columns: 3
@@ -519,6 +535,100 @@ Item {
                                         elide: Text.ElideRight
                                         font.family: ds.fontSans
                                         font.pixelSize: ds.textXs
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ---- and what is already here ----------------------------------------------
+                // READ-ONLY, AND THAT IS THE WHOLE POINT OF IT. The page offered six
+                // applications and said nothing about the eight the image already carries, so
+                // "Nothing extra" read as "nothing" on a machine about to arrive with a browser,
+                // a file manager, a terminal and five more on it. Nobody should have to install
+                // Firefox twice to find that out.
+                //
+                // NOT TILES LIKE THE LIST ABOVE. Those are check boxes and these are facts, and
+                // drawing a fact in the shape of a control is how somebody comes to click one and
+                // wonder why nothing happened. A row of name chips under an eyebrow, on the
+                // design system's sunken ground.
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    Layout.topMargin: ds.space1
+                    visible: apps.included.length > 0
+                    spacing: ds.space2
+
+                    // The design system's eyebrow: small, mono, upper case, widely tracked. It is
+                    // the one place the system uses capitals at all.
+                    Text {
+                        Layout.fillWidth: true
+                        text: apps.includedLabel.toUpperCase()
+                        color: ds.textMuted
+                        elide: Text.ElideRight
+                        font.family: ds.fontMono
+                        font.pixelSize: 11
+                        font.weight: ds.weightSemibold
+                        font.letterSpacing: ds.tracking(ds.trackingCaps, 11)
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: apps.includedNote
+                        color: ds.textMuted
+                        wrapMode: Text.WordWrap
+                        font.family: ds.fontSans
+                        font.pixelSize: ds.textXs
+                    }
+
+                    // A Flow rather than a GridLayout: these are chips of different widths and a
+                    // grid would set them all to the widest, which on "Firefox" beside "Browse
+                    // and manage your files" is most of a column of air.
+                    Flow {
+                        Layout.fillWidth: true
+                        Layout.topMargin: ds.space1
+                        spacing: ds.space2
+
+                        Repeater {
+                            model: apps.included
+
+                            Rectangle {
+                                id: chip
+
+                                required property var modelData
+
+                                implicitWidth: chipRow.implicitWidth + 2 * ds.space3
+                                implicitHeight: 28
+                                radius: ds.radiusPill
+                                color: ds.surfaceSunken
+
+                                // The name is the label; the description would be a tooltip's
+                                // job, except that this installer draws no tooltips, so it is the
+                                // accessible description instead. A second line inside a 28px
+                                // chip would be a paragraph in a pill.
+                                Accessible.role: Accessible.StaticText
+                                Accessible.name: chip.modelData.name
+                                Accessible.description: chip.modelData.description
+
+                                RowLayout {
+                                    id: chipRow
+
+                                    anchors.centerIn: parent
+                                    spacing: ds.space2
+
+                                    Kirigami.Icon {
+                                        source: chip.modelData.icon
+                                        implicitWidth: 16
+                                        implicitHeight: 16
+                                        isMask: false
+                                    }
+
+                                    Text {
+                                        text: chip.modelData.name
+                                        color: ds.textBody
+                                        font.family: ds.fontSans
+                                        font.pixelSize: ds.textXs
+                                        font.weight: ds.weightMedium
                                     }
                                 }
                             }

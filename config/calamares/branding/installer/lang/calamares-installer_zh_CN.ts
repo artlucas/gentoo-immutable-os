@@ -298,6 +298,14 @@
 <context>
     <name>AppsConfig</name>
     <message>
+        <source>Already installed</source>
+        <translation>已安装</translation>
+    </message>
+    <message>
+        <source>%1 comes with these already. You do not need to add them.</source>
+        <translation>%1 已经包含这些应用，无需再添加。</translation>
+    </message>
+    <message>
         <source>Add more applications to %1?</source>
         <translation>要向 %1 添加更多应用程序吗？</translation>
     </message>
@@ -371,6 +379,38 @@
     <message>
         <source>Word processor, spreadsheet and presentations</source>
         <translation>文字处理、电子表格和演示文稿</translation>
+    </message>
+    <message>
+        <source>Browse the web</source>
+        <translation>浏览网页</translation>
+    </message>
+    <message>
+        <source>Browse and manage your files</source>
+        <translation>浏览和管理文件</translation>
+    </message>
+    <message>
+        <source>A terminal</source>
+        <translation>终端</translation>
+    </message>
+    <message>
+        <source>Read PDFs and other documents</source>
+        <translation>阅读 PDF 和其他文档</translation>
+    </message>
+    <message>
+        <source>View and sort your photographs</source>
+        <translation>查看和整理照片</translation>
+    </message>
+    <message>
+        <source>A plain text editor</source>
+        <translation>纯文本编辑器</translation>
+    </message>
+    <message>
+        <source>Open and create archives</source>
+        <translation>打开和创建压缩包</translation>
+    </message>
+    <message>
+        <source>Take screenshots</source>
+        <translation>截取屏幕截图</translation>
     </message>
 </context>
 <context>

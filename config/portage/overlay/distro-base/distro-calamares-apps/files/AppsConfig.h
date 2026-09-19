@@ -57,6 +57,14 @@ public:
      *  beside it), so the getter re-wraps it and retranslated() is what tells the QML to re-read
      *  (plan/27 §2). Selection lives in selectedIds, so the re-read costs nothing but paint. */
     Q_PROPERTY( QVariantList apps READ apps NOTIFY retranslated )
+    /*! [{id, name, icon, description}] out of modules/apps.conf's `included:` list — what the
+     *  image ALREADY carries (plan/30 §5). Read the same way and retranslated the same way as
+     *  `apps` above, and shown read-only: nothing on this page installs or removes any of them.
+     *
+     *  WHY THE PAGE NEEDS IT. It offered six applications and said nothing about the eight
+     *  already on the disk, so "Nothing extra" read as "nothing" on a machine about to arrive
+     *  with a browser, a file manager, a terminal and five more on it. */
+    Q_PROPERTY( QVariantList included READ included NOTIFY retranslated )
     /*! The ids currently ticked for the "custom" answer, in file order. Kept in step with the
      *  checkboxes by setSelected(); starting state is all of them, so "custom" begins where
      *  "typical" ends and un-ticking is the only work a user who wants most of the set does. */
@@ -86,6 +94,10 @@ public:
     Q_PROPERTY( QString noneSubtitle READ noneSubtitle NOTIFY retranslated )
     Q_PROPERTY( QString customTitle READ customTitle NOTIFY retranslated )
     Q_PROPERTY( QString customSubtitle READ customSubtitle NOTIFY retranslated )
+    /*! The eyebrow over the included list, and the sentence under it. The sentence carries the
+     *  product name, so it is composed here like the headline is. */
+    Q_PROPERTY( QString includedLabel READ includedLabel NOTIFY retranslated )
+    Q_PROPERTY( QString includedNote READ includedNote NOTIFY retranslated )
 
     explicit AppsConfig( QObject* parent = nullptr );
 
@@ -95,9 +107,12 @@ public:
     void setMode( const QString& mode );
     bool hasInternet() const { return m_hasInternet; }
     QVariantList apps() const;
+    QVariantList included() const;
     QVariantList selectedIds() const;
     QString headline() const;
     QString subheadline() const;
+    QString includedLabel() const;
+    QString includedNote() const;
     QString offlineNote() const;
     QString typicalNames() const;
     QString checkAgainLabel() const;
@@ -137,10 +152,21 @@ signals:
     void retranslated();
 
 private:
+    /*! Reads one of modules/apps.conf's two identically shaped lists. The key name travels in so
+     *  that a malformed entry says which list it was in. */
+    static QVariantList readEntries( const QVariantMap& configurationMap, const QString& key );
+    /*! Re-wraps a raw list's `description` through the AppsDescriptions context. Both getters
+     *  call it, which is why the translation happens at READ time and not at load: the language
+     *  can change after the conf is read. */
+    static QVariantList translateDescriptions( const QVariantList& entries );
+
     /*! Every configured id, in file order — what "typical" means and what publish() starts from. */
     QStringList allIds() const;
 
     QVariantList m_apps;
+    /*! modules/apps.conf's `included:` list, raw — the descriptions translate at read time, as
+     *  m_apps' do. */
+    QVariantList m_included;
     QStringList m_selected;
     QString m_mode = QStringLiteral( "none" );
     bool m_hasInternet = true;

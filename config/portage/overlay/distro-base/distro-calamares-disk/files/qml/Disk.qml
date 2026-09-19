@@ -230,10 +230,17 @@ Item {
                 // row 0 behind everyone's back. On the language page that chose a language; here
                 // it would choose a disk.
                 model: disk.disks
-                // The design system puts a 10px gutter between the cards; a ListView's spacing is
+                // The design system puts a gutter between the cards; a ListView's spacing is
                 // where that has to live, because each row is now a bordered card rather than a
                 // band of a continuous list.
-                spacing: ds.space2 + 2
+                //
+                // SIX RATHER THAN TEN (plan/30 §4). Ten is the gutter the system sets between
+                // CARDS, and these are rows: three disks at 10px apart, each 16px-padded round a
+                // 40px stack, made a list whose gaps were as tall as a line of its own text. The
+                // row padding came down with it — see topPadding on the delegate — and between
+                // them they give the page back about 40px, which is most of what it was
+                // overflowing 640 by.
+                spacing: ds.space2 - 2
                 keyNavigationEnabled: true
                 focus: true
 
@@ -301,8 +308,12 @@ Item {
                     // the badge below says which of the two greyed rows is which.
                     enabled: !row.blocked
                     opacity: row.blocked ? 0.5 : 1
-                    topPadding: ds.space4
-                    bottomPadding: ds.space4
+                    // TEN, NOT SIXTEEN (plan/30 §4). 16 is the design system's CARD padding and
+                    // this is a list row: it holds a 16px title over a 12px mono line, 40px of
+                    // content that was carrying 32px of air. The mark, the icon and the badge are
+                    // all 20-22px, so the row is still taller than anything in it.
+                    topPadding: ds.space3 - 2
+                    bottomPadding: ds.space3 - 2
                     leftPadding: ds.space5 - 2
                     rightPadding: ds.space5 - 2
 

@@ -300,6 +300,14 @@
 <context>
     <name>AppsConfig</name>
     <message>
+        <source>Already installed</source>
+        <translation>Déjà installé</translation>
+    </message>
+    <message>
+        <source>%1 comes with these already. You do not need to add them.</source>
+        <translation>%1 les inclut déjà. Il n&apos;est pas nécessaire de les ajouter.</translation>
+    </message>
+    <message>
         <source>Add more applications to %1?</source>
         <translation>Ajouter d&apos;autres applications à %1 ?</translation>
     </message>
@@ -373,6 +381,38 @@
     <message>
         <source>Word processor, spreadsheet and presentations</source>
         <translation>Traitement de texte, tableur et présentations</translation>
+    </message>
+    <message>
+        <source>Browse the web</source>
+        <translation>Naviguer sur le web</translation>
+    </message>
+    <message>
+        <source>Browse and manage your files</source>
+        <translation>Parcourir et gérer vos fichiers</translation>
+    </message>
+    <message>
+        <source>A terminal</source>
+        <translation>Un terminal</translation>
+    </message>
+    <message>
+        <source>Read PDFs and other documents</source>
+        <translation>Lire des PDF et d&apos;autres documents</translation>
+    </message>
+    <message>
+        <source>View and sort your photographs</source>
+        <translation>Voir et trier vos photographies</translation>
+    </message>
+    <message>
+        <source>A plain text editor</source>
+        <translation>Un éditeur de texte simple</translation>
+    </message>
+    <message>
+        <source>Open and create archives</source>
+        <translation>Ouvrir et créer des archives</translation>
+    </message>
+    <message>
+        <source>Take screenshots</source>
+        <translation>Faire des captures d&apos;écran</translation>
     </message>
 </context>
 <context>

@@ -20,27 +20,13 @@ AppsConfig::AppsConfig( QObject* parent )
 void
 AppsConfig::setConfigurationMap( const QVariantMap& configurationMap )
 {
-    m_apps.clear();
-    const QVariantList entries = configurationMap.value( QStringLiteral( "apps" ) ).toList();
-    for ( const QVariant& v : entries )
-    {
-        const QVariantMap e = v.toMap();
-        const QString id = e.value( QStringLiteral( "id" ) ).toString().trimmed();
-        if ( id.isEmpty() )
-        {
-            cWarning() << "apps: an entry in the `apps:` list has no id and is skipped.";
-            continue;
-        }
-        QVariantMap out;
-        out.insert( QStringLiteral( "id" ), id );
-        out.insert( QStringLiteral( "name" ), e.value( QStringLiteral( "name" ) ).toString() );
-        out.insert( QStringLiteral( "icon" ), e.value( QStringLiteral( "icon" ) ).toString() );
-        // The description is stored raw and translated at read time — see apps() — because its
-        // source lives in the conf beside the name it belongs to, not in this file.
-        out.insert( QStringLiteral( "description" ),
-                    e.value( QStringLiteral( "description" ) ).toString() );
-        m_apps.append( out );
-    }
+    // TWO LISTS, ONE SHAPE, ONE READER. `apps:` is what this page OFFERS to download and
+    // `included:` is what the image already carries (plan/30 §5); they have identical entries and
+    // are drawn by the same delegate, so reading them twice by hand would be two places for the
+    // same typo. The key name goes into the warning, so a malformed entry still says which list
+    // it was in.
+    m_apps = readEntries( configurationMap, QStringLiteral( "apps" ) );
+    m_included = readEntries( configurationMap, QStringLiteral( "included" ) );
 
     const QString dflt = configurationMap.value( QStringLiteral( "defaultMode" ) ).toString();
     if ( dflt == QLatin1String( "typical" ) || dflt == QLatin1String( "none" ) )
@@ -115,8 +101,41 @@ AppsConfig::apps() const
     // text in a context no lupdate ever sees, hand-maintained in the .ts files beside the
     // machine-extracted ones. An untranslated or drifted entry falls back to the English the
     // conf already holds, which is the correct failure (plan/27 §2).
+    return translateDescriptions( m_apps );
+}
+
+QVariantList
+AppsConfig::readEntries( const QVariantMap& configurationMap, const QString& key )
+{
+    QVariantList list;
+    const QVariantList entries = configurationMap.value( key ).toList();
+    for ( const QVariant& v : entries )
+    {
+        const QVariantMap e = v.toMap();
+        const QString id = e.value( QStringLiteral( "id" ) ).toString().trimmed();
+        if ( id.isEmpty() )
+        {
+            cWarning() << "apps: an entry in the `" << key << ":` list has no id and is skipped.";
+            continue;
+        }
+        QVariantMap out;
+        out.insert( QStringLiteral( "id" ), id );
+        out.insert( QStringLiteral( "name" ), e.value( QStringLiteral( "name" ) ).toString() );
+        out.insert( QStringLiteral( "icon" ), e.value( QStringLiteral( "icon" ) ).toString() );
+        // The description is stored raw and translated at read time — see apps() — because its
+        // source lives in the conf beside the name it belongs to, not in this file.
+        out.insert( QStringLiteral( "description" ),
+                    e.value( QStringLiteral( "description" ) ).toString() );
+        list.append( out );
+    }
+    return list;
+}
+
+QVariantList
+AppsConfig::translateDescriptions( const QVariantList& entries )
+{
     QVariantList out;
-    for ( const QVariant& v : m_apps )
+    for ( const QVariant& v : entries )
     {
         QVariantMap e = v.toMap();
         e.insert( QStringLiteral( "description" ),
@@ -128,6 +147,27 @@ AppsConfig::apps() const
         out.append( e );
     }
     return out;
+}
+
+QVariantList
+AppsConfig::included() const
+{
+    return translateDescriptions( m_included );
+}
+
+QString
+AppsConfig::includedLabel() const
+{
+    return tr( "Already installed" );
+}
+
+QString
+AppsConfig::includedNote() const
+{
+    const auto* branding = Calamares::Branding::instance();
+    const QString product
+        = branding ? branding->string( Calamares::Branding::ProductName ) : QStringLiteral( "this system" );
+    return tr( "%1 comes with these already. You do not need to add them." ).arg( product );
 }
 
 QString

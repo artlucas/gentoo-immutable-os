@@ -300,6 +300,14 @@
 <context>
     <name>AppsConfig</name>
     <message>
+        <source>Already installed</source>
+        <translation>Já instalado</translation>
+    </message>
+    <message>
+        <source>%1 comes with these already. You do not need to add them.</source>
+        <translation>O %1 já vem com estes. Não é preciso adicioná-los.</translation>
+    </message>
+    <message>
         <source>Add more applications to %1?</source>
         <translation>Adicionar mais aplicativos ao %1?</translation>
     </message>
@@ -373,6 +381,38 @@
     <message>
         <source>Word processor, spreadsheet and presentations</source>
         <translation>Editor de textos, planilha e apresentações</translation>
+    </message>
+    <message>
+        <source>Browse the web</source>
+        <translation>Navegue na web</translation>
+    </message>
+    <message>
+        <source>Browse and manage your files</source>
+        <translation>Navegue e gerencie seus arquivos</translation>
+    </message>
+    <message>
+        <source>A terminal</source>
+        <translation>Um terminal</translation>
+    </message>
+    <message>
+        <source>Read PDFs and other documents</source>
+        <translation>Leia PDFs e outros documentos</translation>
+    </message>
+    <message>
+        <source>View and sort your photographs</source>
+        <translation>Veja e organize suas fotografias</translation>
+    </message>
+    <message>
+        <source>A plain text editor</source>
+        <translation>Um editor de texto simples</translation>
+    </message>
+    <message>
+        <source>Open and create archives</source>
+        <translation>Abra e crie arquivos compactados</translation>
+    </message>
+    <message>
+        <source>Take screenshots</source>
+        <translation>Faça capturas de tela</translation>
     </message>
 </context>
 <context>

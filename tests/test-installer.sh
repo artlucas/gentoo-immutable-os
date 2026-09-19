@@ -1420,12 +1420,60 @@ APPS_JOB_CONF="$RENDER/modules/appsetup.conf"
 # between this list and FLATPAK_PREINSTALL.
 APPS_EXPECTED="org.mozilla.Thunderbird org.videolan.VLC org.libreoffice.LibreOffice org.kde.krita org.kde.krdc org.kde.kate"
 assert_file "$APPS_CONF" "apps.conf rendered"
-assert_eq "$APPS_EXPECTED" \
-    "$(sed -nE 's/^[[:space:]]+- id:[[:space:]]+(\S+).*/\1/p' "$APPS_CONF" | tr '\n' ' ' | sed 's/ $//')" \
+# SCOPED TO THE `apps:` BLOCK, because plan/30 §5 gave the file a second list of the same shape —
+# `included:`, what the image already carries — and a bare sweep for "- id:" would now conflate
+# what this page OFFERS with what it merely reports.
+ids_in_block() { awk -v b="$2:" '$1 == b { f = 1; next } /^[^ ]/ { f = 0 } f && $2 == "id:" { print $3 }' "$1" | tr '\n' ' ' | sed 's/ $//'; }
+assert_eq "$APPS_EXPECTED" "$(ids_in_block "$APPS_CONF" apps)" \
     "apps.conf offers the six applications, in file order"
-assert_eq "$APPS_EXPECTED" \
-    "$(sed -nE 's/^[[:space:]]+- id:[[:space:]]+(\S+).*/\1/p' "$APPS_SRC/apps.conf" | tr '\n' ' ' | sed 's/ $//')" \
+assert_eq "$APPS_EXPECTED" "$(ids_in_block "$APPS_SRC/apps.conf" apps)" \
     "...and the packaged fallback offers exactly the same six"
+
+# ---- what the image already carries (plan/30 §5) --------------------------------------------
+#
+# A HAND-KEPT LIST DESCRIBING A BUILD FACT is the drift this section exists to stop: the five
+# Flatpaks in `included:` are build.conf's FLATPAK_PREINSTALL and nothing derives one from the
+# other, so a sixth preinstalled application would otherwise arrive on the disk with the page
+# still saying eight.
+APPS_INCLUDED="$(ids_in_block "$APPS_CONF" included)"
+assert_true "apps.conf says what the image already carries" \
+    bash -c "[[ -n '$APPS_INCLUDED' ]]"
+assert_eq "$APPS_INCLUDED" "$(ids_in_block "$APPS_SRC/apps.conf" included)" \
+    "...and the packaged fallback lists exactly the same ones"
+for pre in $(bash -c 'source "'"$REPO_ROOT"'/config/build.conf"; echo $FLATPAK_PREINSTALL'); do
+    assert_true "...including $pre, which the image preinstalls" \
+        bash -c "printf '%s\n' $APPS_INCLUDED | grep -qx '$pre'"
+done
+# ONE-DIRECTIONAL: the natives (Dolphin, Konsole, Spectacle) are not in FLATPAK_PREINSTALL and
+# never will be, so this does not assert the converse. What it DOES assert is that nothing is in
+# both lists — an application the page offers to download and also claims is already there.
+for id in $APPS_INCLUDED; do
+    assert_false "...and $id is not also offered for download" \
+        bash -c "printf '%s\n' $APPS_EXPECTED | grep -qx '$id'"
+done
+# Read-only on the page: these are facts, not check boxes.
+assert_true "the included list is drawn as chips, not as controls" \
+    bash -c "grep -q 'model: apps.included' '$APPS_SRC/qml/Apps.qml' &&
+             grep -q 'Accessible.role: Accessible.StaticText' '$APPS_SRC/qml/Apps.qml'"
+assert_true "...from a property that retranslates like the offered list" \
+    bash -c "grep -B2 'READ included' '$APPS_SRC/AppsConfig.h' | grep -q 'NOTIFY retranslated'"
+
+# ---- the whole page scrolls (plan/30 §5) -----------------------------------------------------
+#
+# The heading and the offline note were pinned while the choices scrolled in a box beneath them,
+# which gave the page two scroll positions and an inner scrollbar starting partway down it.
+assert_true "the applications page scrolls as one page" \
+    bash -c "grep -q 'anchors.fill: parent' '$APPS_SRC/qml/Apps.qml' &&
+             grep -q 'id: scroll' '$APPS_SRC/qml/Apps.qml' &&
+             grep -q 'width: scroll.availableWidth' '$APPS_SRC/qml/Apps.qml'"
+assert_false "...with no inner scroller left inside it" \
+    bash -c "[[ \$(grep -c 'QQC2.ScrollView {' '$APPS_SRC/qml/Apps.qml') -gt 1 ]]"
+# The margins are the CONTENT's — a `sheet` Item carrying them, the shape Accounts.qml uses —
+# because qqc2-desktop-style's ScrollView binds the four individual padding properties and an
+# assignment to the grouped `padding` on the scroller would lose to them in silence.
+assert_true "...and the page's margins are the content's, not the scroller's" \
+    bash -c "grep -q 'id: sheet' '$APPS_SRC/qml/Apps.qml' &&
+             grep -q 'implicitHeight: column.implicitHeight + 2 \* margin' '$APPS_SRC/qml/Apps.qml'"
 assert_true "apps.conf defaults to the typical set" \
     grep -qE '^defaultMode:[[:space:]]+typical$' "$APPS_CONF"
 
@@ -1437,7 +1485,7 @@ assert_eq "$(sed -nE 's/^[[:space:]]+description:[[:space:]]+(\S.*)$/\1/p' "$APP
     "$(sed -nE 's/^[[:space:]]+description:[[:space:]]+(\S.*)$/\1/p' "$APPS_SRC/apps.conf" | tr '\n' '|' | sed 's/|$//')" \
     "the packaged fallback carries the same descriptions"
 assert_true "...one per application, none missing" \
-    bash -c "[[ \$(sed -nE 's/^[[:space:]]+description:[[:space:]]+(\S.*)$/\1/p' '$APPS_CONF' | wc -l) -eq 6 ]]"
+    bash -c "[[ \$(awk '\$1 == \"apps:\" { f = 1; next } /^[^ ]/ { f = 0 } f && \$1 == \"description:\"' '$APPS_CONF' | wc -l) -eq 6 ]]"
 # The description is the one conf-sourced string that translates: its English text is the lookup
 # key into the hand-maintained AppsDescriptions context (the LanguageNames bargain), and the list
 # property gives up CONSTANT for retranslated so the re-read follows a language change.
@@ -2439,6 +2487,22 @@ assert_true "...and takes the preset's enablement symlink with it" \
 assert_true "the image enables systemd-timesyncd in the first place" \
     grep -qx 'enable systemd-timesyncd.service' \
         "$REPO_ROOT/config/rootfs/usr/lib/systemd/system-preset/50-distro.preset.in"
+
+# ---- 6u. the disk list's vertical rhythm (plan/30 §4) ---------------------------------------
+#
+# Each row holds a 16px title over a 12px mono line — 40px of content that was carrying 32px of
+# padding, in a list whose gaps were as tall as a line of its own text. 16 is the design system's
+# CARD padding and 10 its card gutter; this is a list of rows, and it takes the row values.
+DISK_ROW_QML="$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-disk/files/qml/Disk.qml"
+assert_true "the gap between disks is the row gutter, not the card gutter" \
+    grep -qE '^ +spacing: ds\.space2 - 2$' "$DISK_ROW_QML"
+assert_true "...and a row's own padding came down with it" \
+    bash -c "grep -qE '^ +topPadding: ds\.space3 - 2$' '$DISK_ROW_QML' &&
+             grep -qE '^ +bottomPadding: ds\.space3 - 2$' '$DISK_ROW_QML'"
+# The row must still be taller than anything in it: the radio mark, the drive icon and the
+# "not eligible" badge are all 20-22px, and 10px of padding leaves room for every one of them.
+assert_false "...but not below the height of the marks the row carries" \
+    grep -qE '^ +(top|bottom)Padding: ds\.space2( |$)' "$DISK_ROW_QML"
 
 # ---- 6t. the clock's two shapes (plan/30 §3) --------------------------------------------------
 #

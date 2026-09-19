@@ -302,6 +302,14 @@
 <context>
     <name>AppsConfig</name>
     <message>
+        <source>Already installed</source>
+        <translation>Уже установлено</translation>
+    </message>
+    <message>
+        <source>%1 comes with these already. You do not need to add them.</source>
+        <translation>В %1 они уже есть. Добавлять их не нужно.</translation>
+    </message>
+    <message>
         <source>Add more applications to %1?</source>
         <translation>Добавить больше приложений в %1?</translation>
     </message>
@@ -375,6 +383,38 @@
     <message>
         <source>Word processor, spreadsheet and presentations</source>
         <translation>Текстовый процессор, таблицы и презентации</translation>
+    </message>
+    <message>
+        <source>Browse the web</source>
+        <translation>Просмотр веб-страниц</translation>
+    </message>
+    <message>
+        <source>Browse and manage your files</source>
+        <translation>Просмотр и управление файлами</translation>
+    </message>
+    <message>
+        <source>A terminal</source>
+        <translation>Терминал</translation>
+    </message>
+    <message>
+        <source>Read PDFs and other documents</source>
+        <translation>Чтение PDF и других документов</translation>
+    </message>
+    <message>
+        <source>View and sort your photographs</source>
+        <translation>Просмотр и сортировка фотографий</translation>
+    </message>
+    <message>
+        <source>A plain text editor</source>
+        <translation>Простой текстовый редактор</translation>
+    </message>
+    <message>
+        <source>Open and create archives</source>
+        <translation>Открытие и создание архивов</translation>
+    </message>
+    <message>
+        <source>Take screenshots</source>
+        <translation>Создание снимков экрана</translation>
     </message>
 </context>
 <context>

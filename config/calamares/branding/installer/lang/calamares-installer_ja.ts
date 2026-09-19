@@ -298,6 +298,14 @@
 <context>
     <name>AppsConfig</name>
     <message>
+        <source>Already installed</source>
+        <translation>インストール済み</translation>
+    </message>
+    <message>
+        <source>%1 comes with these already. You do not need to add them.</source>
+        <translation>%1 にはこれらが既に含まれています。追加する必要はありません。</translation>
+    </message>
+    <message>
         <source>Add more applications to %1?</source>
         <translation>%1 にアプリケーションを追加しますか？</translation>
     </message>
@@ -371,6 +379,38 @@
     <message>
         <source>Word processor, spreadsheet and presentations</source>
         <translation>文書作成、表計算、プレゼンテーション</translation>
+    </message>
+    <message>
+        <source>Browse the web</source>
+        <translation>ウェブを閲覧</translation>
+    </message>
+    <message>
+        <source>Browse and manage your files</source>
+        <translation>ファイルの閲覧と管理</translation>
+    </message>
+    <message>
+        <source>A terminal</source>
+        <translation>ターミナル</translation>
+    </message>
+    <message>
+        <source>Read PDFs and other documents</source>
+        <translation>PDF などの文書を閲覧</translation>
+    </message>
+    <message>
+        <source>View and sort your photographs</source>
+        <translation>写真の閲覧と整理</translation>
+    </message>
+    <message>
+        <source>A plain text editor</source>
+        <translation>プレーンテキストエディター</translation>
+    </message>
+    <message>
+        <source>Open and create archives</source>
+        <translation>アーカイブの展開と作成</translation>
+    </message>
+    <message>
+        <source>Take screenshots</source>
+        <translation>スクリーンショットを撮る</translation>
     </message>
 </context>
 <context>
