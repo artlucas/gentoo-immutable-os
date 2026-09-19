@@ -55,10 +55,10 @@ Item {
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.topMargin: ds.space8 + ds.space1
-        anchors.bottomMargin: ds.space8 + ds.space1
-        anchors.leftMargin: ds.space10 + ds.space1
-        anchors.rightMargin: ds.space10 + ds.space1
+        anchors.topMargin: ds.pageMarginV
+        anchors.bottomMargin: ds.pageMarginV
+        anchors.leftMargin: ds.pageMarginH
+        anchors.rightMargin: ds.pageMarginH
         spacing: ds.space6 + 2
 
         ColumnLayout {

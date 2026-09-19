@@ -165,10 +165,10 @@ Item {
         Item {
             id: sheet
 
-            // The design system's content padding: 36 down the page, 44 in from the sides. It is
-            // asymmetric, so `margin` became two.
-            readonly property int margin: ds.space8 + ds.space1
-            readonly property int sideMargin: ds.space10 + ds.space1
+            // The design system's content padding, as this window can afford it — see the note
+            // on pageMarginV in Theme.qml. It is asymmetric, so `margin` became two.
+            readonly property int margin: ds.pageMarginV
+            readonly property int sideMargin: ds.pageMarginH
 
             width: scroll.availableWidth
             implicitHeight: column.implicitHeight + 2 * margin

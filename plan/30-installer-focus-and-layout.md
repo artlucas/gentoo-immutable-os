@@ -164,6 +164,47 @@ appears in both `included:` and `apps:`. The native applications (Dolphin, Konso
 in the list too and are not in `FLATPAK_PREINSTALL`; the test is one-directional for exactly that
 reason.
 
+## What the medium actually said
+
+The first build was walked at 1024×640 in three passes: with a network, with `-nic none`, and once
+more for the states that only appear deep in the flow. Four of the six requests were right first
+time. Three things were not, and all three are the kind that cannot be seen from the checkout.
+
+**`hh` is not a 12-hour hour on the way out.** `editTime()` formatted with `"hh:mm"` on the
+strength of Qt's documentation — which reads *"the hour with a leading zero (00 to 23 **or** 01 to
+12 **if AP/A/ap/a is used**)"*. There is no AM/PM marker in that format, by design, because the
+meridiem is a separate control. So at 1:06 PM the dialog opened on **`13:06`** with **PM**
+selected, and pressing Set would have been refused by this plan's own range check — for a value
+the dialog had filled in itself. The card beside it read `1:06 PM` throughout, because the clock's
+format *does* carry `AP`. `editTime()` composes the string from the converted hour now; the
+constant is for parsing only. The morning pass had missed it: at 12:58 the two conventions agree.
+
+**The summary table scrolled for one row.** Six decisions in a box sized for five and a sliver,
+behind a twenty-pixel scrollbar, with the first of them — Language — hidden above the fold. That
+is the same shape the applications page was asked to lose, so it loses it the same way: the page
+scrolls as one page and the table is as tall as its rows.
+
+**The page margin was one pixel too generous.** The accounts chooser drew a full-height scrollbar,
+which is the "few pixels of overflow" complaint exactly. The mockup sets 36 down the page and every
+page transcribed it; at the window this installer actually opens — 640 tall, 72 of it navigation
+bar — a page has about 568px, and the three chooser cards wanted 567 of them plus 72 of margin. It
+is `Theme.pageMarginV: 28` now, one token rather than eight edits, and the horizontal 44 is
+untouched because that is the rhythm the eye reads the column by.
+
+What the walk confirmed rather than corrected: Tab goes About → Cancel → Next → the page's own
+controls and round again, with the ring on every stop and disabled buttons skipped; **Tab ×3 then
+Return advanced Language → Welcome with no mouse at all**; Welcome is one line on a machine that
+passes and one warning row on a machine with no network, with the verdict still saying it can
+install; the clock reads `12:53 PM`; the dialog carries an AM/PM select that opens inside the modal
+and is pre-filled from the current half of the day; the disk rows are tight and the page no longer
+scrolls; and the applications page carries all eight chips with their Breeze icons and no inner
+scroller.
+
+One thing noted and not changed: a page with no controls of its own — Welcome is the only one —
+still has a tab stop on its `QQuickWidget`, which shows no ring because there is nothing in the
+scene to draw one on. That is `QQuickWidget`'s own `Qt::StrongFocus` policy and not reachable from
+QML.
+
 ## Verification
 
 1. `bash tests/run-tests.sh` — offline, and `test-installer.sh` grows with each phase.

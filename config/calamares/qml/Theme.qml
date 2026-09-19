@@ -144,6 +144,20 @@ QtObject {
     // 800 is the widest, and pages narrower than that set their own.
     readonly property int contentMaxWidth: 800
 
+    // THE PAGE'S OWN PADDING, AND IT IS NOT THE MOCKUP'S 36 DOWN THE PAGE (plan/30 §4). The
+    // mockup sets 36/44, every page transcribed it as `space8 + space1` / `space10 + space1`, and
+    // at the window this installer actually opens at it does not fit: branding.desc asks for
+    // 1024x640, the navigation bar takes 72 of the 640 and the window chrome a little more, so a
+    // page has about 568px to work in. The accounts chooser overflowed that by ONE PIXEL and drew
+    // a full-height scrollbar to say so; the summary table hid a row behind a twenty-pixel one.
+    //
+    // 28 down, 44 in, which buys every page 16px and leaves the horizontal rhythm — the one the
+    // eye actually reads the column by — exactly where the design put it. A token rather than
+    // eight edits, because the next person to wonder why it is not 36 should find the answer in
+    // one place, and because a page that sets its own would be the page that scrolls again.
+    readonly property int pageMarginV: 28
+    readonly property int pageMarginH: 44
+
     // ======== type (tokens/typography.css) =========================================
     //
     // ARCHIVO IS NOT PACKAGED IN GENTOO. The design system's display face is Archivo; the only

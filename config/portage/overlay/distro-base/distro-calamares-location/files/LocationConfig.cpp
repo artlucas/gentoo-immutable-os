@@ -23,10 +23,19 @@ namespace
  *  LocationConfig.h gives at length above editDate(): a date read back from a locale's short form
  *  is ambiguous in a way the field cannot ask about.
  *
- *  THE TIME HAS TWO OF THEM AND THE DIFFERENCE IS ONE LETTER'S CASE. "hh" is the hour on a
- *  12-hour clock, zero-padded, 01 to 12; "HH" is 00 to 23. Neither carries AM or PM — that is a
- *  separate control in the dialog and a separate argument across the boundary, so that the field
- *  never has to parse a word in a language it was not told (plan/30 §3). */
+ *  THE TIME HAS TWO OF THEM AND THE DIFFERENCE IS ONE LETTER'S CASE — on the way IN. "hh" parses
+ *  01..12 and "HH" parses 00..23; neither carries AM or PM, because that is a separate control in
+ *  the dialog and a separate argument across the boundary, so the field never has to parse a word
+ *  in a language it was not told (plan/30 §3).
+ *
+ *  ON THE WAY OUT, "hh" IS A TRAP, and it cost a VM walk to find. Qt documents it as "the hour
+ *  with a leading zero (00 to 23 OR 01 to 12 IF AP/A/ap/a IS USED)" — the 12-hour reading is
+ *  conditional on an AM/PM marker being in the SAME format string. There is none here, by design,
+ *  so QTime(13,6).toString("hh:mm") is "13:06": the dialog opened on a 24-hour value in a 12-hour
+ *  field, and pressing Set would have been refused by the range check below for an hour the
+ *  dialog had filled in itself. The card beside it read "1:06 PM" the whole time, because
+ *  kClockFormat12 DOES carry AP. So editTime() composes the string from the converted hour
+ *  instead, and this constant is for PARSING only. */
 const char* const kEditDateFormat = "yyyy-MM-dd";
 const char* const kEditTimeFormat24 = "HH:mm";
 const char* const kEditTimeFormat12 = "hh:mm";
@@ -521,8 +530,18 @@ LocationConfig::editTime() const
     const QDateTime now = id.isEmpty()
         ? QDateTime::currentDateTime()
         : QDateTime::currentDateTimeUtc().toTimeZone( QTimeZone( id ) );
-    return now.time().toString(
-        QString::fromLatin1( m_twelveHour ? kEditTimeFormat12 : kEditTimeFormat24 ) );
+    const QTime t = now.time();
+    if ( !m_twelveHour )
+    {
+        return t.toString( QString::fromLatin1( kEditTimeFormat24 ) );
+    }
+    // COMPOSED, NOT FORMATTED — see the note on kEditTimeFormat12. Zero-padded to two digits so
+    // that the field and the hint under it are the same shape at every hour, which is also what
+    // the parse accepts.
+    const int hour = t.hour() % 12 == 0 ? 12 : t.hour() % 12;
+    return QStringLiteral( "%1:%2" )
+        .arg( hour, 2, 10, QLatin1Char( '0' ) )
+        .arg( t.minute(), 2, 10, QLatin1Char( '0' ) );
 }
 
 int

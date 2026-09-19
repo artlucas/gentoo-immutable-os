@@ -93,10 +93,10 @@ Item {
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.topMargin: ds.space8 + ds.space1      // 36, the mockup's content padding
-        anchors.bottomMargin: ds.space8 + ds.space1
-        anchors.leftMargin: ds.space10 + ds.space1    // 44
-        anchors.rightMargin: ds.space10 + ds.space1
+        anchors.topMargin: ds.pageMarginV      // 28/44 — see Theme.qml's note
+        anchors.bottomMargin: ds.pageMarginV
+        anchors.leftMargin: ds.pageMarginH
+        anchors.rightMargin: ds.pageMarginH
         spacing: ds.space6 + 2                           // 26
 
         ColumnLayout {

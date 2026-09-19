@@ -2662,6 +2662,54 @@ for f in "$SHARED_QML/Button.qml" "$SHARED_QML/Field.qml" "$SHARED_QML/CheckBox.
         bash -c "tr '\n' ' ' < '$f' | grep -qE 'mix\( *([A-Za-z_]+\.)*accent, *([A-Za-z_]+\.)*surface(Card|Page), *0\.4 *\)'"
 done
 
+# ---- 6v. the three corrections the walk-through asked for (plan/30) --------------------------
+#
+# Each of these is a thing that looked right in the checkout and was wrong at 1024x640.
+
+# 1. "hh" IS NOT A 12-HOUR HOUR ON THE WAY OUT. Qt documents it as "00 to 23 OR 01 to 12 IF
+# AP/A/ap/a IS USED", and the dialog's format deliberately carries no AM/PM marker — so the field
+# opened on "13:06" and the range check below would then have refused the value the dialog itself
+# had filled in. The card beside it read "1:06 PM" the whole time, because the CLOCK format does
+# carry AP. editTime() composes the string instead of formatting it.
+assert_false "the typed time is not formatted through a bare hh" \
+    grep -q 'toString( QString::fromLatin1( m_twelveHour ? kEditTimeFormat12' "$LOCATION_CPP"
+assert_true "...it is composed from the converted hour" \
+    grep -q 'const int hour = t.hour() % 12 == 0 ? 12 : t.hour() % 12;' "$LOCATION_CPP"
+# The clock on the card is the one place "AP" belongs, and it is what makes h/hh mean 12 there.
+assert_true "...and the clock's own format is the one that carries AP" \
+    grep -q 'kClockFormat12 = "h:mm AP"' "$LOCATION_CPP"
+
+# 2. THE PAGE MARGIN IS A TOKEN, AND IT IS NOT THE MOCKUP'S 36. branding.desc asks for a 1024x640
+# window, the navigation bar takes 72 of the height, and 36 top and bottom did not fit: the
+# accounts chooser overflowed by ONE PIXEL and drew a full-height scrollbar to say so.
+THEME_QML="$REPO_ROOT/config/calamares/qml/Theme.qml"
+assert_true "the page margin is a token" \
+    bash -c "grep -qE '^ +readonly property int pageMarginV: 28$' '$THEME_QML' &&
+             grep -qE '^ +readonly property int pageMarginH: 44$' '$THEME_QML'"
+# Every page reads it. A page that set its own is the page that scrolls again.
+for f in "$REPO_ROOT"/config/portage/overlay/distro-base/distro-calamares-*/files/qml/*.qml; do
+    name="$(basename -- "$f")"
+    case "$name" in Theme.qml|Button.qml|Field.qml|CheckBox.qml) continue ;; esac
+    assert_false "$name does not transcribe the mockup's 36 any more" \
+        grep -q 'ds.space8 + ds.space1' "$f"
+    assert_false "...nor its 44" \
+        grep -q 'ds.space10 + ds.space1' "$f"
+done
+
+# 3. THE SUMMARY TABLE SCROLLED FOR ONE ROW. Six decisions in a box sized for five and a sliver,
+# behind a scrollbar twenty pixels long — the shape the applications page was asked to lose.
+REVIEW_QML="$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-review/files/qml/Review.qml"
+assert_true "the summary page scrolls as one page" \
+    bash -c "grep -q 'id: scroll' '$REVIEW_QML' && grep -q 'id: sheet' '$REVIEW_QML'"
+assert_true "...and its table is as tall as its rows" \
+    grep -q 'implicitHeight: rows.contentHeight + 2 \* ds.borderWidth' "$REVIEW_QML"
+assert_false "...with no scroller of its own left inside it" \
+    bash -c "[[ \$(grep -c 'QQC2.ScrollView {' '$REVIEW_QML') -gt 1 ]]"
+# A flickable that cannot move still eats a wheel event, which on a page that scrolls as a whole
+# is a dead patch in the middle of it.
+assert_true "...and the view it holds is not interactive" \
+    grep -qE '^ +interactive: false$' "$REVIEW_QML"
+
 # ---- 7. YAML is YAML ------------------------------------------------------------------------
 # Calamares parses these with yaml-cpp and reports a parse error as a startup failure, so a
 # stray tab is a medium that does not install. Skipped rather than failed where PyYAML is absent,

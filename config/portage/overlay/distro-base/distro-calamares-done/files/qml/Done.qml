@@ -54,7 +54,7 @@ Item {
     // is nothing to scan, only something to be told.
     ColumnLayout {
         anchors.centerIn: parent
-        width: Math.min(parent.width - 2 * (ds.space10 + ds.space1), 600)
+        width: Math.min(parent.width - 2 * ds.pageMarginH, 600)
         spacing: ds.space6 + ds.space1
 
         // The one large positive mark in the installer, and the only place the success tone is
