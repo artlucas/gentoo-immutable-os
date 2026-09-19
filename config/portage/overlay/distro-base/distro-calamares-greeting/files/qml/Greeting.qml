@@ -7,11 +7,18 @@
  * three QLabels and `checker/CheckerContainer` — three files vendored verbatim from Calamares'
  * own welcome module, because "they are not in libcalamaresui and no header of theirs is
  * installed, so a module that wants the box has to carry the source" (plan/23 §2). What that
- * traded away was control of the box: it lists FAILURES only, above a one-sentence verdict, so a
- * machine that passes every check shows an empty space where six answers were. The design system
- * draws a row per check with its own status, which is also what greeting.conf's six checks and
- * three requirements were always for — and RequirementsModel IS an installed header, so a QML
- * ListView binds it directly. The vendored copies went with the widget.
+ * traded away was control of the box, and RequirementsModel IS an installed header — so a QML
+ * ListView binds it directly and the vendored copies went with the widget.
+ *
+ * WHAT THE PANEL LISTS HAS NOW BEEN DECIDED TWICE, and the second answer is nearly the first.
+ * plan/28 drew a row per check, on the reasoning that a box showing nothing when all six pass
+ * cannot say which of them was a blocker and which a note. plan/30 §2 took that back: the machine
+ * this installer normally runs on passes everything, so the panel was six green rows saying OK
+ * above the one sentence anybody reads, and a panel that is always full is a panel that is never
+ * read. It lists failures and warnings, and on a machine that has neither it is not there at all
+ * — which is the part the vendored box never did, since an EMPTY bordered box is indistinguishable
+ * from one that has not finished checking. The required/optional distinction survives, drawn on
+ * the rows that have something to say.
  *
  * THE ROOT ITEM IS A PLAIN Item, for the reason every sibling page gives: this is loaded into a
  * QQuickWidget that Calamares parents into its own window, so an ApplicationWindow would be a
@@ -109,14 +116,40 @@ Item {
             }
         }
 
-        // ---- the checks ------------------------------------------------------------------
+        // ---- what is wrong, if anything ----------------------------------------------------
         // A BORDERED LIST WITH HAIRLINES BETWEEN THE ROWS, which is the design system's shape for
         // a table of facts: one border round the whole thing rather than a card per row, because
         // these rows are not choices and nothing here is clickable.
+        //
+        // FAILURES AND WARNINGS ONLY, AND NO PANEL AT ALL WHEN THERE ARE NONE (plan/30 §2). This
+        // is a reversal of plan/28, which listed every check on the reasoning that a box showing
+        // nothing when all six pass cannot say which of them was optional. True, and the screen
+        // disagreed: the machine this installer normally runs on passes everything, so the panel
+        // was six green rows saying OK above the one sentence anybody reads. The distinction
+        // between a blocker and a note is still drawn — on the rows that HAVE something to say.
+        //
+        // TWO REASONS TO BE VISIBLE, and the first one is not "there is a problem": before the
+        // first round of checks lands there is nothing to filter, and "nothing is wrong" is not
+        // yet true. That is the spinner's state and it keeps the panel.
         Rectangle {
+            id: checksPanel
+
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.maximumWidth: ds.contentMaxWidth
+            // AS TALL AS WHAT IS IN IT, AND NO TALLER. The panel filled the page's whole spare
+            // height when it listed all six checks, which was right for six rows and is wrong for
+            // the one or two this now shows: a single failing row at the top of a 300px box, with
+            // the verdict that concludes it pinned to the bottom of the screen. Capped rather
+            // than hugged, so that a machine failing everything still scrolls instead of pushing
+            // the verdict off the page.
+            //
+            // No binding loop: contentHeight depends on the delegates' heights, which depend on
+            // the view's WIDTH (the text wraps), and width does not depend on this.
+            Layout.maximumHeight: greeting.checked
+                ? checks.contentHeight + 2 * ds.borderWidth
+                : spinner.implicitHeight + 2 * ds.space8
+            visible: !greeting.checked || greeting.hasProblems
             radius: ds.radiusLg
             color: ds.surfaceCard
             border.width: ds.borderWidth
@@ -127,6 +160,8 @@ Item {
             // would read as "no checks" rather than "not yet". The three dots are the design
             // system's only looped animation, at its own timing.
             RowLayout {
+                id: spinner
+
                 anchors.centerIn: parent
                 visible: !greeting.checked
                 spacing: ds.space3
@@ -175,7 +210,11 @@ Item {
                 ListView {
                     id: checks
 
-                    model: greeting.requirements
+                    // The FILTERED model, not `greeting.requirements` — see the panel's note
+                    // above and the long one on UnsatisfiedRequirements in GreetingConfig.h. The
+                    // delegate did not change a line: the proxy passes the model's own roles
+                    // straight through.
+                    model: greeting.problems
                     // Nothing on this page is selectable, so the view must not pretend otherwise:
                     // a highlight here would be a control the user cannot use.
                     interactive: true
@@ -303,7 +342,11 @@ Item {
         // ---- the verdict -----------------------------------------------------------------
         // Below the list rather than above it, which is where the vendored box put it: the list
         // is the evidence and this is the conclusion, and on a machine that passes everything the
-        // conclusion is the only line anybody needs to read.
+        // conclusion is the only line anybody needs to read — which since plan/30 it literally
+        // is, because the panel above is gone and this has moved up into its place. A ColumnLayout
+        // skips a child whose `visible` is false, so nothing had to be written to make that
+        // happen; what DID have to be written is the filler below, since the height the panel was
+        // filling has to go somewhere and this line must not be stretched down the page.
         ColumnLayout {
             Layout.fillWidth: true
             Layout.maximumWidth: ds.contentMaxWidth
@@ -383,6 +426,14 @@ Item {
                 readonly property bool satisfied:
                     greeting.requirements ? greeting.requirements.satisfiedMandatory : false
             }
+        }
+
+        // THE SPARE HEIGHT, wherever it comes from. When there is no panel that is all of it and
+        // the verdict sits just under the lede, which is where the panel's top edge was; when
+        // there is one, it is whatever the panel's cap above did not take. Unconditional, because
+        // both cases want the same thing: nothing on this page stretched down the screen.
+        Item {
+            Layout.fillHeight: true
         }
     }
 }

@@ -14,10 +14,11 @@
  * earning its keep.
  *
  * WHAT CHANGED ON SCREEN, and it is more than paint. The vendored box listed FAILURES only, above
- * a one-sentence verdict. This page lists every check with its own status, which is what the
- * handoff draws and what the checks were always for: greeting.conf checks six things and requires
- * three, and a box that shows nothing when all six pass cannot tell anybody that the network one
- * is a note rather than a blocker.
+ * a one-sentence verdict, and showed an EMPTY bordered box when there were none — which is
+ * indistinguishable from a box that has not finished checking. plan/28 answered that by listing
+ * every check with its own status; plan/30 §2 answered it again, better, by listing the failures
+ * and warnings and removing the panel entirely when there are none. See the long note above
+ * UnsatisfiedRequirements below for why the first answer did not survive contact with the screen.
  *
  * Every string the page shows is a tr()'d property here, because the builder's lupdate is built
  * without QML support (plan/27 §1) and a qsTr() in the QML would reach no catalogue. That is also
@@ -35,17 +36,69 @@
 #include "modulesystem/RequirementsModel.h"
 
 #include <QObject>
+#include <QSortFilterProxyModel>
 #include <QString>
 
 class QAbstractItemModel;
+
+/*! Calamares' requirements model with the passing checks taken out (plan/30 §2).
+ *
+ *  WHY THE PAGE SHOWS FEWER ROWS THAN IT USED TO, and it is a reversal of plan/28's reasoning
+ *  rather than a bug fix. That plan replaced a vendored box which listed FAILURES only, on the
+ *  grounds that "a box that shows nothing when all six pass cannot tell anybody that the network
+ *  one is a note rather than a blocker". True — and the screen disagreed: on the machine the
+ *  installer is normally run on, every check passes, and six green rows saying OK sat above the
+ *  one sentence anybody reads. A page whose panel is always full is a page whose panel is never
+ *  read, which is the state a warning has to appear out of.
+ *
+ *  So the panel is back to failures and warnings, and the difference from the vendored box is
+ *  that it is now ABSENT rather than empty when there is nothing wrong — see hasProblems() and
+ *  what the QML does with it.
+ *
+ *  A PROXY AND NOT A SNAPSHOT. RequirementsEntry holds its two sentences as FUNCTIONS, so that a
+ *  language change re-reads them (upstream's reason, recorded in Requirements.h); a QVariantList
+ *  built here would freeze whichever language was current when the checks ran. The proxy leaves
+ *  the strings where they are and passes the model's own roles straight through, which is also
+ *  why the QML delegate did not have to change a line.
+ *
+ *  NO invalidateFilter() ANYWHERE. The model is RESET rather than updated when a round of checks
+ *  lands — addRequirementsList() calls beginResetModel() — and QSortFilterProxyModel re-filters
+ *  on a source reset by itself. A hand-driven invalidate would be a second thing to keep in step
+ *  with the first.
+ */
+class UnsatisfiedRequirements : public QSortFilterProxyModel
+{
+    Q_OBJECT
+
+public:
+    using QSortFilterProxyModel::QSortFilterProxyModel;
+
+protected:
+    bool filterAcceptsRow( int row, const QModelIndex& parent ) const override;
+};
 
 class GreetingConfig : public QObject
 {
     Q_OBJECT
 
-    /*! Calamares' own requirements model, every row of it. The page draws a row per check with
-     *  its own status, so it binds THIS and not the failures-only proxy the vendored box used. */
+    /*! Calamares' own requirements model, every row of it. Nothing on the page binds this any
+     *  more — `problems` is what the panel lists — and it is kept because it is the honest
+     *  answer to "what did the checker find", and because `satisfiedMandatory` is read off it
+     *  by the verdict line. */
     Q_PROPERTY( QAbstractItemModel* requirements READ requirementsModelForQml CONSTANT )
+
+    /*! The same model with the passing checks filtered out (plan/30 §2) — what the panel lists.
+     *  CONSTANT like the one above: the proxy object never changes, only its contents. */
+    Q_PROPERTY( QAbstractItemModel* problems READ problemsModelForQml CONSTANT )
+
+    /*! Whether there is anything in `problems` at all. The panel's `visible` binds this, so on a
+     *  machine that passes every check there is no panel — and the verdict, which is the only
+     *  line that matters then, moves up into the space it was occupying.
+     *
+     *  NOT `!satisfiedMandatory`. A warning is not a blocker: the internet check is deliberately
+     *  optional (greeting.conf says so at length), and a machine with no network has something to
+     *  show in the panel and a verdict that still says it can install. */
+    Q_PROPERTY( bool hasProblems READ hasProblems NOTIFY problemsChanged )
 
     /*! The verdict above the list. */
     Q_PROPERTY( QString warningMessage READ warningMessage NOTIFY warningMessageChanged )
@@ -97,6 +150,11 @@ public:
      *  QAbstractItemModel*, and a Q_PROPERTY cannot READ through a covariant return. */
     QAbstractItemModel* requirementsModelForQml() const;
 
+    /*! The filtered view of the same thing, typed for the Q_PROPERTY above. */
+    QAbstractItemModel* problemsModelForQml() const;
+
+    bool hasProblems() const;
+
     bool checked() const { return m_checked; }
 
     QString pageTitle() const;
@@ -116,6 +174,9 @@ public slots:
 signals:
     void warningMessageChanged( QString message );
     void checkedChanged( bool value );
+    /*! The panel's `visible` re-reads on this. Emitted whenever the proxy's row count can have
+     *  moved, which on a model that is reset wholesale means: whenever it was reset. */
+    void problemsChanged();
     /*! Every tr()'d property above re-reads on this. Emitted from retranslate(), which the
      *  Retranslator runs on a language change — and which the model's own verdict signals also
      *  run, because warningMessage() depends on both. */
@@ -127,4 +188,8 @@ private:
 
     QString m_warningMessage;
     bool m_checked = false;
+    /*! Owned, and created in the constructor whether or not there is a model to give it: a null
+     *  `problems` would be a ListView with no model, which QML accepts in silence. It gets its
+     *  source model in the same branch that connects everything else. */
+    UnsatisfiedRequirements* m_problems;
 };

@@ -11,8 +11,26 @@
 
 #include <QAbstractItemModel>
 
+bool
+UnsatisfiedRequirements::filterAcceptsRow( int row, const QModelIndex& parent ) const
+{
+    const auto* model = sourceModel();
+    if ( !model )
+    {
+        return false;
+    }
+    // THE ROLE, NOT COLUMN 0's DISPLAY TEXT, which is what a filterRole/filterFixedString pair
+    // would really have compared: QSortFilterProxyModel matches a STRING form of the data, so
+    // "false" would have been matched against whatever QVariant(bool) renders as on the day.
+    // This asks the model the question the model has an enum for.
+    return !model->index( row, 0, parent )
+                .data( Calamares::RequirementsModel::Satisfied )
+                .toBool();
+}
+
 GreetingConfig::GreetingConfig( QObject* parent )
     : QObject( parent )
+    , m_problems( new UnsatisfiedRequirements( this ) )
 {
     // The macro connects the slot AND runs it once, which is what gives warningMessage() a value
     // before anything reads it.
@@ -22,6 +40,8 @@ GreetingConfig::GreetingConfig( QObject* parent )
     auto* model = manager ? manager->requirementsModel() : nullptr;
     if ( model )
     {
+        m_problems->setSourceModel( model );
+
         // ModuleManager::checkRequirements() re-arms a five-second timer for as long as a
         // mandatory requirement is unmet, so attaching a bigger disk really does clear this page
         // without restarting the installer — but only if the sentence above the list is recomputed
@@ -38,6 +58,15 @@ GreetingConfig::GreetingConfig( QObject* parent )
         // that always fires, and it is what `checked` is really watching.
         connect( model, &QAbstractItemModel::modelReset, this, [ this ]
                  { markChecked(); retranslate(); } );
+
+        // THE PANEL APPEARS AND DISAPPEARS ON THIS. A re-check that clears the last failure has
+        // to collapse the panel, not merely empty it — an empty bordered box is the state the
+        // spinner means, and it would be sitting there under a verdict that says everything is
+        // fine. Connected to the PROXY rather than the source: the proxy is what the panel
+        // counts, and it emits these after it has re-filtered.
+        connect( m_problems, &QAbstractItemModel::modelReset, this, &GreetingConfig::problemsChanged );
+        connect( m_problems, &QAbstractItemModel::rowsInserted, this, &GreetingConfig::problemsChanged );
+        connect( m_problems, &QAbstractItemModel::rowsRemoved, this, &GreetingConfig::problemsChanged );
     }
     else
     {
@@ -56,6 +85,18 @@ QAbstractItemModel*
 GreetingConfig::requirementsModelForQml() const
 {
     return requirementsModel();
+}
+
+QAbstractItemModel*
+GreetingConfig::problemsModelForQml() const
+{
+    return m_problems;
+}
+
+bool
+GreetingConfig::hasProblems() const
+{
+    return m_problems->rowCount() > 0;
 }
 
 void

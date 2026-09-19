@@ -1061,14 +1061,43 @@ assert_true "...and the engine retranslated on a language change" \
     grep -q 'engine()->retranslate()' "$GREET_SRC/GreetingViewStep.cpp"
 assert_true "the page binds Calamares' requirements model directly" \
     bash -c "grep -q 'Q_PROPERTY( QAbstractItemModel\* requirements' '$GREET_SRC/GreetingConfig.h' &&
-             grep -q 'model: greeting.requirements' '$GREET_SRC/qml/Greeting.qml'"
+             grep -q 'model: greeting.problems' '$GREET_SRC/qml/Greeting.qml'"
 
-# EVERY CHECK IS LISTED, NOT ONLY THE FAILURES. The vendored box filtered the satisfied rows out,
-# which meant a machine that passed all six showed an empty space where six answers were — and no
-# way to see that `internet` is checked and deliberately not required. The proxy that did the
-# filtering is gone; this is the assertion that it does not come back.
-assert_false "no failures-only proxy filters the list any more" \
-    grep -q 'QSortFilterProxyModel' "$GREET_SRC/GreetingConfig.h"
+# FAILURES AND WARNINGS ONLY, AND NO PANEL WHEN THERE ARE NONE (plan/30 §2). This reverses
+# plan/28, whose assertion here was that no proxy filtered the list; the machine this installer
+# normally runs on passes everything, and six green rows saying OK above the one sentence anybody
+# reads is a panel that is never read. What the vendored box got wrong was not the filtering —
+# it was showing an EMPTY bordered box, which is indistinguishable from one still checking.
+assert_true "the panel lists only what is wrong" \
+    bash -c "grep -q 'class UnsatisfiedRequirements : public QSortFilterProxyModel' '$GREET_SRC/GreetingConfig.h' &&
+             grep -q 'Q_PROPERTY( QAbstractItemModel\* problems' '$GREET_SRC/GreetingConfig.h'"
+# The role, not a filterFixedString against whatever QVariant(bool) renders as.
+assert_true "...filtered on the model's own Satisfied role" \
+    grep -q 'RequirementsModel::Satisfied' "$GREET_SRC/GreetingConfig.cpp"
+assert_false "...and not on a stringified bool" \
+    grep -qE 'setFilterFixedString|setFilterRole' "$GREET_SRC/GreetingConfig.cpp"
+# The panel goes away entirely, which is the half the vendored box never did.
+assert_true "the panel is absent on a machine with nothing wrong" \
+    grep -q 'visible: !greeting.checked || greeting.hasProblems' "$GREET_SRC/qml/Greeting.qml"
+# ...but NOT before the first round has landed: "nothing is wrong" is not yet true then, and that
+# state already has a drawing — the spinner.
+assert_true "...but stays for the spinner while the first round runs" \
+    grep -q 'visible: !greeting.checked$' "$GREET_SRC/qml/Greeting.qml"
+# hasProblems is the proxy's row count and NOT !satisfiedMandatory: a warning is not a blocker,
+# and the internet check is deliberately optional, so a machine with no network has a panel to
+# show and a verdict that still says it can install.
+assert_true "...on the count of problems, not on the mandatory verdict" \
+    grep -q 'return m_problems->rowCount() > 0;' "$GREET_SRC/GreetingConfig.cpp"
+# A re-check that clears the last failure must COLLAPSE the panel, not empty it.
+assert_true "...and the panel collapses when a re-check clears the last failure" \
+    bash -c "grep -q 'connect( m_problems, &QAbstractItemModel::modelReset' '$GREET_SRC/GreetingConfig.cpp' &&
+             grep -q 'void problemsChanged();' '$GREET_SRC/GreetingConfig.h'"
+# When the panel goes, the verdict moves up into its place — which a ColumnLayout does for free
+# with a child whose `visible` is false. What does NOT come for free is the spare height: without
+# a filler the verdict would be stretched to the foot of the page.
+assert_true "the verdict moves up into the space the panel had" \
+    bash -c "tr '\n' ' ' < '$GREET_SRC/qml/Greeting.qml' |
+             grep -qE 'Item \{ *Layout.fillHeight: true *\} *\} *\}'"
 assert_true "a row says whether its check blocks the install or merely reports" \
     bash -c "grep -q 'required property bool mandatory' '$GREET_SRC/qml/Greeting.qml' &&
              grep -q 'greeting.requiredLabel' '$GREET_SRC/qml/Greeting.qml' &&
