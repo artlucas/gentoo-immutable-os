@@ -14,10 +14,72 @@
 #include <QQmlEngine>
 #include <QQuickStyle>
 #include <QQuickWidget>
+#include <QTimer>
 #include <QUrl>
 #include <QWidget>
 
 CALAMARES_PLUGIN_FACTORY_DEFINITION( LanguageViewStepFactory, registerPlugin< LanguageViewStep >(); )
+
+/** @brief How wide the step rail is, in pixels, instead of the 190 Calamares would give it.
+ *
+ * MEASURED, NOT PREFERRED (plan/31 §2). The panel's own margins take 32, the row's take 20, and
+ * the step mark and the gap after it take 27, so a 224px rail leaves 145 for the label. The
+ * widest label this installer can produce is the Russian "Welcome" at 130px in IBM Plex Sans 14
+ * — semibold, because the step you are on is semibold — with the German "Zusammenfassung" at 123
+ * and the Japanese "Applications" at 112 behind it. At Calamares' 190 the budget is 111 and all
+ * three are cut off mid-word.
+ *
+ * The page pays the 30px: 1024 - 224 = 800, less the 44px page margins, is 712 of content
+ * against Theme.qml's contentMaxWidth of 800. No page is capped by this; they simply wrap.
+ */
+static constexpr int kSidebarWidth = 224;
+
+/** @brief Widen the window's step rail past the width Calamares hard-codes.
+ *
+ * CalamaresWindow.cpp builds the sidebar with
+ *
+ *     qBound( 100, Calamares::defaultFontHeight() * 12, w < windowPreferredWidth ? 100 : 190 )
+ *
+ * and setDimension() turns that into setFixedWidth(). windowPreferredWidth is 1024 and
+ * branding.desc asks for a 1024px window, so the ceiling is 190 and the font-derived middle term
+ * is above it on any normal font: the sidebar is 190px and there is NO branding key, config key
+ * or QML property that reaches the number. It is a literal in the window's constructor.
+ *
+ * So it is set from here, in the same walk and by the same filename that retranslateWindowPanels()
+ * below already uses, for the same reason: this panel is nobody's module, and this is the module
+ * that is first in the sequence. The alternative was a portage user patch on app-admin/calamares,
+ * which is one number in a diff and three consequences — calamares rebuilt from source on every
+ * run so a cached binpkg cannot answer in its place (portage judges a binpkg by the ebuild, the
+ * CPV and the USE flags, and a user patch is none of the three), a patch to refresh on every
+ * calamares bump, and an image build that dies on a failed eapply over a sidebar's width.
+ *
+ * THE FAILURE MODE IS THE STATUS QUO, AND IT IS LOGGED. If a future Calamares stops building that
+ * panel from that file, nothing is found, the warning below says so, and the rail is 190px with
+ * elided labels again — which is exactly where this started.
+ *
+ * @returns true if a sidebar panel was found (and is now @c kSidebarWidth wide).
+ */
+static bool
+widenSidebar()
+{
+    const auto windows = QApplication::topLevelWidgets();
+    for ( const QWidget* top : windows )
+    {
+        const auto panels = top->findChildren< QQuickWidget* >();
+        for ( QQuickWidget* panel : panels )
+        {
+            if ( panel->source().fileName() == QLatin1String( "calamares-sidebar.qml" ) )
+            {
+                // setFixedWidth, not resize: the window's layout owns this widget and would
+                // put a resized one straight back. The panel's resize mode is
+                // SizeRootObjectToView, so the QML follows without being told.
+                panel->setFixedWidth( kSidebarWidth );
+                return true;
+            }
+        }
+    }
+    return false;
+}
 
 /** @brief Re-say the words in the main window's own QML panels.
  *
@@ -116,6 +178,28 @@ LanguageViewStep::LanguageViewStep( QObject* parent )
     // calls the body once immediately) there are no top-level widgets and no view steps yet.
     CALAMARES_RETRANSLATE( if ( m_widget && m_widget->engine() ) { m_widget->engine()->retranslate(); }
                            retranslateWindowPanels(); );
+
+    // AND THE WIDTH OF THE PANEL THOSE WORDS GO IN (plan/31 §2). CalamaresApplication::initView()
+    // constructs the window and only then schedules loadModules(), so the sidebar widget exists
+    // by the time this view step is built and the direct call below is the one that normally
+    // lands. The single-shot is for the ordering being different than it reads — it costs one
+    // queued call on a startup that already queues loadModules itself, and it is the difference
+    // between a rail that is 224px wide and a rail nobody can explain.
+    if ( !widenSidebar() )
+    {
+        QTimer::singleShot( 0,
+                            qApp,
+                            []()
+                            {
+                                if ( !widenSidebar() )
+                                {
+                                    cWarning() << "language: no calamares-sidebar.qml panel in "
+                                                  "the window, so the step rail keeps the 190px "
+                                                  "Calamares gives it and long step names in "
+                                                  "some languages will be cut off.";
+                                }
+                            } );
+    }
 }
 
 LanguageViewStep::~LanguageViewStep()

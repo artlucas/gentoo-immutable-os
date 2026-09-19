@@ -593,10 +593,26 @@ Item {
                 columnSpacing: ds.space4
                 rowSpacing: ds.space4
 
+                // EVERY CELL SITS AT ITS OWN HEIGHT, TOPS LEVEL, and the two lines below each
+                // cell are what put the AM/PM select a label lower than the fields beside it
+                // (plan/31 §1). Layout.fillHeight DEFAULTS TO TRUE for a layout item — Field and
+                // Picker are both ColumnLayouts — so the short cell in a row is stretched to the
+                // tall cell's height, and a ColumnLayout handed more height than its children
+                // asked for spreads the surplus BETWEEN them. A Field is label / box / hint and
+                // the Picker is label / box, so the Picker was the short one: it kept its 8px
+                // between label and box in the file and drew 20 on the screen, which is a label
+                // 8px low over a box 20px low. Nothing about that is visible in the QML.
+                //
+                // Stated on all three and not only on the Picker: two Fields whose hints wrap to
+                // a different number of lines have the same disagreement waiting in them, and
+                // today's two hints wrapping to two lines each is a coincidence, not a layout.
+
                 Field {
                     id: dateField
 
                     Layout.fillWidth: true
+                    Layout.fillHeight: false
+                    Layout.alignment: Qt.AlignTop
                     ds: root.ds
                     mono: true
                     label: location.setTimeDateLabel
@@ -608,6 +624,8 @@ Item {
                     id: timeField
 
                     Layout.fillWidth: true
+                    Layout.fillHeight: false
+                    Layout.alignment: Qt.AlignTop
                     ds: root.ds
                     mono: true
                     label: location.setTimeTimeLabel
@@ -630,6 +648,8 @@ Item {
 
                     Layout.preferredWidth: 1
                     Layout.fillWidth: true
+                    Layout.fillHeight: false
+                    Layout.alignment: Qt.AlignTop
                     visible: location.twelveHour
                     ds: root.ds
                     label: location.setTimeMeridiemLabel

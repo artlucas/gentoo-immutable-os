@@ -254,30 +254,18 @@ Item {
                             anchors.rightMargin: ds.space5 - 2
                             spacing: ds.space3 + 2
 
-                            // The status mark. A tick when the check passed; otherwise the
-                            // tone says whether it is a blocker or a note, which is the
-                            // distinction the old failures-only box drew in colour alone.
-                            Rectangle {
-                                Layout.alignment: Qt.AlignVCenter
-                                implicitWidth: 22
-                                implicitHeight: 22
-                                radius: width / 2
-                                color: row.satisfied
-                                    ? ds.statusSuccessBg
-                                    : (row.mandatory ? ds.statusDangerBg : ds.statusWarningBg)
-
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: row.satisfied ? "✓" : "!"
-                                    color: row.satisfied
-                                        ? ds.statusSuccess
-                                        : (row.mandatory ? ds.statusDanger : ds.statusWarning)
-                                    font.family: ds.fontSans
-                                    font.pixelSize: ds.textXs
-                                    font.weight: ds.weightBold
-                                }
-                            }
-
+                            // NO STATUS MARK ON THE ROW (plan/31 §4). There was a 22px chip
+                            // here, a tick or an exclamation in one of three tones, and it made
+                            // sense while this list was every check the installer runs. Since
+                            // plan/30 the list is only what is WRONG, so the chip was an
+                            // exclamation on every row, in a tone the badge at the other end of
+                            // the same row states in words — and it was the same chip, at the
+                            // same size, that the verdict below wears. Six copies of a mark is
+                            // not an emphasis; it is what makes the one line that decides
+                            // whether this machine can be installed look like a seventh row.
+                            //
+                            // What still says which is which: the badge's tone and its word,
+                            // Required or Optional.
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 spacing: 2
@@ -353,21 +341,20 @@ Item {
             visible: greeting.checked
             spacing: ds.space1
 
-            // THE VERDICT WEARS THE SAME MARK ITS EVIDENCE DOES. Every row in the list above
-            // carries a 22px status chip, and the sentence that concludes them carried none — so
-            // the one line on this page that says whether the install can happen at all was the
-            // only status on it drawn as plain text. It is the same chip, at the same size, in
-            // the same two tones: the success tint and a tick when the machine passes, the
-            // danger tint and an exclamation when it does not.
+            // THE ONE MARK ON THE PAGE, and it is on the line that means it. The rows above
+            // carried a 22px chip of their own until plan/31 §4 took it off them: a list that
+            // holds only failures says "!" on every row, in a tone its badge already spells out,
+            // and a verdict sharing that mark with six rows reads as a seventh. This is the same
+            // chip those rows had, in the same two tones — the success tint and a tick when the
+            // machine passes, the danger tint and an exclamation when it does not.
             //
             // BOTH VERDICTS, not just the good one. A tick that appears on success and leaves
-            // nothing behind on failure makes the failure case read as "not checked yet" — which
-            // is exactly the state the spinner above means, and the one this line replaces.
+            // nothing behind on failure makes the failure case read as "not checked yet".
             //
-            // The tick is a glyph and not a Canvas, unlike Done.qml's: at 22px this is the row
-            // chip, and the row chip has set its mark in the sans face since the page was
-            // written. Done.qml draws its at 34px inside a 72px disc, where a font's tick is a
-            // different shape at a size where the difference shows.
+            // The tick is a glyph and not a Canvas, unlike Done.qml's: at 22px it is the chip
+            // this page has drawn since it was written, and the sans face's tick is the right
+            // shape at that size. Done.qml draws its at 34px inside a 72px disc, where a font's
+            // tick is a different shape at a size where the difference shows.
             RowLayout {
                 Layout.fillWidth: true
                 spacing: ds.space3 - 2

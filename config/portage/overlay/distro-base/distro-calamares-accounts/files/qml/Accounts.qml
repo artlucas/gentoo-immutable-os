@@ -252,6 +252,27 @@ Item {
                             QQC2.ButtonGroup.group: modeGroup
                             onToggled: if (checked) { accounts.mode = choice.modelData.mode }
 
+                            // THE MODE THE PAGE IS ALREADY IN, SHOWN (plan/31 §3).
+                            // AccountsConfig::setConfigurationMap() has selected Local since
+                            // plan/26 §2 — it is what isNextEnabled() answers from and what the
+                            // form behind Next belongs to — but the CARDS never read it, because
+                            // the group above is deliberately the UI's own source of truth and a
+                            // group starts with nothing checked. So the page opened on a mode
+                            // nothing on the screen named, with Next lit and no reason given,
+                            // which is a worse answer than either half on its own.
+                            //
+                            // IMPERATIVE, AND ONCE. A binding on `checked` is broken by the
+                            // first click for the reason written over the group; this runs when
+                            // the delegate is built, before anybody can click, and after that
+                            // the group owns the state exactly as before. Nothing writes `mode`
+                            // here — it already says Local, and onToggled above is still the
+                            // only path from the cards into C++.
+                            Component.onCompleted: {
+                                if (choice.modelData.mode === accounts.mode) {
+                                    choice.checked = true;
+                                }
+                            }
+
                             HoverHandler {
                                 id: choiceHover
                                 cursorShape: Qt.PointingHandCursor

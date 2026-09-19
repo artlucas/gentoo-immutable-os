@@ -555,7 +555,9 @@ done
 # THE CHOOSER OPENS ANSWERED. Local is pre-selected when the profile offers it, which turns the
 # first screen from a question into a confirmation for the machines that outnumber all the
 # others; a profile offering no local mode keeps plan/21's nothing-selected rule, because there
-# is nothing that can honestly be pre-selected.
+# is nothing that can honestly be pre-selected. This is the C++ half, and it was the only half
+# until plan/31 §3: the CARDS did not read it, so the page opened in a mode the screen did not
+# name. Section 6w has the other half.
 assert_true "setConfigurationMap pre-selects Local when it is offered" \
     bash -c "sed -n '/^AccountsConfig::setConfigurationMap/,/^}/p' '$OVL_ACCOUNTS/files/AccountsConfig.cpp' |
              grep -q 'm_mode = Local'"
@@ -2282,15 +2284,17 @@ assert_eq "" "$SIZE_LOOP_OFFENDERS" \
 #
 # Each of these is a thing that looked right in a screenshot and was wrong in front of somebody.
 
-# 1. THE VERDICT WEARS A STATUS MARK. Every row in the greeting page's list carries a 22px chip;
-# the sentence that concludes them carried none, so the one line that says whether this machine
-# can be installed at all was the only status on the page set as plain text. Both tones, not just
-# the good one: a tick that appears on success and leaves nothing behind on failure makes the
-# failure read as "not checked yet", which is the state the spinner above it already means.
+# 1. THE VERDICT WEARS A STATUS MARK. The one line that says whether this machine can be
+# installed at all was the only status on the page set as plain text, while every row above it
+# carried a 22px chip. Both tones, not just the good one: a tick that appears on success and
+# leaves nothing behind on failure makes the failure read as "not checked yet", which is the
+# state the spinner above it already means. (The ROWS have since lost their chip — plan/31 §4,
+# section 6w below — which leaves this one the only mark on the page and does not change why it
+# is there.)
 GREETING_QML="$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-greeting/files/qml/Greeting.qml"
-assert_true "the greeting verdict carries the same status chip its evidence rows do" \
+assert_true "the greeting verdict carries a status chip" \
     grep -qE 'color: checksSatisfied\.satisfied \? ds\.statusSuccessBg : ds\.statusDangerBg' "$GREETING_QML"
-assert_true "...a tick when the machine passes, and a mark of its own when it does not" \
+assert_true "...a tick when the machine passes, and an exclamation when it does not" \
     grep -qE 'text: checksSatisfied\.satisfied \? "✓" : "!"' "$GREETING_QML"
 # The chip reads the MODEL's verdict, through the same object the recheck line already uses. Two
 # answers to one question is how a page comes to disagree with the Next button beside it —
@@ -2709,6 +2713,96 @@ assert_false "...with no scroller of its own left inside it" \
 # is a dead patch in the middle of it.
 assert_true "...and the view it holds is not interactive" \
     grep -qE '^ +interactive: false$' "$REVIEW_QML"
+
+# ---- 6w. the sidebar that truncates, and three defaults (plan/31) ---------------------------
+#
+# Four reports off plan/30's second build. Three are one line each in a QML file; the fourth is a
+# number Calamares does not let anybody set.
+
+# 1. EVERY CELL OF THE SET-TIME GRID SITS AT ITS OWN HEIGHT (plan/31 §1). Layout.fillHeight
+# defaults to TRUE for a layout item, and Field and Picker are both ColumnLayouts — so the short
+# cell in a row was stretched to the tall cell's height and spread the surplus between its own
+# children. That is why the AM/PM label sat 8px low over a box 20px low: not one offset, two.
+# All three cells, not just the Picker: two Fields whose hints wrap to a different number of
+# lines have the same disagreement waiting in them.
+assert_eq "3" \
+    "$(tr '\n' ' ' < "$LOCATION_QML" \
+        | grep -oE 'Layout\.fillHeight: false +Layout\.alignment: Qt\.AlignTop' | wc -l)" \
+    "all three cells of the set-time grid are pinned to the top of their row"
+# Top-aligning only lines the LABELS up. What lines the boxes up is that a Field and a Picker put
+# the same gap under the label and the same height under that — so these four lines are the other
+# half of the fix, and changing one of them without the other is a dialog that is aligned at the
+# top and ragged in the middle.
+assert_true "a Field's label and box are ds.space2 apart, over a controlHeightMd box" \
+    bash -c "grep -qE '^ +spacing: field\.ds\.space2$' '$FIELD_QML' &&
+             grep -qE '^ +implicitHeight: field\.ds\.controlHeightMd$' '$FIELD_QML'"
+assert_true "...and the Picker beside it says the same two things" \
+    bash -c "grep -qE '^ +spacing: picker\.ds\.space2$' '$LOCATION_QML' &&
+             grep -qE '^ +implicitHeight: picker\.ds\.controlHeightMd$' '$LOCATION_QML'"
+
+# 2. THE STEP RAIL IS 224PX, AND CALAMARES WOULD MAKE IT 190 (plan/31 §2). CalamaresWindow.cpp
+# builds the sidebar with qBound( 100, defaultFontHeight() * 12, w < windowPreferredWidth ? 100
+# : 190 ) and setDimension() turns that into setFixedWidth(), so 190 is a ceiling no branding
+# key, config key or QML property can reach. At 190 the label has 111px and four of this
+# installer's step names do not fit in it: Добро Пожаловать (130px in IBM Plex Sans 14 semibold),
+# Zusammenfassung (123), Местоположение (117) and アプリケーション (112, eight full-width glyphs).
+assert_true "the language module states the rail's width as a measured constant" \
+    grep -qE '^static constexpr int kSidebarWidth = 224;$' "$LANG_SRC/LanguageViewStep.cpp"
+assert_true "...and sets it on the panel the window built from calamares-sidebar.qml" \
+    bash -c "sed -n '/^widenSidebar()/,/^}/p' '$LANG_SRC/LanguageViewStep.cpp' |
+             grep -q 'calamares-sidebar.qml' &&
+             sed -n '/^widenSidebar()/,/^}/p' '$LANG_SRC/LanguageViewStep.cpp' |
+             grep -q 'setFixedWidth( kSidebarWidth )'"
+# A rail that is too narrow looks like a rail somebody chose, so the one thing this must not do
+# is fail quietly: if the panel is not there, the log says which words will be cut off and why.
+assert_true "...and says so in the log if that panel is not there to widen" \
+    grep -q 'the step rail keeps the 190px' "$LANG_SRC/LanguageViewStep.cpp"
+# THE ARITHMETIC THE 224 CAME FROM, PINNED WHERE IT LIVES. 224 less the panel's two 16px margins,
+# the row's two 10px margins, the 16px step mark and the 11px gap after it is 145px for the label
+# — 15px past the widest one. Every number in that sentence is in the sidebar's QML, and moving
+# any of them without redoing the sum is how the labels get cut off again with the file still
+# looking correct.
+assert_true "the rail's own margins are what the 224 was measured against" \
+    bash -c "grep -qE '^ +anchors\.leftMargin: ds\.space4;$' '$SIDEBAR_QML' &&
+             grep -qE '^ +anchors\.rightMargin: ds\.space4;$' '$SIDEBAR_QML'"
+assert_true "...as are the step row's" \
+    bash -c "grep -qE '^ +anchors\.leftMargin: ds\.space2 \+ 2;$' '$SIDEBAR_QML' &&
+             grep -qE '^ +anchors\.rightMargin: ds\.space2 \+ 2;$' '$SIDEBAR_QML' &&
+             grep -qE '^ +spacing: ds\.space3 - 1;$' '$SIDEBAR_QML'"
+assert_true "...and the mark the label makes room for is still 16px" \
+    bash -c "sed -n '/The mark: a ring for the step/,/^ *}$/p' '$SIDEBAR_QML' |
+             grep -qE 'implicitWidth: 16;'"
+# The elide stays, as the net under all of that: a language nobody measured is one translation
+# away, and a cut-off word is still better than a word drawn over the page.
+assert_true "the step label still elides rather than overrunning the rail" \
+    bash -c "sed -n '/LEFT-ALIGNED, which is the one change/,/^ *}$/p' '$SIDEBAR_QML' |
+             grep -q 'elide: Text.ElideRight;'"
+
+# 3. THE CHOOSER SHOWS THE MODE IT IS ALREADY IN (plan/31 §3). AccountsConfig has selected Local
+# since plan/26 §2 — 6a asserts it — but the cards never read it, because the ButtonGroup above
+# them is deliberately the UI's own source of truth and a group starts with nothing checked. The
+# page therefore opened on a mode nothing on the screen named, with Next lit and no reason given.
+ACCOUNTS_QML="$OVL_ACCOUNTS/files/qml/Accounts.qml"
+assert_true "the card for the configured mode checks itself when it is built" \
+    bash -c "tr '\n' ' ' < '$ACCOUNTS_QML' |
+             grep -qE 'Component\.onCompleted: \{ +if \(choice\.modelData\.mode === accounts\.mode\) \{ +choice\.checked = true;'"
+# IMPERATIVE, AND ONCE. A binding on `checked` is broken by the first click — the reason the
+# group owns the state at all — so this must not become one.
+assert_false "...and does not bind checked, which the first click would break" \
+    grep -qE '^ +checked: ' "$ACCOUNTS_QML"
+
+# 4. ONE EXCLAMATION, ON THE LINE THAT MEANS IT (plan/31 §4). Since plan/30 the greeting panel
+# lists only what is wrong, so the row chip was an exclamation on every row, in a tone the badge
+# at the other end of the same row already spells out in words — and it was the same 22px chip,
+# at the same size, that the verdict wears. Six copies of a mark is not an emphasis.
+assert_false "the greeting's rows carry no status chip of their own" \
+    grep -qE 'text: row\.satisfied \? "✓" : "!"' "$GREETING_QML"
+assert_eq "1" "$(grep -c '"✓" : "!"' "$GREETING_QML")" \
+    "...so the page has exactly one of them left, and it is the verdict's"
+# What still says which is which, now that the chip does not: the badge, in the same two tones.
+assert_true "...and the row still says Required or Optional in the tone it means" \
+    bash -c "grep -q 'greeting.requiredLabel' '$GREETING_QML' &&
+             grep -q 'greeting.optionalLabel' '$GREETING_QML'"
 
 # ---- 7. YAML is YAML ------------------------------------------------------------------------
 # Calamares parses these with yaml-cpp and reports a parse error as a startup failure, so a
