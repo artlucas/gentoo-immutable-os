@@ -41,15 +41,19 @@ two boxes happen to line up.
 
     qBound( 100, Calamares::defaultFontHeight() * 12, w < windowPreferredWidth ? 100 : 190 )
 
-and `setDimension()` turns that into `w->setFixedWidth( desiredWidth )`. `windowPreferredWidth` is
-1024 (`utils/Gui.h:97`) and branding.desc asks for a 1024px window, so the upper bound is 190 and
-the font-derived middle term is above it on any normal font. **The width is not reachable from
-branding, from the QML, or from any config key**: it is a literal in the window's constructor.
+and `setDimension()` turns that into `w->setFixedWidth( desiredWidth )`. **The width is not
+reachable from branding, from the QML, or from any config key**: it is a literal in the window's
+constructor.
 
-Measured against that: the panel's 16px margins, the row's 10px margins, the 16px step mark and
-the 11px gap after it leave **111px** for the label. The widest label this installer can show is
-`Добро Пожаловать` (ru, Welcome) at **130px** in IBM Plex Sans 14px — measured from the shipped
-TTF, taking the semibold width since the current step is semibold. Four labels are over budget:
+190 is only the ceiling, and it is not what this medium gets. `defaultFontHeight()` is
+`QFontMetrics( f ).height()` for the default font at the default point size (`Gui.cpp:160`), which
+here is **14** — so the middle term is 168 and the rail is **168px**, measured off plan/30's last
+screenshot: the panel runs x=128..294 with its 1px seam at 295.
+
+What that leaves for a label: 168 less the panel's two 16px margins, the row's two 10px margins,
+the 16px step mark and the 11px gap after it is **87px**. Against the ninety labels this installer
+can show — ten steps in nine languages — **eight do not fit**, measured from the shipped IBM Plex
+TTF at 14px, taking the semibold width because the step you are on is semibold:
 
 | label | language | width |
 |---|---|---|
@@ -57,8 +61,12 @@ TTF, taking the semibold width since the current step is semibold. Four labels a
 | Zusammenfassung | de | 123 |
 | Местоположение | ru | 117 |
 | アプリケーション | ja | 112 (8 full-width glyphs at 14px) |
+| Учётные записи | ru | 109 |
+| Primeros pasos | es | 100 |
+| Anwendungen | de | 93 |
+| Приложения | ru | 87 |
 
-So the report is exactly right, and it is not a rounding: ru Welcome needs 19px more than it has.
+So the report is exactly right, and it is not a rounding: ru Welcome needs 43px more than it has.
 
 **The width is set from our own module rather than by patching Calamares.** There is precedent
 in the file that gets the change: `LanguageViewStep.cpp`'s `retranslateWindowPanels()` already
@@ -79,12 +87,16 @@ with one `QTimer::singleShot(0, …)` retry and a `cWarning` if the panel is sti
 one thing this must not do is fail silently, because a sidebar that is too narrow looks like a
 sidebar somebody chose.
 
-**224px**, which leaves 145px for the label — 15px past the widest one, for the difference
-between FreeType's advance widths and Qt's, and for the next translation. The page loses the same
-30px: 1024 − 224 = 800 for the page, less the 44px margins, is 712 of content against `Theme.qml`'s
-`contentMaxWidth` of 800, so no page changes shape. What that does to the pages plan/30 took the
-scrollbars off — they wrap taller in a narrower column — is a question for the medium, not the
-checkout.
+**224px**, which leaves 145px for the label — 15px past the widest of the ninety, for the
+difference between FreeType's advance widths and Qt's, and for the next translation. It is above
+the 190 ceiling as well as above the 168, which is the point: a number that only cleared today's
+font would go back to eliding on a medium whose default font is a point smaller.
+
+The page pays the 56px. 1024 − 224 = 800 for the page, less the 44px margins, is 712 of content
+against `Theme.qml`'s `contentMaxWidth` of 800, so nothing is capped and every page simply gets
+narrower. What that does to the pages plan/30 took the scrollbars off — a narrower column wraps
+taller — is a question for the medium and not for the checkout, and it is the one thing in this
+plan that could come back with a second round of work.
 
 ## §3 The chooser's selection lived in two places and only one of them knew
 

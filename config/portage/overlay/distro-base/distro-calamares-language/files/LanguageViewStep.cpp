@@ -20,16 +20,22 @@
 
 CALAMARES_PLUGIN_FACTORY_DEFINITION( LanguageViewStepFactory, registerPlugin< LanguageViewStep >(); )
 
-/** @brief How wide the step rail is, in pixels, instead of the 190 Calamares would give it.
+/** @brief How wide the step rail is, in pixels, instead of the 168 Calamares gives it.
  *
  * MEASURED, NOT PREFERRED (plan/31 §2). The panel's own margins take 32, the row's take 20, and
- * the step mark and the gap after it take 27, so a 224px rail leaves 145 for the label. The
- * widest label this installer can produce is the Russian "Welcome" at 130px in IBM Plex Sans 14
- * — semibold, because the step you are on is semibold — with the German "Zusammenfassung" at 123
- * and the Japanese "Applications" at 112 behind it. At Calamares' 190 the budget is 111 and all
- * three are cut off mid-word.
+ * the step mark and the gap after it take 27, so a 224px rail leaves 145 for the label. Against
+ * the ninety labels this installer can show — ten steps in nine languages — the widest is the
+ * Russian "Welcome" at 130px in IBM Plex Sans 14, semibold because the step you are on is
+ * semibold. On the rail Calamares builds, the budget is 87 and EIGHT of the ninety are cut off
+ * mid-word: that one at 130, "Zusammenfassung" at 123, "Местоположение" at 117, the Japanese
+ * "Applications" at 112, "Учётные записи" at 109, "Primeros pasos" at 100, "Anwendungen" at 93
+ * and "Приложения" at 87.
  *
- * The page pays the 30px: 1024 - 224 = 800, less the 44px page margins, is 712 of content
+ * 224 is above the 190 CEILING as well as above the 168 this medium gets, and that is deliberate:
+ * a width that only cleared today's font would elide again on a medium whose default font is a
+ * point smaller.
+ *
+ * The page pays the 56px: 1024 - 224 = 800, less the 44px page margins, is 712 of content
  * against Theme.qml's contentMaxWidth of 800. No page is capped by this; they simply wrap.
  */
 static constexpr int kSidebarWidth = 224;
@@ -40,10 +46,10 @@ static constexpr int kSidebarWidth = 224;
  *
  *     qBound( 100, Calamares::defaultFontHeight() * 12, w < windowPreferredWidth ? 100 : 190 )
  *
- * and setDimension() turns that into setFixedWidth(). windowPreferredWidth is 1024 and
- * branding.desc asks for a 1024px window, so the ceiling is 190 and the font-derived middle term
- * is above it on any normal font: the sidebar is 190px and there is NO branding key, config key
- * or QML property that reaches the number. It is a literal in the window's constructor.
+ * and setDimension() turns that into setFixedWidth(). There is NO branding key, config key or
+ * QML property that reaches that number — it is a literal in the window's constructor — and 190
+ * is only its ceiling. defaultFontHeight() is QFontMetrics( f ).height() for the default font at
+ * the default point size, which on this medium is 14, so what the rail actually gets is 168.
  *
  * So it is set from here, in the same walk and by the same filename that retranslateWindowPanels()
  * below already uses, for the same reason: this panel is nobody's module, and this is the module
@@ -194,7 +200,7 @@ LanguageViewStep::LanguageViewStep( QObject* parent )
                                 if ( !widenSidebar() )
                                 {
                                     cWarning() << "language: no calamares-sidebar.qml panel in "
-                                                  "the window, so the step rail keeps the 190px "
+                                                  "the window, so the step rail keeps the width "
                                                   "Calamares gives it and long step names in "
                                                   "some languages will be cut off.";
                                 }

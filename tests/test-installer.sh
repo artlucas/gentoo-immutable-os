@@ -2740,12 +2740,15 @@ assert_true "...and the Picker beside it says the same two things" \
     bash -c "grep -qE '^ +spacing: picker\.ds\.space2$' '$LOCATION_QML' &&
              grep -qE '^ +implicitHeight: picker\.ds\.controlHeightMd$' '$LOCATION_QML'"
 
-# 2. THE STEP RAIL IS 224PX, AND CALAMARES WOULD MAKE IT 190 (plan/31 §2). CalamaresWindow.cpp
-# builds the sidebar with qBound( 100, defaultFontHeight() * 12, w < windowPreferredWidth ? 100
-# : 190 ) and setDimension() turns that into setFixedWidth(), so 190 is a ceiling no branding
-# key, config key or QML property can reach. At 190 the label has 111px and four of this
-# installer's step names do not fit in it: Добро Пожаловать (130px in IBM Plex Sans 14 semibold),
-# Zusammenfassung (123), Местоположение (117) and アプリケーション (112, eight full-width glyphs).
+# 2. THE STEP RAIL IS 224PX, AND CALAMARES GIVES IT 168 (plan/31 §2). CalamaresWindow.cpp builds
+# the sidebar with qBound( 100, defaultFontHeight() * 12, w < windowPreferredWidth ? 100 : 190 )
+# and setDimension() turns that into setFixedWidth(), so the number is a literal no branding key,
+# config key or QML property can reach — and 190 is only its ceiling: the default font's height
+# on this medium is 14, so the rail gets 168 and the label gets 87 of it. EIGHT of the ninety
+# labels this installer can show (ten steps, nine languages) are wider than that, measured from
+# the shipped IBM Plex TTF at 14px semibold: Добро Пожаловать (130), Zusammenfassung (123),
+# Местоположение (117), アプリケーション (112), Учётные записи (109), Primeros pasos (100),
+# Anwendungen (93) and Приложения (87). At 224 the budget is 145 and none of them are.
 assert_true "the language module states the rail's width as a measured constant" \
     grep -qE '^static constexpr int kSidebarWidth = 224;$' "$LANG_SRC/LanguageViewStep.cpp"
 assert_true "...and sets it on the panel the window built from calamares-sidebar.qml" \
@@ -2756,10 +2759,10 @@ assert_true "...and sets it on the panel the window built from calamares-sidebar
 # A rail that is too narrow looks like a rail somebody chose, so the one thing this must not do
 # is fail quietly: if the panel is not there, the log says which words will be cut off and why.
 assert_true "...and says so in the log if that panel is not there to widen" \
-    grep -q 'the step rail keeps the 190px' "$LANG_SRC/LanguageViewStep.cpp"
+    grep -q 'the step rail keeps the width' "$LANG_SRC/LanguageViewStep.cpp"
 # THE ARITHMETIC THE 224 CAME FROM, PINNED WHERE IT LIVES. 224 less the panel's two 16px margins,
 # the row's two 10px margins, the 16px step mark and the 11px gap after it is 145px for the label
-# — 15px past the widest one. Every number in that sentence is in the sidebar's QML, and moving
+# — 15px past the widest of the ninety. Every number in that sentence is in the sidebar's QML, and moving
 # any of them without redoing the sum is how the labels get cut off again with the file still
 # looking correct.
 assert_true "the rail's own margins are what the 224 was measured against" \
