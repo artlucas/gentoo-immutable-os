@@ -43,6 +43,7 @@ eval "$( BUILD_PROFILE_OVERRIDE=installer; load_config
                     PAYLOAD_ROOT_EROFS PAYLOAD_UKI PAYLOAD_VAR_TAR VERSION \
                     ROOT_SLOT_SIZE_MIB ESP_SIZE_MIB MIN_INSTALL_DISK_GB \
                     DISTRO_ID DISTRO_NAME LIVE_USER HOME_URL INTERNET_CHECK_URL \
+                    NTP_SERVERS \
            | sed 's/^declare -[-x]* /I_/; s/^I_/declare -g I_/' )"
 
 assert_eq "live"    "$I_PROFILE_ROLE"       "the installer profile is a LIVE profile"
@@ -2292,6 +2293,122 @@ for pair in disk:rescan apps:recheckInternet; do
     assert_true "...on the shared Button, so both pages get the same one" \
         grep -qE '^ +label: '"$m"'\.checkAgainLabel$' "$q"
 done
+
+# ---- 6r. the clock the page can now set (plan/29) ---------------------------------------------
+#
+# The location page drew a clock and could not correct it. Everything below is one of the three
+# ends that had to exist before the checkbox was allowed to: the servers, the page, and the
+# installed system.
+
+# 1. THE SERVERS, AND THE KEY THEY ARE WRITTEN UNDER. FallbackNTP is the whole design: DHCP's
+# servers and the domain controller's NTP= both outrank it, which is what lets a build-time
+# default coexist with a network that has its own opinion.
+NTP_DROPIN_SRC="$REPO_ROOT/config/rootfs/etc/systemd/timesyncd.conf.d/05-distro-ntp.conf.in"
+assert_file "$NTP_DROPIN_SRC" "the image ships a timesyncd drop-in template"
+assert_true "...which sets FallbackNTP from build.conf" \
+    grep -qx 'FallbackNTP=@NTP_SERVERS@' "$NTP_DROPIN_SRC"
+# NTP= would outrank both DHCP and `<id>-domain join`'s 10-domain.conf, on every machine this
+# image ever becomes, and the symptom is a domain login failing on clock skew months later.
+assert_false "...and never NTP=, which belongs to the domain controller" \
+    grep -qE '^NTP=' "$NTP_DROPIN_SRC"
+# The 05- prefix is what keeps that true: drop-ins are read in lexical order and a later file wins
+# the keys it sets, so this one has to sort BEFORE 10-domain.conf.
+assert_true "...and sorts before the domain drop-in it must not outrank" \
+    bash -c '[[ "05-distro-ntp.conf" < "10-domain.conf" ]]'
+assert_true "the domain client still writes the drop-in this one defers to" \
+    grep -q '10-domain.conf' "$REPO_ROOT/config/rootfs/usr/bin/distro-domain.in"
+
+# EMPTY IS NOT THE SAME AS UNSET. `FallbackNTP=` with nothing after it CLEARS systemd's compiled-in
+# list rather than inheriting it, so an unset knob must delete the file instead of rendering it.
+assert_true "an empty NTP_SERVERS deletes the drop-in rather than emptying it" \
+    grep -qE 'rm -f -- "\$NTP_DROPIN"' "$REPO_ROOT/scripts/stages/40-configure.sh"
+assert_true "...and build.conf's default for the knob is empty, not a list" \
+    grep -qE '^ +: "\$\{NTP_SERVERS=\}"$' "$REPO_ROOT/scripts/lib/common.sh"
+# A comma-separated list is the mistake with no symptom: timesyncd reads the whole string as one
+# host name, fails to resolve it, and the clock is simply wrong.
+assert_false "a comma-separated NTP_SERVERS is refused" \
+    bash -c 'set -e
+             export REPO="'"$REPO_ROOT"'" OUT="'"$TMP"'/o" STAGE_NAME=t
+             source "'"$REPO_ROOT"'/scripts/lib/common.sh"
+             load_config
+             NTP_SERVERS="a.example,b.example" validate_config' 2>/dev/null
+
+# 2. THE PAGE. The box, the button, and the line that says whether either worked.
+LOCATION_QML="$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-location/files/qml/Location.qml"
+LOCATION_H="$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-location/files/LocationConfig.h"
+LOCATION_CPP="$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-location/files/LocationConfig.cpp"
+assert_true "the location page opens with network time ticked" \
+    grep -qE '^networkTime: true$' "$CAL/modules/location.conf"
+assert_true "...and the packaged fallback agrees with the image's own preset" \
+    grep -qE '^networkTime: true$' \
+        "$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-location/files/location.conf"
+assert_true "the page draws a network-time checkbox" \
+    grep -qE 'onToggled: location\.networkTime = ntpBox\.checked' "$LOCATION_QML"
+assert_true "...a Set-date-and-time button, disabled while the network owns the clock" \
+    bash -c "grep -qE 'label: location\.setTimeLabel' '$LOCATION_QML' && grep -qE 'enabled: location\.canSetTime' '$LOCATION_QML'"
+assert_true "...and a status line that reports what actually happened" \
+    grep -qE 'text: location\.syncStatus' "$LOCATION_QML"
+# NO qsTr() ANYWHERE IN IT, the rule every page here follows: the builder's lupdate is built
+# without QML support, so a string in this file would reach no catalogue (plan/27 §1).
+assert_false "...with no string of its own" grep -q 'qsTr("' "$LOCATION_QML"
+
+# CHECKING THE BOX IS THE ACTION, not a note of a preference. It runs timedatectl on this machine
+# and then watches NTPSynchronized — because announcing "set from the network" the instant
+# set-ntp returns is a claim about a server that has not been asked yet.
+assert_true "checking the box enables NTP on the running machine" \
+    grep -qE 'QStringLiteral\( "set-ntp" \)' "$LOCATION_CPP"
+assert_true "...and the page waits for a server to answer before saying it worked" \
+    grep -qE 'QStringLiteral\( "NTPSynchronized" \)' "$LOCATION_CPP"
+assert_true "...applied when the page opens, not only when somebody touches it" \
+    grep -qE 'm_config->applyNetworkTime\(\);' \
+        "$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-location/files/LocationViewStep.cpp"
+# THE TYPED TIME IS READ IN THE CHOSEN ZONE AND WRITTEN IN THE MACHINE'S. `timedatectl set-time`
+# reads its argument in the zone /etc/localtime names, which on this medium is UTC — so handing it
+# the string the user typed would set the clock hours wrong in the way that looks like it worked.
+assert_true "a hand-set time is converted out of the chosen zone before it is written" \
+    grep -qE 'entered\.toLocalTime\(\)\.toString' "$LOCATION_CPP"
+assert_true "...and refused outright while the network owns the clock" \
+    grep -qE 'Turn off automatic time before setting the clock by hand' "$LOCATION_CPP"
+# The two typed fields take ONE format, not the locale's: 03/04/2026 is two different days on two
+# sides of an ocean and the field cannot ask which was meant.
+assert_true "the dialog's fields take one unambiguous format" \
+    bash -c "grep -qE 'kEditDateFormat = \"yyyy-MM-dd\"' '$LOCATION_CPP' && grep -qE 'kEditTimeFormat = \"HH:mm\"' '$LOCATION_CPP'"
+# The dialog is the design system's, not Breeze's. The erase confirmation is the one
+# Kirigami.PromptDialog left in this installer and it is noted rather than defended.
+assert_false "the set-time dialog is not a second unbranded Breeze prompt" \
+    grep -qE '^ +Kirigami\.PromptDialog \{' "$LOCATION_QML"
+assert_true "...but a Popup this page draws itself" \
+    grep -qE '^ +QQC2\.Popup \{' "$LOCATION_QML"
+# Both shared components have to be NAMED by the module's own build file or they never reach the
+# resource — stage 20's fan-out is derived from exactly these lines.
+LOCATION_CML="$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-location/files/CMakeLists.txt"
+for shared in Button Field; do
+    assert_true "the location module compiles in $shared.qml" \
+        grep -qE "^ +qml/$shared\.qml$" "$LOCATION_CML"
+done
+
+# 3. THE INSTALLED SYSTEM, which is what makes this a question rather than a live-session
+# convenience. The published key is OURS and spelled so: upstream's locale module has no notion of
+# network time, so there is no contract here to honour and a name that looked like one would lie.
+assert_true "the page publishes its answer for the exec phase" \
+    grep -qE 'QStringLiteral\( "locationNetworkTime" \)' "$LOCATION_CPP"
+LOCALESETUP="$REPO_ROOT/config/calamares/local-modules/localesetup/main.py"
+assert_true "localesetup reads it" \
+    grep -qE 'globalstorage\.value\("locationNetworkTime"\)' "$LOCALESETUP"
+# ABSENT IS NOT FALSE. A missing key means the page is not in the sequence, and the right answer
+# then is the image's own — which is on, because the vendor preset enables timesyncd.
+assert_true "...and treats an absent key as the image's own default, not as a no" \
+    grep -qE 'wanted = True if value is None else bool\(value\)' "$LOCALESETUP"
+# A MASK, NOT A DISABLE: deleting the .wants symlink is a whiteout that the next `systemctl
+# preset-all` undoes, which would quietly switch network time back on.
+assert_true "unticking it masks timesyncd in the target" \
+    grep -qE 'os\.symlink\(os\.devnull, mask\)' "$LOCALESETUP"
+assert_true "...and takes the preset's enablement symlink with it" \
+    grep -qE 'TIMESYNCD_WANT = "/etc/systemd/system/sysinit\.target\.wants/"' "$LOCALESETUP"
+# The unit this is all about has to actually be enabled in the image, or "ticked" means nothing.
+assert_true "the image enables systemd-timesyncd in the first place" \
+    grep -qx 'enable systemd-timesyncd.service' \
+        "$REPO_ROOT/config/rootfs/usr/lib/systemd/system-preset/50-distro.preset.in"
 
 # ---- 7. YAML is YAML ------------------------------------------------------------------------
 # Calamares parses these with yaml-cpp and reports a parse error as a startup failure, so a

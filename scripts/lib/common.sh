@@ -284,6 +284,12 @@ validate_config() {
   # validates, and the default is a site that answers — see build.conf for why this is not
   # HOME_URL.
   : "${INTERNET_CHECK_URL=https://www.gentoo.org}"
+  # The fallback time servers (plan/29). Set-but-possibly-empty, and the EMPTY CASE IS THE
+  # INTERESTING ONE: stage 40 ships no timesyncd drop-in at all when this is blank, so systemd's
+  # own compiled-in fallback stands. Defaulting it to a list here would make a build.conf written
+  # before the knob existed quietly acquire a different set of time servers than the systemd it
+  # ships, which is not what "this file predates the feature" should mean.
+  : "${NTP_SERVERS=}"
   # Managed mode (plan/19). Same ${x=y} shape as every knob above: a build.conf written before
   # the feature existed still has to validate, and both keys are only ever READ by stage 40 and
   # by the client's own template.
@@ -335,6 +341,22 @@ validate_config() {
     || die "build.conf: FLATPAK_PREINSTALL_MODE must be build|firstboot"
   [[ $INSTALLER_PAYLOAD_FLATPAKS =~ ^[01]$ ]] \
     || die "build.conf: INSTALLER_PAYLOAD_FLATPAKS must be 0 or 1 (got: $INSTALLER_PAYLOAD_FLATPAKS)"
+  # NTP_SERVERS (plan/29). Space-separated, because that is the syntax systemd's FallbackNTP=
+  # takes and the drop-in is rendered straight through. A comma-separated list is the mistake
+  # this catches: timesyncd reads "a.example,b.example" as ONE host name, fails to resolve it,
+  # and reports nothing a user would connect to a build.conf line — the clock is simply wrong.
+  [[ -z ${NTP_SERVERS// /} || ! $NTP_SERVERS =~ [,\;] ]] \
+    || die "build.conf: NTP_SERVERS is space-separated, not comma-separated — systemd would read
+  the whole string as one host name (got: $NTP_SERVERS)"
+  local ns
+  # shellcheck disable=SC2086  # deliberate splitting: NTP_SERVERS is a space-separated list
+  for ns in $NTP_SERVERS; do
+    # Host name or IP literal, which is what timesyncd accepts. Deliberately not a resolution
+    # check: a build host with no DNS is normal, and the servers are for the machine this image
+    # becomes rather than for the machine that built it.
+    [[ $ns =~ ^[A-Za-z0-9._:-]+$ ]] \
+      || die "build.conf: NTP_SERVERS entry '$ns' is not a host name or address"
+  done
   # Managed mode (plan/19 §5.1). HTTPS is checked here rather than only in the client because a
   # build that bakes an http:// default produces an image whose every enrolment attempt is
   # refused at runtime, with the reason three layers away from the file that caused it.

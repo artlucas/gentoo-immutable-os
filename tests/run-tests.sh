@@ -36,6 +36,7 @@ source "$REPO_ROOT/scripts/lib/common.sh"
 set +e   # common.sh enables errexit; this runner must keep going after failures
 load_config
 export DISTRO_ID DISTRO_NAME VERSION HOME_URL INTERNET_CHECK_URL UPDATE_URL LIVE_USER FLATPAK_PREINSTALL
+export NTP_SERVERS
 export VERIFY=yes
 export MANAGED_API_BASE MANAGED_PUBRING
 # Dispatched by SHEBANG, not by extension. config/rootfs/usr/bin holds bash programs and, since

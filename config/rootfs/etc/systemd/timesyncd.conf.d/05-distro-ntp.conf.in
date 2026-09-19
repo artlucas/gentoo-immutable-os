@@ -1,0 +1,21 @@
+# The fallback time servers, from build.conf's NTP_SERVERS (plan/29).
+#
+# FallbackNTP, NOT NTP, and the number in this file's name is the other half of the same
+# decision. systemd-timesyncd takes its servers from, in order: what DHCP handed out, then
+# NTP=, then FallbackNTP= — and drop-ins are read in lexical order, so a later file wins a
+# key it sets. `@DISTRO_ID@-domain join` writes 10-domain.conf with NTP=<domain controller>,
+# because Kerberos refuses a ticket from a machine more than five minutes out. This file is
+# 05 so that it is read FIRST and sets only the key nothing else claims: a joined machine
+# uses its DC, a machine on a network with its own time service uses that, and everything
+# else falls back to the list below.
+#
+# SHIPPED ON EVERY PROFILE — the live installer medium and the installed image alike. The
+# installer's location page offers to set the clock from the network before anything has been
+# written to disk; if the medium synced against a different list than the machine it creates,
+# the check the user just watched succeed would say nothing about the machine they end up with.
+#
+# Stage 40 DELETES this file when NTP_SERVERS is empty, rather than rendering an empty
+# FallbackNTP= line: an empty assignment CLEARS systemd's compiled-in default, so "the knob is
+# unset" and "there are no fallback servers" would otherwise be the same image.
+[Time]
+FallbackNTP=@NTP_SERVERS@

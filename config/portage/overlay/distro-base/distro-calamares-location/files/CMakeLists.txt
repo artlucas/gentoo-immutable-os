@@ -86,5 +86,11 @@ qt6_add_resources(${LOCATION_TARGET} "location_qml"
         # config/calamares/qml/Theme.qml is the one copy, and scripts/stages/20-builder-setup.sh
         # stages it here for every module whose CMakeLists names it, which is this line.
         qml/Theme.qml
+        # The design system's button and its labelled input, staged by the same fan-out (plan/29).
+        # The page needs both once it can set the clock: a button opens the dialog, and the date
+        # and time are typed into two Fields — which is also what keeps the dialog's two columns
+        # from moving when a message appears under one of them.
+        qml/Button.qml
+        qml/Field.qml
         qml/Location.qml
 )

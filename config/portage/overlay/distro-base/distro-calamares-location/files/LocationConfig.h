@@ -25,19 +25,36 @@
  * finding that retired the greeting page's vendored widgets: the thing worth copying was already
  * in the library.
  *
- * WHAT THE DESIGN HAND-OFF DRAWS AND THIS PAGE DELIBERATELY DOES NOT. The mockup has four more
- * controls: a Formats picker, a Measurement picker, "set the time automatically over the
- * network", and a 24-hour clock switch. None of them is implemented, and none is forgotten:
+ * WHAT THE DESIGN HAND-OFF DRAWS. The mockup has four more controls than the region and zone
+ * pickers: a Formats picker, a Measurement picker, "set the time automatically over the network",
+ * and a 24-hour clock switch. Two of them are here now and two are still not:
  *
  *   * Formats and Measurement are LC_TIME / LC_NUMERIC / LC_MEASUREMENT, and offering them for a
  *     locale the image did not compile is exactly the bug plan/22 §6 spent a page fixing. The
  *     image carries the nine locales in config/languages.conf and nothing else.
- *   * Automatic time and the 24-hour clock are settings on the INSTALLED system that nothing in
- *     this pipeline writes — no timesyncd drop-in, no Plasma locale config. A switch with no
- *     wiring behind it is worse than no switch: it is a promise the first boot breaks.
+ *   * The 24-hour clock is a Plasma locale setting nothing in this pipeline writes. A switch with
+ *     no wiring behind it is worse than no switch: it is a promise the first boot breaks.
+ *   * Automatic time WAS in that second list, on exactly that argument, until the wiring was
+ *     built (plan/29). It is here now because all three of its ends exist: build.conf's
+ *     NTP_SERVERS renders a FallbackNTP= drop-in that every profile ships, systemd-timesyncd is
+ *     enabled in the vendor preset, and `localesetup` carries the user's answer into the
+ *     installed system — masking timesyncd there when the answer is no, so that the checkbox
+ *     means the same thing on the machine as it did on the page.
  *
- * So the page draws the two questions it can answer and a clock that shows what answering them
- * means. If the plumbing for the others is ever built, the controls belong here.
+ * THE TWO ACTIONS THIS PAGE TAKES ON THE RUNNING MACHINE, and they are the only two on the whole
+ * installer that change the medium rather than describing the target. Calamares runs as root
+ * (the autostart is `pkexec calamares`), so `timedatectl` is available and authorised:
+ *
+ *   * checking the box runs `timedatectl set-ntp true` and then watches NTPSynchronized until it
+ *     says yes, which is the only honest way to report "the clock is set from the network" —
+ *     asking for a sync and announcing success is a claim about a server that may not have
+ *     answered;
+ *   * the Set-date-and-time dialog runs `timedatectl set-time`, which systemd also writes
+ *     through to the RTC, so the machine this medium is about to install onto starts from the
+ *     clock the user just corrected.
+ *
+ * Both are refused by systemd in the other's state — set-time fails while NTP is on — so the
+ * button is disabled while the box is checked rather than left to fail and explain.
  */
 #pragma once
 
@@ -45,6 +62,7 @@
 
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <QVariantMap>
 
 class QTimer;
@@ -72,10 +90,42 @@ class LocationConfig : public QObject
     Q_PROPERTY( QString clockTime READ clockTime NOTIFY tick )
     Q_PROPERTY( QString clockDate READ clockDate NOTIFY tick )
 
+    /*! Whether the clock is set from the network. WRITEABLE from QML, because checking the box
+     *  IS the action: setNetworkTime() runs timedatectl and starts the watch. */
+    Q_PROPERTY( bool networkTime READ networkTime WRITE setNetworkTime NOTIFY networkTimeChanged )
+    /*! "off" | "busy" | "ok" | "failed" | "unavailable" — a string rather than an enum so the QML
+     *  can compare it without a registered metatype, the way every other state on these pages is
+     *  passed. It is what the status line is COLOURED by; syncStatus is what it says. */
+    Q_PROPERTY( QString syncState READ syncState NOTIFY syncChanged )
+    Q_PROPERTY( QString syncStatus READ syncStatus NOTIFY syncChanged )
+    /*! False while the network sets the clock: systemd refuses `timedatectl set-time` outright
+     *  when NTP is on, so the button is disabled rather than left to fail and then explain. */
+    Q_PROPERTY( bool canSetTime READ canSetTime NOTIFY networkTimeChanged )
+    /*! What went wrong in the set-time dialog, or "" — bound to the dialog's message line and
+     *  cleared every time it opens. */
+    Q_PROPERTY( QString setTimeError READ setTimeError NOTIFY setTimeErrorChanged )
+
     Q_PROPERTY( QString pageTitle READ pageTitle NOTIFY retranslated )
     Q_PROPERTY( QString pageLede READ pageLede NOTIFY retranslated )
     Q_PROPERTY( QString regionLabel READ regionLabel NOTIFY retranslated )
     Q_PROPERTY( QString zoneLabel READ zoneLabel NOTIFY retranslated )
+    Q_PROPERTY( QString networkTimeLabel READ networkTimeLabel NOTIFY retranslated )
+    Q_PROPERTY( QString networkTimeHint READ networkTimeHint NOTIFY retranslated )
+    Q_PROPERTY( QString setTimeLabel READ setTimeLabel NOTIFY retranslated )
+    Q_PROPERTY( QString setTimeTitle READ setTimeTitle NOTIFY retranslated )
+    /*! NOTIFY tick, not retranslated: this sentence names the chosen zone, so it has to be
+     *  re-read when the zone moves as well as when the language does — and tick is emitted
+     *  for both, plus once a second, which costs a string nobody is looking at. */
+    Q_PROPERTY( QString setTimeBody READ setTimeBody NOTIFY tick )
+    Q_PROPERTY( QString setTimeDateLabel READ setTimeDateLabel NOTIFY retranslated )
+    Q_PROPERTY( QString setTimeTimeLabel READ setTimeTimeLabel NOTIFY retranslated )
+    /*! The hints under the two fields carry a WORKED EXAMPLE rather than a format string:
+     *  "2026-09-18" tells a reader what to type and "yyyy-MM-dd" tells a programmer. They are
+     *  recomputed on every retranslate, which is also every midnight this page is open. */
+    Q_PROPERTY( QString setTimeDateHint READ setTimeDateHint NOTIFY tick )
+    Q_PROPERTY( QString setTimeTimeHint READ setTimeTimeHint NOTIFY tick )
+    Q_PROPERTY( QString setTimeConfirm READ setTimeConfirm NOTIFY retranslated )
+    Q_PROPERTY( QString setTimeCancel READ setTimeCancel NOTIFY retranslated )
 
 public:
     explicit LocationConfig( QObject* parent = nullptr );
@@ -104,6 +154,60 @@ public:
     QString regionLabel() const { return tr( "Region" ); }
     QString zoneLabel() const { return tr( "Zone" ); }
 
+    bool networkTime() const { return m_networkTime; }
+    void setNetworkTime( bool on );
+    QString syncState() const { return m_syncState; }
+    QString syncStatus() const { return m_syncStatus; }
+    bool canSetTime() const { return !m_networkTime; }
+    QString setTimeError() const { return m_setTimeError; }
+
+    QString networkTimeLabel() const { return tr( "Set the time automatically over the network" ); }
+    QString networkTimeHint() const
+    {
+        return tr( "The installed system keeps doing this. Turn it off to set the clock by hand." );
+    }
+    QString setTimeLabel() const { return tr( "Set date and time…" ); }
+    QString setTimeTitle() const { return tr( "Set the date and time" ); }
+    QString setTimeBody() const
+    {
+        return tr( "This sets this machine's clock now, in %1. The system you install starts from "
+                   "the same clock." )
+            .arg( zoneId() );
+    }
+    QString setTimeDateLabel() const { return tr( "Date" ); }
+    QString setTimeTimeLabel() const { return tr( "Time" ); }
+    QString setTimeDateHint() const { return tr( "Year-month-day, as in %1" ).arg( editDate() ); }
+    QString setTimeTimeHint() const
+    {
+        return tr( "A 24-hour clock, as in %1" ).arg( editTime() );
+    }
+    QString setTimeConfirm() const { return tr( "Set" ); }
+    QString setTimeCancel() const { return tr( "Cancel" ); }
+
+    /*! The dialog's two fields, pre-filled with now IN THE CHOSEN ZONE.
+     *
+     * A FIXED FORMAT, NOT QLocale's, and this is the one place on the page where that is the
+     * right answer. Everything else here — the clock, the date under it — is READ, and a reader
+     * is best served by their own conventions. These two are TYPED, and a typed date in a
+     * locale's short form is the ambiguity nobody can see: 03/04/2026 is two different days on
+     * two sides of an ocean, and the field cannot ask which one was meant. So the dialog shows
+     * and takes one unambiguous shape, and the hint under each field is an example of it.
+     */
+    Q_INVOKABLE QString editDate() const;
+    Q_INVOKABLE QString editTime() const;
+
+    /*! Sets this machine's clock from the dialog's two fields, which are read AS TIMES IN THE
+     *  CHOSEN ZONE — the page shows a clock in that zone, so a person correcting it is correcting
+     *  what they can see. Returns true on success; on failure setTimeError says what happened. */
+    Q_INVOKABLE bool applySystemTime( const QString& date, const QString& time );
+    /*! Clears setTimeError. Called when the dialog opens, so that yesterday's complaint is not
+     *  the first thing in it. */
+    Q_INVOKABLE void clearSetTimeError();
+    /*! Applies whatever `networkTime` currently says to the running machine, and starts the watch
+     *  if it says yes. Called from LocationViewStep::onActivate(): the box is checked when the
+     *  page opens, so the page's first act is the one it is promising. */
+    Q_INVOKABLE void applyNetworkTime();
+
     /*! What the summary page shows. */
     QString prettyStatus() const;
 
@@ -119,11 +223,35 @@ signals:
     void locationChanged();
     void tick();
     void retranslated();
+    void networkTimeChanged();
+    void syncChanged();
+    void setTimeErrorChanged();
 
 private:
     /*! Clamps `zone` to one the current region actually has, and picks the region's first
      *  otherwise. Called whenever the region moves. */
     void clampZone();
+
+    /*! `timedatectl <args>`, run to completion. SYNCHRONOUSLY, which for a page is usually the
+     *  wrong shape and here is the right one: every call is a D-Bus round trip to timedated on
+     *  the same machine and returns in milliseconds. The thing that actually TAKES time — waiting
+     *  for a time server to answer — is not a command at all; it is the poll below, which is a
+     *  timer. Writing the fast calls asynchronously would buy nothing and cost the page a state
+     *  machine per button.
+     *
+     * Returns false if timedatectl is missing, crashed or exited non-zero; `out` gets its merged
+     * output either way, because that is where systemd puts the reason. */
+    bool timedatectl( const QStringList& args, QString* out = nullptr );
+
+    /*! Starts the watch on NTPSynchronized. Announcing "the clock is set from the network" the
+     *  instant set-ntp returns would be a claim about a server that has not been asked yet. */
+    void beginSyncWatch();
+    void pollSync();
+    void setSyncState( const QString& state, const QString& server = QString() );
+    /*! Rebuilds m_syncStatus from m_syncState and m_syncServer — on a state change and on a
+     *  language change, which is why the composed string is stored rather than the pieces. */
+    void composeSyncStatus();
+    void setSetTimeError( const QString& message );
 
     Calamares::Locale::RegionsModel* m_regions;
     Calamares::Locale::ZonesModel* m_zones;
@@ -132,4 +260,16 @@ private:
     QString m_region;
     QString m_zone;
     QTimer* m_clock;
+
+    bool m_networkTime = true;
+    QString m_syncState = QStringLiteral( "off" );
+    QString m_syncStatus;
+    QString m_syncServer;
+    QString m_setTimeError;
+    QTimer* m_poll;
+    /*! How many one-second polls are left before the watch gives up. Twenty, because timesyncd
+     *  gets its first answer in under a second on a working network and a DNS lookup that has to
+     *  time out takes most of the rest — and because a status line that never resolves is the one
+     *  outcome worse than "no time server answered". */
+    int m_pollsLeft = 0;
 };

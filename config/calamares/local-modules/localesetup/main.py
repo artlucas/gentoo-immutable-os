@@ -10,6 +10,13 @@
 # move with it, and four lines of Python beside four other Python job modules is a better home
 # for it than a C++ plugin whose only purpose is to call os.symlink.
 #
+# AND SINCE plan/29, THE OTHER HALF OF THE SAME QUESTION: whether the installed system keeps its
+# clock from the network. The location page asks it with a checkbox, acts on it immediately for
+# the machine the installer is running on, and publishes the answer as `locationNetworkTime`;
+# this job is what makes that answer true of the machine being installed. Without it the checkbox
+# would be a live-session convenience wearing the words "Set the time automatically" — which is a
+# sentence about the system you are about to own, not about a USB stick.
+#
 # /etc/locale.conf IS NOT THIS JOB'S BUSINESS. `imageidentity` writes it, and only for a locale
 # the image actually compiled — see its write_locale() and the long note above target_has_locale().
 # A second writer here would be the exact failure that note exists to prevent.
@@ -44,6 +51,72 @@ def target_path(root, path):
     return os.path.join(root, path.lstrip("/"))
 
 
+# systemd-timesyncd is ENABLED in this image's vendor preset
+# (config/rootfs/usr/lib/systemd/system-preset/50-distro.preset.in), and build.conf's NTP_SERVERS
+# renders a FallbackNTP= drop-in that every profile ships. So "yes" needs nothing done to it: the
+# image already is what the checkbox promises, and a job that re-enabled an enabled unit would be
+# writing a symlink that is already there to make a log line look busy.
+#
+# "No" is the case with work in it, and the work is a MASK rather than a disable.
+TIMESYNCD_UNIT = "systemd-timesyncd.service"
+TIMESYNCD_MASK = "/etc/systemd/system/" + TIMESYNCD_UNIT
+# Where `systemctl preset` put the enablement at build time. [Install] says
+# WantedBy=sysinit.target, so this is the symlink that actually starts it.
+TIMESYNCD_WANT = "/etc/systemd/system/sysinit.target.wants/" + TIMESYNCD_UNIT
+
+
+def write_network_time(root):
+    """Make the installed system agree with the location page's checkbox."""
+    # ABSENT IS NOT FALSE. A missing key means the page never ran — the sequence is a
+    # configuration file — and the right answer then is the image's own, which is "yes".
+    # `if not value` would read an absent key and an explicit False the same way.
+    value = libcalamares.globalstorage.value("locationNetworkTime")
+    wanted = True if value is None else bool(value)
+
+    mask = target_path(root, TIMESYNCD_MASK)
+    want = target_path(root, TIMESYNCD_WANT)
+
+    if wanted:
+        # Nothing to do, and the removal below is only for a rerun: Calamares can be restarted
+        # against a target this job has already touched, and a mask left from a previous answer
+        # would silently outlive the answer that produced it.
+        # readlink, not realpath: the question is what this symlink SAYS, and realpath would
+        # resolve it against the build host's filesystem rather than the target's.
+        if os.path.islink(mask) and os.readlink(mask) == os.devnull:
+            os.remove(mask)
+            debug("localesetup: removed a stale systemd-timesyncd mask")
+        debug("localesetup: the installed system keeps its clock from the network")
+        return None
+
+    # A MASK, NOT A DISABLE, and the difference matters on an image whose /etc is an overlay over
+    # a read-only lower (plan/16 §5.2). Deleting the .wants symlink is a whiteout in the upper and
+    # is undone by the next `systemctl preset-all` — which is a thing an administrator or a later
+    # update can legitimately run, and it would quietly switch network time back on. A mask is a
+    # statement systemd will not overrule, and `systemctl unmask systemd-timesyncd` is how somebody
+    # changes their mind later, in one obvious command.
+    #
+    # BOTH, though: the whiteout as well, so the installed system does not carry a .wants symlink
+    # pointing at a masked unit. That combination works — systemd skips it — but it is the kind of
+    # thing that reads as a mistake to the next person looking at the machine.
+    try:
+        os.makedirs(os.path.dirname(mask), exist_ok=True)
+        # lexists, not exists: a symlink to /dev/null is what we are about to write, and exists()
+        # follows the link and answers about /dev/null rather than about the link.
+        if os.path.lexists(mask):
+            os.remove(mask)
+        os.symlink(os.devnull, mask)
+        if os.path.lexists(want):
+            os.remove(want)
+    except OSError as e:
+        return (
+            _("Configuration Error"),
+            _("Could not turn off network time on the installed system: {!s}").format(e),
+        )
+
+    debug("localesetup: masked {} in the target".format(TIMESYNCD_UNIT))
+    return None
+
+
 def run():
     root = libcalamares.globalstorage.value("rootMountPoint")
     if not root:
@@ -63,7 +136,10 @@ def run():
             "no locationRegion/locationZone in GlobalStorage; leaving the image's "
             "/etc/localtime, which points at UTC"
         )
-        return None
+        # ...and the clock question is still answered. The two halves are independent: a sequence
+        # with no location page publishes neither key, but one that publishes only the checkbox —
+        # a future page, a preset, a test — should still get the machine it asked for.
+        return write_network_time(root)
 
     # THE ZONE FILE IS CHECKED IN THE TARGET, not on the medium. They carry the same
     # sys-libs/timezone-data today and a symlink into /usr/share/zoneinfo that resolves here and
@@ -94,4 +170,5 @@ def run():
         )
 
     debug("localesetup: /etc/localtime -> {}".format(relative))
-    return None
+
+    return write_network_time(root)

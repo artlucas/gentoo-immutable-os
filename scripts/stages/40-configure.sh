@@ -20,7 +20,7 @@ VERIFY="$([[ $UPDATE_VERIFY == 1 ]] && echo yes || echo no)"
 # because both halves come from build.conf and neither is a plain @TOKEN@ substitution.
 SPLASH_STATUS_LEFT="$(printf '%s · V%s · AMD64' "$UPDATE_CHANNEL" "$VERSION" | tr '[:lower:]' '[:upper:]')"
 export DISTRO_ID DISTRO_NAME VERSION HOME_URL INTERNET_CHECK_URL UPDATE_URL LIVE_USER VERIFY FLATPAK_PREINSTALL
-export UPDATE_CHANNEL SPLASH_STATUS_LEFT DISTROBOX_DEFAULT_IMAGE
+export UPDATE_CHANNEL SPLASH_STATUS_LEFT DISTROBOX_DEFAULT_IMAGE NTP_SERVERS
 # ---- CONFIG_PROTECT: apply what the merge deferred, BEFORE our overlay -----------------------
 # Portage does not overwrite a file under CONFIG_PROTECT (/etc, among others) when a package
 # updates it. It writes the new version alongside as ._cfg0000_<name> and leaves it for
@@ -63,6 +63,39 @@ install_rootfs_overlay "$REPO/config/rootfs" "$TARGET"
 # it does not have.
 if [[ ${INCLUDE_DISTROBOX:-1} != 1 ]]; then
   rm -rf -- "${TARGET:?}/etc/distrobox"
+fi
+
+# ---- the fallback time servers (plan/29) ----------------------------------------------------
+# The same shape as /etc/distrobox above, and for a sharper reason. The overlay ships
+# /etc/systemd/timesyncd.conf.d/05-$DISTRO_ID-ntp.conf unconditionally, rendered from NTP_SERVERS —
+# and an EMPTY NTP_SERVERS renders `FallbackNTP=`, which does not mean "no opinion". An empty
+# assignment CLEARS systemd's compiled-in fallback list, so a build.conf that simply never set
+# the knob would ship an image with no fallback time servers at all: a machine on a network that
+# hands out none would never sync, and nothing in the image would say why.
+#
+# Deleting the file is what makes the unset knob mean "systemd's own default stands".
+NTP_DROPIN="$TARGET/etc/systemd/timesyncd.conf.d/05-$DISTRO_ID-ntp.conf"
+if [[ -z ${NTP_SERVERS// /} ]]; then
+  rm -f -- "$NTP_DROPIN"
+  log "time: NTP_SERVERS is empty — no timesyncd drop-in; systemd's compiled-in fallback stands"
+else
+  [[ -f $NTP_DROPIN ]] \
+    || die "NTP_SERVERS is set but $NTP_DROPIN was not rendered. config/rootfs ships
+  etc/systemd/timesyncd.conf.d/05-distro-ntp.conf.in and install_rootfs_overlay rebrands the
+  'distro' segment of a basename — so this means the file was dropped from the overlay, and the
+  image would sync against whatever systemd was compiled with rather than against build.conf."
+  grep -qx "FallbackNTP=$NTP_SERVERS" "$NTP_DROPIN" \
+    || die "$NTP_DROPIN does not carry FallbackNTP=$NTP_SERVERS. The template renders that line
+  from build.conf; a mismatch means the token did not substitute, and timesyncd silently ignores
+  a line it cannot parse."
+  # NTP= is the domain controller's key (plan/18 §5.1), written at join time into 10-domain.conf.
+  # This file must never claim it: NTP= outranks DHCP and the DC both, so a build-time default
+  # there would quietly outrank the network on every machine this image ever becomes.
+  ! grep -q "^NTP=" "$NTP_DROPIN" \
+    || die "$NTP_DROPIN sets NTP=. That key outranks both DHCP-supplied servers and the NTP=
+  that '$DISTRO_ID-domain join' writes for the domain controller, so a build-time default there
+  would take a joined machine's clock away from its DC. This file sets FallbackNTP= only."
+  log "time: fallback NTP servers -> $NTP_SERVERS"
 fi
 
 # The same argument as /etc/distrobox above, one surface further out — and it is the half of

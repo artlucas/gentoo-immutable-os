@@ -98,6 +98,25 @@ LocationViewStep::jobs() const
 }
 
 void
+LocationViewStep::onActivate()
+{
+    // THE PAGE'S FIRST ACT IS THE ONE IT IS PROMISING. The network-time box is checked when the
+    // page opens (modules/location.conf), so leaving the machine alone until somebody touched it
+    // would be a checked box that had done nothing — and on a medium where systemd-timesyncd has
+    // been running since boot, the box would be telling the truth by accident rather than saying
+    // anything about what this page did.
+    //
+    // HERE RATHER THAN IN setConfigurationMap(), which runs while Calamares is still building its
+    // pages: a page that ran timedatectl during startup would change the machine's clock before
+    // anything had been shown to anyone.
+    //
+    // ON EVERY ENTRY, not only the first. A user who comes back to this page has just been
+    // somewhere else for a while, and re-asking is how "the clock is set from 0.pool.ntp.org"
+    // stays a statement about now rather than a statement about a minute ago.
+    m_config->applyNetworkTime();
+}
+
+void
 LocationViewStep::onLeave()
 {
     m_config->publish();
