@@ -237,6 +237,15 @@ Item {
                 keyNavigationEnabled: true
                 focus: true
 
+                // THE VIEW IS THE TAB STOP, NOT THE ROWS (plan/30 §1). QQuickItemDelegate calls
+                // setFocusPolicy(Qt::NoFocus) in its own constructor, so a delegate never takes
+                // focus and never will — which is the right shape for a list (twelve disks would
+                // otherwise be twelve tab stops) and was also why the focus ring below, bound to
+                // `visualFocus`, could not once have appeared. Tab lands on the VIEW; the arrow
+                // keys move within it; the ring is drawn on whichever row is current while the
+                // view holds focus.
+                activeFocusOnTab: true
+
                 // -1 EXPLICITLY. QQuickItemView::componentComplete() runs
                 //     if ( currentIndex < 0 && !currentIndexCleared ) updateCurrent( 0 );
                 // and setCurrentIndex() sets currentIndexCleared = ( index == -1 ) BEFORE its
@@ -278,6 +287,12 @@ Item {
 
                     width: ListView.view ? ListView.view.width : implicitWidth
                     highlighted: ListView.isCurrentItem
+
+                    // WHERE THE KEYBOARD IS, which on a view whose rows cannot hold focus is not
+                    // a property of the row: it is the current row AND a view that has focus.
+                    // `visualFocus` stood here and was always false — see the note on
+                    // activeFocusOnTab above.
+                    readonly property bool keyboardFocus: list.activeFocus && row.highlighted
                     hoverEnabled: !row.blocked
                     // GREYED, NOT HIDDEN (plan/24, Q3). A disabled delegate still reads to a
                     // screen reader and still occupies its place in the list, which is the whole
@@ -312,7 +327,7 @@ Item {
                         radius: ds.radiusLg
                         color: row.highlighted ? ds.accentWash : ds.surfaceCard
                         border.width: ds.borderWidth
-                        border.color: row.visualFocus
+                        border.color: row.keyboardFocus
                             ? ds.accent
                             : (row.highlighted
                                 ? ds.accent
@@ -328,7 +343,7 @@ Item {
                         Rectangle {
                             anchors.fill: parent
                             anchors.margins: -3
-                            visible: row.visualFocus
+                            visible: row.keyboardFocus
                             radius: ds.radiusLg + 3
                             color: "transparent"
                             border.width: 3

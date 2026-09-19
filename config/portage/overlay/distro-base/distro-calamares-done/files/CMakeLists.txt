@@ -84,5 +84,9 @@ qt6_add_resources(${DONE_TARGET} "done_qml"
         # config/calamares/qml/Theme.qml is the one copy, and scripts/stages/20-builder-setup.sh
         # stages it here for every module whose CMakeLists names it, which is this line.
         qml/Theme.qml
+        # The design system's check box (plan/30), staged by the same fan-out: the restart
+        # question was drawn here by hand and drawn identically in the accounts page, and
+        # neither drawing carried a tab stop.
+        qml/CheckBox.qml
         qml/Done.qml
 )

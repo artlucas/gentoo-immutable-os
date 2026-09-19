@@ -205,48 +205,19 @@ Item {
             visible: done.restartOffered
             spacing: ds.space2
 
-            RowLayout {
+            // THE SHARED CHECK BOX (plan/30 §1). It was drawn here by hand and drawn again,
+            // identically, in LocalForm.qml — and neither drawing could be reached or operated
+            // from the keyboard, because a RowLayout with a TapHandler is not a control. The
+            // shared one carries the tab stop, the focus ring and Space/Return.
+            //
+            // `checked` STAYS A BINDING. The shared control never assigns its own — it emits and
+            // waits to be told — so this re-reads on restartWantedChanged with no handler.
+            CheckBox {
                 Layout.alignment: Qt.AlignHCenter
-                spacing: ds.space2
-
-                Rectangle {
-                    id: restartBox
-
-                    Layout.alignment: Qt.AlignVCenter
-                    implicitWidth: 20
-                    implicitHeight: 20
-                    radius: ds.radiusSm
-                    color: done.restartWanted ? ds.accent : ds.surfaceCard
-                    border.width: ds.borderWidthStrong
-                    border.color: done.restartWanted ? ds.accent : ds.borderStrong
-
-                    Text {
-                        anchors.centerIn: parent
-                        visible: done.restartWanted
-                        text: "✓"
-                        color: ds.accentOn
-                        font.family: ds.fontSans
-                        font.pixelSize: ds.textXs
-                        font.weight: ds.weightBold
-                    }
-                }
-
-                Text {
-                    text: done.restartLabel
-                    color: ds.textBody
-                    font.family: ds.fontSans
-                    font.pixelSize: ds.textBase
-                }
-
-                // ONE HIT TARGET FOR BOX AND LABEL (plan/27 §7): the words beside a mark are
-                // words somebody clicks.
-                HoverHandler { cursorShape: Qt.PointingHandCursor }
-                TapHandler { onTapped: done.restartWanted = !done.restartWanted }
-
-                Accessible.role: Accessible.CheckBox
-                Accessible.name: done.restartLabel
-                Accessible.checked: done.restartWanted
-                Accessible.onToggleAction: done.restartWanted = !done.restartWanted
+                ds: root.ds
+                label: done.restartLabel
+                checked: done.restartWanted
+                onToggled: function (value) { done.restartWanted = value; }
             }
 
             // Only while the box is ticked: a medium reminder on a page whose machine is not

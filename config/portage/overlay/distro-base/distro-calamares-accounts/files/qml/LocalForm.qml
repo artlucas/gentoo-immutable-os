@@ -131,59 +131,23 @@ ColumnLayout {
     // Not a binding on `checked`, for the reason every control in this family gives: C++ is the
     // source of truth — it is what publish() reads — and the Connections below puts back what it
     // says. Since plan/28 the box is drawn rather than a QQC2.CheckBox, because the style would
-    // paint Breeze's; the state still lives in exactly one place.
-    RowLayout {
+    // paint Breeze's; since plan/30 the drawing is the SHARED one, because Done.qml had the same
+    // control and the same hole in it — neither could be reached or operated from the keyboard.
+    // The state still lives in exactly one place.
+    //
+    // AND THE Connections THAT USED TO BE HERE IS GONE, which is the part of the swap worth
+    // stating: the old drawing held a `checked` of its own and needed a handler to put C++'s
+    // answer back into it. The shared control never assigns its own `checked` — it emits and
+    // waits to be told (see its header) — so the binding below is never broken and re-reads on
+    // autoLoginChanged by itself. Keeping the handler would have BROKEN the binding on its first
+    // run and then maintained by hand what QML was already maintaining.
+    CheckBox {
+        id: autoLoginBox
+
         Layout.fillWidth: true
-        spacing: form.ds.space2
-
-        Rectangle {
-            id: autoLoginBox
-
-            property bool checked: accounts.autoLogin
-
-            Layout.alignment: Qt.AlignVCenter
-            implicitWidth: 20
-            implicitHeight: 20
-            radius: form.ds.radiusSm
-            color: autoLoginBox.checked ? form.ds.accent : form.ds.surfaceCard
-            border.width: form.ds.borderWidthStrong
-            border.color: autoLoginBox.checked ? form.ds.accent : form.ds.borderStrong
-
-            Text {
-                anchors.centerIn: parent
-                visible: autoLoginBox.checked
-                text: "✓"
-                color: form.ds.accentOn
-                font.family: form.ds.fontSans
-                font.pixelSize: form.ds.textXs
-                font.weight: form.ds.weightBold
-            }
-
-            Connections {
-                target: accounts
-                function onAutoLoginChanged() {
-                    autoLoginBox.checked = accounts.autoLogin;
-                }
-            }
-        }
-
-        Text {
-            Layout.fillWidth: true
-            text: accounts.autoLoginLabel
-            color: form.ds.textBody
-            wrapMode: Text.WordWrap
-            font.family: form.ds.fontSans
-            font.pixelSize: form.ds.textBase
-        }
-
-        // ONE HIT TARGET FOR BOX AND LABEL (plan/27 §7): the words beside a mark are words
-        // somebody clicks. It covers the whole row rather than sitting beside either.
-        HoverHandler { cursorShape: Qt.PointingHandCursor }
-        TapHandler { onTapped: accounts.autoLogin = !accounts.autoLogin }
-
-        Accessible.role: Accessible.CheckBox
-        Accessible.name: accounts.autoLoginLabel
-        Accessible.checked: accounts.autoLogin
-        Accessible.onToggleAction: accounts.autoLogin = !accounts.autoLogin
+        ds: form.ds
+        label: accounts.autoLoginLabel
+        checked: accounts.autoLogin
+        onToggled: function (value) { accounts.autoLogin = value; }
     }
 }

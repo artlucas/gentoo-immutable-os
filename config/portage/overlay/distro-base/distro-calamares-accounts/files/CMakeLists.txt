@@ -123,6 +123,10 @@ qt6_add_resources(${ACCOUNTS_TARGET} "accounts_qml"
         qml/Theme.qml
         qml/Field.qml
         qml/Button.qml
+        # The design system's check box (plan/30). LocalForm draws the auto-login question
+        # with it; it was a hand-rolled RowLayout until Done.qml turned out to have the same
+        # one, with the same hole in it — neither could be reached from the keyboard.
+        qml/CheckBox.qml
         qml/Accounts.qml
         qml/ComputerNameField.qml
         qml/LocalForm.qml

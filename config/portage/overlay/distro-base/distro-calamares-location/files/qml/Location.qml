@@ -245,6 +245,19 @@ Item {
                                     ColorAnimation { duration: ds.durationBase }
                                 }
 
+                                // The installer's one focus ring (plan/30 §1). A border colour cannot carry this
+                                // state on its own here: a ticked box is ALREADY accent-bordered when it is
+                                // chosen, which is exactly the one a keyboard user is standing on.
+                                Rectangle {
+                                    anchors.fill: parent
+                                    anchors.margins: -3
+                                    visible: ntpBox.visualFocus
+                                    radius: ds.radiusSm + 3
+                                    color: "transparent"
+                                    border.width: 3
+                                    border.color: ds.mix(ds.accent, ds.surfaceCard, 0.4)
+                                }
+
                                 Text {
                                     anchors.centerIn: parent
                                     visible: ntpBox.checked
@@ -406,6 +419,22 @@ Item {
 
                         Behavior on border.color {
                             ColorAnimation { duration: picker.ds.durationBase }
+                        }
+
+                        // The installer's one focus ring, at the offset every other control
+                        // draws it (plan/30 §1). The border already moves to the accent on
+                        // focus — but it moves to the accent on an OPEN POPUP too, and it is
+                        // the same accent the field shows while merely hovered on some pages,
+                        // so the border alone cannot say "the keyboard is here".
+                        Rectangle {
+                            anchors.fill: parent
+                            anchors.margins: -3
+                            visible: box.activeFocus
+                            radius: picker.ds.radiusMd + 3
+                            color: "transparent"
+                            border.width: 3
+                            border.color: picker.ds.mix(picker.ds.accent,
+                                                        picker.ds.surfaceCard, 0.4)
                         }
                     }
 

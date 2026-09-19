@@ -127,6 +127,19 @@ ColumnLayout {
         TextInput {
             id: input
 
+            // TAB REACHES THIS FIELD (plan/30 §1). A bare TextInput defaults `activeFocusOnTab`
+            // to FALSE — QQC2.TextField is the one that sets it, and this component is hand-drawn
+            // for the reason the header gives — so until this line every field on the accounts
+            // page and both fields of the set-time dialog were mouse-only. Nothing else about the
+            // component had to change: the focus ring below was already bound to `activeFocus`
+            // and had simply never been reachable by any route but a click.
+            //
+            // A DISABLED ITEM IS SKIPPED BY THE CHAIN ANYWAY, so this is unconditional: the
+            // ColumnLayout's `enabled` propagates down to this TextInput, and Qt's tab walk
+            // ignores an item that is not enabled. Writing `field.enabled` here would be a second
+            // statement of the same rule, able to disagree with the first.
+            activeFocusOnTab: true
+
             anchors.fill: parent
             anchors.leftMargin: field.ds.space3
             anchors.rightMargin: field.ds.space3

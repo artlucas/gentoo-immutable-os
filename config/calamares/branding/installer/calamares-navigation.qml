@@ -72,6 +72,29 @@ Rectangle {
         radius: navigationBar.ds.radiusMd;
         opacity: button.active ? 1 : 0.5;
 
+        // TAB REACHES THIS BAR (plan/30 §1). Until this line Cancel, Back and Next were a
+        // Rectangle with a MouseArea over it, which is a thing you can click and nothing else —
+        // so a keyboard user could fill in every field on a page and then have no way to leave
+        // it. The page and this bar are two SEPARATE QQuickWidgets inside Calamares' window, and
+        // the reason a declaration here is enough to bridge them is in qquickwidget.cpp:1536:
+        // QQuickWidget::focusNextPrevChild() walks its own scene with wrap = FALSE and falls
+        // through to QWidget::focusNextPrevChild() when the scene runs out. So Tab off the last
+        // field of a page arrives here on its own, and Tab off Next goes on to whatever the
+        // window has next. Nothing in Calamares had to change.
+        //
+        // `active`, NOT `enabled`: this component carries its own two-state property (see the
+        // instances at the foot of the file, where it is ViewManager's), and a disabled Back
+        // must not be a tab stop that does nothing when pressed.
+        activeFocusOnTab: button.active;
+
+        Accessible.role: Accessible.Button;
+        Accessible.name: button.label;
+        Accessible.onPressAction: if (button.active) { button.clicked(); }
+
+        Keys.onSpacePressed: if (button.active) { button.clicked(); }
+        Keys.onReturnPressed: if (button.active) { button.clicked(); }
+        Keys.onEnterPressed: if (button.active) { button.clicked(); }
+
         color: button.variant === "primary"
             ? (hoverArea.containsMouse && button.active ? navigationBar.ds.accentHover
                                                         : navigationBar.ds.accent)
@@ -91,6 +114,21 @@ Rectangle {
             enabled: button.active;
             cursorShape: button.active ? Qt.PointingHandCursor : Qt.ArrowCursor;
             onClicked: button.clicked();
+        }
+
+        // The 3px ring the shared Button and Field already draw, at the same offset and in the
+        // same colour: a keyboard user crossing this installer should be learning one shape.
+        // Drawn OUTSIDE the button, which is why the bar's RowLayout has 16px of margin above
+        // and below it — there is room for the ring without it being clipped.
+        Rectangle {
+            anchors.fill: parent;
+            anchors.margins: -3;
+            visible: button.activeFocus;
+            radius: navigationBar.ds.radiusMd + 3;
+            color: "transparent";
+            border.width: 3;
+            border.color: navigationBar.ds.mix(navigationBar.ds.accent,
+                                               navigationBar.ds.surfacePage, 0.4);
         }
 
         Text {

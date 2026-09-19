@@ -284,6 +284,19 @@ Item {
                                 Behavior on border.color {
                                     ColorAnimation { duration: ds.durationBase }
                                 }
+
+                                // The installer's one focus ring (plan/30 §1). A border colour cannot carry this
+                                // state on its own here: a chosen card is ALREADY accent-bordered when it is
+                                // chosen, which is exactly the one a keyboard user is standing on.
+                                Rectangle {
+                                    anchors.fill: parent
+                                    anchors.margins: -3
+                                    visible: choice.visualFocus
+                                    radius: ds.radiusLg + 3
+                                    color: "transparent"
+                                    border.width: 3
+                                    border.color: ds.mix(ds.accent, ds.surfaceCard, 0.4)
+                                }
                             }
 
                             // Drawn inside contentItem below, at the design system's 20px with a

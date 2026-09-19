@@ -196,6 +196,13 @@ Item {
             keyNavigationEnabled: true
             focus: true
 
+            // THE VIEW IS THE TAB STOP, NOT THE CELLS (plan/30 §1). A cell is a plain Item with
+            // a TapHandler on the card inside it, so nothing here ever held focus and Tab
+            // skipped the only control on the page. Tab lands on the VIEW; the arrow keys move
+            // within it, which they already did; the ring below is drawn on the current cell
+            // while the view has focus.
+            activeFocusOnTab: true
+
             delegate: Item {
                 id: cell
 
@@ -204,6 +211,9 @@ Item {
                 required property string localeShort
 
                 readonly property bool current: GridView.isCurrentItem
+                // Where the keyboard is, which on a view whose cells cannot hold focus is the
+                // current cell AND a view that has focus — not a property of the cell alone.
+                readonly property bool keyboardFocus: grid.activeFocus && cell.current
 
                 width: grid.cellWidth
                 height: grid.cellHeight
@@ -227,6 +237,20 @@ Item {
 
                     Behavior on border.color {
                         ColorAnimation { duration: ds.durationBase }
+                    }
+
+                    // The installer's one focus ring, at the offset every other control draws
+                    // it. A border colour alone could not carry this state: the current cell is
+                    // ALREADY accent-bordered because it is selected, which is exactly the cell
+                    // a keyboard user is standing on.
+                    Rectangle {
+                        anchors.fill: parent
+                        anchors.margins: -3
+                        visible: cell.keyboardFocus
+                        radius: ds.radiusMd + 3
+                        color: "transparent"
+                        border.width: 3
+                        border.color: ds.mix(ds.accent, ds.surfaceCard, 0.4)
                     }
 
                     HoverHandler { id: hover }

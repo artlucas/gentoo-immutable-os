@@ -269,6 +269,19 @@ Item {
                             Behavior on border.color {
                                 ColorAnimation { duration: card.ds.durationBase }
                             }
+
+                            // The installer's one focus ring (plan/30 §1). A border colour cannot carry this
+                            // state on its own here: a chosen card is ALREADY accent-bordered when it is
+                            // chosen, which is exactly the one a keyboard user is standing on.
+                            Rectangle {
+                                anchors.fill: parent
+                                anchors.margins: -3
+                                visible: card.visualFocus
+                                radius: card.ds.radiusLg + 3
+                                color: "transparent"
+                                border.width: 3
+                                border.color: card.ds.mix(card.ds.accent, card.ds.surfaceCard, 0.4)
+                            }
                         }
 
                         // The indicator is positioned by the style unless it is given coordinates,
@@ -434,6 +447,19 @@ Item {
 
                                 Behavior on border.color {
                                     ColorAnimation { duration: ds.durationBase }
+                                }
+
+                                // The installer's one focus ring (plan/30 §1). A border colour cannot carry this
+                                // state on its own here: a ticked tile is ALREADY accent-bordered when it is
+                                // chosen, which is exactly the one a keyboard user is standing on.
+                                Rectangle {
+                                    anchors.fill: parent
+                                    anchors.margins: -3
+                                    visible: appBox.visualFocus
+                                    radius: ds.radiusLg + 3
+                                    color: "transparent"
+                                    border.width: 3
+                                    border.color: ds.mix(ds.accent, ds.surfaceCard, 0.4)
                                 }
                             }
 

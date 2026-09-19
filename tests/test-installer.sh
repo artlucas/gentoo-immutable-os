@@ -2410,6 +2410,108 @@ assert_true "the image enables systemd-timesyncd in the first place" \
     grep -qx 'enable systemd-timesyncd.service' \
         "$REPO_ROOT/config/rootfs/usr/lib/systemd/system-preset/50-distro.preset.in"
 
+# ---- 6s. the keyboard reaches every control, and says where it is (plan/30 §1) ---------------
+#
+# WHAT THIS SECTION CANNOT CHECK is whether Tab actually moves between Calamares' three separate
+# QQuickWidgets; that is qquickwidget.cpp's behaviour and it is verified on a booted medium. What
+# it can check is the half that is ours: that every control which a person can operate declares a
+# tab stop and draws the ring, because each of the five gaps plan/30 found was a control that
+# looked finished and had simply never been reachable.
+
+SHARED_QML="$REPO_ROOT/config/calamares/qml"
+NAV_QML="$REPO_ROOT/config/calamares/branding/installer/calamares-navigation.qml"
+SIDEBAR_QML="$REPO_ROOT/config/calamares/branding/installer/calamares-sidebar.qml"
+
+# 1. THE SHARED INPUT. A bare TextInput defaults activeFocusOnTab to false — this is the line that
+# put every accounts field and both set-time fields on the chain.
+assert_true "the shared Field takes tab focus" \
+    grep -qE '^ +activeFocusOnTab: true$' "$SHARED_QML/Field.qml"
+assert_true "...and draws the ring on activeFocus" \
+    grep -q 'visible: input.activeFocus' "$SHARED_QML/Field.qml"
+
+# 2. THE SHARED CHECK BOX, which exists because two pages had drawn the same unreachable control.
+assert_file "$SHARED_QML/CheckBox.qml" "the design system has one check box"
+assert_true "...which takes tab focus" \
+    grep -qE '^ +activeFocusOnTab: true$' "$SHARED_QML/CheckBox.qml"
+assert_true "...and can be operated from the keyboard" \
+    grep -q 'Keys.onSpacePressed' "$SHARED_QML/CheckBox.qml"
+assert_true "...and announces itself as a check box" \
+    grep -q 'Accessible.role: Accessible.CheckBox' "$SHARED_QML/CheckBox.qml"
+# It must NOT toggle itself: C++ is the source of truth on both pages that use it, and a control
+# that flipped its own state would disagree with the install for one frame on every click.
+assert_false "...and never assigns its own checked" \
+    grep -qE '^ +control\.checked = ' "$SHARED_QML/CheckBox.qml"
+for m in accounts done; do
+    d="$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-$m"
+    assert_true "the $m module compiles the shared check box in" \
+        grep -qF 'qml/CheckBox.qml' "$d/files/CMakeLists.txt"
+done
+# The two hand-drawn copies are gone rather than merely unused.
+assert_false "the accounts page no longer draws its own check box" \
+    grep -q 'property bool checked' \
+    "$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-accounts/files/qml/LocalForm.qml"
+assert_false "the finished page no longer draws its own check box" \
+    grep -q 'id: restartBox' \
+    "$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-done/files/qml/Done.qml"
+
+# 3. THE NAVIGATION BAR. Cancel, Back and Next were a Rectangle with a MouseArea on it.
+assert_true "the navigation bar's buttons take tab focus" \
+    grep -qE '^ +activeFocusOnTab: button\.active;$' "$NAV_QML"
+assert_true "...and can be pressed from the keyboard" \
+    grep -q 'Keys.onSpacePressed: if (button.active)' "$NAV_QML"
+assert_true "...and draw the ring" \
+    grep -q 'visible: button.activeFocus;' "$NAV_QML"
+# A disabled Back must not be a tab stop that does nothing: this bar's two-state property is
+# `active`, not `enabled`, so the guard has to read the one the instances actually set.
+assert_false "...and a dead button is not a tab stop" \
+    grep -qE '^ +activeFocusOnTab: true;$' "$NAV_QML"
+
+# 4. THE SIDEBAR's two meta buttons, the same shape and the same hole.
+assert_true "the sidebar's meta buttons take tab focus" \
+    grep -qE '^ +activeFocusOnTab: true;$' "$SIDEBAR_QML"
+assert_true "...and can be pressed from the keyboard" \
+    grep -q 'Keys.onReturnPressed: metaButton.activated();' "$SIDEBAR_QML"
+# The refactor into one inline component must not have moved the catalogue keys: the panel is
+# found by filename and its strings are keyed on the CalamaresSidebar context (plan/27 §3).
+for word in About Debug; do
+    assert_true "...and still asks the CalamaresSidebar catalogue for \"$word\"" \
+        grep -qF "qsTranslate(\"CalamaresSidebar\", \"$word\")" "$SIDEBAR_QML"
+done
+
+# 5. THE TWO VIEWS. QQuickItemDelegate sets Qt::NoFocus in its constructor, so the rows cannot be
+# tab stops and the view has to be one — and a ring bound to a delegate's `visualFocus` could
+# never have appeared, which is what these two replace.
+DISK_QML="$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-disk/files/qml/Disk.qml"
+LANG_QML="$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-language/files/qml/Language.qml"
+assert_true "the disk list is a tab stop" \
+    grep -qE '^ +activeFocusOnTab: true$' "$DISK_QML"
+assert_true "...and its ring follows the view's focus, not the row's" \
+    grep -q 'readonly property bool keyboardFocus: list.activeFocus && row.highlighted' "$DISK_QML"
+assert_false "...so no delegate ring is bound to visualFocus any more" \
+    grep -q 'visible: row.visualFocus' "$DISK_QML"
+assert_true "the language grid is a tab stop" \
+    grep -qE '^ +activeFocusOnTab: true$' "$LANG_QML"
+assert_true "...and its ring follows the view's focus" \
+    grep -q 'readonly property bool keyboardFocus: grid.activeFocus && cell.current' "$LANG_QML"
+
+# 6. ONE RING, EVERYWHERE. Every page that has a control the keyboard can land on draws the same
+# 3px ring in the same colour — a border colour alone cannot carry the state on a control that is
+# already accent-bordered because it is selected, which is every chooser in this installer.
+for f in "$SHARED_QML/Button.qml" "$SHARED_QML/Field.qml" "$SHARED_QML/CheckBox.qml" \
+         "$DISK_QML" "$LANG_QML" "$NAV_QML" "$SIDEBAR_QML" \
+         "$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-apps/files/qml/Apps.qml" \
+         "$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-accounts/files/qml/Accounts.qml" \
+         "$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-keymap/files/qml/Keymap.qml" \
+         "$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-location/files/qml/Location.qml"; do
+    name="$(basename -- "$f")"
+    assert_true "$name draws the installer's focus ring" \
+        grep -qE 'anchors\.margins: -3' "$f"
+    # Newlines folded first: three of these call sites wrap the argument list, and a ring in a
+    # colour nobody else uses is exactly the drift this assertion is here to stop.
+    assert_true "...in the shared colour" \
+        bash -c "tr '\n' ' ' < '$f' | grep -qE 'mix\( *([A-Za-z_]+\.)*accent, *([A-Za-z_]+\.)*surface(Card|Page), *0\.4 *\)'"
+done
+
 # ---- 7. YAML is YAML ------------------------------------------------------------------------
 # Calamares parses these with yaml-cpp and reports a parse error as a startup failure, so a
 # stray tab is a medium that does not install. Skipped rather than failed where PyYAML is absent,

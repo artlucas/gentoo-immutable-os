@@ -183,28 +183,65 @@ Rectangle {
             Layout.fillWidth: true;
             spacing: ds.space1;
 
-            Rectangle {
-                id: aboutButton;
+            // ONE BUTTON, TWICE, and a component rather than two drawings since plan/30 gave
+            // both of them a keyboard. They are real controls — About opens Calamares' own
+            // dialog, Debug opens the module inspector — and until now neither could be reached
+            // by anything but a mouse. That is not in the ask, which names the navigation bar;
+            // it is fixed with it because leaving two controls off the chain while putting the
+            // other nine on it is not a position anybody would defend out loud.
+            //
+            // THE LABELS STAY qsTranslate("CalamaresSidebar", …) AND STAY IN THIS FILE, which is
+            // the one thing the refactor must not quietly change: LanguageViewStep.cpp's
+            // retranslateWindowPanels() finds this panel BY FILENAME and re-runs its engine's
+            // translation, and the context string is what the catalogue is keyed on. An inline
+            // component does not move either.
+            component MetaButton: Rectangle {
+                id: metaButton;
 
-                implicitWidth: aboutLabel.implicitWidth + 2 * ds.space3;
+                property string label;
+
+                signal activated();
+
+                implicitWidth: metaLabel.implicitWidth + 2 * ds.space3;
                 implicitHeight: ds.controlHeightSm;
                 radius: ds.radiusMd;
-                color: aboutHover.hovered ? ds.surfaceSunken : "transparent";
+                color: metaHover.hovered ? ds.surfaceSunken : "transparent";
+
+                activeFocusOnTab: true;
+
+                Accessible.role: Accessible.Button;
+                Accessible.name: metaButton.label;
+                Accessible.onPressAction: metaButton.activated();
+
+                Keys.onSpacePressed: metaButton.activated();
+                Keys.onReturnPressed: metaButton.activated();
+                Keys.onEnterPressed: metaButton.activated();
 
                 MouseArea {
-                    id: aboutHover;
+                    id: metaHover;
 
                     anchors.fill: parent;
                     cursorShape: Qt.PointingHandCursor;
                     hoverEnabled: true;
-                    onClicked: debug.about();
+                    onClicked: metaButton.activated();
+                }
+
+                // The installer's one focus ring, at the offset every other control draws it.
+                Rectangle {
+                    anchors.fill: parent;
+                    anchors.margins: -3;
+                    visible: metaButton.activeFocus;
+                    radius: ds.radiusMd + 3;
+                    color: "transparent";
+                    border.width: 3;
+                    border.color: ds.mix(ds.accent, ds.surfacePage, 0.4);
                 }
 
                 Text {
-                    id: aboutLabel;
+                    id: metaLabel;
 
                     anchors.centerIn: parent;
-                    text: qsTranslate("CalamaresSidebar", "About");
+                    text: metaButton.label;
                     color: ds.textBody;
                     font.family: ds.fontSans;
                     font.pixelSize: ds.textSm;
@@ -212,34 +249,15 @@ Rectangle {
                 }
             }
 
-            Rectangle {
-                id: debugButton;
+            MetaButton {
+                label: qsTranslate("CalamaresSidebar", "About");
+                onActivated: debug.about();
+            }
 
+            MetaButton {
                 visible: debug.enabled;
-                implicitWidth: debugLabel.implicitWidth + 2 * ds.space3;
-                implicitHeight: ds.controlHeightSm;
-                radius: ds.radiusMd;
-                color: debugHover.hovered ? ds.surfaceSunken : "transparent";
-
-                MouseArea {
-                    id: debugHover;
-
-                    anchors.fill: parent;
-                    cursorShape: Qt.PointingHandCursor;
-                    hoverEnabled: true;
-                    onClicked: debug.toggle();
-                }
-
-                Text {
-                    id: debugLabel;
-
-                    anchors.centerIn: parent;
-                    text: qsTranslate("CalamaresSidebar", "Debug");
-                    color: ds.textBody;
-                    font.family: ds.fontSans;
-                    font.pixelSize: ds.textSm;
-                    font.weight: ds.weightSemibold;
-                }
+                label: qsTranslate("CalamaresSidebar", "Debug");
+                onActivated: debug.toggle();
             }
 
             Item {
