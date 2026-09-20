@@ -114,7 +114,19 @@ Item {
         anchors.bottomMargin: ds.pageMarginV
         anchors.leftMargin: ds.pageMarginH
         anchors.rightMargin: ds.pageMarginH
-        spacing: ds.space5
+        // TWELVE, NOT THE TWENTY EVERY OTHER PAGE USES (plan/31 §2). This page has five blocks
+        // down it — header, disk list, planned layout, warning, encryption — and at 224px of
+        // rail the lede takes a second line and the column is about twenty pixels taller than a
+        // 640px window has room for. The list was paying for all of it: two disks need 141px of
+        // viewport and had 124, so the second row — the medium the installer booted from, which
+        // every real machine shows — sat half-drawn behind a scrollbar.
+        //
+        // Four gaps at 12 rather than 20 is 32 of those pixels, and the panel's padding below is
+        // 8 more. THE ROW PADDING IS NOT TOUCHED: plan/30 set it at 10 and tests/test-installer
+        // §6u pins it there, because a row carries a 22px badge and a radio mark and 8 would
+        // start crowding them. The gutter between five blocks with borders of their own is the
+        // cheapest pixel on this page.
+        spacing: ds.space3
 
         // ---- the question, and what it costs to answer it -------------------------------
         RowLayout {
@@ -485,7 +497,10 @@ Item {
             // dark ds's nesting, and the thing to remember before changing either token.
             Rectangle {
                 Layout.fillWidth: true
-                implicitHeight: planBody.implicitHeight + 2 * (ds.space5 - 2)
+                // 14 of padding, down from 18, for the reason the row padding above came down
+                // (plan/31 §2): this panel is the tallest fixed block on the page and eight
+                // pixels of it was the cheapest of the twenty the page needed.
+                implicitHeight: planBody.implicitHeight + 2 * (ds.space4 - 2)
                 radius: ds.radiusLg
                 color: ds.surfacePage
                 border.width: ds.borderWidth
@@ -495,7 +510,7 @@ Item {
                     id: planBody
 
                     anchors.fill: parent
-                    anchors.margins: ds.space5 - 2
+                    anchors.margins: ds.space4 - 2
                     spacing: ds.space3
 
                     RowLayout {
@@ -730,14 +745,18 @@ Item {
                 }
             }
 
-            // THE SPARE HEIGHT, now that the list no longer swallows it. Without this the
-            // surplus is distributed between the items above — a ColumnLayout given more height
-            // than its children asked for spreads it, which is the same mechanism that put the
-            // AM/PM select a label low (plan/31 §1) — and the page would drift apart by however
-            // many pixels the disks left over.
-            Item {
-                Layout.fillHeight: true
-            }
+            // NO FILLER AT THE FOOT OF THIS PAGE, and the first attempt at plan/31 §2's disk fix
+            // put one here. An Item with fillHeight is a SECOND claimant on the surplus, and a
+            // ColumnLayout splits what is going spare between everything that can grow: the list
+            // gave up about twenty pixels to a blank Item and kept its scrollbar, with the spare
+            // space sitting at the bottom of the page where nothing needed it. Measured on the
+            // medium — the list ran 283..400 with the filler and 283..405 without.
+            //
+            // What happens to the surplus instead: the layout spreads it between the sections
+            // above, which on this page is right. They are peers separated by a gutter, not a
+            // label over the box it names, so a few pixels in each gap is invisible — the
+            // failure that argument does NOT cover is §1's, where the gap was between a label
+            // and the field under it.
         }
     }
 

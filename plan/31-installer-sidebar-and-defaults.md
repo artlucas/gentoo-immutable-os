@@ -164,6 +164,31 @@ creates no delegates and can sit at zero forever, and a binding from a view's he
 content is exactly the shape that does it. Here the direction is safe: `contentHeight` follows
 the delegates, which follow the view's WIDTH.
 
+**And the cap on its own did not fix it**, which the second walk said and the first fix assumed
+away. A cap cannot create room. Measured off the scrollbar itself — handle over track, with
+Breeze's end buttons discounted — the list wants **141px** and the page could spare **124**, so
+it still scrolled, by seventeen pixels, with the second row half-drawn. Worse, the `Item {
+Layout.fillHeight: true }` added underneath to catch the surplus was a second claimant on it: a
+ColumnLayout splits what is going spare between everything that can grow, so the list gave up
+about fourteen pixels to a blank Item and kept its scrollbar with the spare space sitting at the
+bottom of the page where nothing needed it. On the medium: the list ran 283..400 with the filler
+and 283..405 without.
+
+So the room is found rather than redistributed, and on this page only:
+
+* the filler is gone — nothing else on the page competes for height;
+* the gutter between the page's five blocks goes from 20 to 12, which is 32px across four gaps;
+* the planned-layout panel gives up 8px of its own padding, 18 to 14.
+
+That is 154px of viewport for 141px of rows, with 13 to spare. **The row padding is deliberately
+not touched**: plan/30 set it at 10 and `tests/test-installer.sh` §6u pins it there, because a
+row carries a 22px badge and a radio mark that 8px of padding would start crowding.
+
+The case this does *not* clear is a three-line lede — German's "Immutable OS wird darauf
+installiert…" — which takes another 27px and puts the list back into an honest scroll. That is
+the cap doing its job rather than a four-pixel overflow pretending to be one, and it is the point
+at which the page would have to give up a block rather than a gutter.
+
 Every other page was checked for the same regression and none of them moved: the summary's six
 rows are still one line each with no scroller, the accounts chooser's three subtitles still fit
 on one line, the keyboard preview is unchanged, and the applications page scrolls as a whole page

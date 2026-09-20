@@ -2789,11 +2789,24 @@ assert_true "the step label still elides rather than overrunning the rail" \
 # view, twenty give 1434 and a view capped at the page's 536.
 assert_true "the disk list is capped at the height of its own rows" \
     grep -qE '^ +Layout\.maximumHeight: list\.contentHeight$' "$DISK_QML"
-# The surplus has to be given somewhere to go: a ColumnLayout handed more height than its
-# children asked for spreads it between them, which is the same mechanism as §1's.
-assert_true "...and the height it no longer takes lands in a filler, not between the rows" \
-    bash -c "sed -n '/THE SPARE HEIGHT, now that the list/,/^ *}$/p' '$DISK_QML' |
-             grep -q 'Layout.fillHeight: true'"
+# THE CAP IS NOT ENOUGH ON ITS OWN, and the first attempt shipped as if it were. A cap cannot
+# create room: two disks need 141px of viewport and the page could spare 124, so the list still
+# scrolled — by seventeen pixels, with the second row (the medium the installer booted from,
+# which every real machine shows) half-drawn behind a scrollbar. The gutter between this page's
+# five blocks is where the rest comes from: four gaps at 12 rather than 20.
+assert_true "the disk page's blocks sit on a tighter gutter than the other pages'" \
+    bash -c "sed -n '/^    ColumnLayout {/,/^        Layout/p' '$DISK_QML' |
+             grep -qE '^ +spacing: ds\.space3$'"
+assert_true "...and the planned-layout panel gives up 8px of its own padding" \
+    bash -c "grep -qE 'implicitHeight: planBody\.implicitHeight \+ 2 \* \(ds\.space4 - 2\)' '$DISK_QML' &&
+             grep -qE '^ +anchors\.margins: ds\.space4 - 2$' '$DISK_QML'"
+# AND NO FILLER AT THE FOOT OF THE PAGE. An Item with fillHeight is a second claimant on the
+# surplus and a ColumnLayout splits what is going spare between everything that can grow: with
+# one there, the list gave up about fourteen pixels to a blank Item and kept its scrollbar.
+# Measured on the medium — the list ran 283..400 with the filler and 283..405 without.
+assert_false "...and nothing else on the page competes for the height the list needs" \
+    bash -c "sed -n '/---- what will happen to it/,\$p' '$DISK_QML' |
+             grep -qE '^ +Layout\.fillHeight: true$'"
 
 # 3. THE CHOOSER SHOWS THE MODE IT IS ALREADY IN (plan/31 §3). AccountsConfig has selected Local
 # since plan/26 §2 — 6a asserts it — but the cards never read it, because the ButtonGroup above
