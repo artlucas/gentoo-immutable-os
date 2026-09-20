@@ -184,12 +184,20 @@ That is 154px of viewport for 141px of rows, with 13 to spare. **The row padding
 not touched**: plan/30 set it at 10 and `tests/test-installer.sh` §6u pins it there, because a
 row carries a 22px badge and a radio mark that 8px of padding would start crowding.
 
-The case this does *not* clear is a three-line lede — German's "Immutable OS wird darauf
-installiert…" — which takes another 27px and puts the list back into an honest scroll. That is
-the cap doing its job rather than a four-pixel overflow pretending to be one, and it is the point
-at which the page would have to give up a block rather than a gutter.
+The case I expected this *not* to clear was a three-line lede, and the medium says there isn't
+one: German's "Immutable OS wird darauf installiert, und alles, was jetzt darauf ist, wird
+gelöscht." wraps to two lines like the English, and its disk page has no scrollbar either. The
+page that would still scroll is one with three or more disks — which is the cap doing its job
+rather than a seventeen-pixel overflow pretending to be one.
 
 Every other page was checked for the same regression and none of them moved: the summary's six
 rows are still one line each with no scroller, the accounts chooser's three subtitles still fit
 on one line, the keyboard preview is unchanged, and the applications page scrolls as a whole page
 under "Choose individually" exactly as plan/30 left it.
+
+### The third build
+
+`e12`: the disk page carries both rows, the planned layout, the warning and the encryption row
+with no scroller, in English and in German. The AM/PM select's popup opens inside the modal with
+PM current, the fields still level under it, and the clock reads 9:45 PM with `09:45` in the
+field. The rail measures 224 on this build as it did on the last.
