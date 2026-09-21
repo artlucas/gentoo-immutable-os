@@ -1,0 +1,53 @@
+# MkDocs configuration for the developer documentation. Build with:
+#   python3 -m venv .venv && .venv/bin/pip install -r docs/requirements.txt
+#   .venv/bin/mkdocs serve            # http://127.0.0.1:8000
+#   .venv/bin/mkdocs build --strict   # CI-grade check, warnings are errors
+site_name: immos developer documentation
+site_description: Build, pinning, relock, cache and test workflows for the immos image builder.
+strict: true
+
+theme:
+  name: material
+  features:
+    - content.code.copy
+    - navigation.sections
+    - navigation.top
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - toc:
+      permalink: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.details
+  - pymdownx.superfences
+
+plugins:
+  - search
+
+nav:
+  - index.md
+  - build.md
+  - pipeline.md
+  - pinning.md
+  - relock.md
+  - cache.md
+  - scenarios.md
+  - testing.md

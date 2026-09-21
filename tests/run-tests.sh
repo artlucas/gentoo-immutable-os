@@ -111,8 +111,11 @@ while IFS= read -r -d '' f; do
 # content (.gitignore says so explicitly), and .claude/worktrees holds live `git worktree`
 # checkouts whose own out/logs carry QEMU serial logs full of CR bytes. Without this the suite
 # is red on any machine that has ever used a worktree, for a file nobody is asked to fix.
+# .venv and site are the same category: the MkDocs environment and output for docs/, gitignored,
+# whose pip RECORD and generated HTML carry CR bytes no one is asked to fix.
 done < <(find "$REPO_ROOT" -path "$REPO_ROOT/out" -prune -o -path "$REPO_ROOT/.git" -prune \
-              -o -path "$REPO_ROOT/.claude" -prune -o -type f -print0)
+              -o -path "$REPO_ROOT/.claude" -prune -o -path "$REPO_ROOT/.venv" -prune \
+              -o -path "$REPO_ROOT/site" -prune -o -type f -print0)
 if [[ -n $CRLF_HITS ]]; then
     printf '  FAIL: CR bytes found in:\n%s' "$CRLF_HITS"
     FAILED=1

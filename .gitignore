@@ -1,5 +1,8 @@
 out/
 *.log
+# MkDocs virtualenv for the developer documentation (docs/requirements.txt).
+.venv/
+site/
 config/keys/*.gpg
 config/keys/*.asc
 .claude/settings.local.json.tmp.*

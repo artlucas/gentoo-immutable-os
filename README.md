@@ -33,6 +33,20 @@ been run yet. The full design lives in [`plan/`](plan/00-overview.md):
 | [21-installer-accounts-page](plan/21-installer-accounts-page.md) | The installer's accounts page: local, managed or domain as one choice, replacing Calamares' `users` module |
 | [22-installer-language-page](plan/22-installer-language-page.md) | The installer's language page: the list first and the requirements second, and offering only the languages the installed machine can speak |
 
+## Developer documentation
+
+The maintainer handbook lives in [`docs/`](docs/) and builds with MkDocs (material theme):
+
+```sh
+python3 -m venv .venv && .venv/bin/pip install -r docs/requirements.txt
+.venv/bin/mkdocs serve      # http://127.0.0.1:8000
+.venv/bin/mkdocs build --strict
+```
+
+It covers the build invocation, the pipeline stages, the pinning model, relock
+workflows, the build cache, worked maintenance scenarios (including a security
+update), and testing.
+
 ## Building
 
 Any host with Docker/Podman and Bash — including Docker Desktop (WSL2) on Windows:
