@@ -377,7 +377,11 @@ PYEOF
         # onto a flat canvas, so (0,0) is never ink.
         python3 "$GEN" --asset-dir "$DST" --logo "$TMP/logo-default.png" \
             > /dev/null 2>&1 || _fail "the generator fails with no --bg"
-        python3 "$GEN" --asset-dir "$DST" --bg '#f6f7f9' --ink '#161b21' \
+        # The same artefact on the dark ground, in the arrangement the installer asks for, so the
+        # comparison below is about the GROUND and not about --lockup as well (plan/32 §3).
+        python3 "$GEN" --asset-dir "$DST" --lockup --logo "$TMP/logo-default-lockup.png" \
+            > /dev/null 2>&1 || _fail "the generator fails with --lockup and no --bg"
+        python3 "$GEN" --asset-dir "$DST" --bg '#f6f7f9' --ink '#161b21' --lockup \
             --logo "$TMP/logo-light.png" \
             --slide "$TMP/slide-light.png" --slide-size 640x360 \
             > /dev/null 2>&1 || _fail "the generator fails with --bg and --ink"
@@ -413,12 +417,29 @@ def ink_box(path):
 
 dark, light = ink_box(sys.argv[1]), ink_box(sys.argv[2])
 assert dark[1] is not None, "the dark logo has no ink on it at all"
-assert dark == light, (dark, light)' "$TMP/logo-default.png" "$TMP/logo-light.png"
+assert dark == light, (dark, light)' "$TMP/logo-default-lockup.png" "$TMP/logo-light.png"
+        # --lockup IS THE ARRANGEMENT AND NOTHING ELSE (plan/32 §3). The stacked block is taller
+        # than it is wide and the lockup is the other way round — 260x108 against 144x212 at the
+        # design baseline — and the sidebar draws logo.png TO A HEIGHT, so the aspect is the
+        # whole of what this change buys. A --lockup that silently did nothing would leave a rail
+        # with a 22px logo in it and a build that passed.
+        assert_true "--lockup composes the mark beside the wordmark, not above it" \
+            python3 -c 'import sys
+from PIL import Image
+stack = Image.open(sys.argv[1]).size
+lockup = Image.open(sys.argv[2]).size
+assert stack[1] > stack[0], ("the stacked block is not taller than it is wide", stack)
+assert lockup[0] > 2 * lockup[1], ("the lockup is not a row", lockup)
+# And it is SHORTER than the stack, because the wordmark moved out from under the mark and the
+# transparent padding round the mark was cropped off with it — which is the whole of what the
+# rail gets back, since this file is drawn to a height.
+assert lockup[1] < stack[1], (stack, lockup)' "$TMP/logo-default.png" "$TMP/logo-default-lockup.png"
+
         # A malformed --bg stops the run rather than falling back to a default, because an
         # artefact built on a mistyped colour is merely wrong and a build that stops is not.
         assert_false "a malformed --bg is refused rather than defaulted" \
             python3 "$GEN" --asset-dir "$DST" --bg 'f6f7f' --logo "$TMP/logo-bad.png"
-        python3 "$GEN" --asset-dir "$DST" --bg '#f6f7f9' --ink '#363e4a' \
+        python3 "$GEN" --asset-dir "$DST" --bg '#f6f7f9' --ink '#363e4a' --lockup \
             --logo "$TMP/logo-light-alt.png" > /dev/null 2>&1 \
             || _fail "the generator fails with a second --ink"
 
@@ -437,10 +458,19 @@ from PIL import Image, ImageChops
 a = Image.open(sys.argv[1]).convert("RGB")
 b = Image.open(sys.argv[2]).convert("RGB")
 # Same ground, different ink: the SLABS are the teal accent and must not move, so the difference
-# has to be confined to the wordmark — the lower part of the block, below the mark box.
+# has to be confined to the wordmark. In the boot splash'"'"'s COLUMN that was the bottom of the
+# block; in the installer'"'"'s LOCKUP it is the right of it, beside the mark (plan/32 §3) — so the
+# claim is stated three ways, each of which the slabs would break:
+#
+#   * it starts past the left third. The mark'"'"'s ink is 81 of the lockup'"'"'s 260 columns, and the
+#     wordmark starts at 115 (81 + the 34px gap); re-inked slabs would start the diff at 0.
+#   * it runs to the right edge, because the wordmark ends there and the mark does not.
+#   * it is no taller than half the block: the wordmark is 46 rows of 108, the slabs are all 108.
 diff = ImageChops.difference(a, b).getbbox()
 assert diff is not None, "re-inking changed nothing"
-assert diff[1] > a.height // 2, ("the difference reaches into the logomark", diff)' \
+assert diff[0] > a.width // 3, ("the difference reaches into the logomark", diff)
+assert diff[2] >= a.width - 2, ("the difference does not reach the wordmark'"'"'s end", diff)
+assert diff[3] - diff[1] <= a.height // 2, ("the difference is as tall as a slab", diff)' \
                 "$TMP/logo-light.png" "$TMP/logo-light-alt.png"
     else
         echo "  (Pillow absent — skipping the generate pass; builder/Dockerfile installs it)"

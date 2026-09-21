@@ -39,12 +39,21 @@ a mark and has nothing to gain from being a vector.
 | `outline-wordmark.py` | the one-time generator for `wordmark.svg` (not run by the build) |
 | `make-splash-assets.py` | composes **every** shipped artefact from the sources above. Run by stage 40, after the rasterise pass |
 
-`make-splash-assets.py` produces all of them from one `build_block()` on purpose. The pieces meet
+`make-splash-assets.py` produces all of them from one `load_marks()` on purpose. The pieces meet
 on screen at two hand-offs — the first modeset, and the login after it — so any drift in geometry
 or brightness between them shows up exactly there, as a jump. It also holds the layout constants
 (`MARK_BOX`, `GAP`, `PAD_X`, `PAD_Y`) that used to be duplicated in the Plymouth theme script,
 and the three animation constants (`PULSE_CYCLE_MS`, `PULSE_DEPTH`, `PULSE_SLOTS`) that the C
 splash and the QML splash both run.
+
+**One drawing, two arrangements** ([plan/32](../../plan/32-installer-finish-and-lockup.md) §3).
+`build_block()` is the column — mark box, gap, wordmark under it — and every **boot-time**
+artefact is cut from it: the stub bitmap, the KMS tile container (whose band-slicing assumes a
+vertical stack of slabs and asserts it), the Plasma splash and its preview. `build_lockup()` is
+the row the **installer** draws under `--lockup`: the mark, the gap, the wordmark beside it, all
+cropped to the mark's own ink rather than to `MARK_BOX`. A 224px sidebar rail is a strip and the
+column rendered 22 pixels wide in it. The boundary between the two is the one `--bg` already
+draws — see "The two grounds" below.
 
 ## Two ways to shade one slab
 
@@ -117,12 +126,14 @@ invented on one page fails the offline suite rather than shipping unexplained.
 hex literal, which is why it is not in the table's shape.
 
 **The two grounds.** `logo.png` and `slide.png` are composed by `make-splash-assets.py` from the
-same `build_block()` as the boot splash, but they are flattened onto the **installer's**
-`--surface-page` rather than the splash's `#0a0d11` — because they are pasted into a light window
-and a dark rectangle behind the logomark is exactly what "no visible edge" was supposed to
-prevent. So the claim above that all consumers share one layout function still holds; what they no
-longer share is the colour underneath. `--bg` is the argument that says which, it defaults to the
-splash's dark, and `tests/test-splash-assets.sh` pins both.
+same slabs and the same wordmark as the boot splash, but they are flattened onto the
+**installer's** `--surface-page` rather than the splash's `#0a0d11` — because they are pasted into
+a light window and a dark rectangle behind the logomark is exactly what "no visible edge" was
+supposed to prevent. So the claim above that every consumer shares one drawing still holds; what
+they no longer share is the colour underneath, and since plan/32 the arrangement on top of it.
+`--bg` is the argument that says which, it defaults to the splash's dark, and
+`tests/test-splash-assets.sh` pins both. `--lockup` travels with it: same two artefacts, same
+default, same test.
 
 **...and the wordmark is re-inked with it,** which is the half of that nobody predicted.
 `wordmark.svg` fills its glyph paths with `#f6f7f9` — `--text-strong` of the **dark** theme,

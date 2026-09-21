@@ -1415,10 +1415,19 @@ if profile_has_set installer; then
   # there. This is --text-strong of the LIGHT theme, and it is Theme.qml's value, compared by the
   # offline suite like the one above. The generator refuses outright if the two ever match.
   INSTALLER_TEXT_STRONG="#161b21"
+  # --lockup: THE ROW, NOT THE COLUMN (plan/32 §3), and it is the third argument on the line --bg
+  # and --ink already drew. The drawing is the splash's; the ARRANGEMENT is this medium's. The
+  # stacked block is 144x212, and calamares-sidebar.qml draws it to a height — so in a 224px rail
+  # it rendered 22 pixels wide, with the wordmark at seven pixels of cap height. The lockup is
+  # 260x108, cropped to the mark's own ink rather than to its layout box, because in an
+  # arrangement drawn to a height the box's padding is height the mark does not get. The Plasma
+  # splash's preview, which is the other caller of the same slide function, passes neither this
+  # nor --bg: it previews a splash, and the splash is a column.
   python3 "$REPO/config/branding/make-splash-assets.py" \
     --asset-dir "$BRANDING_PNG" \
     --bg "$INSTALLER_SURFACE_PAGE" \
     --ink "$INSTALLER_TEXT_STRONG" \
+    --lockup \
     --logo  "$TARGET/etc/calamares/branding/installer/logo.png" \
     --slide "$TARGET/etc/calamares/branding/installer/slide.png" \
     || die "installer: branding image generation failed"

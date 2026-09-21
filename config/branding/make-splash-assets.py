@@ -7,15 +7,22 @@ Run by stage 40, after the rasterise pass, emitting whichever outputs were asked
               kernel starts. Covers firmware -> first modeset.
   --sprites   the tile container read by config/splash/splash.c, which draws on DRM from the
               first modeset to the greeter.
-  --logo      the Calamares sidebar logo (plan/16).
-  --slide     the Calamares progress-page slide (plan/16).
+  --logo      the Calamares sidebar logo (plan/16), as a lockup with --lockup (plan/32).
+  --slide     the Calamares progress-page slide (plan/16); --lockup applies to it too.
   --theme     the Plasma splash theme's contents (plan/17): the vectors and the design
               constants the QML that runs at login lays itself out with.
 
 They are produced by ONE script from ONE set of sources on purpose. The pieces meet on screen
 at two hand-offs — the first modeset, and the login that follows it — and any drift in geometry,
-shading or brightness between them shows up exactly there, as a jump. There is one layout
-function, build_block(), and every raster consumer calls it.
+shading or brightness between them shows up exactly there, as a jump. Every raster consumer
+composes through load_marks(), so the slabs, their shading and the wordmark are one drawing.
+
+There are TWO arrangements of that drawing, and the boundary between them is the same one --bg
+already draws (plan/32 §3). build_block() is the column every BOOT-TIME artefact is cut from —
+the stub bitmap, the KMS tile container, the Plasma splash and its preview — and it is the only
+one the sprite path can use, because its band-slicing assumes a vertical stack of slabs and
+asserts it. build_lockup() is the row the INSTALLER draws, under --lockup, because a 224px
+sidebar rail is a strip and the column rendered 22 pixels wide in it.
 
 Two facts about systemd-stub drive the BMP half (src/boot/splash.c, v260):
 
@@ -279,6 +286,86 @@ class Block:
         return self.image.size
 
 
+def load_marks(theme: Path, scale: float,
+               word_ink: tuple[int, int, int]) -> tuple[list[Image.Image], Image.Image]:
+    """The three re-shaded slabs and the wordmark, at `scale`, inked.
+
+    Shared by the two compositions below so that they cannot drift: whatever else the stack and
+    the lockup disagree about, the pixels they are made of come out of one function.
+
+    Re-shade BEFORE scaling: the LUT keys off exact baked alpha values, and resampling blends them
+    into intermediates that would no longer identify a face.
+    """
+    factor = scale / ASSET_ZOOM
+    slabs = [reshade_slab(load(theme, n, 1.0)) for n in SLABS]
+    slabs = [
+        s.resize((max(1, round(s.width * factor)), max(1, round(s.height * factor))), Image.LANCZOS)
+        for s in slabs
+    ]
+    word = load(theme, WORDMARK, factor)
+    if word_ink != WORDMARK_INK:
+        word = recolour(word, word_ink)
+    return slabs, word
+
+
+def build_lockup(theme: Path, scale: float, background: tuple[int, int, int],
+                 word_ink: tuple[int, int, int] = WORDMARK_INK) -> Image.Image:
+    """The horizontal arrangement: [logomark] + [gap] + [wordmark], flattened onto `background`.
+
+    THE SAME MARK, COMPOSED FOR A DIFFERENT SPACE (plan/32 §3). build_block() below is a column,
+    which is what a full screen with a splash in the middle of it wants; this is a row, which is
+    what a 224px sidebar rail wants. The sidebar drew the column at 32px tall, and a 144x212 block
+    at 32px tall is 22px WIDE — a wordmark seven pixels high over a logomark twelve pixels across,
+    in a rail with 184px of room. The lockup is 260x108 at the design baseline, so the same rail
+    at 48px tall buys a 48px mark and a 64x20 wordmark beside it: 2.9x, in both directions.
+
+    WHAT IT DOES NOT CHANGE is the drawing: same slabs, same shading, same wordmark, same
+    generator, through load_marks() above. The claim the splash and the installer have always made
+    to each other is about those, and since plan/28 it has already not been about the GROUND —
+    --bg and --ink apply to the installer's two artefacts and to nothing else. --lockup is the
+    third argument on that same line.
+
+    COMPOSED FROM THE MARK'S INK, NOT FROM MARK_BOX, which is the one number the two arrangements
+    do not share. The slab PNGs are square canvases with the mark drawn small inside them — at the
+    design baseline the ink is 81.5 x 108 in a 130px image, so a quarter of the width and a tenth
+    of the height either side is transparent padding — and MARK_BOX is the column's layout box
+    around that, sized for a splash with a wordmark below it and screen above. Both are height
+    this arrangement cannot spend: the sidebar draws logo.png TO A HEIGHT, so every transparent
+    row in the file comes off the mark the user is meant to see (39px of a 48px slot instead of
+    48), and every transparent column widens the gap the lockup is trying to set. Cropping to the
+    ink makes GAP an optical gap and the drawn height the mark's own.
+
+    The ink is MEASURED the way build_block() measures it for its band assertion, against
+    INK_ALPHA, because LANCZOS ringing leaves a couple of rows of alpha 3-4 around every hard edge
+    and an `alpha > 0` bbox would be those rather than the mark.
+    """
+    slabs, word = load_marks(theme, scale, word_ink)
+
+    gap_px = round(GAP * scale)
+
+    boxes = []
+    for i, slab in enumerate(slabs):
+        box = slab.getchannel("A").point(lambda v: 255 if v > INK_ALPHA else 0).getbbox()
+        if box is None:
+            sys.exit(f"make-splash-assets: {SLABS[i]} rasterised to nothing — did rsvg-convert "
+                     f"find it?")
+        boxes.append(box)
+    ink_l = min(b[0] for b in boxes)
+    ink_t = min(b[1] for b in boxes)
+    ink_w = max(b[2] for b in boxes) - ink_l
+    ink_h = max(b[3] for b in boxes) - ink_t
+
+    width = ink_w + gap_px + word.width
+    height = max(ink_h, word.height)
+
+    canvas = Image.new("RGB", (width, height), background)
+    # Negative offsets, which is the crop: the ink's own bounding box lands at x = 0.
+    for slab in slabs:
+        canvas.paste(slab, (-ink_l, (height - ink_h) // 2 - ink_t), slab)
+    canvas.paste(word, (ink_w + gap_px, (height - word.height) // 2), word)
+    return canvas
+
+
 def build_block(theme: Path, scale: float, background: tuple[int, int, int],
                 word_ink: tuple[int, int, int] = WORDMARK_INK) -> Block:
     """The centred column: [logomark box] + [gap] + [wordmark], flattened onto `background`.
@@ -289,21 +376,15 @@ def build_block(theme: Path, scale: float, background: tuple[int, int, int],
     `word_ink` exists because the wordmark is the one element whose colour is baked into an SVG
     rather than derived here — see WORDMARK_INK. The SLABS need no equivalent: they are the teal
     --accent, which reads on both of this project's grounds, and reshade_slab() already owns
-    their shading. The LAYOUT does not vary with either argument, which is what lets the boot
-    splash and the installer keep sharing this function (plan/28).
-    """
-    factor = scale / ASSET_ZOOM
+    their shading. The LAYOUT does not vary with either argument, which is what let the boot splash
+    and the installer keep sharing this function through plan/28's two grounds.
 
-    # Re-shade before scaling: the LUT keys off exact baked alpha values, and resampling blends
-    # them into intermediates that would no longer identify a face.
-    slabs = [reshade_slab(load(theme, n, 1.0)) for n in SLABS]
-    slabs = [
-        s.resize((max(1, round(s.width * factor)), max(1, round(s.height * factor))), Image.LANCZOS)
-        for s in slabs
-    ]
-    word = load(theme, WORDMARK, factor)
-    if word_ink != WORDMARK_INK:
-        word = recolour(word, word_ink)
+    THE INSTALLER LEFT IT IN plan/32 §3, and what it took with it is the drawing rather than the
+    arrangement: build_lockup() above composes the same load_marks() into a row. This function
+    still owns every boot-time artefact, and it is the only one that can own the sprites — `parts`
+    below cuts the mark into one strip per slab, which is a statement that the slabs are stacked.
+    """
+    slabs, word = load_marks(theme, scale, word_ink)
 
     box_px = round(MARK_BOX * scale)
     gap_px = round(GAP * scale)
@@ -443,29 +524,36 @@ def build_bmp(theme: Path, output: Path, scale: float) -> None:
 
 def build_logo(theme: Path, output: Path, scale: float,
                background: tuple[int, int, int] = BG,
-               word_ink: tuple[int, int, int] = WORDMARK_INK) -> None:
-    """The installer's sidebar logo (plan/16).
+               word_ink: tuple[int, int, int] = WORDMARK_INK,
+               lockup: bool = False) -> None:
+    """The installer's sidebar logo (plan/16, recomposed in plan/32 §3).
 
-    Another consumer of build_block(), and it is here rather than in a new script for the same
-    reason the others share it: Calamares' sidebar sits next to a boot the user watched sixty
-    seconds ago, so the two have to be the same block of pixels, not two drawings of one logo
-    that drift apart the first time either is touched.
+    Another consumer of the shared drawing, and it is here rather than in a new script for the
+    same reason the others share it: Calamares' sidebar sits next to a boot the user watched sixty
+    seconds ago, so the two have to be made of the same pixels, not two drawings of one logo that
+    drift apart the first time either is touched.
+
+    `lockup` picks the ARRANGEMENT of those pixels — the row for a sidebar rail, the column for a
+    screen. What the two share and what they do not is build_lockup()'s docstring.
 
     Flattened onto `background` rather than left transparent, and the Calamares branding sets
     SidebarBackground to the same value — so the PNG has no visible edge against the sidebar at
     any scale, and no alpha for a Qt style to composite differently than expected. Since plan/28
     that value is the LIGHT --surface-page rather than the splash's dark --surface-sunken: the
-    installer and the boot splash share a layout function and no longer share a ground.
+    installer and the boot splash share a drawing and no longer share a ground.
     """
-    canvas = build_block(theme, scale, background, word_ink).image
+    canvas = (build_lockup(theme, scale, background, word_ink) if lockup
+              else build_block(theme, scale, background, word_ink).image)
     output.parent.mkdir(parents=True, exist_ok=True)
     canvas.save(output, format="PNG")
-    print(f"make-splash-assets: {output} ({canvas.width}x{canvas.height}, scale {scale})")
+    print(f"make-splash-assets: {output} ({canvas.width}x{canvas.height}, scale {scale}"
+          f"{', lockup' if lockup else ''})")
 
 
 def build_slide(theme: Path, output: Path, scale: float, size: tuple[int, int],
                 background: tuple[int, int, int] = BG,
-                word_ink: tuple[int, int, int] = WORDMARK_INK) -> None:
+                word_ink: tuple[int, int, int] = WORDMARK_INK,
+                lockup: bool = False) -> None:
     """The installer's progress-page slide (plan/16).
 
     The only consumer that needs a CANVAS rather than a tight block: Calamares' SlideshowPictures
@@ -477,8 +565,15 @@ def build_slide(theme: Path, output: Path, scale: float, size: tuple[int, int],
     Painted on `background`, the same ground the sidebar's logo uses, so it reads as a deliberate
     brand panel rather than as a stray rectangle on the page. Since plan/28 that is the light
     --surface-page; see build_logo().
+
+    AND `lockup` IS WHY THIS FUNCTION HAS THE ARGUMENT AT ALL (plan/32 §3). Both of its callers
+    pass through here: the installer's slide takes the row, because it is the installer's and the
+    sidebar beside it is too; the Plasma splash's preview for System Settings takes the column,
+    because it previews a SPLASH and the splash is a column. That is the same split --bg already
+    makes — this function's second caller passes neither.
     """
-    block = build_block(theme, scale, background, word_ink).image
+    block = (build_lockup(theme, scale, background, word_ink) if lockup
+             else build_block(theme, scale, background, word_ink).image)
     canvas = Image.new("RGB", size, background)
     canvas.paste(block, ((size[0] - block.width) // 2, (size[1] - block.height) // 2))
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -630,6 +725,15 @@ def main() -> None:
              "a light ground needs a dark wordmark or the two are the same colour and the "
              "wordmark is simply not there.",
     )
+    ap.add_argument(
+        "--lockup",
+        action="store_true",
+        help="--logo and --slide only: compose the mark and the wordmark side by side (mark left, "
+             "wordmark right) instead of stacked. The installer's arrangement: a sidebar rail is "
+             "a strip, and the stacked block rendered 22px wide in it. The boot-time artefacts "
+             "are NOT affected — and neither is --slide's second caller, the Plasma splash's "
+             "preview, which previews a splash and so stays a column.",
+    )
     ap.add_argument("--theme", type=Path,
                     help="write the Plasma splash theme's generated contents (images/ and "
                          "Design.qml) into here")
@@ -684,7 +788,8 @@ def main() -> None:
     if args.bmp:
         build_bmp(args.asset_dir, args.bmp, args.scale)
     if args.logo:
-        build_logo(args.asset_dir, args.logo, args.logo_scale, installer_bg, installer_ink)
+        build_logo(args.asset_dir, args.logo, args.logo_scale, installer_bg, installer_ink,
+                   args.lockup)
     if args.slide:
         try:
             w, h = (int(v) for v in args.slide_size.lower().split("x", 1))
@@ -693,7 +798,7 @@ def main() -> None:
         if w < 1 or h < 1:
             sys.exit("make-splash-assets: --slide-size must be positive")
         build_slide(args.asset_dir, args.slide, args.logo_scale, (w, h), installer_bg,
-                    installer_ink)
+                    installer_ink, args.lockup)
     if args.theme:
         build_theme(args.svg_dir, args.theme)
 

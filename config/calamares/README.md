@@ -28,10 +28,26 @@ its job — the one pair that adds to the image rather than writing it — are
 | `branding/installer/lang/*.ts` | `/etc/calamares/branding/installer/lang/*.qm` | compiled by stage 40 with `lrelease`; Calamares loads them as its **branding** translator, which is how our own pages get translated with no mechanism of our own ([plan/22](../../plan/22-installer-language-page.md) §4) |
 
 `branding/installer/logo.png` is **not in this directory**. It is composed at build time by
-`config/branding/make-splash-assets.py --logo`, from the same `build_block()` that produces the
-boot splash's stub bitmap, its KMS sprite tiles and the Plasma splash's preview — one layout
-function for all of them, because the user sees this sidebar within a minute of watching that
+`config/branding/make-splash-assets.py --logo --lockup`, from the same slabs and the same wordmark
+as the boot splash's stub bitmap, its KMS sprite tiles and the Plasma splash's preview — one
+drawing for all of them, because the user sees this sidebar within a minute of watching that
 splash.
+
+What the sidebar does **not** share with the splash is the arrangement, and since
+[plan/32](../../plan/32-installer-finish-and-lockup.md) §3 that is deliberate rather than
+accidental: `--lockup` puts the mark beside the wordmark instead of above it, because a 224px rail
+is a strip and the splash's column — drawn to a height, as `calamares-sidebar.qml` draws it —
+rendered 22 pixels wide in it. The same flag applies to `slide.png` and to nothing else, which is
+exactly the line `--bg` and `--ink` already draw between the installer's two artefacts and
+everything that runs before a desktop exists.
+
+**The window icon is Calamares' own**, not this logo: `branding.desc`'s `productIcon` names
+`/usr/share/icons/hicolor/scalable/apps/calamares.svg` by absolute path — `app-admin/calamares`
+installs it, and it is what `calamares.desktop` and our autostart copy have always resolved to.
+Its one reader is `setWindowIcon()`, which takes the value through `QIcon( QString )` — the
+**file** constructor — so the icon *name* `calamares` would pass Branding's own validation
+(`QIcon::fromTheme()` finds it) and then produce a null icon in silence. Stage 40 checks the path
+is in the target, because Branding reports a missing image at startup, on the medium.
 
 ## The panel pins one application
 

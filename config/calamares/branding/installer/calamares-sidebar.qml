@@ -70,12 +70,19 @@ Rectangle {
         spacing: 0;
 
         // LEFT-ALIGNED AND LOCKUP-SHAPED, not a centred square. The image is logo.png, composed
-        // by make-splash-assets.py from the same block as the boot splash and flattened onto this
-        // panel's own ground, so it has no edge to see. `fillMode: PreserveAspectFit` with only a
-        // height set is what lets a wordmark-shaped block stay wordmark-shaped.
+        // by make-splash-assets.py from the same drawing as the boot splash and flattened onto
+        // this panel's own ground, so it has no edge to see. `fillMode: PreserveAspectFit` with
+        // only a height set is what lets a wordmark-shaped block stay wordmark-shaped.
+        //
+        // AND SINCE plan/32 §3 IT IS ACTUALLY A LOCKUP — mark left, wordmark right, 260x108 at
+        // the design baseline. It was the boot splash's COLUMN, 144x212, and this item draws to a
+        // HEIGHT: at 32px tall that column was 22px wide, which is a wordmark seven pixels high
+        // and a logomark twelve pixels across, in a rail with 184px of room (224 less this
+        // layout's two space4 margins and the space2 below). The 48 spends 116px of that room,
+        // and everything inside it is 2.9x the size of what nobody could read.
         //
         // NOTHING HERE READS `height`, AND THAT IS THE WHOLE POINT. This Image is a ColumnLayout
-        // child, so the LAYOUT owns its width and height — `height: 32` is a starting value the
+        // child, so the LAYOUT owns its width and height — `height: 48` is a starting value the
         // layout immediately overwrites with one it computes from implicitHeight. An Image takes
         // its implicitHeight from sourceSize once sourceSize is set. So `sourceSize.height:
         // height * 2` said: my implicit height is twice my height. The layout then set the height
@@ -99,11 +106,11 @@ Rectangle {
             Layout.leftMargin: ds.space2;
             Layout.bottomMargin: ds.space6;
             Layout.alignment: Qt.AlignLeft | Qt.AlignTop;
-            Layout.preferredHeight: 32;
-            Layout.preferredWidth: Math.round(32 * logo.implicitWidth / Math.max(1, logo.implicitHeight));
+            Layout.preferredHeight: 48;
+            Layout.preferredWidth: Math.round(48 * logo.implicitWidth / Math.max(1, logo.implicitHeight));
             fillMode: Image.PreserveAspectFit;
             source: "file:/" + Branding.imagePath(Branding.ProductLogo);
-            sourceSize.height: 64;   // 2 x the drawn height, for a HiDPI panel — a CONSTANT
+            sourceSize.height: 96;   // 2 x the drawn height, for a HiDPI panel — a CONSTANT
         }
 
         Repeater {
