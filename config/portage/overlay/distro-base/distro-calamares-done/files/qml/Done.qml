@@ -48,14 +48,35 @@ Item {
         color: ds.surfaceCard
     }
 
-    // CENTRED, which no other page in this installer is. Every screen before this one is a
-    // question with a column of controls under it, and reads from the top left; this one is an
-    // answer, and the design system centres it for the same reason a receipt is centred — there
-    // is nothing to scan, only something to be told.
+    // CENTRED ACROSS, TOP-ALIGNED DOWN (plan/32 §1). The horizontal half is the design system's
+    // and stands: every screen before this one is a question with a column of controls under it
+    // and reads from the top left; this one is an answer, and an answer is centred for the same
+    // reason a receipt is — there is nothing to scan, only something to be told.
+    //
+    // THE VERTICAL HALF WAS `anchors.centerIn` AND HAD TO GO, because a centred column taller
+    // than its parent is still centred: the overflow is split between the two ends and nothing
+    // is logged. This page is 576px tall — a 640px window less the 64px the navigation bar is
+    // bounded to in CalamaresWindow's setDimension(), and no contents margins, because
+    // ViewManager only sets those on a widget that HAS a layout and DoneViewStep returns a bare
+    // QQuickWidget. With the restart box ticked the column asked for 586, so the medium reminder
+    // — the last line, and the one that only appears when it is ticked — was drawn below the
+    // bottom edge while five pixels came off the top of the success mark.
+    //
+    // TOP-ANCHORING ALONE WOULD HAVE MADE THAT WORSE, which is the part worth keeping: centred,
+    // a column of height H hangs over by (H - 576)/2; anchored at margin m it hangs over by
+    // H + m - 576, which here is 38px rather than 5. So the page is made to FIT first — the lede
+    // lost a sentence (36px, see DoneConfig.h) and the gaps below lost their +4 (12px) — and
+    // raised second. 538 + 28 = 566, with 10px of slack, and the table sits 48px higher than
+    // centring had it.
+    //
+    // THE GAP IS `space6`, which is what every other page in this installer puts between its
+    // sections; the `+ space1` was this page's alone.
     ColumnLayout {
-        anchors.centerIn: parent
+        anchors.top: parent.top
+        anchors.topMargin: ds.pageMarginV
+        anchors.horizontalCenter: parent.horizontalCenter
         width: Math.min(parent.width - 2 * ds.pageMarginH, 600)
-        spacing: ds.space6 + ds.space1
+        spacing: ds.space6
 
         // The one large positive mark in the installer, and the only place the success tone is
         // used at this size.
@@ -122,6 +143,12 @@ Item {
         // The same rows the summary page showed before the erase, in the same words — see
         // DoneConfig.h. Left-aligned inside a centred page, because a table of label/value pairs
         // that is centred is a table nobody can read down.
+        //
+        // 260 IS A CEILING NOTHING REACHES TODAY, and it is deliberately left that way: the
+        // eight steps before the exec phase yield six rows with a prettyStatus(), and a row is
+        // a 14px label against a 12px mono value plus 2 x space3 — 42.5, so 255. The cap is for
+        // the language whose values wrap, and the ScrollView under it is what that language
+        // gets instead of a page that grows past its viewport again.
         Rectangle {
             Layout.fillWidth: true
             Layout.maximumHeight: 260

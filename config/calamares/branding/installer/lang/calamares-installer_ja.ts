@@ -624,8 +624,8 @@
         <translation>%1 のインストールが完了しました</translation>
     </message>
     <message>
-        <source>Restart to sign in for the first time. Anything still downloading finishes after that.</source>
-        <translation>再起動すると初回サインインができます。ダウンロード中のものはその後に完了します。</translation>
+        <source>Restart to sign in for the first time.</source>
+        <translation>再起動すると初回サインインができます。</translation>
     </message>
     <message>
         <source>Restart now</source>

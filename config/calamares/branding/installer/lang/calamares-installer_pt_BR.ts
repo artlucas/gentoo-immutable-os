@@ -629,8 +629,8 @@
         <translation>%1 está instalado</translation>
     </message>
     <message>
-        <source>Restart to sign in for the first time. Anything still downloading finishes after that.</source>
-        <translation>Reinicie para entrar pela primeira vez. O que ainda estiver baixando termina depois disso.</translation>
+        <source>Restart to sign in for the first time.</source>
+        <translation>Reinicie para entrar pela primeira vez.</translation>
     </message>
     <message>
         <source>Restart now</source>

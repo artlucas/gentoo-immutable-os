@@ -624,8 +624,8 @@
         <translation>%1 已安装完成</translation>
     </message>
     <message>
-        <source>Restart to sign in for the first time. Anything still downloading finishes after that.</source>
-        <translation>重新启动即可首次登录。仍在下载的内容会在之后完成。</translation>
+        <source>Restart to sign in for the first time.</source>
+        <translation>重新启动即可首次登录。</translation>
     </message>
     <message>
         <source>Restart now</source>

@@ -634,8 +634,8 @@
         <translation>%1 установлена</translation>
     </message>
     <message>
-        <source>Restart to sign in for the first time. Anything still downloading finishes after that.</source>
-        <translation>Перезагрузитесь, чтобы войти в систему впервые. То, что ещё загружается, завершится после этого.</translation>
+        <source>Restart to sign in for the first time.</source>
+        <translation>Перезагрузитесь, чтобы войти в систему впервые.</translation>
     </message>
     <message>
         <source>Restart now</source>
