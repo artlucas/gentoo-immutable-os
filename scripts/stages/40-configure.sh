@@ -1428,6 +1428,17 @@ if profile_has_set installer; then
     chmod 0644 -- "$TARGET/etc/calamares/branding/installer/$img.png"
   done
 
+  # THE THIRD BRANDING IMAGE IS NOT OURS AND IS NOT IN THAT DIRECTORY (plan/32 §2). branding.desc's
+  # productIcon names Calamares' own icon by absolute path — app-admin/calamares installs
+  # data/images/squid.svg there — because the window icon should be the application's and not a
+  # brand block scaled into a square. Checked here for the same reason logo.png is: Branding
+  # refuses to load a component naming an image that does not exist, and it refuses at startup,
+  # on the medium, as "Image file … does not exist". tests/test-installer.sh reads this line to
+  # decide the path is accounted for, so the two move together.
+  CAL_PRODUCT_ICON="/usr/share/icons/hicolor/scalable/apps/calamares.svg"
+  [[ -f $TARGET$CAL_PRODUCT_ICON ]] \
+    || die "installer: $CAL_PRODUCT_ICON is missing from the target — branding.desc names it as productIcon and Calamares would exit at startup"
+
   # Live-medium ergonomics, all three of them the same argument: the live account's password is
   # printed in this medium's own documentation, so nothing on the medium should stop to ask for
   # it. Start the installer on login; let the live user authenticate for that ONE polkit action

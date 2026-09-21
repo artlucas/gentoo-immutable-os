@@ -62,7 +62,25 @@ strings:
     releaseNotesUrl:     "@HOME_URL@"
 
 images:
-    productIcon:         "logo.png"
+    # THE WINDOW ICON IS CALAMARES' OWN (plan/32 §2). `productIcon` has exactly one reader —
+    # CalamaresApplication::initBranding()'s setWindowIcon() — and it was pointed at logo.png,
+    # so the window, the task switcher and the title bar wore a 144x212 brand block squeezed into
+    # a square icon box. The stock icon has been on this medium all along: src/calamares's own
+    # CMakeLists installs data/images/squid.svg as the path below, which is what
+    # calamares.desktop's `Icon=calamares` and our autostart copy of it already resolve to. Only
+    # the window disagreed with the panel.
+    #
+    # AN ABSOLUTE PATH, NOT THE ICON NAME "calamares", and the difference is silent. Branding's
+    # loader accepts either — it falls back to QIcon::fromTheme() and keeps the bare name when
+    # the file is not in this directory — but the consumer is QIcon( QString ), which is the FILE
+    # constructor. A name would therefore pass the branding's own validation and produce a null
+    # icon, with no warning and no log line. QDir::absoluteFilePath() returns an absolute argument
+    # unchanged, so the path reaches setWindowIcon() intact; stage 40 checks that the file is in
+    # the target, because Calamares reports a missing branding image at startup, on the medium.
+    productIcon:         "/usr/share/icons/hicolor/scalable/apps/calamares.svg"
+    # OURS, both of them, and they stay the composed block: the sidebar is the one place in this
+    # installer a brand lockup belongs. productWelcome has no reader here at all — the greeting
+    # page draws no logo, and tests/test-installer.sh asserts it.
     productLogo:         "logo.png"
     productWelcome:      "logo.png"
 
