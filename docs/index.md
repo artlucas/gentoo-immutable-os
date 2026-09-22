@@ -51,3 +51,5 @@ python3 -m venv .venv
 .venv/bin/mkdocs serve             # live preview at http://127.0.0.1:8000
 .venv/bin/mkdocs build --strict    # validation pass; warnings fail the build
 ```
+
+`docs/assets/javascripts/mermaid.min.js` is a vendored, version-pinned copy of mermaid 11; it renders the pipeline diagrams client-side without a CDN fetch. Update it deliberately, together with the diagrams it renders.

@@ -37,10 +37,20 @@ markdown_extensions:
       anchor_linenums: true
   - pymdownx.inlinehilite
   - pymdownx.details
-  - pymdownx.superfences
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_div_format
 
 plugins:
   - search
+
+extra_javascript:
+  # Material loads mermaid from unpkg.com at view time unless window.mermaid already exists.
+  # This vendored, version-pinned copy (mermaid 11.12.2) keeps the diagrams rendering offline
+  # and independent of a CDN; material's own loader picks it up and skips the unpkg fetch.
+  - assets/javascripts/mermaid.min.js
 
 nav:
   - index.md

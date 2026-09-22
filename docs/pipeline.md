@@ -15,6 +15,36 @@
 
 ## Stages
 
+Each stage runs as its own privileged container against the persistent mounts; the table carries the per-stage detail.
+
+```mermaid
+flowchart TD
+    subgraph host["Host — scripts/build.sh"]
+        pins["config/build.conf<br/>BUILDER_DIGEST · SNAPSHOT_DATE/SHA256 · VERSION"] --> disp["stage dispatcher<br/>one privileged container per stage"]
+    end
+
+    subgraph stages["Stages — scripts/stages/NN-*.sh"]
+        s10["10 fetch<br/>preflight · tree reconcile"] --> s20["20 builder-setup<br/>config root · @locked-image"]
+        s20 --> s30["30 target-rootfs<br/>two-root emerge"]
+        s30 --> s40["40 configure<br/>overlay · Flatpaks · UKI"]
+        s40 --> s50["50 prune<br/>audit gate · toolchain-free"]
+        s50 --> s60["60 image<br/>EROFS · GPT · zstd"]
+        s60 --> s70["70 test<br/>QEMU boot tests"]
+        s70 --> s80["80 release<br/>skips live profiles"]
+        s80 -.->|"--vendor only"| s90["90 vendor<br/>offline archive"]
+    end
+
+    subgraph mounts["Persistent mounts — survive every stage"]
+        tree[("immos-tree<br/>/var/db/repos<br/>pinned ebuild tree")]
+        work[("immos-work<br/>/work<br/>target rootfs · config root")]
+        cache[("immos-cache<br/>/cache<br/>binpkgs · distfiles")]
+        artifacts[("out/<br/>logs · stamps · reports · images")]
+    end
+
+    disp --> s10
+    mounts -.->|"mounted into every stage container"| stages
+```
+
 | Stage | Script | Purpose |
 |---|---|---|
 | 10 | `scripts/stages/10-fetch.sh` | Builder preflight: verify every tool later stages shell out to; reconcile the tree volume against the `SNAPSHOT_DATE`/`SNAPSHOT_SHA256` pin; assert the builder's own closure matches `builder.lock` |
@@ -40,6 +70,20 @@ Each stage writes `out/state[-<profile>]/<NN>-<name>.done` containing an inputs 
 ## The two-root emerge
 
 Stage 30 installs each dependency into the root that needs it:
+
+```mermaid
+flowchart TD
+    lock["&lt;profile&gt;.lock — exact atoms"] --> set20["stage 20 — @locked-image set,<br/>package.use, make.conf"]
+    set20 --> em{"stage 30 — one depgraph, two roots"}
+
+    em -->|"BDEPEND — build-time"| broot["builder root /<br/>binaries from BINHOST_URI<br/>never enters the image"]
+    em -->|"RDEPEND — runtime"| tgt["$TARGET — /work/target<br/>--usepkg, no binhost"]
+
+    ovl["config/portage/overlay —<br/>this repo's ebuilds"] -.->|"recompiled from the checkout<br/>on every run"| tgt
+    binpkgs[("/cache/binpkgs")] -->|"merge if present"| tgt
+    tgt -->|"FEATURES=buildpkg"| binpkgs
+    tgt --> nxt["stage 40 configure, 50 prune, 60 image"]
+```
 
 - Build-time dependencies (`DEPEND`: compilers, build tools) merge into the builder's own `/` and never enter the image.
 - Runtime dependencies merge into `$TARGET` (`/work/target[-<profile>]`).
