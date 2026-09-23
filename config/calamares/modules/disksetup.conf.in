@@ -39,9 +39,10 @@ version:          "@VERSION@"
 rootPartLabel:    "@ROOT_PARTLABEL@"
 
 # The filesystem labels the factory image's own filesystems carry (stage 60: `mkfs.ext4 -L var`,
-# `mkfs.vfat -n ESP`). Nothing reads them — /etc/fstab finds both partitions by PARTLABEL — but
-# "indistinguishable from an image dd'd to the disk" is the property this installer is built
-# around, and a label is part of what lsblk shows somebody comparing the two.
+# `mkfs.vfat -n ESP`). Nothing reads them — the desktop UKI's cmdline finds both partitions by
+# PARTLABEL, not a filesystem label (plan/34 §4) — but "indistinguishable from an image dd'd to
+# the disk" is the property this installer is built around, and a label is part of what lsblk
+# shows somebody comparing the two.
 varLabel:         "var"
 espLabel:         "ESP"
 

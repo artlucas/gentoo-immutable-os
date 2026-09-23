@@ -1948,7 +1948,14 @@ RECOVERY_TOKENS=()
 # a live medium booted next to an installed disk cannot resolve PARTLABEL=root_<v> to the wrong
 # device. For a target image the two names are the same string, so nothing here changes for the
 # desktop or console builds.
-CMDLINE="root=PARTLABEL=$IMG_ROOT_PARTLABEL rootfstype=erofs ro nvidia-drm.modeset=1 console=tty0 console=ttyS0 quiet ${SPLASH_TOKENS[*]} loglevel=3 rd.udev.log_level=3 vt.global_cursor_default=0 ${RECOVERY_TOKENS[*]}"
+#
+# /var and /efi ride the same cmdline now (plan/34 §4): /etc/fstab.in no longer names a
+# PARTLABEL at all, because it is one file for every role and var/esp vs. live_var/live_esp is
+# exactly the kind of per-role fact this cmdline already carries. mount_extra_var_token/
+# mount_extra_esp_token (scripts/lib/common.sh) hold the systemd-source citations for why each
+# option is there; IMG_VAR_PARTLABEL and IMG_ESP_PARTLABEL are this image's OWN names, same as
+# IMG_ROOT_PARTLABEL above.
+CMDLINE="root=PARTLABEL=$IMG_ROOT_PARTLABEL rootfstype=erofs ro nvidia-drm.modeset=1 console=tty0 console=ttyS0 quiet ${SPLASH_TOKENS[*]} loglevel=3 rd.udev.log_level=3 vt.global_cursor_default=0 $(mount_extra_var_token "$IMG_VAR_PARTLABEL") $(mount_extra_esp_token "$IMG_ESP_PARTLABEL") ${RECOVERY_TOKENS[*]}"
 log "splash backend: $SPLASH_BACKEND; initrd emergency shell: ${DEBUG_INITRD:-0}"
 
 # The stub bitmap comes out of the same script and the same PNGs as the KMS splash's sprites in
@@ -1982,22 +1989,35 @@ grep -q "IMAGE_VERSION=$VERSION" "$TARGET/etc/os-release" || die "verify: os-rel
 grep -q "ID=$DISTRO_ID" "$TARGET/etc/os-release"          || die "verify: os-release ID mismatch"
 [[ -s $UKI_DIR/$UKI_NAME ]]                               || die "verify: UKI missing/empty"
 
-# fstab: the PARTLABELs THIS IMAGE mounts /var and the ESP by (plan/33 §2). /etc/fstab.in
-# rendered from the IMG_*_PARTLABEL tokens exported near the top of section 1; checked here,
-# beside the other renders this block already asserts about.
-grep -q "PARTLABEL=$IMG_VAR_PARTLABEL" "$TARGET/etc/fstab" \
-  || die "verify: /etc/fstab does not name PARTLABEL=$IMG_VAR_PARTLABEL — /var would not mount"
-grep -q "PARTLABEL=$IMG_ESP_PARTLABEL" "$TARGET/etc/fstab" \
-  || die "verify: /etc/fstab does not name PARTLABEL=$IMG_ESP_PARTLABEL — the ESP would not mount"
+# fstab: names NO partition any more (plan/34 §4) — /var and /efi moved to the cmdline below,
+# precisely so the one rendered fstab.in can stop differing per profile. Comment lines (the
+# header explains where the mounts went, in prose that says "PARTLABEL") are excluded — only an
+# actual DATA line naming one fails this.
+grep -vE '^[[:space:]]*#' "$TARGET/etc/fstab" | grep -q 'PARTLABEL' \
+  && die "verify: /etc/fstab still names a PARTLABEL. plan/34 §4 moved /var and /efi to the UKI
+cmdline's systemd.mount-extra= entries so fstab.in could stop being a per-role template; a
+PARTLABEL back in the rendered file means something reintroduced the old lines."
+
+# cmdline: the PARTLABELs THIS IMAGE mounts /var and the ESP by (plan/33 §2, plan/34 §4).
+grep -qF "$(mount_extra_var_token "$IMG_VAR_PARTLABEL")" <<<"$CMDLINE" \
+  || die "verify: the UKI cmdline does not carry this image's own /var mount-extra
+(PARTLABEL=$IMG_VAR_PARTLABEL) — /var would not mount"
+grep -qF "$(mount_extra_esp_token "$IMG_ESP_PARTLABEL")" <<<"$CMDLINE" \
+  || die "verify: the UKI cmdline does not carry this image's own /efi mount-extra
+(PARTLABEL=$IMG_ESP_PARTLABEL) — the ESP would not mount"
 if [[ $PROFILE_ROLE == live ]]; then
-  # THE CHECK THIS WHOLE PHASE EXISTS FOR. A live medium's fstab must never name the installed
-  # system's identity label PARTLABEL=var — booted next to a disk that already has this distro
-  # on it (keep mode's entire scenario, plan/33 §2), that label resolves to whichever device
-  # udev enumerated first: this medium's own var, or the attached disk's.
-  ! grep -qE 'PARTLABEL=var([[:space:]]|$)' "$TARGET/etc/fstab" \
-    || die "verify: a live medium's /etc/fstab names PARTLABEL=var — the installed-system
-  identity label, not this image's own live_var. Mounted next to a disk that already has this
-  distro on it, /var could come from either device (plan/33 §2)."
+  # THE CHECK THIS WHOLE PHASE EXISTS FOR, carried over from the fstab it used to be (plan/33
+  # §2). A live medium's cmdline must never name the installed system's identity label
+  # PARTLABEL=var/esp — booted next to a disk that already has this distro on it (keep mode's
+  # entire scenario), that label resolves to whichever device udev enumerated first: this
+  # medium's own var/esp, or the attached disk's.
+  ! grep -qE 'PARTLABEL=var(:|[[:space:]]|$)' <<<"$CMDLINE" \
+    || die "verify: a live medium's cmdline names PARTLABEL=var — the installed-system identity
+  label, not this image's own live_var. Mounted next to a disk that already has this distro on
+  it, /var could come from either device (plan/33 §2)."
+  ! grep -qE 'PARTLABEL=esp(:|[[:space:]]|$)' <<<"$CMDLINE" \
+    || die "verify: a live medium's cmdline names PARTLABEL=esp — the installed-system identity
+  label, not this image's own live_esp (plan/33 §2)."
 fi
 
 # Boot splash. Every piece is checked because the splash is invisible to every automated test

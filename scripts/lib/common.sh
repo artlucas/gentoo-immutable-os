@@ -503,6 +503,44 @@ init_paths() {
   fi
 }
 
+# ---- cmdline mount-extras (plan/34 §4) -----------------------------------------------
+# /var and /efi left /etc/fstab.in (it renders identically for every profile now) and moved to
+# the UKI cmdline, the one place that already differs per role — IMG_VAR_PARTLABEL/IMG_ESP_
+# PARTLABEL are "var"/"esp" for a target image and "live_var"/"live_esp" for a live one
+# (init_paths, above). Split into their own functions, rather than inlined into stage 40's
+# CMDLINE assembly, so tests/test-profiles.sh can check the exact string per role without
+# running dracut+ukify.
+#
+# Checked against the pinned systemd 260.1 source (src/fstab-generator/fstab-generator.c):
+#   - mount_array_add() (147-163) splits a `systemd.mount-extra=` value on ':' into at most
+#     WHAT:WHERE:FSTYPE:OPTIONS (extract_many_words, 4 pointers) and fails the whole entry if
+#     anything is left over — so OPTIONS must not itself contain a ':'. Neither string below
+#     does; both use ',' only.
+#   - add_mounts_from_cmdline() (1400-1421), called from run_generator() (1690) in the SAME
+#     generator pass that synthesises sysroot.mount from root= (1670) — before /sysroot exists,
+#     let alone systemd-repart.service, which our own 90repart-sysroot drop-in only orders
+#     After=sysroot.mount. So nothing orders a cmdline mount-extra entry after repart by
+#     default, which is exactly why the var token below adds x-systemd.after= itself.
+#   - mount_in_initrd() (317-320): an entry needs x-initrd.mount (or WHERE=/usr) to be mounted
+#     under /sysroot while still in the initrd (parse_fstab_one, 902-1024; canonicalize_mount_
+#     path with prefix_sysroot, 961); one without it — the ESP — is silently skipped there and
+#     picked up on the generator's second pass after switch-root, exactly like it was as a plain
+#     fstab line.
+#   - write_after()/write_extra_dependencies() (365-368, 417-451, called at 585): x-systemd.
+#     after=UNIT is written as a literal `After=UNIT` line once UNIT already carries a suffix
+#     (unit_name_mangle_with_suffix only appends ".mount" to a bare path) — so
+#     x-systemd.after=systemd-repart.service is not turned into systemd-repart.service.mount.
+#   - parse_fstab_one() passno default (946-947): passno = is_device_path(what), true for a
+#     PARTLABEL= device, so /var is still fsck'd with no passno field in the mount-extra syntax.
+#   - add_mount() (735-746): a non-noauto entry gets `Requires=` (not just `Before=`) on its
+#     target unit via generator_add_symlink, so it is pulled in without a [Install] WantedBy=.
+mount_extra_var_token() {
+  printf 'systemd.mount-extra=PARTLABEL=%s:/var:ext4:defaults,x-initrd.mount,x-systemd.growfs,x-systemd.after=systemd-repart.service' "$1"
+}
+mount_extra_esp_token() {
+  printf 'systemd.mount-extra=PARTLABEL=%s:/efi:vfat:umask=0077,noauto,x-systemd.automount' "$1"
+}
+
 # ---- versions -----------------------------------------------------------------
 version_valid() { [[ ${1:-} =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; }
 

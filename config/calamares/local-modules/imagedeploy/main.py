@@ -393,7 +393,9 @@ def run():
                         "account after the live medium")
 
         # ---- 5. the ESP and the API filesystems ---------------------------------------------
-        # /efi, matching config/rootfs/etc/fstab. imagebootloader writes into it next.
+        # /efi. Nothing in the target's own /etc/fstab names this any more (plan/34 §4) — the
+        # desktop UKI's cmdline mounts it by PARTLABEL at boot — but the install still needs it
+        # mounted here for imagebootloader, which writes into it next.
         mount(parts["esp"]["device"], os.path.join(root_mount_point, "efi"), "vfat", "umask=0077")
 
         # What a chroot needs. `users` and `removeuser` run useradd/userdel in here, and shadow's

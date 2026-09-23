@@ -1,6 +1,15 @@
 # Root is mounted by the initrd from the UKI cmdline (root=PARTLABEL=@IMG_ROOT_PARTLABEL@).
 # /etc overlay is mounted by the etc-overlay dracut module, NOT here (plan/01: overlay
 # upperdir paths would not be /sysroot-prefixed by the fstab generator in the initrd).
-PARTLABEL=@IMG_VAR_PARTLABEL@  /var  ext4   defaults,x-initrd.mount,x-systemd.growfs  0 2
-PARTLABEL=@IMG_ESP_PARTLABEL@  /efi  vfat   umask=0077,noauto,x-systemd.automount     0 2
-tmpfs                          /tmp  tmpfs  nosuid,nodev                              0 0
+#
+# /var and /efi are NOT here either (plan/34 §4). This EROFS now boots as more than one role's
+# root — a live medium's and an installed disk's — and those two want DIFFERENT PARTLABELs for
+# the same mountpoints (var vs. live_var, esp vs. live_esp; plan/33 §2). An fstab baked into the
+# lower has to be one string for every role, so the labels moved to the one place that already
+# differs per role: the UKI's cmdline, as two `systemd.mount-extra=` entries (mount_extra_var_
+# token/mount_extra_esp_token in scripts/lib/common.sh, assembled into CMDLINE by stage 40).
+# Confirmed against systemd 260.1's src/fstab-generator/fstab-generator.c: add_mounts_from_
+# cmdline() (1400-1421) runs a cmdline mount-extra entry through the SAME parse_fstab_one() an
+# /etc/fstab line goes through, so x-initrd.mount, x-systemd.growfs and the /sysroot prefixing in
+# the initrd (mount_in_initrd(), 317-320) all behave identically either way.
+tmpfs  /tmp  tmpfs  nosuid,nodev  0 0

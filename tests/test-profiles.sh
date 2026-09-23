@@ -87,25 +87,43 @@ assert_true "installer (live): IMG_ROOT_PARTLABEL differs from the identity ROOT
     test "$I_IMG_ROOT_PARTLABEL" != "$I_ROOT_PARTLABEL"
 assert_eq "live_var" "$I_IMG_VAR_PARTLABEL" "installer (live): IMG_VAR_PARTLABEL is live_var"
 
-# ---- fstab.in renders the right names per role (plan/33 §2) ---------------------------------
+# ---- fstab.in names no PARTLABEL for any role any more (plan/34 §4) --------------------------
+# /var and /efi moved to the UKI cmdline (checked below), so fstab.in is now the SAME rendered
+# text for every profile — the whole reason it "can stop being a template" (plan/34 §4), even
+# though it still carries the .in suffix and still goes through render_template.
 FSTAB_SRC="$REPO_ROOT/config/rootfs/etc/fstab.in"
 assert_true "config/rootfs/etc/fstab.in exists" test -f "$FSTAB_SRC"
-(
-  IMG_ESP_PARTLABEL=esp IMG_ROOT_PARTLABEL=root_9.9.9 IMG_VAR_PARTLABEL=var
-  render_template "$FSTAB_SRC" "$TMP/fstab.target"
-)
-assert_contains 'PARTLABEL=var'  "$(cat "$TMP/fstab.target")" "target fstab: PARTLABEL=var"
-assert_contains 'PARTLABEL=esp'  "$(cat "$TMP/fstab.target")" "target fstab: PARTLABEL=esp"
-assert_false "target fstab: no live_ names leaked in" grep -q 'live_' "$TMP/fstab.target"
+render_template "$FSTAB_SRC" "$TMP/fstab.target"
+assert_false "fstab: no PARTLABEL of any kind on a DATA line" bash -c \
+    "grep -vE '^[[:space:]]*#' '$TMP/fstab.target' | grep -q PARTLABEL"
+assert_contains 'tmpfs' "$(cat "$TMP/fstab.target")" "fstab: /tmp survives"
 
-(
-  IMG_ESP_PARTLABEL=live_esp IMG_ROOT_PARTLABEL=live_root_9.9.9 IMG_VAR_PARTLABEL=live_var
-  render_template "$FSTAB_SRC" "$TMP/fstab.live"
-)
-assert_contains 'PARTLABEL=live_var' "$(cat "$TMP/fstab.live")" "live fstab: PARTLABEL=live_var"
-assert_contains 'PARTLABEL=live_esp' "$(cat "$TMP/fstab.live")" "live fstab: PARTLABEL=live_esp"
-assert_false "live fstab: the installed-system identity PARTLABEL=var is absent" \
-    grep -qE 'PARTLABEL=var([[:space:]]|$)' "$TMP/fstab.live"
+# ---- the cmdline carries /var and /efi instead, by role (plan/34 §4) -------------------------
+assert_eq "systemd.mount-extra=PARTLABEL=var:/var:ext4:defaults,x-initrd.mount,x-systemd.growfs,x-systemd.after=systemd-repart.service" \
+    "$(mount_extra_var_token var)" "mount_extra_var_token: target role"
+assert_eq "systemd.mount-extra=PARTLABEL=esp:/efi:vfat:umask=0077,noauto,x-systemd.automount" \
+    "$(mount_extra_esp_token esp)" "mount_extra_esp_token: target role"
+assert_eq "systemd.mount-extra=PARTLABEL=live_var:/var:ext4:defaults,x-initrd.mount,x-systemd.growfs,x-systemd.after=systemd-repart.service" \
+    "$(mount_extra_var_token live_var)" "mount_extra_var_token: live role"
+assert_eq "systemd.mount-extra=PARTLABEL=live_esp:/efi:vfat:umask=0077,noauto,x-systemd.automount" \
+    "$(mount_extra_esp_token live_esp)" "mount_extra_esp_token: live role"
+# Every option is comma-separated, never ':' — mount_array_add() (fstab-generator.c:147-163)
+# splits the value after "systemd.mount-extra=" into WHAT:WHERE:FSTYPE:OPTIONS on ':' and fails
+# the whole entry if a 5th field shows up, i.e. if OPTIONS itself carries a ':'.
+for tok in "$(mount_extra_var_token var)" "$(mount_extra_esp_token esp)"; do
+  value="${tok#systemd.mount-extra=}"
+  colon_count="$(grep -o ':' <<<"$value" | wc -l)"
+  assert_eq "3" "$colon_count" \
+      "mount-extra value has exactly 3 ':' (WHAT:WHERE:FSTYPE:OPTIONS): $value"
+done
+
+# ...and stage 40 actually builds CMDLINE through these functions, not by hand — the regression
+# a passing offline test above cannot see on its own.
+S40="$REPO_ROOT/scripts/stages/40-configure.sh"
+assert_true "stage 40 CMDLINE calls mount_extra_var_token" \
+    grep -q 'mount_extra_var_token "\$IMG_VAR_PARTLABEL"' "$S40"
+assert_true "stage 40 CMDLINE calls mount_extra_esp_token" \
+    grep -q 'mount_extra_esp_token "\$IMG_ESP_PARTLABEL"' "$S40"
 
 # ---- 1. no per-build path may be shared between two profiles -------------------------------
 for v in TARGET CONFIG_ROOT STATE_DIR REPORT_DIR UKI_DIR LOG_DIR IMG_NAME PROFILE_LOCK EXPECTED_PACKAGES; do

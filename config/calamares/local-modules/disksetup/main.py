@@ -610,10 +610,11 @@ def run():
             # overwritten a step later.
             #
             # The labels match the ones stage 60 gives the factory image's filesystems
-            # (`mkfs.ext4 -L var`, `mkfs.vfat -n ESP`). Nothing reads them — /etc/fstab finds
-            # both partitions by PARTLABEL — but "indistinguishable from an image dd'd to the
-            # disk" is the property this whole installer is built around, and a filesystem
-            # label is part of what `lsblk` shows somebody comparing the two. mkfs.vfat is
+            # (`mkfs.ext4 -L var`, `mkfs.vfat -n ESP`). Nothing reads them — the desktop UKI's
+            # cmdline finds both partitions by PARTLABEL, not a filesystem label (plan/34 §4) —
+            # but "indistinguishable from an image dd'd to the disk" is the property this whole
+            # installer is built around, and a filesystem label is part of what `lsblk` shows
+            # somebody comparing the two. mkfs.vfat is
             # make_esp()'s, shared with the keep path; mkfs.ext4 stays here — the keep path
             # never formats var, which is the entire point of keeping it.
             make_esp(esp, conf)
