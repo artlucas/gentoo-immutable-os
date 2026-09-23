@@ -380,8 +380,15 @@ log "live user: $LIVE_USER moved to $UPPER_ETC (lower /etc restored to pristine)
 
 # The autologin drop-in follows the same account into the upper (plan/34 §5). Its template used
 # to live in config/rootfs, where install_rootfs_overlay (section 1, above) would have put it
-# straight into the lower — moved to config/live-seed so that never happens, and rendered here,
-# by hand, into the one place it now belongs.
+# straight into the lower — moved to config/live-seed so install_rootfs_overlay never sees it —
+# and rendered here, by hand, into the one place it now belongs.
+#
+# rm -f the lower copy FIRST, unconditionally, for the same reason userdel runs before the
+# snapshot above: install_rootfs_overlay only ever ADDS files, it never deletes one that used to
+# ship and no longer does, so a $TARGET left over from a build made before this file moved out of
+# config/rootfs still has it sitting in the lower — found by the real build this exact swap was
+# verified against, the same run that found the userdel gap.
+rm -f -- "$TARGET/etc/plasmalogin.conf.d/10-autologin.conf"
 LIVE_SEED_AUTOLOGIN="$REPO/config/live-seed/plasmalogin.conf.d/10-autologin.conf.in"
 [[ -f $LIVE_SEED_AUTOLOGIN ]] || die "live seed missing: $LIVE_SEED_AUTOLOGIN"
 ensure_dir "$UPPER_ETC/plasmalogin.conf.d"
