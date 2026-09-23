@@ -3731,4 +3731,45 @@ for leaked in 'etc/xdg/kscreenlockerrc' \
         grep -qF "\"$leaked\"" "$STAGE40"
 done
 
+# ---- the live user and its autologin leave the root image (plan/34 §5) --------------------
+# The build-time mechanism cannot run for real without a $TARGET, which this offline suite does
+# not build — so, like the sections above, this checks that the SOURCE actually implements each
+# step plan/34 §5 describes, not that a real build produces the right bytes (stage 40/60's own
+# verify blocks, and the real build in the task's report, cover that).
+STAGE60="$REPO_ROOT/scripts/stages/60-image.sh"
+assert_true "stage 40 snapshots the six account files before touching them" \
+    grep -qF 'LIVE_ACCT_FILES=(passwd shadow group gshadow subuid subgid)' "$STAGE40"
+assert_true "...and moves the modified copies into the /etc overlay's upper" \
+    grep -qF 'mv -f -- "$TARGET/etc/$_f" "$UPPER_ETC/$_f"' "$STAGE40"
+assert_true "...and restores the pristine snapshot to the lower" \
+    grep -qF 'mv -f -- "$LIVE_ACCT_SNAPSHOT/$_f" "$TARGET/etc/$_f"' "$STAGE40"
+assert_true "stage 40 renders the autologin drop-in from config/live-seed, not config/rootfs" \
+    grep -qF 'config/live-seed/plasmalogin.conf.d/10-autologin.conf.in' "$STAGE40"
+assert_true "...into the upper, not the lower" \
+    grep -qF 'render_template "$LIVE_SEED_AUTOLOGIN" "$UPPER_ETC/plasmalogin.conf.d/10-autologin.conf"' \
+    "$STAGE40"
+assert_true "stage 40 dies if \$LIVE_USER is still in the lower /etc/passwd" \
+    grep -qF 'grep -qE "^$LIVE_USER:" "$TARGET/etc/passwd"' "$STAGE40"
+assert_true "stage 40 dies if 10-autologin.conf is still in the lower" \
+    grep -qF '[[ -e $TARGET/etc/plasmalogin.conf.d/10-autologin.conf ]]' "$STAGE40"
+assert_true "stage 40's later pipewire-group check reads the upper, not a chroot id lookup" \
+    grep -qF '"$UPPER_ETC/group"' "$STAGE40"
+
+assert_true "stage 60 excludes the live seed from the var template tarball" \
+    grep -qF '"./overlay/etc/upper/*"' "$STAGE60"
+assert_true "...and the live user's home" \
+    grep -qF '"./home/$LIVE_USER"' "$STAGE60"
+assert_true "...and verifies neither made it into the packed tarball" \
+    grep -qF 'overlay/etc/upper/.' "$STAGE60"
+assert_true "stage 60 reads the BUILT var.img back with debugfs (loopless, plan/04)" \
+    grep -qF 'debugfs -R "cat /overlay/etc/upper/passwd" "$VAR_IMG"' "$STAGE60"
+assert_true "...and the BUILT root EROFS with dump.erofs" \
+    grep -qF 'dump.erofs --cat --path=/etc/passwd "$ROOT_EROFS"' "$STAGE60"
+
+# stage 50's rootless-podman check has to follow the same swap, or it greps a lower that was
+# just restored to pristine and fails every build with INCLUDE_DISTROBOX=1 (found while making
+# this change: it originally read "$T/etc/$f", which the live-user swap emptied of LIVE_USER).
+assert_true "stage 50's subuid/subgid check reads the /etc overlay's upper, not the lower" \
+    grep -qF '"$T/var/overlay/etc/upper/$f"' "$STAGE50"
+
 finish

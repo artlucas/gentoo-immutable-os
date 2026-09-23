@@ -271,8 +271,29 @@ while IFS='|' read -r lang_id lang_locale lang_label _; do
 done <<<"$LANGUAGES_TABLE"
 log "locales: $(grep -c . <<<"$LANGUAGES_TABLE") compiled and readable in the target"
 
-# live user (v1 live-style images; the future installer replaces this)
+# live user (v1 live-style images) — created in the lower, then moved to /var (plan/34 §5)
 #
+# The live user leaves the root image entirely: every profile still creates it exactly as
+# before, but the six account files it touches end up in the /etc overlay's upper
+# ($TARGET/var/overlay/etc/upper — 90etc-overlay's upper root IS /etc, so a file goes there
+# under its bare /etc-relative name, e.g. upper/passwd) rather than in $TARGET/etc, which is
+# what ships inside the read-only EROFS every profile's build produces. Snapshot the PRISTINE
+# six files first, let useradd/usermod/chpasswd run exactly as they always have, then swap: the
+# modified copies go to the upper, the pristine snapshot goes back to the lower. `mv`, not `cp`,
+# for both halves of the swap — passwd is 0644 root:root but shadow and gshadow are not, and
+# nothing here should need to know or restate what mode shadow-utils gave them.
+LIVE_ACCT_FILES=(passwd shadow group gshadow subuid subgid)
+LIVE_ACCT_SNAPSHOT="$WORK/live-acct-snapshot$(profile_suffix)"
+rm -rf -- "$LIVE_ACCT_SNAPSHOT"; ensure_dir "$LIVE_ACCT_SNAPSHOT"
+for _f in "${LIVE_ACCT_FILES[@]}"; do
+  [[ -f $TARGET/etc/$_f ]] \
+    || die "verify: $TARGET/etc/$_f is missing before the live user is created. sys-apps/shadow's
+  pkg_postinst is what creates subuid/subgid as empty files at merge time (stage 30); its
+  absence here means the package did not merge, not that there is nothing yet to snapshot."
+  cp -a -- "$TARGET/etc/$_f" "$LIVE_ACCT_SNAPSHOT/$_f"
+done
+unset _f
+
 # Groups, and why these three: wheel is sudo/polkit (see /etc/sudoers.d/wheel and
 # 49-wheel.rules), video is DRM/KMS access. "pipewire" is the realtime path — PipeWire ships
 # /etc/security/limits.d/25-pw-rlimits.conf granting rtprio 95 / nice -19 to @pipewire and
@@ -329,6 +350,47 @@ if [[ ${INCLUDE_DISTROBOX:-1} == 1 ]]; then
       || die "could not allocate subgids for $LIVE_USER — rootless podman would not work"
   fi
 fi
+
+# The swap (plan/34 §5): move the SIX now-modified files to the /etc overlay's upper, then put
+# the pristine snapshot back in the lower. Order matters — restore only after every touch above
+# is done, or a later step in this same block would silently modify the file that is about to
+# be thrown away instead of the one that ships.
+UPPER_ETC="$TARGET/var/overlay/etc/upper"
+ensure_dir "$UPPER_ETC"
+for _f in "${LIVE_ACCT_FILES[@]}"; do
+  mv -f -- "$TARGET/etc/$_f" "$UPPER_ETC/$_f"
+  mv -f -- "$LIVE_ACCT_SNAPSHOT/$_f" "$TARGET/etc/$_f"
+done
+unset _f
+rmdir -- "$LIVE_ACCT_SNAPSHOT" 2>/dev/null || true
+log "live user: $LIVE_USER moved to $UPPER_ETC (lower /etc restored to pristine)"
+
+# The autologin drop-in follows the same account into the upper (plan/34 §5). Its template used
+# to live in config/rootfs, where install_rootfs_overlay (section 1, above) would have put it
+# straight into the lower — moved to config/live-seed so that never happens, and rendered here,
+# by hand, into the one place it now belongs.
+LIVE_SEED_AUTOLOGIN="$REPO/config/live-seed/plasmalogin.conf.d/10-autologin.conf.in"
+[[ -f $LIVE_SEED_AUTOLOGIN ]] || die "live seed missing: $LIVE_SEED_AUTOLOGIN"
+ensure_dir "$UPPER_ETC/plasmalogin.conf.d"
+render_template "$LIVE_SEED_AUTOLOGIN" "$UPPER_ETC/plasmalogin.conf.d/10-autologin.conf"
+log "live user: autologin drop-in rendered to $UPPER_ETC/plasmalogin.conf.d/10-autologin.conf"
+
+# ---- verify: the live user and its autologin are in the upper, NEVER in the lower ------------
+# The lower ships inside the read-only EROFS every profile's build produces, byte for byte, on
+# an installed disk too (plan/34 §2) — an assertion here is the one place that can still catch a
+# regression before it ships, rather than after somebody boots a machine with a `live:x:1000:`
+# account and a published password in its root filesystem.
+grep -qE "^$LIVE_USER:" "$TARGET/etc/passwd" \
+  && die "verify: $LIVE_USER is still in the LOWER $TARGET/etc/passwd — the live-user swap above
+did not move it. An installed disk's EROFS is this file, byte for byte."
+[[ -e $TARGET/etc/plasmalogin.conf.d/10-autologin.conf ]] \
+  && die "verify: 10-autologin.conf is still in the LOWER $TARGET/etc/plasmalogin.conf.d — it
+must only ever be rendered into the /etc overlay's upper (plan/34 §5)."
+grep -qE "^$LIVE_USER:" "$UPPER_ETC/passwd" \
+  || die "verify: $LIVE_USER is missing from the UPPER $UPPER_ETC/passwd — desktop.img and
+console.img would boot with no live user to autologin as."
+[[ -s $UPPER_ETC/plasmalogin.conf.d/10-autologin.conf ]] \
+  || die "verify: the upper's 10-autologin.conf is missing or empty."
 
 # unit presets shipped by the overlay decide what's enabled
 chroot_target "$TARGET" "systemctl preset-all --preset-mode=enable-only" || \
@@ -2289,9 +2351,13 @@ if profile_has_set desktop; then
     || die "verify: wireplumber.service not enabled — PipeWire would start with no session
   manager, and no audio device would ever be adopted"
   # The live user must be able to reach those RT limits, or the group membership above was lost.
-  chroot_target "$TARGET" "id -nG '$LIVE_USER'" 2>/dev/null | tr ' ' '\n' | grep -qx pipewire \
-    || die "verify: $LIVE_USER is not in the 'pipewire' group — no rtprio/nice limits apply
-  (there is no rtkit-daemon in this image to fall back to)"
+  # Read straight from $UPPER_ETC/group rather than `chroot_target ... id -nG` — by this point in
+  # the script the live-user swap (plan/34 §5) has already moved passwd/group to the upper and
+  # restored the chroot's own /etc/{passwd,group} to their pristine, live-user-less state, so `id`
+  # run inside the chroot would find no such user at all.
+  grep -qE "^pipewire:[^:]*:[^:]*:([^,]*,)*${LIVE_USER}(,[^,]*)*\$" "$UPPER_ETC/group" \
+    || die "verify: $LIVE_USER is not in the 'pipewire' group in $UPPER_ETC/group — no
+  rtprio/nice limits apply (there is no rtkit-daemon in this image to fall back to)"
 fi
 
 # The installer. Each of these is a failure whose only symptom is a Calamares that refuses to

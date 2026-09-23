@@ -133,4 +133,32 @@ for f in module-setup.sh etc-overlay.service etc-overlay.sh; do
     assert_file "$DST/usr/lib/dracut/modules.d/90etc-overlay/$f" "dracut module: $f"
 done
 
+# ---- the live user's autologin never comes from config/rootfs (plan/34 §5) -----------------
+# install_rootfs_overlay walks the WHOLE tree — the one guarantee this checks is that nothing
+# under config/rootfs can put 10-autologin.conf into the LOWER /etc again by accident. It has to
+# be rendered by hand, straight into the /etc overlay's upper, which is stage 40's job and not
+# install_rootfs_overlay's; that half is exercised in tests/test-profiles.sh and by the
+# stage-40/60 grep regressions below, not here, because it needs a $TARGET this suite does not
+# build.
+assert_false "config/rootfs ships no 10-autologin.conf.in" \
+    bash -c "find '$REPO_ROOT/config/rootfs' -name '10-autologin.conf.in' | grep -q ."
+assert_false "install_rootfs_overlay(config/rootfs) writes no plasmalogin.conf.d/10-autologin.conf" \
+    test -e "$DST/etc/plasmalogin.conf.d/10-autologin.conf"
+
+# ---- the live seed itself renders correctly (plan/34 §5) -----------------------------------
+LIVE_SEED_AUTOLOGIN="$REPO_ROOT/config/live-seed/plasmalogin.conf.d/10-autologin.conf.in"
+assert_file "$LIVE_SEED_AUTOLOGIN" "config/live-seed/plasmalogin.conf.d/10-autologin.conf.in exists"
+LIVE_SEED_OUT="$TMP/live-seed-autologin.conf"
+render_template "$LIVE_SEED_AUTOLOGIN" "$LIVE_SEED_OUT"
+assert_true "live seed: [Autologin] section" grep -qx '\[Autologin\]' "$LIVE_SEED_OUT"
+assert_true "live seed: User=\$LIVE_USER" grep -qx "User=$LIVE_USER" "$LIVE_SEED_OUT"
+assert_true "live seed: Session=plasma" grep -qx 'Session=plasma' "$LIVE_SEED_OUT"
+assert_true "live seed: Relogin=false" grep -qx 'Relogin=false' "$LIVE_SEED_OUT"
+assert_false "live seed: no unresolved tokens" grep -qE '@[A-Z][A-Z0-9_]*@' "$LIVE_SEED_OUT"
+# The PLM mtime trap (the file's own header): render_template's plain `printf > dst` always
+# stamps the current wall-clock time, never epoch zero, but the assertion is cheap and this is
+# exactly the property that cost 0.3.0 its autologin once already (stage 60, -T0).
+seed_mtime="$(stat -c%Y "$LIVE_SEED_OUT")"
+assert_true "live seed: rendered mtime is non-zero" test "$seed_mtime" -gt 0
+
 finish

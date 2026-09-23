@@ -1,0 +1,40 @@
+# Plasma Login Manager config for @DISTRO_NAME@'s LIVE VIEW — plan/34 §5.
+#
+# NOT config/rootfs. Everything under config/rootfs/etc goes into the lower via
+# install_rootfs_overlay, which ships inside the read-only EROFS on every profile's build —
+# including an installed disk's. This file is the live user's autologin, and the live user
+# leaves the root image entirely (plan/34 §5): stage 40 renders THIS template by hand, straight
+# into the /etc overlay's upper on $TARGET/var, which only a live boot of this image (this
+# medium, desktop.img, console.img) ever merges over the lower. An installed disk gets a fresh
+# /var and never receives it.
+#
+# A drop-in, not a replacement config: kde-plasma/plasma-login-manager's ebuild installs its
+# own /etc/plasmalogin.conf.d/01gentoo.conf (it blanks InputMethod to drop the
+# qtvirtualkeyboard default) — into the LOWER, same as always, since that file is the package's
+# own and never touches the live user. The 10- prefix sorts after it, so both apply once the
+# overlay merges upper and lower into one directory listing.
+#
+# PLM is a fork of SDDM and keeps its config syntax, so [Autologin] User/Session/Relogin carry
+# over unchanged. CONFIRMED against plasma-login-manager 6.6.6's own Configuration.h: the
+# section is [Autologin], the keys are User/Session/Relogin, and Session names a file in
+# .../wayland-sessions with the ".desktop" appended for you, so "plasma" is right.
+#
+# THE FILE BEING CORRECT IS NOT ENOUGH, and this is the trap to know about before editing it:
+# PLM only reads this directory when its newest mtime beats a zero-initialised "already loaded"
+# stamp, so every inode in the image needs a non-zero mtime or nothing here is ever parsed and
+# the greeter comes up with no error logged anywhere. Stage 60 stamps SOURCE_DATE_EPOCH into the
+# EROFS for exactly this reason; it shipped as -T0 (the Unix epoch) through 0.3.0, and autologin
+# was dead in every one of those images. This file no longer lives in the EROFS stage 60 stamps —
+# it is a plain `render_template` write in stage 40, which always carries the build's real
+# wall-clock time, never zero, so the trap does not apply here BY CONSTRUCTION. It still applies
+# to var.img's mtimes in general; nothing in this file's own path should ever pass -T0 or
+# `touch -d @0` to it. Stage 70 asserts autologin=yes so a regression cannot go unnoticed.
+#
+# Session names /usr/share/wayland-sessions/plasma.desktop, installed by
+# kde-plasma/plasma-login-sessions[wayland]. Stage 40 asserts that file exists in the lower for
+# exactly this reason. No [General] or [Wayland] compositor block belongs here: PLM drives kwin
+# itself, which is why it RDEPENDs kwin[lock].
+[Autologin]
+User=@LIVE_USER@
+Session=plasma
+Relogin=false

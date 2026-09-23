@@ -14,7 +14,7 @@ is_linux || die "stages run inside the builder container only"
 [[ -d $TARGET/usr ]] || die "target rootfs missing"
 [[ -s $UKI_DIR/$UKI_NAME ]] || die "UKI missing — run stage 40"
 
-require_cmds mkfs.erofs dump.erofs mkfs.ext4 mkfs.vfat mmd mcopy sfdisk dd truncate zstd rsync tar
+require_cmds mkfs.erofs dump.erofs mkfs.ext4 mkfs.vfat mmd mcopy sfdisk dd truncate zstd rsync tar debugfs
 
 STAGING="$WORK/staging"; rm -rf -- "$STAGING"; ensure_dir "$STAGING"
 IMG="$OUT/$IMG_NAME"
@@ -168,6 +168,22 @@ slot_bytes="$((ROOT_SLOT_SIZE_MIB * 1024 * 1024))"
   || die "root image ($((root_bytes/1024/1024)) MiB) exceeds slot size (${ROOT_SLOT_SIZE_MIB} MiB)"
 log "root erofs: $((root_bytes/1024/1024)) MiB of ${ROOT_SLOT_SIZE_MIB} MiB slot"
 
+# ---- verify: the BUILT EROFS carries neither the live user nor its autologin (plan/34 §5) ----
+# `dump.erofs --cat --path=X` reads a single file straight out of the image with no extraction
+# and no mount — cheap enough to run here even though $ROOT_EROFS can be several GiB. stage 40
+# already asserted this of $TARGET/etc, which rsync (above, --exclude '/var/*' only — no /etc
+# special-casing) copied here verbatim; this is the same fact checked on the artifact that
+# actually ships, one rsync+mkfs.erofs away from what stage 40 saw.
+if dump.erofs --cat --path=/etc/passwd "$ROOT_EROFS" 2>/dev/null | grep -qE "^${LIVE_USER}:"; then
+  die "verify: $ROOT_EROFS's /etc/passwd has a $LIVE_USER entry — an installed disk is this EROFS,
+byte for byte (plan/34 §2), and would ship it."
+fi
+if [[ -n "$(dump.erofs --cat --path=/etc/plasmalogin.conf.d/10-autologin.conf "$ROOT_EROFS" 2>/dev/null)" ]]; then
+  die "verify: $ROOT_EROFS carries /etc/plasmalogin.conf.d/10-autologin.conf — it must only ever
+be in the /etc overlay's upper (plan/34 §5)."
+fi
+log "root erofs: verified no $LIVE_USER and no 10-autologin.conf in the lower"
+
 # ---- 2. var ext4 (the target's /var payload: flatpaks, overlay skeleton, homes) ------
 VAR_STAGE="$STAGING/var"
 rsync -aHAX "$TARGET/var/" "$VAR_STAGE/"
@@ -190,15 +206,34 @@ VAR_IMG="$STAGING/var.img"
 # not the builder's; --sort=name and a fixed --mtime because two builds of one commit are meant to
 # produce the same bytes. zstd -3: the flatpak store is ~2.7 GiB of already-deployed files, and
 # the difference between -3 and -19 here is minutes of build time for a few percent of a stick.
+#
+# --exclude the live seed (plan/34 §5): overlay/etc/upper/* is stage 40's live-account swap (the
+# directory itself stays, empty, so the installer's own useradd has somewhere to write) and
+# home/$LIVE_USER is the live user's own home. Both are THIS build's own live view, seeded fresh
+# for every boot of THIS image — never something a machine installed FROM this tarball should
+# inherit. Before this, an installed disk's fresh /var could carry a stale live:x:1000: account
+# and its published password by way of the very tarball meant to seed a clean install.
 if [[ $PROFILE_ROLE == target ]]; then
   VAR_TAR="$OUT/$VAR_TEMPLATE_NAME"
   log "var template: packing $VAR_STAGE -> ${VAR_TAR#"$OUT"/}"
   tar --create --directory="$VAR_STAGE" \
       --numeric-owner --sort=name --mtime="@$SOURCE_DATE_EPOCH" \
+      --exclude="./overlay/etc/upper/*" --exclude="./home/$LIVE_USER" \
       --xattrs --acls . \
     | zstd -T0 -3 -q -o "$VAR_TAR.tmp"
   mv -f -- "$VAR_TAR.tmp" "$VAR_TAR"
   log "var template: $(du -m "$VAR_TAR" | cut -f1) MiB compressed"
+
+  # ---- verify: the tarball that seeds an installed disk carries neither (plan/34 §5) ----------
+  # --list only (no extraction of the ~GiB Flatpak store inside): the exclude above should leave
+  # no member under overlay/etc/upper/ or home/$LIVE_USER at all, so a listing is enough.
+  TAR_MEMBERS="$(tar --list --zstd --file="$VAR_TAR")"
+  grep -q '^\./overlay/etc/upper/.' <<<"$TAR_MEMBERS" \
+    && die "verify: $VAR_TAR still carries a file under overlay/etc/upper/ — the --exclude above
+  did not take, and an installed disk's fresh /var would inherit this build's own live account."
+  grep -qE "^\./home/${LIVE_USER}(/|\$)" <<<"$TAR_MEMBERS" \
+    && die "verify: $VAR_TAR still carries home/$LIVE_USER — the --exclude above did not take."
+  log "var template: verified neither overlay/etc/upper/* nor home/$LIVE_USER is packed"
 fi
 
 # The var partition has to actually HOLD what stage 40 staged into it. For the desktop profile
@@ -216,6 +251,19 @@ var_need_mib=$(( var_used_kib / 1024 + var_used_kib / 1024 / 20 + 64 ))   # +5% 
 
 truncate -s "${VAR_SIZE_MIB}M" "$VAR_IMG"
 mkfs.ext4 -q -F -L var -d "$VAR_STAGE" "$VAR_IMG"
+
+# ---- verify: the BUILT var image, not $VAR_STAGE (plan/34 §5, plan/16's --all-root lesson) ----
+# This is what actually boots — dd'd desktop.img and console.img, and this build's own live
+# medium — so it is read back rather than trusted from the staging tree it was built from.
+# debugfs, not a mount: stage 60 stays loopless (module header, above). `cat`/`ls` against a
+# missing path both exit 0 and print nothing to stdout (an error goes to stderr instead), so
+# checking stdout content is the right test either way.
+debugfs -R "cat /overlay/etc/upper/passwd" "$VAR_IMG" 2>/dev/null | grep -qE "^${LIVE_USER}:" \
+  || die "verify: $VAR_IMG's overlay/etc/upper/passwd has no $LIVE_USER entry — desktop.img and
+console.img would boot with no live user to autologin as (plan/34 §5)."
+[[ -n "$(debugfs -R "cat /overlay/etc/upper/plasmalogin.conf.d/10-autologin.conf" "$VAR_IMG" 2>/dev/null)" ]] \
+  || die "verify: $VAR_IMG has no overlay/etc/upper/plasmalogin.conf.d/10-autologin.conf."
+log "var image: verified $LIVE_USER and the autologin drop-in are both in the built var.img"
 
 # ---- 3. ESP vfat via mtools ------------------------------------------------------------
 ESP_IMG="$STAGING/esp.img"

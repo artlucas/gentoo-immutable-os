@@ -975,9 +975,14 @@ if [[ ${INCLUDE_DISTROBOX:-1} == 1 ]]; then
   done
   # The ranges themselves. Stage 40 allocates them explicitly when useradd did not; this is the
   # check that the allocation actually landed in the image rather than in a chroot's /run.
+  #
+  # $T/var/overlay/etc/upper, NOT $T/etc (plan/34 §5): the live-user swap in stage 40 moved
+  # subuid/subgid to the /etc overlay's upper along with the other four account files, and
+  # restored $T/etc's own copies to pristine — no LIVE_USER line there any more, on purpose.
   for f in subuid subgid; do
-    grep -q "^${LIVE_USER}:" "$T/etc/$f" 2>/dev/null \
-      || violation "/etc/$f has no range for $LIVE_USER — rootless podman would fail for the live user"
+    grep -q "^${LIVE_USER}:" "$T/var/overlay/etc/upper/$f" 2>/dev/null \
+      || violation "$f has no range for $LIVE_USER in the /etc overlay's upper — rootless podman
+  would fail for the live user"
   done
   # Rootless means rootless: no system-wide podman API socket may be enabled. Stage 40's preset
   # disables it, but preset-all also applies VENDOR presets, which is exactly how systemd-networkd
