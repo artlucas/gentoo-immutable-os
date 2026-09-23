@@ -1,3 +1,8 @@
+# Updated 2026-09-22 (0.3.1): +1 entry, kde-plasma/kinfocenter. Deliberately NOT #not-live,
+# unlike Spectacle and Discover: 2.2 MiB with zero new dependencies is nothing to trim
+# against, and a session that exists to troubleshoot a failed install is the one that most
+# wants to ask "what hardware is this?" — the same keep-decision dolphin and partitionmanager
+# carry in config/profiles/installer.conf.
 acct-group/adm
 acct-group/audio
 acct-group/avahi
@@ -318,6 +323,7 @@ kde-plasma/kdecoration
 kde-plasma/kdesu-gui
 kde-plasma/keditfiletype
 kde-plasma/kglobalacceld
+kde-plasma/kinfocenter
 kde-plasma/knighttime
 kde-plasma/kpipewire
 kde-plasma/kscreen

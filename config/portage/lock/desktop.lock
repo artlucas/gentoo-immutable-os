@@ -4,10 +4,11 @@
 # SNAPSHOT_SHA256: c61294000825031e58a38f60fadb603423c61430b841d73b87705f789d83944b
 # SNAPSHOT_DATE: 20260820
 # PROFILE: default/linux/amd64/23.0/desktop/plasma/systemd
-# PORTAGE_CONFIG_HASH: f3e30c7ca631983e428719531bda3e5ce8589f1f6414e86623aadcbc7e96abd5
+# PORTAGE_CONFIG_HASH: 5b3c9dd113fc581e7bf0fcf2a3703a63dfba5d3f85beecf58b9a055660bde6c6
 # INCLUDE_CJK_FONTS: 1
 # INCLUDE_PRINTING: 1
 # INCLUDE_DISTROBOX: 1
+# PROFILE_ROLE: target
 # BUILD_PROFILE: desktop
 # PROFILE_SETS: base hardware domain desktop
 #
@@ -350,6 +351,7 @@
 =kde-plasma/kdesu-gui-6.6.6
 =kde-plasma/keditfiletype-6.6.6
 =kde-plasma/kglobalacceld-6.6.6-r1
+=kde-plasma/kinfocenter-6.6.6
 =kde-plasma/knighttime-6.6.6
 =kde-plasma/kpipewire-6.6.6.1
 =kde-plasma/kscreen-6.6.6

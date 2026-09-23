@@ -48,6 +48,11 @@
 #     dev-libs/cyrus-sasl carries net-mail/mailbase in DEPEND, for /etc/aliases.
 #
 
+# Updated 2026-09-22 (0.3.1): +1 entry, kde-plasma/kinfocenter — and it is the whole
+# closure change: the relock's lock.diff adds exactly that atom and nothing else, measured
+# against the real depgraph. Every framework kinfocenter links was already in the image for
+# System Settings; see config/portage/sets/desktop for the full argument, including the
+# optional query tools deliberately not pulled.
 acct-group/adm
 acct-group/audio
 acct-group/avahi
@@ -378,6 +383,7 @@ kde-plasma/kdecoration
 kde-plasma/kdesu-gui
 kde-plasma/keditfiletype
 kde-plasma/kglobalacceld
+kde-plasma/kinfocenter
 kde-plasma/knighttime
 kde-plasma/kpipewire
 kde-plasma/kscreen

@@ -8,9 +8,9 @@
 # else. Applications are Flatpaks (plan/03), so there is no Ark, no Kate, no Okular and no
 # Gwenview here for exactly the reasons file-roller and gnome-text-editor were dropped from
 # the GNOME set: each is a preinstalled Flatpak (`FLATPAK_PREINSTALL` in build.conf), and each
-# would cost a native dependency tail on a read-only root to save a Flatpak download. Spectacle
-# and KDE Partition Manager (below, near dolphin/konsole) are the two exceptions, because for
-# them it isn't a choice: neither has ever been published to Flathub.
+# would cost a native dependency tail on a read-only root to save a Flatpak download. Spectacle,
+# KDE Partition Manager and KInfoCenter (below, near dolphin/konsole) are the three exceptions,
+# because for them it isn't a choice: none has ever been published to Flathub.
 kde-plasma/plasma-desktop
 kde-plasma/plasma-workspace
 kde-plasma/kwin
@@ -107,6 +107,21 @@ kde-plasma/spectacle             #not-live
 # it drives sys-apps/util-linux (already in @base) directly. Privilege escalation goes through
 # sys-auth/polkit-qt, already here for Discover/systemsettings.
 sys-block/partitionmanager
+# Native for the same reason as the two above: no `org.kde.kinfocenter` (or any casing) has
+# ever shipped on Flathub, and the reason plausibly rhymes with Partition Manager's — a tool
+# whose entire job is reading the host's hardware is a poor sandbox fit. kde-plasma/, not
+# kde-apps/: it releases with Plasma, not with the applications bundle. Pulls nothing the image
+# does not already carry — the relock adds exactly one atom: every framework it links —
+# kcmutils, kdeclarative, kirigami, kitemmodels, kio, systemsettings — is already in the
+# closure for System Settings itself, and everything its KCMs read — sys-apps/pciutils,
+# sys-apps/hwdata, virtual/libusb, media-libs/mesa, x11-libs/libdrm — is already in
+# @base/@hardware. kde-frameworks/kdoctools is build-time only, because -handbook is global
+# USE (make.conf.in). 2.2 MiB installed over 387 files; the pinned tree carries 6.6.6 stable
+# (6.7.5 is ~amd64 only), so no keyword exception is taken here. The ebuild's elog names
+# optional query tools its panels can exec — dmidecode, wayland-utils, mesa-progs, clinfo,
+# vulkan-tools, xdpyinfo — and none of them is added: each is a probe for one panel, not a
+# dependency, and a probe the image lacks costs that panel's data, not the tool.
+kde-plasma/kinfocenter
 kde-apps/kio-extras              # the gvfs equivalent: trash, network, thumbnails
 kde-plasma/print-manager         #printing
 sys-power/power-profiles-daemon
