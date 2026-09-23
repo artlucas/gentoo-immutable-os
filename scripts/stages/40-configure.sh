@@ -282,6 +282,20 @@ log "locales: $(grep -c . <<<"$LANGUAGES_TABLE") compiled and readable in the ta
 # modified copies go to the upper, the pristine snapshot goes back to the lower. `mv`, not `cp`,
 # for both halves of the swap — passwd is 0644 root:root but shadow and gshadow are not, and
 # nothing here should need to know or restate what mode shadow-utils gave them.
+#
+# userdel FIRST, unconditionally: $TARGET persists in the work volume across runs (a resumed
+# `--from 40`, which the README documents, and — more subtly — a from-scratch stage 30, because
+# portage's own emerge never touches /etc/passwd at all, so a $TARGET built by an OLDER version
+# of this pipeline, before this swap existed, can still carry $LIVE_USER baked directly into the
+# lower from that earlier run). Snapshotting "whatever is here right now" would then capture a
+# baseline that already has the live user in it, and the swap below would faithfully move THAT
+# to the upper and restore THAT to the lower — passing every mv, changing nothing, and still
+# failing the verify at the end of this block. `userdel -f -r` empties passwd/shadow/group/
+# gshadow/subuid/subgid of every live-related line (confirmed against this tree's shadow-utils:
+# it also strips the supplementary group memberships in wheel/video/pipewire and drops the
+# private "live" group and gshadow entry, not just the passwd line) — a true no-op when the
+# user does not exist yet, which `|| true` treats as such rather than as failure.
+chroot_target "$TARGET" "userdel -f -r '$LIVE_USER'" >/dev/null 2>&1 || true
 LIVE_ACCT_FILES=(passwd shadow group gshadow subuid subgid)
 LIVE_ACCT_SNAPSHOT="$WORK/live-acct-snapshot$(profile_suffix)"
 rm -rf -- "$LIVE_ACCT_SNAPSHOT"; ensure_dir "$LIVE_ACCT_SNAPSHOT"
@@ -318,13 +332,12 @@ if ! chroot_target "$TARGET" "id -u '$LIVE_USER'" >/dev/null 2>&1; then
   chroot_target "$TARGET" "useradd -m -G '$LIVE_USER_GROUPS' -s /bin/bash '$LIVE_USER'"
   chroot_target "$TARGET" "echo '$LIVE_USER:$LIVE_USER_PASSWORD' | chpasswd"
 else
-  # The target persists in the work volume between runs, so on a resumed build (`--from 40`,
-  # which the README documents for recovering from a failure) useradd above never runs and any
-  # change to the group list would silently never apply. Reconcile it instead of trusting
-  # whatever a previous run set — `-G` REPLACES the supplementary list, which is the point:
-  # dropping "audio" has to actually drop it. The useradd above is the only thing in the build
-  # that touches this user's groups (the subuid/subgid usermod below does not), so there is no
-  # other membership to preserve.
+  # Reached only if the userdel above did not actually remove the user (a defensive fallback,
+  # not the steady state: `-f -r` should always succeed in a batch build with no live session
+  # holding the account open). Reconcile rather than trust whatever is already there — `-G`
+  # REPLACES the supplementary list, which is the point: dropping "audio" has to actually drop
+  # it. The useradd branch is the only thing in the build that touches this user's groups (the
+  # subuid/subgid usermod below does not), so there is no other membership to preserve.
   chroot_target "$TARGET" "usermod -G '$LIVE_USER_GROUPS' '$LIVE_USER'" \
     || die "could not reconcile supplementary groups for $LIVE_USER"
 fi

@@ -185,10 +185,22 @@ nothing takes the framebuffer, so nothing modesets until after switch-root.
 ## fstab (shipped in image, immutable lower)
 
 ```
-PARTLABEL=var  /var   ext4   defaults,x-initrd.mount,x-systemd.growfs   0 2
-PARTLABEL=esp  /efi   vfat   umask=0077,noauto,x-systemd.automount      0 2
-tmpfs          /tmp   tmpfs  nosuid,nodev                               0 0
+tmpfs  /tmp  tmpfs  nosuid,nodev  0 0
 ```
+
+`/var` and `/efi` are NOT fstab entries any more ([plan/34 §4](34-installer-sysext.md)): this
+EROFS now boots as both a live medium and an installed disk, and the two need different
+PARTLABELs for the same mountpoints (`var`/`esp` vs. `live_var`/`live_esp`,
+[plan/33 §2](33-reinstall-keeping-files.md)). fstab has no per-role hook, so both moved to the
+UKI cmdline — the one place that already differs per role — as two
+`systemd.mount-extra=WHAT:WHERE:FSTYPE:OPTIONS` entries, assembled by
+`mount_extra_var_token`/`mount_extra_esp_token` in `scripts/lib/common.sh`. Checked against the
+pinned systemd 260.1 source: a cmdline mount-extra is turned into a unit by the SAME
+`parse_fstab_one()` an `/etc/fstab` line goes through, so `x-initrd.mount` and
+`x-systemd.growfs` behave identically either way — except that it is parsed on the generator's
+FIRST pass, before `/sysroot` exists, so it needs `x-systemd.after=systemd-repart.service`
+explicitly (the fstab-sourced entry never did, because `initrd-parse-etc.service` only reads
+`/sysroot/etc/fstab` after `initrd-root-fs.target`, which is itself after repart).
 
 Root itself has no fstab entry (mounted by initrd from `root=PARTLABEL=root_<ver>`); the
 `/etc` overlay is mounted by the dracut module, not fstab (rationale in 01).

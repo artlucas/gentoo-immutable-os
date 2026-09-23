@@ -67,7 +67,8 @@ UEFI firmware
             └─ initrd (dracut, systemd-based, hostonly=no)
                  1. systemd-repart grows `var` partition to end of disk (first boot only)
                  2. mount /sysroot            ← root=PARTLABEL=root_<version> (erofs, ro)
-                 3. mount /sysroot/var        ← fstab x-initrd.mount entry (PARTLABEL=var)
+                 3. mount /sysroot/var        ← cmdline systemd.mount-extra=, x-initrd.mount
+                                                 (PARTLABEL=var; plan/34 §4 — was an fstab entry)
                  4. etc-overlay unit          ← custom dracut module (see below)
                  5. switch-root
                       └─ systemd (full)
@@ -140,10 +141,11 @@ boot and gets rolled back. Manual rollback: `bootctl set-default immos_<old>.efi
   `mkdir -p`s the upper/work dirs and mounts
   `overlay /sysroot/etc -o lowerdir=/sysroot/etc,upperdir=/sysroot/var/overlay/etc/upper,workdir=/sysroot/var/overlay/etc/work`.
 
-Why a custom module and not an fstab `x-initrd.mount` entry: overlay `upperdir=`/`workdir=`
-options are absolute paths that systemd's fstab generator would *not* rewrite to `/sysroot/...`
-in the initrd context — the entry would point at the initrd's own `/var` and fail. Regular
-partition mounts like `/var` don't have this problem, which is why `/var` *does* use fstab.
+Why a custom module and not an `x-initrd.mount` entry: overlay `upperdir=`/`workdir=` options
+are absolute paths that systemd's fstab generator would *not* rewrite to `/sysroot/...` in the
+initrd context — the entry would point at the initrd's own `/var` and fail. Regular partition
+mounts like `/var` don't have this problem, which is why `/var` *does* get one — as a cmdline
+`systemd.mount-extra=` entry rather than an `/etc/fstab` line since [plan/34 §4](34-installer-sysext.md).
 
 Semantics (documented tradeoff): overlay upper wins file-wise. A file the user modified stops
 receiving vendor updates until the user deletes the upper copy (`immos-update etc-diff` in
@@ -159,8 +161,9 @@ lands in the upper — stable thereafter.
 - First boot: `systemd-repart` (in initrd, `repart.d/50-var.conf` with
   `SizeMaxBytes=` unset + `Weight=`) extends the partition to the end of the physical disk —
   libfdisk relocates the backup GPT header automatically, so a 16 GiB image dd'd onto a 1 TB
-  disk claims the full disk. `x-systemd.growfs` on the `/var` fstab entry grows the ext4 to
-  match.
+  disk claims the full disk. `x-systemd.growfs` on the `/var` cmdline `systemd.mount-extra=`
+  entry ([plan/34 §4](34-installer-sysext.md) — was an `/etc/fstab` entry) grows the ext4 to
+  match; `x-systemd.after=systemd-repart.service` is what makes it wait for the resize.
 - Updates never touch `/var`. A "factory reset" is: wipe `var` + relabel (roadmap: recovery
   UKI that does this).
 - swap: zram only (`sys-apps/zram-generator`), no swap partition, no hibernation — **in the
@@ -173,13 +176,19 @@ lands in the upper — stable thereafter.
 ## First boot & default user
 
 v1 images are "live-style": a `live` user (uid 1000, wheel, configurable name/password in
-`build.conf`) is baked into the image `/etc/passwd`/`shadow` at build time, with Plasma Login
-Manager autologin into the Plasma Wayland session (`/etc/plasmalogin.conf.d/10-autologin.conf`). Rationale: zero-interaction boot for both VM
-evaluation and USB live use. The installer ([plan/16](16-installer.md) §5.4) replaces this with real
-user creation. It cannot *delete* the `live` user — that user lives in the read-only EROFS the
-installed system also boots — so it shadows `passwd`/`shadow`/`group` from the `/etc` overlay
-upper, and adds a `20-no-autologin.conf` drop-in that sorts after the baked-in one. User-created accounts at runtime land in the `/etc` overlay
-upper and `/var/home` — they survive updates.
+`build.conf`) autologins into the Plasma Wayland session
+(`/etc/plasmalogin.conf.d/10-autologin.conf`), for zero-interaction boot in both VM evaluation
+and USB live use.
+
+**The live user is not in the image.** [plan/34 §5](34-installer-sysext.md) moved it: stage 40
+still creates it exactly as before, but the six account files it touches
+(`passwd`/`shadow`/`group`/`gshadow`/`subuid`/`subgid`) and the autologin drop-in end up in the
+`/etc` overlay's upper on `$TARGET/var`, never in the lower `/etc` that ships inside the
+read-only EROFS. An installed disk gets a fresh `/var` and never receives any of it — the
+installer's `accountsetup` no longer needs to delete a `live` account that was never there to
+begin with. `desktop.img` and `console.img`, dd'd directly, still autologin as `live`, because
+their own `/var` still carries the seed. User-created accounts at runtime land in the `/etc`
+overlay upper and `/var/home` the same way — they survive updates.
 
 There is a third kind of identity as of [plan/18](18-active-directory.md): accounts that are not
 in `/etc/passwd` at all. Every profile ships `sys-auth/sssd`, `/etc/nsswitch.conf` names the `sss`

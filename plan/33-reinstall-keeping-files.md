@@ -54,6 +54,14 @@ never a sysupdate target. Everything that describes an *installed* system is unt
 `root_<v>`, `_empty`, `var`, `ROOT_PARTLABEL`, `UKI_NAME`, and every string `disksetup`,
 `imagedeploy`, the manifest and sysupdate use.
 
+**Updated by [plan/34 §4](34-installer-sysext.md):** the table below still describes how these
+labels were carried when this document was written — `fstab.in` rendered per role. They are the
+same names today, but fstab.in no longer names any of them: `/var` and `/efi` moved from fstab
+to two `systemd.mount-extra=` entries on the UKI cmdline, because that was already the one place
+that differs per role. `IMG_VAR_PARTLABEL`/`IMG_ESP_PARTLABEL` and the live-medium guard
+(`live` never resolving to `PARTLABEL=var`/`PARTLABEL=esp`) are unchanged in substance, just
+checked against `CMDLINE` instead of `/etc/fstab` now.
+
 | File | Change |
 |---|---|
 | `scripts/lib/layout.sh` | New `layout_names ROLE VERSION`, setting `NAME_ESP NAME_ROOT NAME_VAR` — `target`: `esp`/`root_V`/`var`; `live`: `live_esp`/`live_root_V`/`live_var`; any other role dies. `emit_sfdisk_script VERSION [ROLE]` defaults to `target` and takes its names from it; slot B stays `_empty`. `emit_install_sfdisk_script` always uses `target` — an installer only ever makes an installed machine. Still self-contained: no `$REPO`, no `load_config` |
