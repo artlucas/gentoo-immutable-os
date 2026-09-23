@@ -101,8 +101,10 @@ public:
     /*! ONE SENTENCE, AND IT USED TO BE TWO (plan/32 §1). The second one said that anything still
      *  downloading would finish after the restart — about `appsetup`, which has already run by
      *  the time this page is drawn and which does nothing at all on an offline install. It cost a
-     *  wrapped line at 18px/1.5, and this page was 10px taller than its viewport. */
-    QString pageLede() const { return tr( "Restart to sign in for the first time." ); }
+     *  wrapped line at 18px/1.5, and this page was 10px taller than its viewport. STILL ONE LINE
+     *  now that it branches on keeping (plan/33 §8) — plan/32 left this page ten pixels of slack,
+     *  not room for a second sentence. */
+    QString pageLede() const;
     QString restartLabel() const { return tr( "Restart now" ); }
     QString mediumReminder() const
     {
@@ -128,4 +130,7 @@ private:
     RestartMode m_mode = RestartMode::Never;
     QString m_restartCommand;
     bool m_restartWanted = false;
+    /*! plan/33 §8, read from GlobalStorage's diskKeepData in collect() — the disk step's own
+     *  publish() is the one place this fact is decided, and this page only ever reports it. */
+    bool m_keeping = false;
 };

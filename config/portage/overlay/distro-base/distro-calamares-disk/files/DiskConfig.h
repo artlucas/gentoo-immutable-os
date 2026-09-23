@@ -115,6 +115,24 @@ public:
      *  would mean the first person to ask about encryption asks whether it was forgotten. */
     Q_PROPERTY( bool encryptionAvailable READ encryptionAvailable CONSTANT )
 
+    // ---- keeping what is on the disk (plan/33) --------------------------------------------
+    /*! The SELECTED row already holds a recognisable install of this distro, whether or not it
+     *  can actually be kept (DiskModel::Keep != None). Decides WHICH ROW Disk.qml draws in the
+     *  slot the encryption row used to occupy alone — the keep row on a disk this is true for,
+     *  the encryption row on every other disk — never both and never neither. */
+    Q_PROPERTY( bool keepOffered READ keepOffered NOTIFY planChanged )
+    /*! The selected row's install can actually be kept (== Offered rather than Refused). Gates
+     *  the checkbox itself; keepOffered alone only decided which row is drawn at all. */
+    Q_PROPERTY( bool keepAvailable READ keepAvailable NOTIFY planChanged )
+    /*! The tick. TICKED BY DEFAULT the moment it becomes available (plan/33 §1) — the choice
+     *  that cannot lose anything is the one a user has to act to leave — computed in
+     *  setCurrentIndex() and ignored by the setter unless keepAvailable(). */
+    Q_PROPERTY( bool keepData READ keepData WRITE setKeepData NOTIFY keepDataChanged )
+    Q_PROPERTY( QString keepLabel READ keepLabel NOTIFY retranslated )
+    /*! The hint beside a disabled checkbox, on a disk that holds an install this build cannot
+     *  reuse (DiskModel::Keep::Refused). */
+    Q_PROPERTY( QString keepUnavailableText READ keepUnavailableText NOTIFY retranslated )
+
     explicit DiskConfig( QObject* parent = nullptr );
 
     void setConfigurationMap( const QVariantMap& configurationMap );
@@ -144,14 +162,23 @@ public:
     QString layoutSummaryLabel() const { return tr( "The disk will be set up like this" ); }
     QString encryptLabel() const { return tr( "Encrypt this disk" ); }
     QString notYetAvailableText() const { return tr( "Not yet available" ); }
-    QString confirmTitle() const { return tr( "Erase this disk?" ); }
+    // confirmTitle/confirmAcceptLabel are no longer one-liners: both now say something different
+    // while keeping (plan/33 §9), so they moved out of line beside confirmSubtitle.
+    QString confirmTitle() const;
     QString confirmSubtitle() const;
     QString cancelLabel() const { return tr( "Cancel" ); }
-    QString confirmAcceptLabel() const { return tr( "Erase and install" ); }
+    QString confirmAcceptLabel() const;
     QString selectedDiskTitle() const;
     QVariantList plan() const;
     QString lossSummary() const;
     bool encryptionAvailable() const { return false; }
+
+    bool keepOffered() const;
+    bool keepAvailable() const;
+    bool keepData() const { return m_keepData; }
+    void setKeepData( bool keep );
+    QString keepLabel() const { return tr( "Keep my files, apps and settings" ); }
+    QString keepUnavailableText() const { return tr( "Not possible on this disk" ); }
 
     /*! Re-enumerate. Bound to "Check again", because plugging a disk in is the fix for the one
      *  state this page can reach with nothing to offer. */
@@ -192,9 +219,30 @@ signals:
     void disksChanged();
     void planChanged();
     void retranslated();
+    void keepDataChanged();
 
 private:
     QVector< DiskModel::Entry > enumerate() const;
+
+    /*! Runs the layout helper against ONE disk (plan/33 §4/§5): `sfdisk --dump`, then
+     *  `<layoutHelper> inspect` with the dump on stdin, then — only on a `keep` verdict — the
+     *  var partition's lsblk fstype, because `inspect` is a pure text function over a partition
+     *  TABLE and never looks at what is actually written to a filesystem. Sets e.keep,
+     *  e.installedVersion and the four kept* sizes; leaves them at their defaults (None, empty,
+     *  zero) on anything short of a full Offered verdict except where noted. Called from
+     *  enumerate() only for an otherwise-installable row whose lsblk children already include a
+     *  partition literally labelled "var" — the cheap gate that keeps this off every disk that
+     *  obviously never ran this distro. */
+    void inspectDisk( DiskModel::Entry& e ) const;
+
+    /*! Any INSTALLABLE row the model holds offers a keep — used by subheadline(), which the
+     *  disk list's own note says must depend on the machine, not on the current selection. */
+    bool anyRowOffersKeep() const;
+
+    /*! keepAvailable() AND the tick — the one condition plan() /lossSummary()/confirmTitle()/
+     *  confirmAcceptLabel()/prettyStatus() all branch on (plan/33 §5). Not a Q_PROPERTY: nothing
+     *  in the QML needs "is it available AND ticked" as a single value, only the two halves. */
+    bool keeping() const;
 
     DiskModel* m_model;
     int m_currentIndex = -1;
@@ -205,4 +253,13 @@ private:
     double m_minimumDiskGB = 0.0;
     qint64 m_espBytes = 0;
     qint64 m_slotBytes = 0;
+
+    /*! /usr/libexec/<id>-disk-layout — modules/disk.conf's `layoutHelper`, read with
+     *  Calamares::getString() rather than configNumber() (plan/33 §5): the disk plugin's
+     *  file-static configNumber() call-site count is pinned at five by the tests, and this is a
+     *  string, not a number. Empty means no keep can ever be offered — inspectDisk() no-ops. */
+    QString m_layoutHelper;
+    /*! The tick (plan/33 §1). Recomputed by setCurrentIndex() on every selection, TICKED by
+     *  default whenever the newly selected row offers it. */
+    bool m_keepData = false;
 };

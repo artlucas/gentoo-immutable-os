@@ -125,6 +125,14 @@ def run():
             _("No rootMountPoint is set — <pre>{!s}</pre> did not run.").format("localesetup"),
         )
 
+    if bool(libcalamares.globalstorage.value("diskKeepData")):
+        # KEEPING (plan/33 §8): the location page's answer configures the INSTALLER SESSION
+        # only — the kept system keeps its own time zone, exactly as an update leaves it. This
+        # job's whole purpose is applying that answer to the target, so on this path it has
+        # nothing to do.
+        debug("localesetup: keeping — the target's time zone is the kept system's own")
+        return None
+
     region = libcalamares.globalstorage.value("locationRegion")
     zone = libcalamares.globalstorage.value("locationZone")
     if not region or not zone:

@@ -41,6 +41,18 @@ public:
     };
     Q_ENUM( Block )
 
+    /*! Whether this disk already holds an install of this distro, and whether disksetup can
+     *  keep it (plan/33 §4). Set in DiskConfig::enumerate() from `disk-layout inspect`, run
+     *  once per eligible disk — the same helper the job re-runs before it writes anything, so
+     *  the page and the job cannot disagree about a disk. */
+    enum class Keep
+    {
+        None = 0,  //!< Not recognisably an install of this distro. The page does what it always did.
+        Offered,   //!< An install this build's disksetup can keep.
+        Refused,   //!< An install, but this build cannot reuse it (`inspect`'s `refuse`, or no ext4).
+    };
+    Q_ENUM( Keep )
+
     enum Roles
     {
         /*! What the user reads first: "Samsung SSD 990 PRO 1TB", from sysfs — or the bus's own
@@ -80,6 +92,22 @@ public:
          *  in the languages that punctuate differently. */
         QString firstPartition;
         Block block = Block::None;
+
+        /*! plan/33 §4/§5. `keep` is None for every disk that is not recognisably an install of
+         *  this distro — which is most of them — so the four fields below are meaningful only
+         *  when it is Offered or Refused. */
+        Keep keep = Keep::None;
+        /*! "0.3.0" — the highest root_<v> `inspect` found, on Offered and Refused alike; empty
+         *  for None. What ContentsRole names the disk by, and what §9's sentences quote. */
+        QString installedVersion;
+        /*! The kept disk's ACTUAL four segment sizes, from `inspect`'s esp_mib/slot_mib/
+         *  spare_mib/var_mib — the layout that is really on the disk, which need not match this
+         *  build's own ESP_SIZE_MIB/ROOT_SLOT_SIZE_MIB if an earlier build used different ones.
+         *  Zero unless keep is Offered. */
+        qint64 keptEspBytes = 0;
+        qint64 keptSlotBytes = 0;
+        qint64 keptSpareBytes = 0;
+        qint64 keptVarBytes = 0;
     };
 
     explicit DiskModel( QObject* parent = nullptr );

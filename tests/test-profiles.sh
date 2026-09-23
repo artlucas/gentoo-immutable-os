@@ -58,6 +58,55 @@ eval "$( BUILD_PROFILE_OVERRIDE=console; load_config
                     ROOT_PARTLABEL PROFILE_LOCK EXPECTED_PACKAGES \
            | sed 's/^declare -[-x]* /C_/; s/^C_/declare -g C_/' )"
 
+# ---- IMG_*_PARTLABEL: this profile's OWN image, vs. ROOT_PARTLABEL's identity (plan/33 §2) ---
+eval "$( BUILD_PROFILE_OVERRIDE=installer; load_config
+         declare -p ROOT_PARTLABEL IMG_ESP_PARTLABEL IMG_ROOT_PARTLABEL IMG_VAR_PARTLABEL \
+           | sed 's/^declare -[-x]* /I_/; s/^I_/declare -g I_/' )"
+assert_eq "$D_ROOT_PARTLABEL" "$C_ROOT_PARTLABEL" "ROOT_PARTLABEL: desktop == console (identity, unchanged)"
+assert_eq "$D_ROOT_PARTLABEL" "$I_ROOT_PARTLABEL" "ROOT_PARTLABEL: desktop == installer too (identity, unchanged)"
+# desktop and console are PROFILE_ROLE=target, so their own image's names ARE the identity names.
+eval "$( BUILD_PROFILE_OVERRIDE=desktop; load_config
+         declare -p IMG_ESP_PARTLABEL IMG_ROOT_PARTLABEL IMG_VAR_PARTLABEL \
+           | sed 's/^declare -[-x]* /D_/; s/^D_/declare -g D_/' )"
+eval "$( BUILD_PROFILE_OVERRIDE=console; load_config
+         declare -p IMG_ESP_PARTLABEL IMG_ROOT_PARTLABEL IMG_VAR_PARTLABEL \
+           | sed 's/^declare -[-x]* /C_/; s/^C_/declare -g C_/' )"
+assert_eq "esp" "$D_IMG_ESP_PARTLABEL" "desktop (target): IMG_ESP_PARTLABEL is unsuffixed"
+assert_eq "$D_ROOT_PARTLABEL" "$D_IMG_ROOT_PARTLABEL" "desktop (target): IMG_ROOT_PARTLABEL == ROOT_PARTLABEL"
+assert_eq "var" "$D_IMG_VAR_PARTLABEL" "desktop (target): IMG_VAR_PARTLABEL is unsuffixed"
+assert_eq "esp" "$C_IMG_ESP_PARTLABEL" "console (target): IMG_ESP_PARTLABEL is unsuffixed"
+assert_eq "$C_ROOT_PARTLABEL" "$C_IMG_ROOT_PARTLABEL" "console (target): IMG_ROOT_PARTLABEL == ROOT_PARTLABEL"
+assert_eq "var" "$C_IMG_VAR_PARTLABEL" "console (target): IMG_VAR_PARTLABEL is unsuffixed"
+# The installer is PROFILE_ROLE=live: its OWN image's names are live_*, never the identity ones —
+# the whole fix plan/33 §2 exists for, so booting it next to an installed disk cannot resolve
+# PARTLABEL=root_<v> or PARTLABEL=var to the wrong device.
+assert_eq "live_esp" "$I_IMG_ESP_PARTLABEL" "installer (live): IMG_ESP_PARTLABEL is live_esp"
+assert_eq "live_${I_ROOT_PARTLABEL}" "$I_IMG_ROOT_PARTLABEL" \
+    "installer (live): IMG_ROOT_PARTLABEL is live_root_<v>"
+assert_true "installer (live): IMG_ROOT_PARTLABEL differs from the identity ROOT_PARTLABEL" \
+    test "$I_IMG_ROOT_PARTLABEL" != "$I_ROOT_PARTLABEL"
+assert_eq "live_var" "$I_IMG_VAR_PARTLABEL" "installer (live): IMG_VAR_PARTLABEL is live_var"
+
+# ---- fstab.in renders the right names per role (plan/33 §2) ---------------------------------
+FSTAB_SRC="$REPO_ROOT/config/rootfs/etc/fstab.in"
+assert_true "config/rootfs/etc/fstab.in exists" test -f "$FSTAB_SRC"
+(
+  IMG_ESP_PARTLABEL=esp IMG_ROOT_PARTLABEL=root_9.9.9 IMG_VAR_PARTLABEL=var
+  render_template "$FSTAB_SRC" "$TMP/fstab.target"
+)
+assert_contains 'PARTLABEL=var'  "$(cat "$TMP/fstab.target")" "target fstab: PARTLABEL=var"
+assert_contains 'PARTLABEL=esp'  "$(cat "$TMP/fstab.target")" "target fstab: PARTLABEL=esp"
+assert_false "target fstab: no live_ names leaked in" grep -q 'live_' "$TMP/fstab.target"
+
+(
+  IMG_ESP_PARTLABEL=live_esp IMG_ROOT_PARTLABEL=live_root_9.9.9 IMG_VAR_PARTLABEL=live_var
+  render_template "$FSTAB_SRC" "$TMP/fstab.live"
+)
+assert_contains 'PARTLABEL=live_var' "$(cat "$TMP/fstab.live")" "live fstab: PARTLABEL=live_var"
+assert_contains 'PARTLABEL=live_esp' "$(cat "$TMP/fstab.live")" "live fstab: PARTLABEL=live_esp"
+assert_false "live fstab: the installed-system identity PARTLABEL=var is absent" \
+    grep -qE 'PARTLABEL=var([[:space:]]|$)' "$TMP/fstab.live"
+
 # ---- 1. no per-build path may be shared between two profiles -------------------------------
 for v in TARGET CONFIG_ROOT STATE_DIR REPORT_DIR UKI_DIR LOG_DIR IMG_NAME PROFILE_LOCK EXPECTED_PACKAGES; do
     d="D_$v"; c="C_$v"

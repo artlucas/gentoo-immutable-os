@@ -108,6 +108,10 @@
         <translation>%1 нельзя использовать в качестве имени компьютера.</translation>
     </message>
     <message>
+        <source>Existing accounts and computer name are kept.</source>
+        <translation>Существующие учётные записи и имя компьютера сохраняются.</translation>
+    </message>
+    <message>
         <source>Local account %1 on %2.</source>
         <translation>Локальная учётная запись %1 на %2.</translation>
     </message>
@@ -126,6 +130,14 @@
     <message>
         <source>No accounts have been set up.</source>
         <translation>Учётные записи не настроены.</translation>
+    </message>
+    <message>
+        <source>Your accounts are kept</source>
+        <translation>Ваши учётные записи сохраняются</translation>
+    </message>
+    <message>
+        <source>Everyone who uses this computer signs in as before, with the same password. The computer keeps its name, and stays managed or joined to a domain if it was.</source>
+        <translation>Все, кто пользуется этим компьютером, входят в систему как раньше, с тем же паролем. Компьютер сохраняет своё имя и остаётся управляемым или подключённым к домену, если это уже было так.</translation>
     </message>
     <message>
         <source>How should people sign in to this computer?</source>
@@ -487,8 +499,16 @@
         <translation>%1 нужен диск размером не менее %2, не тот, с которого он сам работает.</translation>
     </message>
     <message>
+        <source>%1 is already on it. You can reinstall it and keep your files, apps and settings.</source>
+        <translation>%1 уже установлена на нём. Вы можете переустановить систему, сохранив свои файлы, приложения и настройки.</translation>
+    </message>
+    <message>
         <source>%1 will be installed on it, and everything on it now will be erased.</source>
         <translation>%1 будет установлен на него, и всё, что сейчас на нём есть, будет стёрто.</translation>
+    </message>
+    <message>
+        <source>A disk that already has %1 on it can keep your files, apps and settings. Everything else on the disk you choose is erased.</source>
+        <translation>Диск, на котором уже установлена %1, может сохранить ваши файлы, приложения и настройки. Всё остальное на выбранном диске будет стёрто.</translation>
     </message>
     <message>
         <source>Everything on the disk you choose will be erased. Nothing else on this computer is changed.</source>
@@ -507,8 +527,24 @@
         <translation>Зарезервировано для обновлений</translation>
     </message>
     <message>
+        <source>Your files (kept)</source>
+        <translation>Ваши файлы (сохраняются)</translation>
+    </message>
+    <message>
         <source>Your files</source>
         <translation>Ваши файлы</translation>
+    </message>
+    <message>
+        <source>The system on this disk is replaced with %1. Its accounts, files, apps and settings are kept.</source>
+        <translation>Система на этом диске заменяется на %1. Его учётные записи, файлы, приложения и настройки сохраняются.</translation>
+    </message>
+    <message>
+        <source>%1 and everything saved on it will be deleted, including its accounts, files, apps and settings.</source>
+        <translation>%1 и всё сохранённое на нём будет удалено, включая учётные записи, файлы, приложения и настройки.</translation>
+    </message>
+    <message>
+        <source>This disk was set up in a way this version of %1 cannot reuse, so they cannot be kept.</source>
+        <translation>Этот диск был настроен так, что эта версия %1 не может его переиспользовать, поэтому сохранить их не получится.</translation>
     </message>
     <message>
         <source>Everything on this disk will be deleted.</source>
@@ -541,12 +577,24 @@
         <translation>Это съёмный диск.</translation>
     </message>
     <message>
+        <source>Reinstall on this disk?</source>
+        <translation>Переустановить на этот диск?</translation>
+    </message>
+    <message>
+        <source>Reinstall</source>
+        <translation>Переустановить</translation>
+    </message>
+    <message>
         <source>%1 — %2</source>
         <translation>%1 — %2</translation>
     </message>
     <message>
         <source>Everything on the selected disk will be erased.</source>
         <translation>Всё на выбранном диске будет стёрто.</translation>
+    </message>
+    <message>
+        <source>Reinstall %3 on %1 (%2), keeping its accounts, files, apps and settings.</source>
+        <translation>Переустановить %3 на %1 (%2), сохранив учётные записи, файлы, приложения и настройки.</translation>
     </message>
     <message>
         <source>Erase %1 (%2) and install %3 on it.</source>
@@ -575,6 +623,14 @@
     <message>
         <source>Not yet available</source>
         <translation>Пока недоступно</translation>
+    </message>
+    <message>
+        <source>Keep my files, apps and settings</source>
+        <translation>Сохранить мои файлы, приложения и настройки</translation>
+    </message>
+    <message>
+        <source>Not possible on this disk</source>
+        <translation>Невозможно на этом диске</translation>
     </message>
     <message>
         <source>Erase this disk?</source>
@@ -630,8 +686,16 @@
 <context>
     <name>DoneConfig</name>
     <message>
+        <source>%1 is reinstalled</source>
+        <translation>%1 переустановлена</translation>
+    </message>
+    <message>
         <source>%1 is installed</source>
         <translation>%1 установлена</translation>
+    </message>
+    <message>
+        <source>Restart and sign in as before.</source>
+        <translation>Перезагрузите компьютер и войдите в систему как раньше.</translation>
     </message>
     <message>
         <source>Restart to sign in for the first time.</source>
@@ -725,6 +789,10 @@
         <source>No keyboard layouts could be read from this medium, so the installed system will keep the layout this one booted with.</source>
         <translation>С этого носителя не удалось прочитать ни одной раскладки, поэтому установленная система сохранит ту, с которой он загрузился.</translation>
     </message>
+    <message>
+        <source>Kept as it is on this computer</source>
+        <translation>Остаётся как на этом компьютере</translation>
+    </message>
 </context>
 <context>
     <name>KeymapViewStep</name>
@@ -742,6 +810,10 @@
     <message>
         <source>Pick the language you want to use while installing. This becomes the system language, and you can change it later in Settings.</source>
         <translation>Выберите язык, который вы хотите использовать при установке. Он станет языком системы, и его можно изменить позже в настройках.</translation>
+    </message>
+    <message>
+        <source>Kept as it is on this computer</source>
+        <translation>Остаётся как на этом компьютере</translation>
     </message>
 </context>
 <context>
@@ -913,6 +985,10 @@
         <translation>Не удалось установить часы.</translation>
     </message>
     <message>
+        <source>Kept as it is on this computer</source>
+        <translation>Остаётся как на этом компьютере</translation>
+    </message>
+    <message>
         <source>The clock could not be set: %1</source>
         <translation>Не удалось установить часы: %1</translation>
     </message>
@@ -1021,8 +1097,20 @@
         <translation>Пока на компьютере ничего не изменилось. Это последний шаг перед тем, как программа установки начнёт запись на диск.</translation>
     </message>
     <message>
+        <source>this system</source>
+        <translation>эта система</translation>
+    </message>
+    <message>
+        <source>This reinstalls %1 on %2</source>
+        <translation>Это переустановит %1 на %2</translation>
+    </message>
+    <message>
         <source>This erases %1 completely</source>
         <translation>Диск %1 будет полностью очищен</translation>
+    </message>
+    <message>
+        <source>The system is replaced with a fresh copy. The accounts, files, apps and settings on that drive are kept, and other drives are left alone.</source>
+        <translation>Система заменяется свежей копией. Учётные записи, файлы, приложения и настройки на этом накопителе сохраняются, другие накопители не затрагиваются.</translation>
     </message>
     <message>
         <source>Every partition, file and operating system on that drive will be removed. Other drives are left alone.</source>

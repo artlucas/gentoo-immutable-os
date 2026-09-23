@@ -4,6 +4,8 @@
 #include "DoneConfig.h"
 
 #include "Branding.h"
+#include "GlobalStorage.h"
+#include "JobQueue.h"
 #include "ViewManager.h"
 #include "utils/Logger.h"
 #include "utils/Retranslator.h"
@@ -149,6 +151,13 @@ DoneConfig::collect()
     }
 
     m_rows->setEntries( entries );
+
+    // plan/33 §8: the one fact about the disk step this page still needs, re-read here exactly
+    // like the rows are so it cannot go stale independently of them.
+    auto* gs = Calamares::JobQueue::instance() ? Calamares::JobQueue::instance()->globalStorage()
+                                              : nullptr;
+    m_keeping = gs && gs->value( QStringLiteral( "diskKeepData" ) ).toBool();
+    emit retranslated();
 }
 
 void
@@ -190,7 +199,22 @@ QString
 DoneConfig::pageTitle() const
 {
     const auto* branding = Calamares::Branding::instance();
-    return tr( "%1 is installed" ).arg( branding ? branding->productName() : QString() );
+    const QString product = branding ? branding->productName() : QString();
+    if ( m_keeping )
+    {
+        return tr( "%1 is reinstalled" ).arg( product );
+    }
+    return tr( "%1 is installed" ).arg( product );
+}
+
+QString
+DoneConfig::pageLede() const
+{
+    if ( m_keeping )
+    {
+        return tr( "Restart and sign in as before." );
+    }
+    return tr( "Restart to sign in for the first time." );
 }
 
 void

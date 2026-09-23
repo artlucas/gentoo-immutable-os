@@ -162,6 +162,35 @@ lsblkByName()
     return out;
 }
 
+/*! @brief The device node of partition NUMBER on DISK — /dev/sda + 4 -> /dev/sda4,
+ *  /dev/nvme0n1 + 4 -> /dev/nvme0n1p4.
+ *
+ * The reverse of the rule scripts/lib/layout.sh's `inspect` strips off a node to find the
+ * partition number (plan/33 §4): a "p" goes in front of the number only when the disk's own
+ * node already ends in a digit, which is true for nvme/mmcblk and false for sdX/vdX/hdX.
+ */
+static QString
+partitionNode( const QString& disk, int number )
+{
+    const bool diskEndsInDigit = !disk.isEmpty() && disk.at( disk.length() - 1 ).isDigit();
+    return disk + ( diskEndsInDigit ? QStringLiteral( "p" ) : QString() ) + QString::number( number );
+}
+
+/*! @brief lsblk's FSTYPE for one partition, or empty. Best effort, like lsblkByName() above. */
+static QString
+partitionFstype( const QString& partition )
+{
+    QProcess p;
+    p.start( QStringLiteral( "lsblk" ),
+             { QStringLiteral( "--noheadings" ), QStringLiteral( "--output" ), QStringLiteral( "FSTYPE" ),
+               partition } );
+    if ( !p.waitForFinished( 5000 ) || p.exitStatus() != QProcess::NormalExit || p.exitCode() != 0 )
+    {
+        return {};
+    }
+    return QString::fromUtf8( p.readAllStandardOutput() ).trimmed();
+}
+
 // ================================ DiskConfig =================================================
 
 DiskConfig::DiskConfig( QObject* parent )
@@ -179,6 +208,10 @@ DiskConfig::setConfigurationMap( const QVariantMap& configurationMap )
     const double slotMiB = configNumber( configurationMap, QStringLiteral( "rootSlotSizeMiB" ), 0.0 );
     m_espBytes = static_cast< qint64 >( espMiB ) * 1024LL * 1024LL;
     m_slotBytes = static_cast< qint64 >( slotMiB ) * 1024LL * 1024LL;
+    // A STRING, so Calamares::getString() rather than configNumber() — see the note on
+    // configNumber() above the disk plugin's file-static definition, and DiskConfig.h's comment
+    // on the five-call-site pin (plan/33 §5).
+    m_layoutHelper = Calamares::getString( configurationMap, QStringLiteral( "layoutHelper" ) );
 
     // Loud, and then FATAL TO THE PAGE rather than defaulted, for the reason the greeting page's
     // requiredStorage guard gives: a minimum that defaults to zero is the same thing as no
@@ -195,6 +228,14 @@ DiskConfig::setConfigurationMap( const QVariantMap& configurationMap )
     {
         cError() << "disk: espSizeMiB/rootSlotSizeMiB are missing, so the page cannot say what it "
                     "is about to do to the disk. The bar will be empty.";
+    }
+    if ( m_layoutHelper.isEmpty() )
+    {
+        // Not fatal, unlike the two guards above: a page that cannot tell whether a disk can be
+        // kept still does everything plan/24 already asked of it, offered by nobody rather than
+        // shown wrong. Every disk simply keeps Keep::None.
+        cWarning() << "disk: layoutHelper is missing from the configuration, so no disk can be "
+                      "offered a keep — every disk is treated as a fresh install.";
     }
 
     rescan();
@@ -340,6 +381,25 @@ DiskConfig::enumerate() const
                              .arg( parts.join( QStringLiteral( ", " ) ) );
         }
 
+        // ---- can this disk be KEPT? (plan/33 §4/§5) --------------------------------------
+        // The cheap gate first, over EVERY child rather than the first three `parts` stopped
+        // building label text for above: a partition literally labelled "var" existing at all.
+        // Only a disk that passes it is worth a `sfdisk --dump` and a subprocess — which is
+        // every disk that is obviously not this distro's install, i.e. nearly all of them.
+        bool hasVarPartition = false;
+        for ( const QJsonValue& cv : children )
+        {
+            if ( cv.toObject().value( QStringLiteral( "partlabel" ) ).toString() == QLatin1String( "var" ) )
+            {
+                hasVarPartition = true;
+                break;
+            }
+        }
+        if ( e.block == DiskModel::Block::None && hasVarPartition )
+        {
+            inspectDisk( e );
+        }
+
         // INSTALLABLE DISKS FIRST, and the blocked ones after them in one block. That ordering is
         // what makes the keyboard usable: setCurrentIndex() refuses a blocked row, so a list that
         // interleaved them would leave Down doing nothing at unpredictable places rather than
@@ -354,6 +414,113 @@ DiskConfig::enumerate() const
         }
     }
     return installable + blocked;
+}
+
+void
+DiskConfig::inspectDisk( DiskModel::Entry& e ) const
+{
+    if ( m_layoutHelper.isEmpty() || m_espBytes <= 0 || m_slotBytes <= 0 )
+    {
+        return;  // e.keep stays None — nothing to compare a disk against
+    }
+
+    QProcess dump;
+    dump.start( QStringLiteral( "sfdisk" ), { QStringLiteral( "--dump" ), e.node } );
+    if ( !dump.waitForFinished( 5000 ) || dump.exitStatus() != QProcess::NormalExit || dump.exitCode() != 0 )
+    {
+        // The gate that got us here already saw a partition literally labelled "var" through
+        // lsblk, so this is not the ordinary "blank disk" case — it is sfdisk itself failing on
+        // a disk that looked like an install. Conservative rather than silent: refuse rather than
+        // falling back to None, which would tell the user the disk is empty when it may not be.
+        cWarning() << "disk: sfdisk --dump failed on" << e.node << "- it will not offer to keep data";
+        e.keep = DiskModel::Keep::Refused;
+        return;
+    }
+    const QByteArray dumpOut = dump.readAllStandardOutput();
+
+    QProcess helper;
+    helper.start( m_layoutHelper,
+                  { QStringLiteral( "inspect" ), QStringLiteral( "--device" ), e.node,
+                    QStringLiteral( "--esp-mib" ), QString::number( m_espBytes / ( 1024LL * 1024LL ) ),
+                    QStringLiteral( "--slot-mib" ), QString::number( m_slotBytes / ( 1024LL * 1024LL ) ) } );
+    if ( !helper.waitForStarted( 5000 ) )
+    {
+        cWarning() << "disk: could not start" << m_layoutHelper << "to inspect" << e.node;
+        e.keep = DiskModel::Keep::Refused;
+        return;
+    }
+    helper.write( dumpOut );
+    helper.closeWriteChannel();
+    if ( !helper.waitForFinished( 5000 ) || helper.exitStatus() != QProcess::NormalExit
+         || helper.exitCode() != 0 )
+    {
+        cWarning() << "disk:" << m_layoutHelper << "failed inspecting" << e.node << "-"
+                   << helper.readAllStandardError();
+        e.keep = DiskModel::Keep::Refused;
+        return;
+    }
+
+    // key=value, one per line (plan/33 §4) — never a GPT GUID among them, which is the point of
+    // asking the helper rather than reading the dump here.
+    QHash< QString, QString > kv;
+    const auto lines = helper.readAllStandardOutput().split( '\n' );
+    for ( const QByteArray& raw : lines )
+    {
+        const QString line = QString::fromUtf8( raw ).trimmed();
+        const int eq = line.indexOf( QLatin1Char( '=' ) );
+        if ( eq <= 0 )
+        {
+            continue;
+        }
+        kv.insert( line.left( eq ), line.mid( eq + 1 ) );
+    }
+
+    const QString verdict = kv.value( QStringLiteral( "verdict" ) );
+    if ( verdict == QLatin1String( "none" ) )
+    {
+        return;  // e.keep stays None; the gate above was a false alarm (wrong type, say)
+    }
+    e.installedVersion = kv.value( QStringLiteral( "installed" ) );
+    if ( verdict != QLatin1String( "keep" ) )
+    {
+        // "refuse" — the reason is for the log, not for this page: §3 gives the user one
+        // sentence regardless of which of `inspect`'s four reasons applies.
+        e.keep = DiskModel::Keep::Refused;
+        return;
+    }
+
+    // The partition TABLE says keep; the FILESYSTEM still has to be ext4, or disksetup's own
+    // e2fsck -p (§6) would be the first thing that ever checked it — after the point nothing has
+    // been written yet stops being true. lsblk, not the helper: `inspect` is a pure text function
+    // over a partition table and never mounts or reads a filesystem (plan/33 §4).
+    const QString varNode = partitionNode( e.node, kv.value( QStringLiteral( "var" ) ).toInt() );
+    if ( partitionFstype( varNode ) != QLatin1String( "ext4" ) )
+    {
+        e.keep = DiskModel::Keep::Refused;
+        return;
+    }
+
+    bool sizesOk = true;
+    const auto mib = [ &kv, &sizesOk ]( const QString& key ) -> qint64
+    {
+        bool ok = false;
+        const qint64 v = kv.value( key ).toLongLong( &ok );
+        sizesOk = sizesOk && ok;
+        return v * 1024LL * 1024LL;
+    };
+    e.keptEspBytes = mib( QStringLiteral( "esp_mib" ) );
+    e.keptSlotBytes = mib( QStringLiteral( "slot_mib" ) );
+    e.keptSpareBytes = mib( QStringLiteral( "spare_mib" ) );
+    e.keptVarBytes = mib( QStringLiteral( "var_mib" ) );
+    if ( !sizesOk )
+    {
+        cWarning() << "disk:" << m_layoutHelper << "printed a keep verdict for" << e.node
+                   << "with unreadable sizes";
+        e.keep = DiskModel::Keep::Refused;
+        return;
+    }
+
+    e.keep = DiskModel::Keep::Offered;
 }
 
 void
@@ -422,16 +589,42 @@ DiskConfig::setCurrentIndex( int index )
         return;
     }
     m_currentIndex = index;
+    // TICKED BY DEFAULT the instant the new selection offers it (plan/33 §1) — the choice that
+    // cannot lose anything is the one a user has to act to leave. Recomputed on every change,
+    // including rescan()'s restore of a disk that was already selected, so a fresh scan's new
+    // information about the SAME disk is never left carrying a stale tick.
+    m_keepData = ( index != -1 && m_model->entries().at( index ).keep == DiskModel::Keep::Offered );
     // The answer was about a disk, not about the page. Changing the disk withdraws it — mostly a
     // formality now that onLeave() withdraws it too, but a dialog left pending over a changed
     // selection is exactly the thing neither rule should have to be the only one preventing.
     setConfirmed( false );
     emit currentIndexChanged();
+    emit keepDataChanged();
     emit planChanged();
     emit nextEnabledChanged();
     // And retranslated(), though nothing translated: confirmSubtitle is a string property that
     // follows the selection as well as the language, and this is its change signal — the same
     // loosening rescan() makes for the headline.
+    emit retranslated();
+}
+
+void
+DiskConfig::setKeepData( bool keep )
+{
+    // Ignored unless the SELECTED row actually offers it — a stray write while nothing is
+    // selected, or while the row cannot be kept, must not put the page in a state its own
+    // properties say is impossible.
+    if ( !keepAvailable() || keep == m_keepData )
+    {
+        return;
+    }
+    m_keepData = keep;
+    // Every confirmation string follows this (plan/33 §9): what is kept, what is erased, the
+    // dialog's title and accept label. Re-asking rather than trusting a stale answer is the same
+    // loosening setCurrentIndex() already makes for confirmSubtitle on a changed selection.
+    setConfirmed( false );
+    emit keepDataChanged();
+    emit planChanged();
     emit retranslated();
 }
 
@@ -486,6 +679,39 @@ DiskConfig::installableCount() const
     return m_model->installableCount();
 }
 
+bool
+DiskConfig::keepOffered() const
+{
+    return m_model->isInstallable( m_currentIndex )
+        && m_model->entries().at( m_currentIndex ).keep != DiskModel::Keep::None;
+}
+
+bool
+DiskConfig::keepAvailable() const
+{
+    return m_model->isInstallable( m_currentIndex )
+        && m_model->entries().at( m_currentIndex ).keep == DiskModel::Keep::Offered;
+}
+
+bool
+DiskConfig::anyRowOffersKeep() const
+{
+    for ( const DiskModel::Entry& e : m_model->entries() )
+    {
+        if ( e.block == DiskModel::Block::None && e.keep == DiskModel::Keep::Offered )
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool
+DiskConfig::keeping() const
+{
+    return keepAvailable() && m_keepData;
+}
+
 QString
 DiskConfig::minimumSizeText() const
 {
@@ -509,15 +735,31 @@ DiskConfig::headline() const
 QString
 DiskConfig::subheadline() const
 {
+    // WHICH ROW SHOWS DEPENDS ON THE DISK, NOT ON THE TICK, and the subheadline follows the same
+    // rule for the same reason (plan/33 §3): it says what the MACHINE can do, so it depends on
+    // whether ANY installable row offers a keep — anyRowOffersKeep() — never on m_currentIndex
+    // or m_keepData, which is what nothing on this page is allowed to move under the cursor.
     switch ( installableCount() )
     {
     case 0:
         return tr( "%1 needs a disk of at least %2 that it is not itself running from." )
             .arg( DiskModel::productName(), minimumSizeText() );
     case 1:
+        if ( anyRowOffersKeep() )
+        {
+            return tr( "%1 is already on it. You can reinstall it and keep your files, apps and "
+                       "settings." )
+                .arg( DiskModel::productName() );
+        }
         return tr( "%1 will be installed on it, and everything on it now will be erased." )
             .arg( DiskModel::productName() );
     default:
+        if ( anyRowOffersKeep() )
+        {
+            return tr( "A disk that already has %1 on it can keep your files, apps and settings. "
+                       "Everything else on the disk you choose is erased." )
+                .arg( DiskModel::productName() );
+        }
         return tr( "Everything on the disk you choose will be erased. Nothing else on this "
                    "computer is changed." );
     }
@@ -531,11 +773,7 @@ DiskConfig::plan() const
     {
         return out;
     }
-    const qint64 total = m_model->entries().at( m_currentIndex ).bytes;
-    // The two alignment megabytes lib/layout.sh accounts for: one leading, one for the backup GPT
-    // at the end. Subtracted here as well so the bar adds up to the disk rather than to slightly
-    // more than it.
-    const qint64 rest = total - ( 2LL * 1024LL * 1024LL ) - m_espBytes - 2LL * m_slotBytes;
+    const DiskModel::Entry& e = m_model->entries().at( m_currentIndex );
 
     const auto seg = [ &out ]( const QString& label, qint64 bytes )
     {
@@ -547,6 +785,24 @@ DiskConfig::plan() const
         m.insert( QStringLiteral( "bytes" ), double( bytes ) );
         out.append( m );
     };
+
+    if ( keeping() )
+    {
+        // The disk's OWN sizes — inspectDisk()'s kept* fields, straight from `inspect`'s
+        // esp_mib/slot_mib/spare_mib/var_mib — not this build's ESP_SIZE_MIB/ROOT_SLOT_SIZE_MIB.
+        // A disk kept across several builds may have been partitioned by an earlier one with
+        // different geometry, and the bar is meant to show what is really there (plan/33 §5).
+        seg( tr( "Boot" ), e.keptEspBytes );
+        seg( tr( "System" ), e.keptSlotBytes );
+        seg( tr( "Reserved for updates" ), e.keptSpareBytes );
+        seg( tr( "Your files (kept)" ), e.keptVarBytes );
+        return out;
+    }
+
+    // The two alignment megabytes lib/layout.sh accounts for: one leading, one for the backup GPT
+    // at the end. Subtracted here as well so the bar adds up to the disk rather than to slightly
+    // more than it.
+    const qint64 rest = e.bytes - ( 2LL * 1024LL * 1024LL ) - m_espBytes - 2LL * m_slotBytes;
     // On-disk order, which is also the order they are explained in: the part that boots, the
     // system, the half kept back for the next version, and then everything the user owns.
     seg( tr( "Boot" ), m_espBytes );
@@ -566,7 +822,40 @@ DiskConfig::lossSummary() const
     const DiskModel::Entry& e = m_model->entries().at( m_currentIndex );
 
     QString s;
-    if ( e.partitions <= 0 )
+    if ( e.keep != DiskModel::Keep::None )
+    {
+        // A disk that already holds a recognisable install is NAMED, not counted (plan/33 §3,
+        // §9) — this sentence never says "partitions" for a disk it is describing software on,
+        // whichever way the tick goes.
+        const QString named = DiskModel::productName() + QLatin1Char( ' ' ) + e.installedVersion;
+        if ( keeping() )
+        {
+            const auto* branding = Calamares::Branding::instance();
+            const QString versioned = branding
+                ? branding->string( Calamares::Branding::VersionedName )
+                : named;
+            s = tr( "The system on this disk is replaced with %1. Its accounts, files, apps and "
+                    "settings are kept." )
+                    .arg( versioned );
+        }
+        else
+        {
+            s = tr( "%1 and everything saved on it will be deleted, including its accounts, "
+                    "files, apps and settings." )
+                    .arg( named );
+            if ( e.keep == DiskModel::Keep::Refused )
+            {
+                // §3's "the warning gains the reason in one sentence" — ONE sentence regardless
+                // of which of `inspect`'s four refuse reasons applies; see inspectDisk()'s note
+                // on why the reason itself never reaches this page.
+                s += QLatin1Char( ' ' )
+                    + tr( "This disk was set up in a way this version of %1 cannot reuse, so "
+                          "they cannot be kept." )
+                          .arg( DiskModel::productName() );
+            }
+        }
+    }
+    else if ( e.partitions <= 0 )
     {
         s = e.contents.isEmpty() ? tr( "Everything on this disk will be deleted." )
                                  : tr( "This disk is empty." );
@@ -614,6 +903,18 @@ DiskConfig::selectedDiskTitle() const
 }
 
 QString
+DiskConfig::confirmTitle() const
+{
+    return keeping() ? tr( "Reinstall on this disk?" ) : tr( "Erase this disk?" );
+}
+
+QString
+DiskConfig::confirmAcceptLabel() const
+{
+    return keeping() ? tr( "Reinstall" ) : tr( "Erase and install" );
+}
+
+QString
 DiskConfig::confirmSubtitle() const
 {
     // The whole line, composed here rather than in the QML: the disk by the name the row used,
@@ -642,6 +943,11 @@ DiskConfig::prettyStatus() const
     // The summary page's job is to name the disk one last time, in the same words the user picked
     // it by — rowTitle rather than e.title, so a disk the row named "VirtIO disk" is not suddenly
     // nameless on the summary: one composer, and the two cannot disagree.
+    if ( keeping() )
+    {
+        return tr( "Reinstall %3 on %1 (%2), keeping its accounts, files, apps and settings." )
+            .arg( DiskModel::rowTitle( e ), e.node, product );
+    }
     return tr( "Erase %1 (%2) and install %3 on it." ).arg( DiskModel::rowTitle( e ), e.node, product );
 }
 
@@ -652,9 +958,9 @@ DiskConfig::publish( Calamares::GlobalStorage* gs ) const
     {
         return;
     }
-    // The whole contract with `disksetup`, and it is deliberately three keys. The job does not
-    // need to know what the page decided about anything else, and the page does not get to
-    // describe a disk layout that does not exist yet.
+    // The whole contract with `disksetup`, and it is deliberately FOUR keys now (plan/33 §6
+    // added diskKeepData). The job does not need to know what the page decided about anything
+    // else, and the page does not get to describe a disk layout that does not exist yet.
     gs->insert( QStringLiteral( "diskDevice" ), selectedNode() );
     // NOT nextEnabled(), which since plan/26 answers "may the button be pressed" (a disk alone)
     // rather than "was the erase agreed to". Spelled out here as the old gate so the job's
@@ -667,6 +973,11 @@ DiskConfig::publish( Calamares::GlobalStorage* gs ) const
     // rather than omitted so that the key's absence never has to mean two things — "this medium
     // has no encryption" and "an older page forgot to say".
     gs->insert( QStringLiteral( "diskEncrypt" ), false );
+    // keepAvailable() AND THE TICK, not m_keepData alone: a value left over from a disk that
+    // offered it, still true after the selection moved to one that does not, must never reach
+    // the job as "keep". disksetup re-derives the same verdict itself before it believes this
+    // (plan/33 §6) — this key only tells it which of its two paths to take.
+    gs->insert( QStringLiteral( "diskKeepData" ), keeping() );
 }
 
 void

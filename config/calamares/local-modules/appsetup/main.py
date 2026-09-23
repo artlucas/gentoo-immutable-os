@@ -209,12 +209,22 @@ def ensure_remote(root, conf):
 
 
 def install_refs(root, refs, conf):
-    """The page's list, installed. Warns and returns rather than failing — see the header."""
+    """The page's list, installed. Warns and returns rather than failing — see the header.
+
+    --or-update (plan/33 §7): on a KEPT store, one or more of the selected refs may already be
+    there — it is exactly what keeping a Flatpak store means — and plain `flatpak install`
+    refuses an already-installed ref as an error, failing the WHOLE batch over the one app that
+    did not need installing. --or-update makes that ref an update instead (to whatever the
+    remote's current commit is, same as update_refs() below does for everything already there),
+    so one ref that is already present can no longer take the rest of the list down with it. A
+    no-op on a fresh install, where nothing in `refs` is present yet.
+    """
     if not refs:
         debug("appsetup: nothing selected; skipping the install pass")
         return
     libcalamares.job.setprogress(0.1)
-    argv = ["flatpak", "install", "-y", "--system", "--noninteractive", conf.get("remote", "flathub")]
+    argv = ["flatpak", "install", "-y", "--or-update", "--system", "--noninteractive",
+            conf.get("remote", "flathub")]
     try:
         proc = in_target(root, argv + list(refs), timeout=conf.get("installTimeoutS", 2400))
     except (OSError, subprocess.SubprocessError) as e:

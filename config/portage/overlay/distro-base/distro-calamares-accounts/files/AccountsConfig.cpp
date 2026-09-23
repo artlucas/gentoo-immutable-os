@@ -883,9 +883,40 @@ AccountsConfig::refreshNextEnabled()
     }
 }
 
+void
+AccountsConfig::setKeeping( bool keeping )
+{
+    if ( keeping == m_keeping )
+    {
+        return;
+    }
+    m_keeping = keeping;
+    if ( m_keeping )
+    {
+        // A live managed enrolment made earlier in THIS session — mode Managed chosen, a code
+        // entered, it succeeded, then Back to the disk page and Keep ticked instead — is
+        // released exactly the way LEAVING managed mode already releases one (setMode(), above).
+        // releaseEnrolment() is its own guard, a no-op whenever nothing was ever enrolled, so
+        // this is safe to call unconditionally rather than repeating its condition here.
+        releaseEnrolment();
+    }
+    emit keepingChanged();
+    // stepChanged(), though the step itself did not move: AccountsViewStep::isAtBeginning() and
+    // isAtEnd() both read `keeping` through this same signal's existing connections (plan/26 §1's
+    // pattern), which is what makes the window's Back and Next redraw for the new answer.
+    emit stepChanged();
+    emit nextEnabledChanged();
+}
+
 bool
 AccountsConfig::nextEnabled() const
 {
+    if ( m_keeping )
+    {
+        // ONE SCREEN, NOTHING TO FILL IN (plan/33 §8). The disk page already asked the one
+        // question that matters for this install; this page has nothing left to gate on.
+        return true;
+    }
     if ( m_step == ChooseMode )
     {
         // The first screen asks one question and nothing else, so it gates on one thing. In
@@ -982,6 +1013,10 @@ AccountsConfig::acceptWeakPassword()
 QString
 AccountsConfig::prettyStatus() const
 {
+    if ( m_keeping )
+    {
+        return tr( "Existing accounts and computer name are kept." );
+    }
     switch ( m_mode )
     {
     case Local:
@@ -1016,6 +1051,43 @@ AccountsConfig::publish( Calamares::GlobalStorage* gs ) const
 {
     if ( !gs )
     {
+        return;
+    }
+
+    if ( m_keeping )
+    {
+        // KEEPING (plan/33 §8): every identity key empty or false, and "kept" rather than one of
+        // the three real modes. accountsMode is for the LOG ONLY — accountsetup and every other
+        // job that stands down for keep reads GlobalStorage's diskKeepData directly, which
+        // disksetup publishes, not this page. Nothing here describes a machine to build: the
+        // kept system's own /etc already has all of it.
+        gs->insert( QStringLiteral( "accountsMode" ), QStringLiteral( "kept" ) );
+        gs->insert( QStringLiteral( "hostname" ), QString() );
+        gs->insert( QStringLiteral( "username" ), QString() );
+        gs->insert( QStringLiteral( "userFullName" ), QString() );
+        gs->insert( QStringLiteral( "userGroups" ), QStringList() );
+        gs->insert( QStringLiteral( "userShell" ), QString() );
+        gs->insert( QStringLiteral( "homePermissions" ), QString() );
+        gs->insert( QStringLiteral( "autoLogin" ), false );
+        gs->insert( QStringLiteral( "managedEnrollmentScratchRoot" ), QString() );
+        gs->insert( QStringLiteral( "managedDeviceName" ), QString() );
+        gs->insert( QStringLiteral( "managedOrgName" ), QString() );
+        gs->insert( QStringLiteral( "domainName" ), QString() );
+        gs->insert( QStringLiteral( "domainJoinUser" ), QString() );
+        gs->insert( QStringLiteral( "domainDcAddress" ), QString() );
+        gs->insert( QStringLiteral( "domainOu" ), QString() );
+        gs->insert( QStringLiteral( "domainAdminGroup" ), QString() );
+        gs->insert( QStringLiteral( "domainComputerName" ), QString() );
+        // DELETED, not merely left unpublished: an EARLIER forward pass through this page —
+        // a mode chosen, a password typed, then Back to the disk page and Keep ticked instead —
+        // may already have written a real secrets file. accountsetup's own unlink only runs when
+        // that job runs, and it stands down entirely under keep (plan/33 §7), so nothing else
+        // would ever clean this one up.
+        if ( !m_secretsPath.isEmpty() )
+        {
+            QFile::remove( m_secretsPath );
+        }
+        gs->insert( QStringLiteral( "accountsSecretsPath" ), QString() );
         return;
     }
 

@@ -22,7 +22,13 @@ removing the page removes the partitioner with it.
 
 ## 1. What it looks like
 
-Four states, at the 710×536 a view module actually gets.
+Four states, at the 710×536 a view module actually gets. A fifth — a disk that already holds an
+install — is [plan/33](33-reinstall-keeping-files.md) §3's, which draws over this section's
+encryption row rather than adding a sixth block.
+
+The mockups below predate the confirmation dialog (plan/26), the design-system repaint (plan/28)
+and the layout tightening (plan/30, plan/31); they are kept as the record of the shape this page
+started from, not as what it currently draws.
 
 ```
  ┌───────────────────────────────────────────────────────┐  nothing chosen yet
@@ -260,6 +266,13 @@ today, written rather than omitted so the key's absence never has to mean two th
 | `scripts/stages/40-configure.sh` | asserts the `disk` module is installed; installs `layout.sh` and checks it verbatim, executable, parsing and producing all four partition names; exports two new tokens; the payload verify block reads `disksetup.conf` instead of `partition.conf`, and asserts no `partition.conf` survives |
 | `scripts/lib/check-translations.py`, `scripts/update-translations.sh` | the disk module joins the source list |
 | `config/calamares/README.md`, `config/portage/overlay/README.md` | the module maps gain their rows; the live-medium known limit is rewritten, because it is ours now |
+
+**The keep path.** [plan/33](33-reinstall-keeping-files.md) adds a fourth answer to "what does
+this disk get" — kept rather than erased — on top of everything above: `DiskModel`/`DiskConfig`
+gain the keep verdict and the checkbox, `disksetup` gains a second path through `run()` that
+never calls `write_table()`, and `scripts/lib/layout.sh` gains `inspect`, the one place the GPT
+type GUIDs are compared against an EXISTING disk rather than written to a new one. Nothing in
+this section's table stopped being true; plan/33 is what runs after it.
 
 The lock moves for one package, and the config hash for all of them:
 

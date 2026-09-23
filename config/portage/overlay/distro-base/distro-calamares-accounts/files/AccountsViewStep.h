@@ -52,6 +52,13 @@ public:
     void back() override;
     void next() override;
 
+    /*! Reads GlobalStorage's diskKeepData into the config every time this page is SHOWN — going
+     *  forward from the disk page, or back from applications — so a tick changed after this page
+     *  was last on screen (Back to the disk page, un-tick, forward again) is never stale (plan/33
+     *  §8). Calamares' own ViewStep::onActivate() is a no-op the base class already defines, so
+     *  this is the first override this file has needed for it. */
+    void onActivate() override;
+
     /*! Empty, always. Creating the account, joining the domain and transplanting the enrolment
      *  are the `accountsetup` python job's work. */
     Calamares::JobList jobs() const override;

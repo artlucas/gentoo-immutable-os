@@ -117,24 +117,88 @@ def run():
         device, part = esp_device(root_mount_point)
         if device and part:
             label = conf.get("efiBootEntryLabel") or distro_id
-            cmd = [
-                "efibootmgr", "--create", "--quiet",
-                "--disk", device, "--part", str(part),
-                "--label", label,
-                "--loader", "\\EFI\\BOOT\\BOOTX64.EFI",
-            ]
-            try:
-                debug("running: {}".format(" ".join(cmd)))
-                subprocess.run(cmd, check=True, capture_output=True)
-            except (subprocess.CalledProcessError, FileNotFoundError) as e:
-                warning(
-                    "could not create an EFI boot entry ({}); the disk is still bootable "
-                    "through the removable-media path".format(e)
+            # SKIP CREATION when an entry with this label already names THIS ESP, by PARTUUID
+            # (plan/33 §7). Right on both paths, and neither needs to ask which one it is on:
+            #
+            #   keeping   disksetup's keep_disk() never touches the ESP's partition TABLE entry,
+            #             only its filesystem (mkfs.vfat) — the PARTUUID is unchanged, so an
+            #             entry an EARLIER install created still names this exact partition and
+            #             this reinstall would otherwise leave two entries pointing at the same
+            #             disk, accumulating one per reinstall.
+            #   erasing   a fresh GPT (disksetup's write_table()) generates a brand new PARTUUID
+            #             for every partition, so nothing already in NVRAM can match it and this
+            #             check is a no-op — efibootmgr runs exactly as it always has.
+            node = esp_node()
+            partuuid = blkid_partuuid(node) if node else None
+            if partuuid and existing_boot_entry(label, partuuid):
+                debug(
+                    "imagebootloader: an EFI boot entry '{}' already names this ESP "
+                    "(PARTUUID {}); not creating a duplicate".format(label, partuuid)
                 )
+            else:
+                cmd = [
+                    "efibootmgr", "--create", "--quiet",
+                    "--disk", device, "--part", str(part),
+                    "--label", label,
+                    "--loader", "\\EFI\\BOOT\\BOOTX64.EFI",
+                ]
+                try:
+                    debug("running: {}".format(" ".join(cmd)))
+                    subprocess.run(cmd, check=True, capture_output=True)
+                except (subprocess.CalledProcessError, FileNotFoundError) as e:
+                    warning(
+                        "could not create an EFI boot entry ({}); the disk is still bootable "
+                        "through the removable-media path".format(e)
+                    )
         else:
             warning("could not identify the ESP's disk; skipping the EFI boot entry")
 
     return None
+
+
+def esp_node():
+    """The ESP partition's own /dev/... node, straight out of GlobalStorage's `partitions`."""
+    for p in libcalamares.globalstorage.value("partitions") or []:
+        if p.get("mountPoint") == "/efi":
+            return p.get("device")
+    return None
+
+
+def blkid_partuuid(device):
+    """`blkid -s PARTUUID -o value DEVICE`, or None. Best-effort, like the NVRAM entry itself."""
+    try:
+        proc = subprocess.run(
+            ["blkid", "-s", "PARTUUID", "-o", "value", device],
+            capture_output=True, text=True, check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        warning("could not read the PARTUUID of {}: {}".format(device, e))
+        return None
+    value = (proc.stdout or "").strip()
+    return value or None
+
+
+def existing_boot_entry(label, partuuid):
+    """True when `efibootmgr -v` already lists an entry named `label` whose device path
+    contains `partuuid` (matched case-insensitively — GUIDs from different tools disagree on
+    case, and this one comes from a different tool than the one that will read it back).
+
+    `-v` rather than the bare listing: efibootmgr's default output is just "Boot0000* Label",
+    with the device path — the only place a PARTUUID appears — shown only in verbose mode.
+    """
+    try:
+        proc = subprocess.run(["efibootmgr", "-v"], capture_output=True, text=True, check=False)
+    except (OSError, subprocess.SubprocessError) as e:
+        warning("could not list existing EFI boot entries: {}".format(e))
+        return False
+    if proc.returncode != 0:
+        warning("efibootmgr -v failed listing existing entries: {}".format((proc.stdout or "").strip()))
+        return False
+    needle = partuuid.lower()
+    for line in (proc.stdout or "").splitlines():
+        if "Boot" in line and label in line and needle in line.lower():
+            return True
+    return False
 
 
 def esp_device(root_mount_point):

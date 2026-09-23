@@ -255,6 +255,25 @@ assert_false "the disksetup job carries no partition layout of its own" \
 # can install and then offers nothing to install onto.
 DISK_CONF="$RENDER/modules/disk.conf"
 assert_file "$DISK_CONF" "disk.conf rendered"
+# disk.conf and disksetup.conf must name the SAME helper (plan/33 §5): the page's own
+# `disk-layout inspect` and the job's re-check are the same subprocess call, run against the
+# same binary, or "the page offered a keep and the job refused it" becomes a possible outcome.
+disk_conf_helper="$(sed -nE 's/^layoutHelper:[[:space:]]+"([^"]+)".*/\1/p' "$DISK_CONF")"
+disksetup_conf_helper="$(sed -nE 's/^layoutHelper:[[:space:]]+"([^"]+)".*/\1/p' "$DISKSETUP_CONF")"
+assert_eq "/usr/libexec/${I_DISTRO_ID}-disk-layout" "$disk_conf_helper" \
+    "disk.conf's layoutHelper is the installed helper's path"
+assert_eq "$disksetup_conf_helper" "$disk_conf_helper" \
+    "disk.conf and disksetup.conf name the same layoutHelper"
+
+# The keep path's own probe (plan/33 §11): stage 40 does not just install the helper and prove
+# it can WRITE a layout (above) — it also proves the helper's `inspect` recognises that very
+# layout as keepable, against a real sfdisk table rather than a fixture.
+assert_true "stage 40 also probes the helper's inspect path" \
+    grep -qF '"$DISK_LAYOUT_DST" inspect --device "$_layout_scratch"' "$STAGE40"
+assert_true "...and requires verdict=keep" grep -qF "grep -qx 'verdict=keep'" "$STAGE40"
+assert_true "...and requires installed=\$VERSION" \
+    grep -qF 'grep -qx "installed=$VERSION"' "$STAGE40"
+
 min_greeting="$(sed -nE 's/^[[:space:]]*requiredStorage:[[:space:]]+([0-9.]+).*/\1/p' "$RENDER/modules/greeting.conf")"
 min_disk="$(sed -nE 's/^minimumDiskSize:[[:space:]]+([0-9.]+).*/\1/p' "$DISK_CONF")"
 min_job="$(sed -nE 's/^minimumDiskSize:[[:space:]]+([0-9.]+).*/\1/p' "$DISKSETUP_CONF")"
@@ -655,9 +674,10 @@ assert_true "...and so do the local form's two" \
 # fstab writes a file that ships in the immutable image; machineid would give every machine
 # installed from this medium the same one.
 #
-# TWO ENTRIES ON THIS LIST WOULD ACTUALLY WORK, and that is what makes them worth asserting: the
-# rest fail loudly on a medium like this one, while these two would run and produce a second page
-# each.
+# THREE ENTRIES ON THIS LIST WOULD ACTUALLY WORK, and that is what makes them worth asserting:
+# the rest fail loudly on a medium like this one, while these three would run and do the wrong
+# thing instead — two of them a second page each, the third silently, on the one disk this whole
+# feature exists to protect.
 #
 # `users` since plan/21. It is still installed, because it comes with app-admin/calamares and no
 # USE flag removes it, so naming it costs nothing at build time and produces a second, additive
@@ -677,12 +697,23 @@ assert_true "...and so do the local form's two" \
 # — allowManualPartitioning off, a fixed partitionLayout — it produced a usable disk picker for the
 # whole of Phase A. Naming it now would produce a second disk page, with upstream's words, whose
 # jobs would rewrite the disk a second time from a layout that lives nowhere any more.
+#
+# `removeuser` since plan/33 §7, and it is the most dangerous of the three: RemoveUserJob.cpp
+# (calamares-3.4.2) runs `userdel -f -r <live>` UNCONDITIONALLY — it takes no configuration that
+# could tell it to stand down for a kept disk, which every other job this document touches does
+# read (diskKeepData). On a disk kept from a factory image dd'd straight to a drive, @LIVE_USER@
+# may be the only account there is, and `-r` deletes its home directory: the exact files this
+# whole feature exists to keep. Its job — userdel on the live user, on an ERASE only — moved into
+# accountsetup's own remove_live_user(), the last thing that job does, checked further down.
 for forbidden in localecfg unpackfs fstab bootloader grubcfg initcpio initcpiocfg dracut \
                  initramfs machineid packages netinstall displaymanager mount users welcome \
-                 partition; do
+                 partition removeuser; do
     assert_false "the sequence does not name the stock '$forbidden' module" \
         grep -qE "^[[:space:]]*-[[:space:]]+$forbidden$" "$SETTINGS"
 done
+assert_false "modules/removeuser.conf.in is deleted with the module it configured" \
+    test -e "$CAL/modules/removeuser.conf.in"
+assert_false "...and nothing renders a removeuser.conf" test -e "$RENDER/modules/removeuser.conf"
 # ...and the pair that replaced it is there, in the right phase each. `accounts` in show: and
 # `accountsetup` in exec: is not interchangeable — a page in the exec list draws nothing and a job
 # in the show list is a step with no UI.
@@ -731,14 +762,21 @@ assert_true "disksetup is the FIRST exec step" \
              sed -nE 's/^[[:space:]]*-[[:space:]]+([a-z][a-z0-9_-]*)\$/\\1/p' | head -1 | grep -qx disksetup"
 
 # Order, inside exec:. accountsetup must run AFTER imagedeploy (which mounts the target and its
-# /etc overlay — every write below depends on it) and BEFORE removeuser and imageidentity, which
-# delete the live user and read `username` out of GlobalStorage to allocate its subuid range.
-assert_true "accountsetup runs after imagedeploy and before removeuser and imageidentity" \
+# /etc overlay — every write below depends on it) and BEFORE imageidentity, which reads
+# `username` out of GlobalStorage to allocate its subuid range.
+#
+# REMOVEUSER IS GONE FROM THIS CHECK, not merely from the sequence (plan/33 §7, §11): stock
+# `removeuser` ran unconditionally and could not be told to stand down for a kept disk, so its
+# job — userdel on the live user — moved INTO accountsetup, as the last thing that job does on
+# an erase (see remove_live_user() in the accountsetup source, checked further down). The
+# ordering this assertion used to protect — the real account exists before the live one goes —
+# is now enforced by that function running after create_local_user() in the same job, which
+# tests/test-domain.sh's comment on this module also used to name; both are corrected here.
+assert_true "accountsetup runs after imagedeploy and before imageidentity" \
     bash -c "
       seq=\$(sed -n '/^- exec:/,/^- show:/p' '$SETTINGS' | sed -nE 's/^[[:space:]]*-[[:space:]]+([a-z][a-z0-9_-]*)\$/\\1/p')
       idx() { printf '%s\\n' \"\$seq\" | grep -nxF \"\$1\" | cut -d: -f1; }
       [[ \$(idx imagedeploy) -lt \$(idx accountsetup) ]] &&
-      [[ \$(idx accountsetup) -lt \$(idx removeuser) ]] &&
       [[ \$(idx accountsetup) -lt \$(idx imageidentity) ]]"
 # appsetup LAST of the chroot work, after imageidentity and before umount (plan/25 §5). It needs
 # everything imageidentity needed — a deployed, /var-seeded, chroot-ready target — and it must be
@@ -1186,11 +1224,13 @@ assert_true "and the job waits for udev before it makes a filesystem" \
 # THE ROOT SLOTS ARE NOT FORMATTED. What goes in slot A is an EROFS image written byte-for-byte by
 # imagedeploy; a mkfs here would be a filesystem overwritten one step later, and slot B ships as
 # zeros for systemd-sysupdate to claim.
-# Comments stripped: the job explains in prose which labels stage 60 gives the factory image's
-# filesystems, and a naive count reads the explanation as a second mkfs.
-assert_eq "1" "$(grep -vE '^[[:space:]]*#' "$DISK_JOB" | grep -c 'mkfs.ext4')" \
+# QUOTED, not just the bare word: the job's prose — in `#` comments and in docstrings, which a
+# `#`-only strip does not touch — explains in words which labels stage 60 gives the factory
+# image's filesystems and which of the two paths calls make_esp() (plan/33 §6), and mentions
+# both tool names doing it. Only actual Python string-literal arguments are quoted like this.
+assert_eq "1" "$(grep -c '"mkfs\.ext4"' "$DISK_JOB")" \
     "the job makes exactly one ext4 filesystem"
-assert_eq "1" "$(grep -vE '^[[:space:]]*#' "$DISK_JOB" | grep -c 'mkfs.vfat')" \
+assert_eq "1" "$(grep -c '"mkfs\.vfat"' "$DISK_JOB")" \
     "...and exactly one FAT32 one"
 assert_false "neither root slot is formatted" \
     bash -c "grep -E 'mkfs' '$DISK_JOB' | grep -q 'root_a\|root_b'"
@@ -1309,9 +1349,18 @@ assert_true "the view step retranslates its QML engine on a language change" \
 assert_false "no qsTr() call is left in the disk QML" \
     grep -q 'qsTr("' "$DISK_QML"
 assert_true "the erase dialog's words live on DiskConfig, where lupdate can see them" \
-    grep -q 'tr( "Erase this disk?" )' "$DISK_SRC/DiskConfig.h"
+    grep -q 'tr( "Erase this disk?" )' "$DISK_SRC/DiskConfig.cpp"
 assert_true "...and its subtitle is composed whole in C++, selection and language both" \
     grep -q 'DiskConfig::confirmSubtitle' "$DISK_SRC/DiskConfig.cpp"
+# confirmTitle/confirmAcceptLabel moved out of line for the same reason confirmSubtitle already
+# was: they now say something different while keeping (plan/33 §5, §9), so the header only
+# declares them and DiskConfig.cpp is where both branches of each live.
+assert_true "confirmTitle branches on keeping" \
+    bash -c "sed -n '/^DiskConfig::confirmTitle/,/^}/p' '$DISK_SRC/DiskConfig.cpp' |
+             grep -q 'tr( \"Reinstall on this disk?\" )'"
+assert_true "confirmAcceptLabel branches on keeping" \
+    bash -c "sed -n '/^DiskConfig::confirmAcceptLabel/,/^}/p' '$DISK_SRC/DiskConfig.cpp' |
+             grep -q 'tr( \"Reinstall\" )'"
 
 # A Qt context IS a class name, and check-translations.py check 5 resolves one to the file whose
 # stem matches. DiskModel says its own strings, so it has to be its own file or every one of them
@@ -1550,8 +1599,12 @@ assert_true "...and skips the install AND the update when offline" \
 assert_eq "1" "$(grep -c 'return (' "$APPS_JOB")" \
     "the job's only error tuple is the missing-rootMountPoint configuration error"
 assert_true "the install and update passes run flatpak noninteractively" \
-    bash -c "grep -q '\"flatpak\", \"install\", \"-y\", \"--system\", \"--noninteractive\"' '$APPS_JOB' &&
+    bash -c "grep -q '\"flatpak\", \"install\", \"-y\", \"--or-update\", \"--system\", \"--noninteractive\"' '$APPS_JOB' &&
              grep -q '\"flatpak\", \"update\", \"-y\", \"--system\", \"--noninteractive\"' '$APPS_JOB'"
+# --or-update (plan/33 §7): on a KEPT store, one or more selected apps may already be there, and
+# plain `flatpak install` fails the WHOLE batch on the one app that did not need installing.
+assert_true "the install pass tolerates apps a kept store already has" \
+    grep -q -- '--or-update' "$APPS_JOB"
 assert_true "the update pass runs even when nothing was selected" \
     grep -qE '^[[:space:]]+update_refs\(root, conf\)$' "$APPS_JOB"
 
@@ -2839,6 +2892,281 @@ assert_eq "1" "$(grep -c '"✓" : "!"' "$GREETING_QML")" \
 assert_true "...and the row still says Required or Optional in the tone it means" \
     bash -c "grep -q 'greeting.requiredLabel' '$GREETING_QML' &&
              grep -q 'greeting.optionalLabel' '$GREETING_QML'"
+
+# ---- 6x. keeping what is on the disk (plan/33) -------------------------------------------
+#
+# The feature this whole file gained a new section for: a disk that already holds an install of
+# this distro can be reinstalled onto while keeping its accounts, files, apps and settings. §2's
+# partition-label fix is asserted in test-common.sh and test-profiles.sh; everything below is the
+# checkbox, the job, the pages that stand down, and the summary/finish rows.
+
+# ---- inspect_installed_layout(), against fixtures (plan/33 §4) -------------------------------
+# No sfdisk needed: heredoc `sfdisk --dump` texts, fed straight to the function layout.sh
+# defines — the SAME function both the disk page and the disksetup job run as a subprocess, so a
+# fixture that passes here is a fixture both of them agree about.
+assert_true "inspect_installed_layout is defined only in layout.sh" \
+    bash -c "[[ \$(grep -rl '^inspect_installed_layout()' '$REPO_ROOT/scripts') == '$LAYOUT_SH' ]]"
+
+inspect_of() {   # DEVICE ESP_MIB SLOT_MIB <<< DUMP
+    bash -c "source '$LAYOUT_SH'; inspect_installed_layout \"\$1\" \"\$2\" \"\$3\"" _ "$1" "$2" "$3"
+}
+
+# keep: one real root_<v> and one _empty, exactly the shape a fresh install leaves.
+keep_dump='label: gpt
+sector-size: 512
+
+/dev/sda1 : start=        2048, size=      2097152, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, name="esp"
+/dev/sda2 : start=     2099200, size=    12582912, type=4F68BC64-6ACB-4AA4-B891-DB7CD79ABF44, name="root_0.3.0"
+/dev/sda3 : start=    14682112, size=    12582912, type=4F68BC64-6ACB-4AA4-B891-DB7CD79ABF44, name="_empty"
+/dev/sda4 : start=    27265024, size=    60000000, type=4D21B016-B534-45C2-A9FB-5C16E091FD2D, name="var"'
+keep_out="$(inspect_of /dev/sda 100 6144 <<<"$keep_dump")"
+assert_contains 'verdict=keep'    "$keep_out" "fixture: root_0.3.0 + _empty is verdict=keep"
+assert_contains 'installed=0.3.0' "$keep_out" "fixture: installed= is the version on the disk"
+assert_contains 'esp=1'           "$keep_out" "fixture: esp is partition 1"
+assert_contains 'slot=2'          "$keep_out" "fixture: slot is always partition 2"
+assert_contains 'spare=3'         "$keep_out" "fixture: spare is always partition 3"
+assert_contains 'var=4'           "$keep_out" "fixture: var is partition 4"
+
+# keep: BOTH slots hold a real root_<v> (two successful installs/updates) — installed= is the
+# HIGHER one, by sort -V, not the one that happens to sit in p2.
+two_root_dump='label: gpt
+sector-size: 512
+
+/dev/sda1 : start=        2048, size=      2097152, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, name="esp"
+/dev/sda2 : start=     2099200, size=    12582912, type=4F68BC64-6ACB-4AA4-B891-DB7CD79ABF44, name="root_0.4.0"
+/dev/sda3 : start=    14682112, size=    12582912, type=4F68BC64-6ACB-4AA4-B891-DB7CD79ABF44, name="root_0.3.0"
+/dev/sda4 : start=    27265024, size=    60000000, type=4D21B016-B534-45C2-A9FB-5C16E091FD2D, name="var"'
+two_root_out="$(inspect_of /dev/sda 100 6144 <<<"$two_root_dump")"
+assert_contains 'verdict=keep'    "$two_root_out" "fixture: two root_* is still verdict=keep"
+assert_contains 'installed=0.4.0' "$two_root_out" "fixture: installed= is the HIGHER of the two versions"
+
+# nvme-style nodes: the "p" separator, stripped correctly.
+nvme_dump='label: gpt
+sector-size: 512
+
+/dev/nvme0n1p1 : start=        2048, size=      2097152, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, name="esp"
+/dev/nvme0n1p2 : start=     2099200, size=    12582912, type=4F68BC64-6ACB-4AA4-B891-DB7CD79ABF44, name="root_0.3.0"
+/dev/nvme0n1p3 : start=    14682112, size=    12582912, type=4F68BC64-6ACB-4AA4-B891-DB7CD79ABF44, name="_empty"
+/dev/nvme0n1p4 : start=    27265024, size=    60000000, type=4D21B016-B534-45C2-A9FB-5C16E091FD2D, name="var"'
+nvme_out="$(inspect_of /dev/nvme0n1 100 6144 <<<"$nvme_dump")"
+assert_contains 'verdict=keep' "$nvme_out" "fixture: nvme-style p2/p3/p4 nodes resolve correctly"
+
+# none: no var at all — a disk running something else entirely.
+none_dump='label: gpt
+sector-size: 512
+
+/dev/sda1 : start=2048, size=2097152, type=0FC63DAF-8483-4772-8E79-3D69D8477DE4, name="root"'
+none_out="$(inspect_of /dev/sda 100 6144 <<<"$none_dump")"
+assert_eq "verdict=none" "$none_out" "fixture: no var partition at all is verdict=none, and nothing else"
+
+# refuse/table: a var-typed, var-named partition present, but the table itself is not GPT.
+dos_dump='label: dos
+sector-size: 512
+
+/dev/sda4 : start=2048, size=2097152, type=4D21B016-B534-45C2-A9FB-5C16E091FD2D, name="var"'
+dos_out="$(inspect_of /dev/sda 100 6144 <<<"$dos_dump")"
+assert_contains 'verdict=refuse' "$dos_out" "fixture: a var match on a non-gpt table is verdict=refuse"
+assert_contains 'reason=table'   "$dos_out" "fixture: ...reason=table"
+
+# refuse/layout: three partitions, not four.
+three_part_dump='label: gpt
+sector-size: 512
+
+/dev/sda1 : start=        2048, size=      2097152, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, name="esp"
+/dev/sda2 : start=     2099200, size=    12582912, type=4F68BC64-6ACB-4AA4-B891-DB7CD79ABF44, name="root_0.3.0"
+/dev/sda3 : start=    14682112, size=    60000000, type=4D21B016-B534-45C2-A9FB-5C16E091FD2D, name="var"'
+three_out="$(inspect_of /dev/sda 100 6144 <<<"$three_part_dump")"
+assert_contains 'verdict=refuse' "$three_out" "fixture: three partitions is verdict=refuse"
+assert_contains 'reason=layout'  "$three_out" "fixture: ...reason=layout"
+
+# refuse/layout: a wrong type on the root slot (right name, wrong GUID).
+wrong_type_dump='label: gpt
+sector-size: 512
+
+/dev/sda1 : start=        2048, size=      2097152, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, name="esp"
+/dev/sda2 : start=     2099200, size=    12582912, type=0FC63DAF-8483-4772-8E79-3D69D8477DE4, name="root_0.3.0"
+/dev/sda3 : start=    14682112, size=    12582912, type=4F68BC64-6ACB-4AA4-B891-DB7CD79ABF44, name="_empty"
+/dev/sda4 : start=    27265024, size=    60000000, type=4D21B016-B534-45C2-A9FB-5C16E091FD2D, name="var"'
+wrong_type_out="$(inspect_of /dev/sda 100 6144 <<<"$wrong_type_dump")"
+assert_contains 'verdict=refuse' "$wrong_type_out" "fixture: a wrong-typed root slot is verdict=refuse"
+assert_contains 'reason=layout'  "$wrong_type_out" "fixture: ...reason=layout"
+
+# refuse/esp-size: p1 smaller than ESP_MIB.
+small_esp_dump='label: gpt
+sector-size: 512
+
+/dev/sda1 : start=        2048, size=      204800, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, name="esp"
+/dev/sda2 : start=      206848, size=    12582912, type=4F68BC64-6ACB-4AA4-B891-DB7CD79ABF44, name="root_0.3.0"
+/dev/sda3 : start=    12789760, size=    12582912, type=4F68BC64-6ACB-4AA4-B891-DB7CD79ABF44, name="_empty"
+/dev/sda4 : start=    25372672, size=    60000000, type=4D21B016-B534-45C2-A9FB-5C16E091FD2D, name="var"'
+small_esp_out="$(inspect_of /dev/sda 200 6144 <<<"$small_esp_dump")"
+assert_contains 'verdict=refuse'  "$small_esp_out" "fixture: an ESP smaller than ESP_MIB is verdict=refuse"
+assert_contains 'reason=esp-size' "$small_esp_out" "fixture: ...reason=esp-size"
+
+# refuse/slot-size: a root slot smaller than SLOT_MIB.
+small_slot_dump='label: gpt
+sector-size: 512
+
+/dev/sda1 : start=        2048, size=      2097152, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, name="esp"
+/dev/sda2 : start=     2099200, size=     2097152, type=4F68BC64-6ACB-4AA4-B891-DB7CD79ABF44, name="root_0.3.0"
+/dev/sda3 : start=     4196352, size=     2097152, type=4F68BC64-6ACB-4AA4-B891-DB7CD79ABF44, name="_empty"
+/dev/sda4 : start=     6293504, size=    60000000, type=4D21B016-B534-45C2-A9FB-5C16E091FD2D, name="var"'
+small_slot_out="$(inspect_of /dev/sda 100 6144 <<<"$small_slot_dump")"
+assert_contains 'verdict=refuse'   "$small_slot_out" "fixture: a root slot smaller than SLOT_MIB is verdict=refuse"
+assert_contains 'reason=slot-size' "$small_slot_out" "fixture: ...reason=slot-size"
+
+# usage error: 2, not 1 or a crash.
+( inspect_of /dev/sda not-a-number 6144 <<<"$keep_dump" ) >/dev/null 2>&1
+assert_eq "2" "$?" "inspect: a non-numeric ESP_MIB is a usage error (exit 2)"
+
+# ---- disk.conf.in and the page: layoutHelper, and the checked signature (plan/33 §5) ---------
+assert_true "modules/disk.conf.in also gains layoutHelper" \
+    grep -qE '^layoutHelper:[[:space:]]+"/usr/libexec/@DISTRO_ID@-disk-layout"' \
+        "$CAL/modules/disk.conf.in"
+assert_true "the page calls inspectDisk() from enumerate()" \
+    grep -q 'inspectDisk( e )' "$DISK_SRC/DiskConfig.cpp"
+assert_true "...gated on a var-labelled lsblk child, the cheap pre-filter" \
+    bash -c "sed -n '/^DiskConfig::enumerate/,/^}/p' '$DISK_SRC/DiskConfig.cpp' |
+             grep -q 'hasVarPartition'"
+assert_true "...and layoutHelper is read with Calamares::getString, not configNumber" \
+    grep -q 'Calamares::getString( configurationMap, QStringLiteral( "layoutHelper" )' \
+        "$DISK_SRC/DiskConfig.cpp"
+# The configNumber call-site count stays at five (plan/24 §11) — a string key must never add a
+# sixth. Re-asserted here beside the new key, not just in section 5, so the two cannot drift.
+assert_eq "5" \
+    "$(cat "$GREET_SRC/Requirements.cpp" "$DISK_SRC/DiskConfig.cpp" |
+       grep -cE 'configNumber\( (configurationMap|requirements),')" \
+    "adding layoutHelper did not move the five-call-site pin"
+assert_true "the page publishes diskKeepData" \
+    grep -q 'gs->insert( QStringLiteral( "diskKeepData" ), keeping() )' "$DISK_SRC/DiskConfig.cpp"
+assert_false "no GPT type GUID reaches DiskConfig.cpp from inspectDisk()" \
+    bash -c "sed -n '/^DiskConfig::inspectDisk/,/^}/p' '$DISK_SRC/DiskConfig.cpp' |
+             grep -qiE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'"
+
+# ---- disksetup: the keep path (plan/33 §6) ----------------------------------------------------
+assert_true "keep_disk() exists" grep -q '^def keep_disk' "$DISK_JOB"
+KEEP_DISK_BODY="$(sed -n '/^def keep_disk/,/^def /p' "$DISK_JOB")"
+# "write_table(device" — the real call SIGNATURE, with its first argument immediately after the
+# paren — not the bare word, which the function's own docstring uses (in prose, with no argument)
+# to explain that this path never calls it.
+assert_false "the keep path never calls write_table()" \
+    grep -qF 'write_table(device' <<<"$KEEP_DISK_BODY"
+assert_false "...and never wipefs'es the whole device" \
+    grep -qE 'wipefs.*\bdevice\b' <<<"$KEEP_DISK_BODY"
+# _empty is relabelled BEFORE the slot — the spare may already carry the very label about to be
+# written to the slot, and two partitions sharing one PARTLABEL is what plan/33 §2 exists to
+# remove (see the module's own comment on keep_disk()). Exact call-site substrings, not the bare
+# word "_empty" or "layout[\"slot\"]" — both appear a second time in this module's docstrings and
+# in publish_partitions(), which would make either line number meaningless on its own.
+spare_line="$(grep -nF 'str(layout["spare"]), "_empty"' "$DISK_JOB" | head -1 | cut -d: -f1)"
+slot_line="$(grep -nF 'str(layout["slot"]), str(conf.get("rootPartLabel")' "$DISK_JOB" | head -1 | cut -d: -f1)"
+assert_true "both relabel calls were found" test -n "$spare_line" -a -n "$slot_line"
+assert_true "the spare is relabelled _empty before the slot gets the new root label" \
+    bash -c "(( $spare_line < $slot_line ))"
+assert_true "check_kept_files() runs e2fsck -p" \
+    bash -c "sed -n '/^def check_kept_files/,/^def /p' '$DISK_JOB' | grep -q '\"e2fsck\", \"-p\"'"
+assert_true "...and checks overlay/etc/upper" \
+    bash -c "sed -n '/^def check_kept_files/,/^def /p' '$DISK_JOB' | grep -q '\"overlay\", \"etc\", \"upper\"'"
+assert_true "...and checks lib/<distroId>" \
+    bash -c "sed -n '/^def check_kept_files/,/^def /p' '$DISK_JOB' | grep -q '\"lib\", distro_id'"
+assert_true "...mounted read-only" \
+    bash -c "sed -n '/^def check_kept_files/,/^def /p' '$DISK_JOB' | grep -q '\"-o\", \"ro\"'"
+assert_true "...and unmounted (and the scratch dir removed) in a finally" \
+    bash -c "sed -n '/^def check_kept_files/,/^def /p' '$DISK_JOB' | grep -q 'finally:'"
+assert_true "inspect_layout() dies loudly unless verdict is keep" \
+    grep -q "cannot be kept" "$DISK_JOB"
+assert_true "run() reads keep from diskKeepData" \
+    grep -q 'keep = bool(libcalamares.globalstorage.value("diskKeepData"))' "$DISK_JOB"
+assert_true "publish_partitions() is shared by both paths" \
+    bash -c "grep -q 'esp, root_a, root_b, var = keep_disk' '$DISK_JOB' &&
+             grep -q 'partitions = publish_partitions(esp, root_a, root_b, var, conf)' '$DISK_JOB'"
+assert_true "disksetup.conf.in gains distroId" \
+    grep -qE '^distroId:[[:space:]]+"@DISTRO_ID@"' "$REPO_ROOT/config/calamares/modules/disksetup.conf.in"
+assert_true "...rendered" grep -qE "^distroId:[[:space:]]+\"$I_DISTRO_ID\"" "$DISKSETUP_CONF"
+
+# ---- the jobs that stand down (plan/33 §7) -----------------------------------------------------
+# `run()` is the LAST function in each of these files, so /^def run/,$ is its whole body.
+for job in localesetup keyboardsetup imageidentity; do
+    assert_true "$job reads diskKeepData in run()" \
+        bash -c "sed -n '/^def run/,\$p' '$CAL/local-modules/$job/main.py' | grep -q 'diskKeepData'"
+done
+ACCOUNTSETUP_JOB="$REPO_ROOT/config/calamares/local-modules/accountsetup/main.py.in"
+assert_true "accountsetup reads diskKeepData in run()" \
+    bash -c "sed -n '/^def run/,\$p' '$ACCOUNTSETUP_JOB' | grep -q 'diskKeepData'"
+assert_true "...and does nothing but the secrets-file unlink while keeping" \
+    bash -c "sed -n '/^def run/,\$p' '$ACCOUNTSETUP_JOB' | grep -A2 'diskKeepData' | grep -q 'return None'"
+assert_true "accountsetup's userdel on the live user is outside keep only" \
+    bash -c "sed -n '/^def run/,\$p' '$ACCOUNTSETUP_JOB' | grep -q 'remove_live_user(root)'"
+IMAGEDEPLOY_JOB="$CAL/local-modules/imagedeploy/main.py"
+assert_true "imagedeploy reads diskKeepData too" grep -q 'diskKeepData' "$IMAGEDEPLOY_JOB"
+assert_true "...and skips the var template extraction under it" \
+    bash -c "sed -n '/seed \/var/,/---- 4\./p' '$IMAGEDEPLOY_JOB' | grep -q 'if keep:'"
+assert_true "...and skips the early /etc/hostname write under it too" \
+    bash -c "sed -n '/hostname, EARLY/,/---- 5\./p' '$IMAGEDEPLOY_JOB' | grep -q 'if keep:'"
+assert_true "...the directory belt-and-braces still runs unconditionally" \
+    bash -c "! sed -n '/Belt and braces/,/chmod.*roothome/p' '$IMAGEDEPLOY_JOB' | grep -q 'if keep'"
+
+# imagebootloader: the NVRAM dedup applies in both modes, by PARTUUID, not by reading diskKeepData
+# at all — see scripts/run-vm.sh's note and the module's own header on why.
+BOOTLOADER_JOB="$CAL/local-modules/imagebootloader/main.py"
+assert_true "imagebootloader skips a duplicate NVRAM entry by PARTUUID" \
+    bash -c "grep -q 'def blkid_partuuid' '$BOOTLOADER_JOB' && grep -q 'def existing_boot_entry' '$BOOTLOADER_JOB'"
+
+# ---- the pages after the disk (plan/33 §8) ------------------------------------------------------
+assert_true "AccountsViewStep::onActivate() reads diskKeepData" \
+    grep -q 'gs->value( QStringLiteral( "diskKeepData" ) ).toBool()' "$OVL_ACCOUNTS/files/AccountsViewStep.cpp"
+assert_true "...into AccountsConfig::setKeeping()" \
+    grep -q 'm_config->setKeeping(' "$OVL_ACCOUNTS/files/AccountsViewStep.cpp"
+assert_true "AccountsConfig::publish() writes accountsMode \"kept\" while keeping" \
+    grep -q 'QStringLiteral( "accountsMode" ), QStringLiteral( "kept" )' "$OVL_ACCOUNTS/files/AccountsConfig.cpp"
+assert_true "...and clears every identity key" \
+    bash -c "sed -n '/^AccountsConfig::publish/,/^}/p' '$OVL_ACCOUNTS/files/AccountsConfig.cpp' |
+             grep -c 'QString()\|QStringList()\|false' | grep -qE '^(1[0-9]|[2-9][0-9])\$'"
+assert_true "...and deletes any secrets file an earlier forward pass left" \
+    bash -c "sed -n '/^AccountsConfig::publish/,/^}/p' '$OVL_ACCOUNTS/files/AccountsConfig.cpp' |
+             grep -q 'QFile::remove( m_secretsPath )'"
+assert_true "keeping() releases a live managed enrolment, the same path leaving managed mode takes" \
+    bash -c "sed -n '/^AccountsConfig::setKeeping/,/^}/p' '$OVL_ACCOUNTS/files/AccountsConfig.cpp' |
+             grep -q 'releaseEnrolment()'"
+assert_true "the pager's isAtBeginning/isAtEnd both read keeping()" \
+    bash -c "grep -q 'm_config->keeping() || m_config->onChooser()' '$OVL_ACCOUNTS/files/AccountsViewStep.cpp' &&
+             grep -q 'm_config->keeping() ||' '$OVL_ACCOUNTS/files/AccountsViewStep.cpp'"
+assert_true "Accounts.qml draws a kept block and hides the chooser/fields under it" \
+    bash -c "grep -q 'visible: accounts.keeping' '$ACCOUNTS_QML' &&
+             grep -q 'visible: accounts.onChooser && !accounts.keeping' '$ACCOUNTS_QML' &&
+             grep -q 'visible: accounts.onFields && !accounts.keeping' '$ACCOUNTS_QML'"
+
+REVIEW_SRC="$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-review/files"
+assert_false "the review page never reads the never-published 'device' key" \
+    grep -q '"device"' "$REVIEW_SRC/ReviewConfig.cpp"
+assert_true "...it reads diskDevice, which DiskConfig::publish() actually writes" \
+    grep -q '"diskDevice"' "$REVIEW_SRC/ReviewConfig.cpp"
+assert_true "...and diskKeepData, cached as the page's own keeping property" \
+    grep -q '"diskKeepData"' "$REVIEW_SRC/ReviewConfig.cpp"
+assert_true "eraseTitle/eraseBody both branch on keeping" \
+    bash -c "sed -n '/^ReviewConfig::eraseTitle/,/^}/p' '$REVIEW_SRC/ReviewConfig.cpp' | grep -q 'm_keeping' &&
+             sed -n '/^ReviewConfig::eraseBody/,/^}/p' '$REVIEW_SRC/ReviewConfig.cpp' | grep -q 'm_keeping'"
+assert_true "Review.qml's panel takes the warning tone while keeping" \
+    grep -q 'review.keeping ? ds.statusWarningBg : ds.statusDangerBg' "$REVIEW_SRC/qml/Review.qml"
+
+DONE_SRC="$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-done/files"
+assert_true "the finish page reads diskKeepData in collect()" \
+    grep -q '"diskKeepData"' "$DONE_SRC/DoneConfig.cpp"
+assert_true "...and pageTitle/pageLede both branch on it" \
+    bash -c "sed -n '/^DoneConfig::pageTitle/,/^}/p' '$DONE_SRC/DoneConfig.cpp' | grep -q 'm_keeping' &&
+             sed -n '/^DoneConfig::pageLede/,/^}/p' '$DONE_SRC/DoneConfig.cpp' | grep -q 'm_keeping'"
+
+# The three rows that say "Kept as it is on this computer" — language, location, keyboard. Each
+# page's answer configures the installer session only while keeping (plan/33 §1), so its summary
+# row must say so rather than name a setting that will not be applied.
+for pair in language:LanguageConfig location:LocationConfig keymap:KeymapConfig; do
+    mod="${pair%%:*}"; cls="${pair#*:}"
+    src="$REPO_ROOT/config/portage/overlay/distro-base/distro-calamares-$mod/files/$cls.cpp"
+    assert_true "$mod's prettyStatus() reads diskKeepData" \
+        bash -c "sed -n '/^$cls::prettyStatus/,/^}/p' '$src' | grep -q 'diskKeepData'"
+    assert_true "...and says 'Kept as it is on this computer'" \
+        bash -c "sed -n '/^$cls::prettyStatus/,/^}/p' '$src' | grep -q 'Kept as it is on this computer'"
+done
 
 # ---- 7. YAML is YAML ------------------------------------------------------------------------
 # Calamares parses these with yaml-cpp and reports a parse error as a startup failure, so a

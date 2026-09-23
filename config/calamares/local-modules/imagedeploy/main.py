@@ -21,10 +21,11 @@
 #
 # Step 4 is the one that matters. It is the same incantation as
 # config/rootfs/usr/lib/dracut/modules.d/90etc-overlay/etc-overlay.sh, including mounting the
-# overlay onto its own lowerdir — and with it in place, Calamares' stock `locale`, `keyboard`,
-# `users` and `removeuser` modules write to /etc/... exactly as they would on a mutable distro,
-# and the writes land in the upper on /var because that is what the mount does. No patched
-# modules anywhere in this installer (plan/16 §5.2).
+# overlay onto its own lowerdir — and with it in place, every job downstream (localesetup,
+# keyboardsetup, accountsetup — accountsetup's own userdel for the live user included, since
+# plan/33 §7 folded stock `removeuser`'s job into it) writes to /etc/... exactly as a stock
+# module would on a mutable distro, and the writes land in the upper on /var because that is
+# what the mount does. No patched modules anywhere in this installer (plan/16 §5.2).
 
 import json
 import os
@@ -209,6 +210,11 @@ def mount(source, target, fstype=None, options=None, mkdir=True):
 
 def run():
     conf = libcalamares.job.configuration
+    # Read once, at the top, and used at the two places below that differ for a kept disk
+    # (plan/33 §7): everything else in this module — writing the root image, mounting it, the
+    # /etc overlay, the ESP, the API filesystems — is identical whichever way this reads, because
+    # disksetup already made the two paths converge on the same `partitions` contract.
+    keep = bool(libcalamares.globalstorage.value("diskKeepData"))
     payload_dir = conf.get("payloadDir", "/var/lib/install")
     root_label = conf.get("rootPartLabel")
     if not root_label:
@@ -296,7 +302,13 @@ def run():
         # bytes. It carries the overlay skeleton, /home, /roothome and the preinstalled Flatpak
         # store, which is what lets an install with no network at all produce a machine with its
         # apps already on it.
-        if os.path.isfile(var_template):
+        if keep:
+            # KEEPING (plan/33 §7): the var partition already has an overlay skeleton, homes and
+            # a Flatpak store of its own — they are the entire reason var was kept rather than
+            # erased. Extracting the template over them would replace the accounts, files and
+            # apps this feature exists to keep with the image's own factory defaults.
+            debug("imagedeploy: keeping — not extracting the var template over the kept /var")
+        elif os.path.isfile(var_template):
             debug("unpacking {} into the target /var".format(var_template))
             sh(
                 [
@@ -363,14 +375,22 @@ def run():
         #
         # Written after the overlay mount above, so it lands in the upper on /var like every
         # other identity file — not into the read-only lower, where it could not go anyway.
-        hostname = libcalamares.globalstorage.value("hostname")
-        if hostname:
-            with open(os.path.join(etc, "hostname"), "w") as f:
-                f.write(hostname + "\n")
-            debug("wrote /etc/hostname early for the AD join: {}".format(hostname))
+        #
+        # SKIPPED WHILE KEEPING (plan/33 §7): the kept system's own /etc/hostname is exactly
+        # what plan/33 §1 promises to leave alone, and the race this early write exists to avoid
+        # cannot happen on this path anyway — accountsetup stands down entirely under keep, so
+        # no domain join is being started fresh here for a hostname to race.
+        if keep:
+            debug("imagedeploy: keeping — not writing /etc/hostname over the kept system's own")
         else:
-            warning("no hostname in global storage; an AD join would name the computer "
-                    "account after the live medium")
+            hostname = libcalamares.globalstorage.value("hostname")
+            if hostname:
+                with open(os.path.join(etc, "hostname"), "w") as f:
+                    f.write(hostname + "\n")
+                debug("wrote /etc/hostname early for the AD join: {}".format(hostname))
+            else:
+                warning("no hostname in global storage; an AD join would name the computer "
+                        "account after the live medium")
 
         # ---- 5. the ESP and the API filesystems ---------------------------------------------
         # /efi, matching config/rootfs/etc/fstab. imagebootloader writes into it next.

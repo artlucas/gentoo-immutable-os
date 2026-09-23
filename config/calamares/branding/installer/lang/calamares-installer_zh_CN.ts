@@ -104,6 +104,10 @@
         <translation>%1 不能用作电脑名称。</translation>
     </message>
     <message>
+        <source>Existing accounts and computer name are kept.</source>
+        <translation>现有账户和电脑名称将被保留。</translation>
+    </message>
+    <message>
         <source>Local account %1 on %2.</source>
         <translation>本地账户 %1（位于 %2）。</translation>
     </message>
@@ -122,6 +126,14 @@
     <message>
         <source>No accounts have been set up.</source>
         <translation>尚未设置任何账户。</translation>
+    </message>
+    <message>
+        <source>Your accounts are kept</source>
+        <translation>您的账户将被保留</translation>
+    </message>
+    <message>
+        <source>Everyone who uses this computer signs in as before, with the same password. The computer keeps its name, and stays managed or joined to a domain if it was.</source>
+        <translation>使用这台电脑的每个人都可以像以前一样用相同的密码登录。电脑名称保持不变，如果之前处于受管理状态或已加入域，也将继续保持。</translation>
     </message>
     <message>
         <source>How should people sign in to this computer?</source>
@@ -481,8 +493,16 @@
         <translation>%1 需要一块至少 %2 的磁盘，且不能是它正在运行的那块。</translation>
     </message>
     <message>
+        <source>%1 is already on it. You can reinstall it and keep your files, apps and settings.</source>
+        <translation>%1 已经安装在其中。您可以重新安装它，并保留您的文件、应用程序和设置。</translation>
+    </message>
+    <message>
         <source>%1 will be installed on it, and everything on it now will be erased.</source>
         <translation>%1 将安装到该磁盘，其上现有的所有内容都将被擦除。</translation>
+    </message>
+    <message>
+        <source>A disk that already has %1 on it can keep your files, apps and settings. Everything else on the disk you choose is erased.</source>
+        <translation>已安装 %1 的磁盘可以保留您的文件、应用程序和设置。您所选磁盘上的其他所有内容都将被清除。</translation>
     </message>
     <message>
         <source>Everything on the disk you choose will be erased. Nothing else on this computer is changed.</source>
@@ -501,8 +521,24 @@
         <translation>保留用于更新</translation>
     </message>
     <message>
+        <source>Your files (kept)</source>
+        <translation>您的文件（保留）</translation>
+    </message>
+    <message>
         <source>Your files</source>
         <translation>您的文件</translation>
+    </message>
+    <message>
+        <source>The system on this disk is replaced with %1. Its accounts, files, apps and settings are kept.</source>
+        <translation>此磁盘上的系统将被替换为 %1。其账户、文件、应用程序和设置将被保留。</translation>
+    </message>
+    <message>
+        <source>%1 and everything saved on it will be deleted, including its accounts, files, apps and settings.</source>
+        <translation>%1 及其中保存的所有内容都将被删除，包括其账户、文件、应用程序和设置。</translation>
+    </message>
+    <message>
+        <source>This disk was set up in a way this version of %1 cannot reuse, so they cannot be kept.</source>
+        <translation>此磁盘的设置方式无法被此版本的 %1 重新使用，因此无法保留这些内容。</translation>
     </message>
     <message>
         <source>Everything on this disk will be deleted.</source>
@@ -531,12 +567,24 @@
         <translation>这是一块可移动磁盘。</translation>
     </message>
     <message>
+        <source>Reinstall on this disk?</source>
+        <translation>要在此磁盘上重新安装吗？</translation>
+    </message>
+    <message>
+        <source>Reinstall</source>
+        <translation>重新安装</translation>
+    </message>
+    <message>
         <source>%1 — %2</source>
         <translation>%1 — %2</translation>
     </message>
     <message>
         <source>Everything on the selected disk will be erased.</source>
         <translation>所选磁盘上的所有内容都将被擦除。</translation>
+    </message>
+    <message>
+        <source>Reinstall %3 on %1 (%2), keeping its accounts, files, apps and settings.</source>
+        <translation>在 %1（%2）上重新安装 %3，并保留其账户、文件、应用程序和设置。</translation>
     </message>
     <message>
         <source>Erase %1 (%2) and install %3 on it.</source>
@@ -565,6 +613,14 @@
     <message>
         <source>Not yet available</source>
         <translation>尚不可用</translation>
+    </message>
+    <message>
+        <source>Keep my files, apps and settings</source>
+        <translation>保留我的文件、应用程序和设置</translation>
+    </message>
+    <message>
+        <source>Not possible on this disk</source>
+        <translation>此磁盘上无法使用</translation>
     </message>
     <message>
         <source>Erase this disk?</source>
@@ -620,8 +676,16 @@
 <context>
     <name>DoneConfig</name>
     <message>
+        <source>%1 is reinstalled</source>
+        <translation>%1 已重新安装完成</translation>
+    </message>
+    <message>
         <source>%1 is installed</source>
         <translation>%1 已安装完成</translation>
+    </message>
+    <message>
+        <source>Restart and sign in as before.</source>
+        <translation>重新启动，然后像以前一样登录。</translation>
     </message>
     <message>
         <source>Restart to sign in for the first time.</source>
@@ -715,6 +779,10 @@
         <source>No keyboard layouts could be read from this medium, so the installed system will keep the layout this one booted with.</source>
         <translation>无法从此介质读取键盘布局，因此安装好的系统将沿用此介质启动时使用的布局。</translation>
     </message>
+    <message>
+        <source>Kept as it is on this computer</source>
+        <translation>保持这台电脑上的原有设置</translation>
+    </message>
 </context>
 <context>
     <name>KeymapViewStep</name>
@@ -732,6 +800,10 @@
     <message>
         <source>Pick the language you want to use while installing. This becomes the system language, and you can change it later in Settings.</source>
         <translation>选择安装时使用的语言。它将成为系统语言，之后可以在设置中更改。</translation>
+    </message>
+    <message>
+        <source>Kept as it is on this computer</source>
+        <translation>保持这台电脑上的原有设置</translation>
     </message>
 </context>
 <context>
@@ -903,6 +975,10 @@
         <translation>无法设置时钟。</translation>
     </message>
     <message>
+        <source>Kept as it is on this computer</source>
+        <translation>保持这台电脑上的原有设置</translation>
+    </message>
+    <message>
         <source>The clock could not be set: %1</source>
         <translation>无法设置时钟：%1</translation>
     </message>
@@ -1011,8 +1087,20 @@
         <translation>目前尚未对这台计算机做出任何更改。这是安装程序写入磁盘前的最后一步。</translation>
     </message>
     <message>
+        <source>this system</source>
+        <translation>此系统</translation>
+    </message>
+    <message>
+        <source>This reinstalls %1 on %2</source>
+        <translation>这将在 %2 上重新安装 %1</translation>
+    </message>
+    <message>
         <source>This erases %1 completely</source>
         <translation>这将彻底清除 %1</translation>
+    </message>
+    <message>
+        <source>The system is replaced with a fresh copy. The accounts, files, apps and settings on that drive are kept, and other drives are left alone.</source>
+        <translation>系统将被替换为全新副本。该驱动器上的账户、文件、应用程序和设置将被保留，其他驱动器不受影响。</translation>
     </message>
     <message>
         <source>Every partition, file and operating system on that drive will be removed. Other drives are left alone.</source>

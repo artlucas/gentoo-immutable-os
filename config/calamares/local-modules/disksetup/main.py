@@ -8,7 +8,7 @@
 # the other. The page is `disk`, a compiled view module in config/portage/overlay; this is the
 # half that touches the disk.
 #
-# WHAT IT DOES, and it is short because installing this distro is `dd` rather than
+# WHAT IT DOES ON AN ERASE, and it is short because installing this distro is `dd` rather than
 # unpack-and-configure (plan/16 §5.1):
 #
 #   1. refuse, loudly, unless the target is a whole disk that is not the one we booted from
@@ -19,13 +19,21 @@
 #   5. publish `partitions` into GlobalStorage, which is the contract the rest of the sequence
 #      was already written against
 #
+# OR, KEEPING (plan/33 §6), steps 3-4 above become: confirm the disk still says it can be kept,
+# confirm its var filesystem is actually this distro's, relabel the slot the new root goes into
+# and the spare beside it, mkfs only the ESP. THE GPT ITSELF IS NEVER TOUCHED and var's filesystem
+# is never formatted — that is the whole content of "keeping". Steps 1, 2 and 5 are identical on
+# both paths; `run()` is the only place the two diverge.
+#
 # THE GPT COMES FROM lib/layout.sh, WHICH IS THE PIPELINE'S OWN (plan/24 §4). This module does not
 # describe a partition layout; it runs /usr/libexec/<id>-disk-layout, which stage 40 installs
 # verbatim from scripts/lib/layout.sh — the same file, the same two functions, that stage 60 uses
 # to build the factory .img. plan/16 §3.4 requires an installed machine to be indistinguishable
 # from one dd'd from that image, and the previous arrangement kept that promise by having
 # tests/test-installer.sh compare a YAML block against a shell function, label by label. One file
-# cannot disagree with itself.
+# cannot disagree with itself. The same helper's `inspect` subcommand is what decides whether a
+# disk CAN be kept (plan/33 §4) — the disk page asks it once, this module asks it again, and
+# neither ever spells out a GPT type GUID: that stays in the one file that owns them.
 #
 # WHAT IS DELIBERATELY NOT HERE: any notion of a user-chosen layout. There is no swap (plan/16 §6
 # is Phase B), no LUKS (plan/24 §7 draws the control and disables it), no filesystem choice and no
@@ -36,6 +44,7 @@ import json
 import os
 import re
 import subprocess
+import tempfile
 import time
 
 import libcalamares
@@ -297,6 +306,22 @@ def release_disk(disk):
         warning("still mounted after release: {}".format(remaining))
 
 
+def parse_kv(text):
+    """key=value lines -> dict — the format scripts/lib/layout.sh's `inspect` prints (plan/33 §4).
+
+    One key per line, on purpose: a value that itself contained an '=' would still split
+    correctly on the FIRST one, but nothing `inspect` prints ever does.
+    """
+    out = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or "=" not in line:
+            continue
+        key, _sep, value = line.partition("=")
+        out[key] = value
+    return out
+
+
 def layout_script(conf, device, disk_bytes):
     """Ask lib/layout.sh for the sfdisk script. The pipeline's own function, on the medium.
 
@@ -363,71 +388,247 @@ def write_table(device, script):
     subprocess.run(["sfdisk", "--reread", device], check=False, capture_output=True)
 
 
+def make_esp(esp, conf):
+    """mkfs.vfat the ESP. THE ONLY mkfs.vfat LITERAL IN THIS FILE — the erase path calls this too
+    rather than running its own, so the count tests/test-installer.sh pins (plan/24 §6, plan/33
+    §6) stays true on both paths at once instead of by two copies agreeing.
+    """
+    sh(["mkfs.vfat", "-F32", "-n", str(conf.get("espLabel") or "ESP"), esp], capture_output=True)
+
+
+def inspect_layout(conf, device):
+    """Ask lib/layout.sh's `inspect` whether `device` still says it can be kept. Raises SetupError.
+
+    THE SAME QUESTION THE PAGE ALREADY ASKED, asked again (plan/24 §6's rule, plan/33 §5): the
+    page's answer travelled through GlobalStorage as a plain boolean, and a job that is about to
+    keep a disk does not take a string's word for it — a rescan a screen back, a disk pulled and
+    reinserted, even (in principle) another process racing this one, and diskKeepData would still
+    read true. No GPT type GUID appears here or anywhere else in this module; only the helper
+    that owns them ever compares one.
+    """
+    helper = conf.get("layoutHelper") or ""
+    if not os.path.exists(helper):
+        raise SetupError(
+            _("Configuration Error"),
+            _("The disk layout helper is missing from this installation medium: {!s}. Stage 40 "
+              "installs it from scripts/lib/layout.sh.").format(helper),
+        )
+    dump = subprocess.run(["sfdisk", "--dump", device], capture_output=True, text=True)
+    if dump.returncode != 0:
+        raise SetupError(
+            _("Disk error"),
+            _("{!s} could not be read:\n{!s}").format(device, dump.stderr.strip()),
+        )
+    cmd = [
+        helper, "inspect",
+        "--device", device,
+        "--esp-mib", str(int(conf["espSizeMiB"])),
+        "--slot-mib", str(int(conf["rootSlotSizeMiB"])),
+    ]
+    debug("running: {}".format(" ".join(cmd)))
+    proc = subprocess.run(cmd, input=dump.stdout, capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise SetupError(
+            _("Disk error"),
+            _("{!s} could not be inspected:\n{!s}").format(device, proc.stderr.strip()),
+        )
+    layout = parse_kv(proc.stdout)
+    if layout.get("verdict") != "keep" or not all(k in layout for k in ("esp", "slot", "spare", "var")):
+        raise SetupError(
+            _("Disk error"),
+            _("{!s} cannot be kept. Nothing has been changed. Start the installer again and "
+              "choose to erase the disk instead.").format(device),
+        )
+    return layout
+
+
+def check_kept_files(var_node, conf):
+    """e2fsck the var filesystem, then confirm it is actually this distro's. Raises SetupError.
+
+    e2fsck FIRST, ALWAYS, before anything reads a single file from it: the partition table
+    already says this is var (inspect_layout() ran before this), but nothing has actually looked
+    at the FILESYSTEM yet, and mounting one with errors is how those errors reach the /etc
+    overlay's upperdir this build is about to graft its own image onto. `-p` (preen) fixes the
+    problems that are always safe to fix without asking anyone; `rc & ~3` is the standard e2fsck
+    convention for "still failed after preening" — bits 0 and 1 both mean "fixed, filesystem is
+    fine now", and anything else set is a problem preening could not resolve on its own.
+
+    Mounted READ-ONLY on a throwaway directory, and unmounted in `finally` regardless of which
+    branch below is taken — nothing here may still hold the mount open when keep_disk() goes on
+    to relabel partitions on this same disk.
+
+    TWO DIRECTORIES, because either alone proves less than both together: overlay/etc/upper is
+    the /etc overlay's own upperdir (plan/01), which nothing but this distro's own boot path ever
+    creates, and lib/<distroId> is stamped both by the installer's own hostname write and by the
+    distro-state tmpfiles entry on every boot — so every install has it by the time this ever
+    runs, on a fresh install or a kept one alike.
+    """
+    fsck = subprocess.run(["e2fsck", "-p", var_node], capture_output=True, text=True)
+    if fsck.returncode & ~3:
+        raise SetupError(
+            _("Disk error"),
+            _("{!s} has errors the installer could not repair. Nothing has been changed. Start "
+              "the installer again and choose to erase the disk instead.").format(var_node),
+        )
+
+    mountpoint = tempfile.mkdtemp(prefix="immos-keep-")
+    mounted = False
+    try:
+        sh(["mount", "-t", "ext4", "-o", "ro", var_node, mountpoint])
+        mounted = True
+        distro_id = str(conf.get("distroId") or "")
+        upper = os.path.join(mountpoint, "overlay", "etc", "upper")
+        stamp = os.path.join(mountpoint, "lib", distro_id)
+        if not (distro_id and os.path.isdir(upper) and os.path.isdir(stamp)):
+            raise SetupError(
+                _("Disk error"),
+                _("{!s} does not hold files from this operating system. Nothing has been "
+                  "changed. Start the installer again and choose to erase the disk "
+                  "instead.").format(var_node),
+            )
+    finally:
+        if mounted:
+            sh(["umount", mountpoint])
+        os.rmdir(mountpoint)
+
+
+def keep_disk(device, layout, conf):
+    """Relabel the two partitions that get NEW content; leave the GPT and var otherwise alone.
+
+    ORDER MATTERS. The spare (layout["spare"]) is relabelled to "_empty" BEFORE the slot
+    (layout["slot"]) is relabelled to the new rootPartLabel — because the spare may ALREADY carry
+    that very label. An A/B pair where both slots hold a real root_<v> is completely ordinary
+    (two successful installs/updates back to back), and two partitions sharing one PARTLABEL at
+    once is exactly the ambiguity plan/33 §2 exists to remove: the same string briefly resolving
+    to two devices is what broke a live medium sharing labels with an installed disk in the first
+    place, and relabelling in the wrong order would reproduce it for one `udevadm settle`.
+
+    NEITHER write_table() NOR a whole-device wipefs runs on this path — the GPT itself is never
+    rewritten, which is the entire content of "keeping". wipefs instead runs on exactly the two
+    partitions being reused for something new that are not var: the ESP is about to be mkfs'd
+    here, and the spare is about to sit unused until the next update claims it, so both start
+    clean the way an erase's own targets do. The slot is left alone — imagedeploy writes an EROFS
+    image into it byte-for-byte, so whatever signature it carries now is about to be overwritten
+    regardless.
+    """
+    esp = partition_node(device, int(layout["esp"]))
+    slot = partition_node(device, int(layout["slot"]))
+    spare = partition_node(device, int(layout["spare"]))
+    var = partition_node(device, int(layout["var"]))
+
+    sh(["sfdisk", "--part-label", device, str(layout["spare"]), "_empty"])
+    sh(["sfdisk", "--part-label", device, str(layout["slot"]), str(conf.get("rootPartLabel") or "")])
+
+    settle_for([esp, slot, spare, var])
+
+    sh(["wipefs", "--all", "--force", spare])
+    sh(["wipefs", "--all", "--force", esp])
+
+    make_esp(esp, conf)
+
+    return esp, slot, spare, var
+
+
+def publish_partitions(esp, root_a, root_b, var, conf):
+    """The contract with the rest of the sequence (plan/24 §6 originally, shared with the keep
+    path by plan/33 §6): `imagedeploy` looks for the root slot by `partlabel` and for the other
+    two by `mountPoint`; `imagebootloader` looks for /efi the same way. Identical dicts on both
+    paths are what let neither of those jobs tell keeping and erasing apart.
+    """
+    partitions = [
+        {"device": esp, "mountPoint": "/efi", "fs": "fat32", "fsName": "fat32",
+         "partlabel": "esp", "claimed": True, "uuid": ""},
+        {"device": root_a, "mountPoint": None, "fs": "unformatted", "fsName": "unformatted",
+         "partlabel": str(conf.get("rootPartLabel") or ""), "claimed": True, "uuid": ""},
+        {"device": root_b, "mountPoint": None, "fs": "unformatted", "fsName": "unformatted",
+         "partlabel": "_empty", "claimed": True, "uuid": ""},
+        {"device": var, "mountPoint": "/var", "fs": "ext4", "fsName": "ext4",
+         "partlabel": "var", "claimed": True, "uuid": ""},
+    ]
+    libcalamares.globalstorage.insert("partitions", partitions)
+    # Upstream's `partition` module publishes this and the stock bootloader module reads it.
+    # We do not run that module, but `summary` and any future stock step do look for it, and
+    # a medium that is UEFI-only by construction should say so rather than leave it unset.
+    libcalamares.globalstorage.insert("firmwareType", "efi")
+    return partitions
+
+
 def run():
-    """Partition the chosen disk and report what was made."""
+    """Partition the chosen disk — or, keeping, prepare only what gets NEW content — and report
+    what was made.
+
+    `keep` is read straight out of GlobalStorage, exactly the way `diskConfirmed` and
+    `diskDevice` already are: check_target() below re-derives everything IT protects from
+    scratch, but which of the two paths to take is not itself a fact this job can re-derive —
+    it is the user's answer, published once by DiskConfig::publish() (plan/33 §5), and
+    inspect_layout()/check_kept_files() are what re-ask whether that answer can still be honoured.
+    """
     conf = libcalamares.job.configuration
     device = (libcalamares.globalstorage.value("diskDevice") or "").strip()
+    keep = bool(libcalamares.globalstorage.value("diskKeepData"))
 
     try:
         disk, size = check_target(device, conf)
         libcalamares.job.setprogress(0.1)
 
+        # check_target() and release_disk() run UNCHANGED on both paths — the checks that
+        # protect data get no keep-mode exemption, and a Plasma session will have automounted
+        # the target's var exactly as it automounts anything else (plan/33 §6).
         release_disk(disk)
         libcalamares.job.setprogress(0.2)
 
-        write_table(device, layout_script(conf, device, size))
-        libcalamares.job.setprogress(0.5)
+        if keep:
+            # NOTHING IS WRITTEN UNTIL keep_disk() (step 3 of 3 below): inspect_layout() only
+            # reads the partition table, and check_kept_files() mounts the filesystem read-only.
+            layout = inspect_layout(conf, device)
+            libcalamares.job.setprogress(0.3)
 
-        # The four partitions, in the order lib/layout.sh emits them. This mapping is the ONE
-        # place in this module that knows which partition is which, and it is positional because
-        # the layout is fixed — see the module header on why there is no user-chosen layout to
-        # discover here.
-        esp = partition_node(device, 1)
-        root_a = partition_node(device, 2)
-        root_b = partition_node(device, 3)
-        var = partition_node(device, 4)
-        settle_for([esp, root_a, root_b, var])
-        libcalamares.job.setprogress(0.6)
+            var = partition_node(device, int(layout["var"]))
+            check_kept_files(var, conf)
+            libcalamares.job.setprogress(0.5)
 
-        # The ESP, and then /var. The two root slots are NOT formatted: imagedeploy writes an
-        # EROFS image into slot A byte-for-byte, and slot B ships as zeros for systemd-sysupdate
-        # to claim. A mkfs here would be a filesystem that gets overwritten a step later.
-        #
-        # The labels match the ones stage 60 gives the factory image's filesystems (`mkfs.ext4 -L
-        # var`, `mkfs.vfat -n ESP`). Nothing reads them — /etc/fstab finds both partitions by
-        # PARTLABEL — but "indistinguishable from an image dd'd to the disk" is the property this
-        # whole installer is built around, and a filesystem label is part of what `lsblk` shows
-        # somebody comparing the two.
-        sh(["mkfs.vfat", "-F32", "-n", str(conf.get("espLabel") or "ESP"), esp],
-           capture_output=True)
-        libcalamares.job.setprogress(0.75)
-        sh(["mkfs.ext4", "-q", "-F", "-L", str(conf.get("varLabel") or "var"), var],
-           capture_output=True)
-        libcalamares.job.setprogress(0.9)
+            esp, root_a, root_b, var = keep_disk(device, layout, conf)
+            libcalamares.job.setprogress(0.9)
+        else:
+            write_table(device, layout_script(conf, device, size))
+            libcalamares.job.setprogress(0.5)
 
-        # THE CONTRACT WITH THE REST OF THE SEQUENCE, and it is upstream's shape on purpose.
-        # `imagedeploy` looks for the root slot by `partlabel` and for the other two by
-        # `mountPoint`; `imagebootloader` looks for /efi the same way. Both were written against
-        # what KPMcore used to publish here, and neither needed a line changed when this module
-        # replaced it — which is the test of whether the replacement is honest.
-        partitions = [
-            {"device": esp, "mountPoint": "/efi", "fs": "fat32", "fsName": "fat32",
-             "partlabel": "esp", "claimed": True, "uuid": ""},
-            {"device": root_a, "mountPoint": None, "fs": "unformatted", "fsName": "unformatted",
-             "partlabel": str(conf.get("rootPartLabel") or ""), "claimed": True, "uuid": ""},
-            {"device": root_b, "mountPoint": None, "fs": "unformatted", "fsName": "unformatted",
-             "partlabel": "_empty", "claimed": True, "uuid": ""},
-            {"device": var, "mountPoint": "/var", "fs": "ext4", "fsName": "ext4",
-             "partlabel": "var", "claimed": True, "uuid": ""},
-        ]
-        libcalamares.globalstorage.insert("partitions", partitions)
-        # Upstream's `partition` module publishes this and the stock bootloader module reads it.
-        # We do not run that module, but `summary` and any future stock step do look for it, and
-        # a medium that is UEFI-only by construction should say so rather than leave it unset.
-        libcalamares.globalstorage.insert("firmwareType", "efi")
+            # The four partitions, in the order lib/layout.sh emits them. This mapping is the
+            # ONE place in this module that knows which partition is which, and it is
+            # positional because the layout is fixed — see the module header on why there is no
+            # user-chosen layout to discover here.
+            esp = partition_node(device, 1)
+            root_a = partition_node(device, 2)
+            root_b = partition_node(device, 3)
+            var = partition_node(device, 4)
+            settle_for([esp, root_a, root_b, var])
+            libcalamares.job.setprogress(0.6)
+
+            # The ESP, and then /var. The two root slots are NOT formatted: imagedeploy writes
+            # an EROFS image into slot A byte-for-byte, and slot B ships as zeros for
+            # systemd-sysupdate to claim. A mkfs here would be a filesystem that gets
+            # overwritten a step later.
+            #
+            # The labels match the ones stage 60 gives the factory image's filesystems
+            # (`mkfs.ext4 -L var`, `mkfs.vfat -n ESP`). Nothing reads them — /etc/fstab finds
+            # both partitions by PARTLABEL — but "indistinguishable from an image dd'd to the
+            # disk" is the property this whole installer is built around, and a filesystem
+            # label is part of what `lsblk` shows somebody comparing the two. mkfs.vfat is
+            # make_esp()'s, shared with the keep path; mkfs.ext4 stays here — the keep path
+            # never formats var, which is the entire point of keeping it.
+            make_esp(esp, conf)
+            libcalamares.job.setprogress(0.75)
+            sh(["mkfs.ext4", "-q", "-F", "-L", str(conf.get("varLabel") or "var"), var],
+               capture_output=True)
+            libcalamares.job.setprogress(0.9)
+
+        # THE CONTRACT WITH THE REST OF THE SEQUENCE, shared by both paths (plan/33 §6):
+        # `imagedeploy` and `imagebootloader` read the same dicts either way and cannot tell
+        # keeping and erasing apart.
+        partitions = publish_partitions(esp, root_a, root_b, var, conf)
         libcalamares.job.setprogress(1.0)
 
-        debug("partitioned {}: {}".format(device, json.dumps(partitions)))
+        debug("{} {}: {}".format("kept" if keep else "partitioned", device, json.dumps(partitions)))
         return None
 
     except SetupError as e:

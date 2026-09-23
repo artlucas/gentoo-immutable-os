@@ -11,6 +11,17 @@
 #   run-vm.sh IMG --disk-size 32G           # bigger virtual disk; repart grows /var into it
 #   run-vm.sh IMG --disk-size 32G --writable  # ...and the overlay persists across reboots
 #   run-vm.sh IMG --extra-disk 32G          # blank second disk, e.g. a Calamares install target
+#
+# --extra-disk-keep is the reinstall-and-keep loop (plan/33 §10): the extra disk survives the
+# run instead of being thrown away with $VMDIR, so a second boot can install onto it, a third
+# can reinstall while keeping what the second wrote, and so on. IMG itself may be either the
+# pipeline's raw .img or a qcow2 from an earlier --extra-disk-keep run — the format is
+# autodetected — so step 2 below boots the disk the installer just wrote to, on its own:
+#
+#   run-vm.sh out/immos-<v>-installer.img --extra-disk 40G --extra-disk-keep   # 1. install
+#   run-vm.sh out/immos-<v>-installer.img.extra-disk.qcow2 --writable          # 2. use it
+#   run-vm.sh out/immos-<v>-installer.img --extra-disk-keep                    # 3. reinstall, keeping
+#   run-vm.sh out/immos-<v>-installer.img.extra-disk.qcow2 --writable          # 4. check it
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -22,9 +33,10 @@ export STAGE_NAME=run-vm
 source "$SCRIPT_DIR/lib/common.sh"
 
 IMG="${1:-}"; shift || true
-[[ -n $IMG && -f $IMG ]] || die "usage: run-vm.sh IMG [--headless LOG] [--test smoke|update|domain|managed] [--update-url URL] [--domain SPEC] [--managed SPEC] [--disk-size SIZE] [--extra-disk SIZE]"
+[[ -n $IMG && -f $IMG ]] || die "usage: run-vm.sh IMG [--headless LOG] [--test smoke|update|domain|managed] [--update-url URL] [--domain SPEC] [--managed SPEC] [--disk-size SIZE] [--extra-disk SIZE] [--extra-disk-keep]"
 
 HEADLESS_LOG='' TEST_MODE='' TEST_URL='' MEM=4096 SNAPSHOT=on DISK_SIZE='' EXTRA_DISK=''
+EXTRA_DISK_KEEP=0
 DOMAIN_SPEC='' MANAGED_SPEC=''
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -42,6 +54,7 @@ while [[ $# -gt 0 ]]; do
     --writable)   SNAPSHOT=off; shift ;;
     --disk-size)  DISK_SIZE="$2"; shift 2 ;;
     --extra-disk) EXTRA_DISK="$2"; shift 2 ;;
+    --extra-disk-keep) EXTRA_DISK_KEEP=1; shift ;;
     *) die "unknown argument: $1" ;;
   esac
 done
@@ -74,6 +87,16 @@ VMDIR="$(mktemp -d)"
 trap 'rm -rf -- "$VMDIR"' EXIT
 cp -- "$OVMF_VARS_SRC" "$VMDIR/VARS.fd"    # fresh NVRAM per run: no state leaks
 
+# ---- IMG's own format, autodetected ----------------------------------------------------------
+# Usually the pipeline's raw .img — but IMG may also be a qcow2 (plan/33 §10): step 2 of the
+# reinstall-and-keep loop in the header boots the extra disk an earlier --extra-disk-keep run
+# left at "$IMG.extra-disk.qcow2", on its own, to see what the installer just did to it. qcow2's
+# magic is the four bytes "QFI\xfb" at the start of the file; anything else is the raw image
+# every stage 60 build produces.
+IMG_MAGIC="$(dd if="$IMG" bs=4 count=1 status=none 2>/dev/null | od -An -tx1 | tr -d ' \n')"
+IMG_FORMAT=raw
+[[ $IMG_MAGIC == 514649fb ]] && IMG_FORMAT=qcow2
+
 # ---- --disk-size: room for the guest to actually store things ---------------------------
 #
 # stage 60 sizes the image to fit its own partitions and nothing more (compute_layout:
@@ -88,7 +111,7 @@ cp -- "$OVMF_VARS_SRC" "$VMDIR/VARS.fd"    # fresh NVRAM per run: no state leaks
 # to the image, writes and the extra space live in the overlay, and the released artifact is
 # never modified. Whether the overlay survives the run follows --writable, for the same
 # reason snapshot= does — a two-boot test needs its first boot's writes to still be there.
-DISK_ARG="file=$IMG,if=virtio,format=raw,snapshot=$SNAPSHOT"
+DISK_ARG="file=$IMG,if=virtio,format=$IMG_FORMAT,snapshot=$SNAPSHOT"
 if [[ -n $DISK_SIZE ]]; then
   require_cmds qemu-img
   img_bytes="$(stat -c '%s' -- "$IMG")"
@@ -107,8 +130,10 @@ if [[ -n $DISK_SIZE ]]; then
     log "reusing overlay $OVERLAY (delete it to reset the guest)"
   else
     # -b needs an absolute path: qcow2 stores it in the overlay header and it is resolved
-    # relative to the OVERLAY's directory, not the caller's cwd, when the two differ.
-    qemu-img create -q -f qcow2 -F raw -b "$(realpath -- "$IMG")" "$OVERLAY" "$DISK_SIZE" \
+    # relative to the OVERLAY's directory, not the caller's cwd, when the two differ. -F
+    # follows IMG's OWN format (autodetected above) rather than assuming raw, so this still
+    # works when IMG is itself a qcow2 from an earlier --extra-disk-keep run.
+    qemu-img create -q -f qcow2 -F "$IMG_FORMAT" -b "$(realpath -- "$IMG")" "$OVERLAY" "$DISK_SIZE" \
       || die "could not create overlay $OVERLAY"
     log "overlay $OVERLAY: $DISK_SIZE virtual disk over a $((img_bytes / 1024 / 1024)) MiB image"
   fi
@@ -122,10 +147,39 @@ fi
 # The primary drive is IMG itself (or its overlay) — Calamares cannot install onto the medium
 # it booted from. Testing the installer needs a second, empty disk to be its target: unlike
 # --disk-size above, this one has no backing file at all, so what Calamares writes to it has no
-# relationship to IMG. It lives in $VMDIR, which the EXIT trap already removes, so it is
-# throwaway by construction — there is no --writable equivalent for it.
+# relationship to IMG.
+#
+# WITHOUT --extra-disk-keep, nothing here changes from before: it lives in $VMDIR, which the
+# EXIT trap removes, so it is throwaway by construction.
+#
+# WITH IT (plan/33 §10), the disk lives beside IMG instead — "$IMG.extra-disk.qcow2" — and
+# survives the run, which is the whole point: a reinstall-and-keep test needs an install's
+# output to still be there for the NEXT run to boot, reinstall onto, or both. Existing means
+# reused, with a log line that says how to start over; missing means created from --extra-disk
+# SIZE, and asking to keep a disk that does not exist yet with no SIZE to make it from is a
+# usage error, not a silent no-op.
 EXTRA_DISK_ARG=''
-if [[ -n $EXTRA_DISK ]]; then
+if [[ $EXTRA_DISK_KEEP == 1 ]]; then
+  require_cmds qemu-img
+  EXTRA_DISK_PATH="${IMG}.extra-disk.qcow2"
+  # Two drives on one qcow2 file would corrupt it, and this is exactly the shape a copy-paste
+  # of the header's own loop produces if step 2's IMG argument is mistyped back to step 1's —
+  # -m because a not-yet-created kept disk has nothing on disk for realpath to resolve.
+  [[ $(realpath -m -- "$IMG") != "$(realpath -m -- "$EXTRA_DISK_PATH")" ]] \
+    || die "--extra-disk-keep: IMG and the kept extra disk are the same file ($EXTRA_DISK_PATH) — two drives on one qcow2 would corrupt it"
+  if [[ -f $EXTRA_DISK_PATH ]]; then
+    log "reusing extra disk $EXTRA_DISK_PATH (delete it to start over; it keeps the size it was made with)"
+  else
+    [[ -n $EXTRA_DISK ]] \
+      || die "--extra-disk-keep: $EXTRA_DISK_PATH does not exist yet — pass --extra-disk SIZE to create it"
+    numfmt --from=iec -- "${EXTRA_DISK^^}" >/dev/null 2>&1 \
+      || die "--extra-disk: not a size (try 32G): $EXTRA_DISK"
+    qemu-img create -q -f qcow2 "$EXTRA_DISK_PATH" "$EXTRA_DISK" \
+      || die "could not create extra disk $EXTRA_DISK_PATH"
+    log "extra disk: $EXTRA_DISK virtual disk at $EXTRA_DISK_PATH (kept across runs; delete it to start over)"
+  fi
+  EXTRA_DISK_ARG="file=$EXTRA_DISK_PATH,if=virtio,format=qcow2"
+elif [[ -n $EXTRA_DISK ]]; then
   require_cmds qemu-img
   numfmt --from=iec -- "${EXTRA_DISK^^}" >/dev/null 2>&1 \
     || die "--extra-disk: not a size (try 32G): $EXTRA_DISK"

@@ -461,6 +461,20 @@ init_paths() {
   UKI_NAME="${DISTRO_ID}_${VERSION}.efi"              # identity — never profile-suffixed
   ROOT_IMG_NAME="${DISTRO_ID}_${VERSION}${sfx}.root.erofs"
   ROOT_PARTLABEL="root_${VERSION}"                    # identity — never profile-suffixed
+
+  # THIS PROFILE'S OWN IMAGE'S partition names (plan/33 §2) — the PARTLABELs the disk THIS BUILD
+  # writes carries, as opposed to ROOT_PARTLABEL above, which is the identity an INSTALLED
+  # machine is found and updated by and is equal to IMG_ROOT_PARTLABEL only for PROFILE_ROLE=
+  # target. A live medium gets its own esp/root/var names (live_esp/live_root_<v>/live_var) so
+  # that booting it on a machine that already runs this distro — which keep mode makes routine —
+  # cannot resolve /dev/disk/by-partlabel/<name> to the wrong disk's partition. PROFILE_ROLE must
+  # already be set (load_profile runs before init_paths in load_config; tests/test-profiles.sh
+  # calls it explicitly per profile for the same reason).
+  layout_names "$PROFILE_ROLE" "$VERSION"
+  IMG_ESP_PARTLABEL="$NAME_ESP"
+  IMG_ROOT_PARTLABEL="$NAME_ROOT"
+  IMG_VAR_PARTLABEL="$NAME_VAR"
+
   PROFILE_LOCK="$LOCK_DIR/${BUILD_PROFILE}.lock"
   EXPECTED_PACKAGES="$REPO/config/portage/expected-packages.${BUILD_PROFILE}.txt"
 

@@ -44,3 +44,10 @@ rootPartLabel:    "@ROOT_PARTLABEL@"
 # around, and a label is part of what lsblk shows somebody comparing the two.
 varLabel:         "var"
 espLabel:         "ESP"
+
+# What check_kept_files() looks for under /var/lib on a disk being kept (plan/33 §6): the
+# directory the installer's own hostname stamp and the distro-state tmpfiles entry create on
+# every boot, so every install has it. Rendered rather than hardcoded because the job must never
+# know DISTRO_ID any other way than the build told it — the same rule every other token here
+# follows.
+distroId:         "@DISTRO_ID@"

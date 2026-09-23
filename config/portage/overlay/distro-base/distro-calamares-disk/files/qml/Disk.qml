@@ -662,14 +662,20 @@ Item {
             // The design system's `warning` Alert, because this sentence is the page's one piece
             // of bad news and the system has a tone for that. It is a panel rather than loose
             // text for the same reason the dialog repeats it: the eye has to land on it.
+            //
+            // WHILE KEEPING, THE TONE IS `info`, NOT `warning` (plan/33 §3): lossSummary() is
+            // then telling somebody what stays, not what goes, and a panel that still looked like
+            // bad news would contradict the sentence sitting inside it.
             Rectangle {
                 Layout.fillWidth: true
                 implicitHeight: lossText.implicitHeight + 2 * ds.space3
                 visible: disk.lossSummary.length > 0
                 radius: ds.radiusMd
-                color: ds.statusWarningBg
+                color: (disk.keepAvailable && disk.keepData) ? ds.statusInfoBg : ds.statusWarningBg
                 border.width: ds.borderWidth
-                border.color: ds.mix(ds.statusWarning, ds.statusWarningBg, 0.35)
+                border.color: (disk.keepAvailable && disk.keepData)
+                    ? ds.mix(ds.statusInfo, ds.statusInfoBg, 0.35)
+                    : ds.mix(ds.statusWarning, ds.statusWarningBg, 0.35)
 
                 Text {
                     id: lossText
@@ -688,6 +694,38 @@ Item {
                 }
             }
 
+            // ---- keeping what is already there (plan/33 §3, §5) ----------------------------
+            // THE KEEP ROW REPLACES THE ENCRYPTION ROW RATHER THAN JOINING IT — same slot, and
+            // never both at once: encryption cannot apply to a partition that is being kept as
+            // it is, so on a disk that offers keeping the row that would say "not yet available"
+            // has nothing left to say. `keepOffered` decides which of the two is drawn; toggling
+            // the checkbox itself never adds or removes a block, so nothing on this page moves
+            // under the cursor (plan/24 §1a's rule, which the disk list already follows).
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.topMargin: ds.space1
+                visible: disk.keepOffered
+                spacing: ds.space3
+
+                CheckBox {
+                    ds: root.ds
+                    label: disk.keepLabel
+                    checked: disk.keepData
+                    enabled: disk.keepAvailable
+                    onToggled: function (value) { disk.keepData = value; }
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    visible: !disk.keepAvailable
+                    text: disk.keepUnavailableText
+                    color: ds.textMuted
+                    elide: Text.ElideRight
+                    font.family: ds.fontSans
+                    font.pixelSize: ds.textXs
+                }
+            }
+
             // ---- encryption, drawn and disabled (plan/24 §7) ------------------------------
             // Visible on purpose. Hiding it would mean the first person to ask about encryption
             // has to ask whether it was forgotten; showing it disabled, with a reason, answers
@@ -696,6 +734,7 @@ Item {
             RowLayout {
                 Layout.fillWidth: true
                 Layout.topMargin: ds.space1
+                visible: !disk.keepOffered
                 spacing: ds.space3
                 enabled: disk.encryptionAvailable
                 opacity: disk.encryptionAvailable ? 1 : 0.5
@@ -790,7 +829,11 @@ Item {
                 onTriggered: confirmDialog.close()
             },
             Kirigami.Action {
-                icon.name: "data-warning"
+                // A refresh glyph while keeping, not the warning triangle: this action is no
+                // longer "you are about to lose data" once the tick means the opposite
+                // (plan/33 §5). disk.keepData alone is enough here — it can only be true for the
+                // row that is both selected and keepAvailable (DiskConfig::setKeepData()).
+                icon.name: disk.keepData ? "view-refresh" : "data-warning"
                 text: disk.confirmAcceptLabel
                 onTriggered: {
                     confirmDialog.close();

@@ -181,10 +181,44 @@ Item {
                 width: Math.min(sheet.width - 2 * sheet.sideMargin, ds.contentMaxWidth)
                 spacing: ds.space6
 
+                // ======== keeping what is already there (plan/33 §8) ====================
+                // The one screen this page draws while the disk being installed onto is being
+                // kept: no chooser, no fields, nothing to fill in — the kept system's own /etc
+                // already has all of it. Styled as the chooser's own heading and lede, because it
+                // occupies the same place in the reading order and says something of the same
+                // shape: what is about to happen to the accounts on this machine.
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    visible: accounts.keeping
+                    spacing: ds.space2
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: accounts.keptHeading
+                        color: ds.textStrong
+                        wrapMode: Text.WordWrap
+                        font.family: ds.fontDisplay
+                        font.pixelSize: ds.textHeading
+                        font.weight: ds.weightBold
+                        font.letterSpacing: ds.tracking(ds.trackingTight, ds.textHeading)
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: accounts.keptBody
+                        color: ds.textMuted
+                        wrapMode: Text.WordWrap
+                        font.family: ds.fontSans
+                        font.pixelSize: ds.textMd
+                        lineHeight: ds.leadingNormal
+                        lineHeightMode: Text.ProportionalHeight
+                    }
+                }
+
                 // ======== screen one: the choice ========================================
                 ColumnLayout {
                     Layout.fillWidth: true
-                    visible: accounts.onChooser
+                    visible: accounts.onChooser && !accounts.keeping
                     // The design system's card gutter. The heading and its lede are one block
                     // inside it, with the tighter gap of their own, so that the two sentences
                     // read as one unit and the cards below do not.
@@ -407,7 +441,7 @@ Item {
                 // ======== screen two: the fields ========================================
                 ColumnLayout {
                     Layout.fillWidth: true
-                    visible: accounts.onFields
+                    visible: accounts.onFields && !accounts.keeping
                     spacing: ds.space6
 
                     // The header says which choice these fields belong to, because on this screen

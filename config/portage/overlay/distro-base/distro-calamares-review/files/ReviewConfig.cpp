@@ -3,6 +3,7 @@
  */
 #include "ReviewConfig.h"
 
+#include "Branding.h"
 #include "GlobalStorage.h"
 #include "JobQueue.h"
 #include "ViewManager.h"
@@ -108,6 +109,12 @@ ReviewConfig::collect( const Calamares::ViewStep* upToHere )
         }
     }
 
+    auto* gs = Calamares::JobQueue::instance() ? Calamares::JobQueue::instance()->globalStorage()
+                                              : nullptr;
+    // plan/33 §8: the one piece of state this page keeps about ITSELF, re-read every collect()
+    // exactly like the rows are, so it cannot go stale independently of them.
+    m_keeping = gs && gs->value( QStringLiteral( "diskKeepData" ) ).toBool();
+
     m_rows->setEntries( entries );
     emit rowsChanged();
 }
@@ -115,13 +122,37 @@ ReviewConfig::collect( const Calamares::ViewStep* upToHere )
 QString
 ReviewConfig::eraseTitle() const
 {
-    // GlobalStorage's `device`, written by the disk page's onLeave(). Read here rather than
-    // reached for through the disk module, because a summary that #included another view module's
-    // header would be a link-time dependency between two plugins that Calamares loads separately.
+    // GlobalStorage's `diskDevice` — NOT `device`, which NOTHING HAS EVER PUBLISHED. This read
+    // that key, silently, since the page was written: gs->value() on a missing key answers an
+    // empty QVariant, device.isEmpty() was always true, and every install this installer has
+    // ever run showed "This erases the selected disk completely" regardless of which disk was
+    // chosen. DiskConfig::publish() writes `diskDevice`; read here rather than reached for
+    // through the disk module, because a summary that #included another view module's header
+    // would be a link-time dependency between two plugins that Calamares loads separately.
     auto* gs = Calamares::JobQueue::instance() ? Calamares::JobQueue::instance()->globalStorage()
                                               : nullptr;
-    const QString device = gs ? gs->value( QStringLiteral( "device" ) ).toString() : QString();
-    return tr( "This erases %1 completely" ).arg( device.isEmpty() ? unknownDiskText() : device );
+    const QString device = gs ? gs->value( QStringLiteral( "diskDevice" ) ).toString() : QString();
+    const QString diskName = device.isEmpty() ? unknownDiskText() : device;
+    if ( m_keeping )
+    {
+        const auto* branding = Calamares::Branding::instance();
+        const QString product
+            = branding ? branding->string( Calamares::Branding::ProductName ) : tr( "this system" );
+        return tr( "This reinstalls %1 on %2" ).arg( product, diskName );
+    }
+    return tr( "This erases %1 completely" ).arg( diskName );
+}
+
+QString
+ReviewConfig::eraseBody() const
+{
+    if ( m_keeping )
+    {
+        return tr( "The system is replaced with a fresh copy. The accounts, files, apps and "
+                   "settings on that drive are kept, and other drives are left alone." );
+    }
+    return tr( "Every partition, file and operating system on that drive will be removed. "
+               "Other drives are left alone." );
 }
 
 void

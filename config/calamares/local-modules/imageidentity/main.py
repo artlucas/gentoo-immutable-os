@@ -222,6 +222,18 @@ def run():
             _("Configuration Error"),
             _("No rootMountPoint is set — <pre>{!s}</pre> did not run.").format("imagedeploy"),
         )
+
+    if bool(libcalamares.globalstorage.value("diskKeepData")):
+        # KEEPING (plan/33 §8), and this is not a nicety the way it is for localesetup and
+        # keyboardsetup: the machine-id guard further down truncates the overlay upper's
+        # machine-id whenever /etc/machine-id is non-empty, on the assumption that a non-empty
+        # one only ever got there by mistake (plan/01 — the image ships it EMPTY). A KEPT var
+        # already carries the real machine-id from the disk's very first boot, and running that
+        # guard unmodified would truncate it back to nothing on every reinstall — the one piece
+        # of per-machine identity this whole feature is supposed to leave alone.
+        debug("imageidentity: keeping — hostname, subuids, locale and machine-id are the kept system's own")
+        return None
+
     username = libcalamares.globalstorage.value("username")
 
     try:

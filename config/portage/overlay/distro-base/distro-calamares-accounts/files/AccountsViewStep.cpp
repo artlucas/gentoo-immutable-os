@@ -148,7 +148,11 @@ AccountsViewStep::isAtBeginning() const
     // whenever isAtEnd() is false (ViewManager.cpp). So the window's own Back and Next move
     // between the choice and the fields, the sidebar still shows one entry, and Back on the
     // first screen goes to the partition page exactly as it always did.
-    return m_config->onChooser();
+    //
+    // WHILE KEEPING (plan/33 §8) there is only the one screen, so both ends of the pager are
+    // true at once: Back leaves for the disk page and Next leaves for applications, neither
+    // visiting a chooser or fields screen that Accounts.qml is not even drawing.
+    return m_config->keeping() || m_config->onChooser();
 }
 
 bool
@@ -159,7 +163,18 @@ AccountsViewStep::isAtEnd() const
     // password that fails libpwquality is the one state in which the window's Next opens the
     // weak-password prompt instead of leaving. Managed mode is always settled here; its gate is
     // the enrolment, and nextEnabled() is where it is held.
-    return m_config->onFields() && m_config->passwordSettled();
+    return m_config->keeping() || ( m_config->onFields() && m_config->passwordSettled() );
+}
+
+void
+AccountsViewStep::onActivate()
+{
+    // Read on EVERY activation, not just the first — this page can be reached with `keeping`
+    // already true (forward from the disk page after ticking Keep) or reached again after Back
+    // (the disk page changed which disk is selected, or the tick, since this page was last on
+    // screen) — and it must never go stale in either direction (plan/33 §8).
+    Calamares::GlobalStorage* gs = Calamares::JobQueue::instance()->globalStorage();
+    m_config->setKeeping( gs && gs->value( QStringLiteral( "diskKeepData" ) ).toBool() );
 }
 
 void

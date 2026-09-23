@@ -167,6 +167,14 @@ def run():
             _("No rootMountPoint is set — <pre>{!s}</pre> did not run.").format("keyboardsetup"),
         )
 
+    if bool(libcalamares.globalstorage.value("diskKeepData")):
+        # KEEPING (plan/33 §8): the keyboard page's answer configures the INSTALLER SESSION
+        # only — the kept system keeps its own keyboard, exactly as an update leaves it. This
+        # job's whole purpose is applying that answer to the target, so on this path it has
+        # nothing to do.
+        debug("keyboardsetup: keeping — the target's keyboard configuration is the kept system's own")
+        return None
+
     layout = libcalamares.globalstorage.value("keyboardLayout")
     variant = libcalamares.globalstorage.value("keyboardVariant") or ""
     if not layout:

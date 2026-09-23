@@ -62,13 +62,21 @@ class ReviewConfig : public QObject
 
     Q_PROPERTY( QString pageTitle READ pageTitle NOTIFY retranslated )
     Q_PROPERTY( QString pageLede READ pageLede NOTIFY retranslated )
-    /*! The danger panel's heading, which NAMES THE DISK — the whole reason this page is in the
-     *  sequence. It is composed in C++ from GlobalStorage's `device`, because a page that said
-     *  "this erases the selected disk" would be a page nobody has to read. */
+    /*! The panel's heading, which NAMES THE DISK — the whole reason this page is in the
+     *  sequence. It is composed in C++ from GlobalStorage's `diskDevice`, because a page that
+     *  said "this erases the selected disk" would be a page nobody has to read. */
     Q_PROPERTY( QString eraseTitle READ eraseTitle NOTIFY rowsChanged )
-    Q_PROPERTY( QString eraseBody READ eraseBody NOTIFY retranslated )
+    Q_PROPERTY( QString eraseBody READ eraseBody NOTIFY rowsChanged )
 
     Q_PROPERTY( QString unknownDiskText READ unknownDiskText NOTIFY retranslated )
+
+    /*! Whether the chosen disk is being kept (plan/33 §8), set in collect() from GlobalStorage's
+     *  `diskKeepData` — the one piece of state this page keeps about itself, because unlike the
+     *  ROWS (other steps' own words, re-asked every time so this page cannot disagree with them)
+     *  this is a fact about the disk step specifically, and re-reading it needs no other step's
+     *  cooperation. Review.qml's panel reads it for its tone; eraseTitle/eraseBody branch on it
+     *  for their words. */
+    Q_PROPERTY( bool keeping READ keeping NOTIFY rowsChanged )
 
 public:
     explicit ReviewConfig( QObject* parent = nullptr );
@@ -85,12 +93,9 @@ public:
                    "installer writes to the disk." );
     }
     QString eraseTitle() const;
-    QString eraseBody() const
-    {
-        return tr( "Every partition, file and operating system on that drive will be removed. "
-                   "Other drives are left alone." );
-    }
+    QString eraseBody() const;
     QString unknownDiskText() const { return tr( "the selected disk" ); }
+    bool keeping() const { return m_keeping; }
 
 public slots:
     void retranslate();
@@ -101,4 +106,5 @@ signals:
 
 private:
     ReviewModel* m_rows;
+    bool m_keeping = false;
 };

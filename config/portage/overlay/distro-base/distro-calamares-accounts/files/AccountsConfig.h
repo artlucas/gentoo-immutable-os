@@ -209,6 +209,16 @@ public:
     // ---- the answer --------------------------------------------------------------------------
     Q_PROPERTY( bool nextEnabled READ nextEnabled NOTIFY nextEnabledChanged )
 
+    // ---- keeping what is already there (plan/33 §8) -------------------------------------------
+    /*! Set from GlobalStorage's `diskKeepData` by AccountsViewStep::onActivate(), every time this
+     *  page is shown — never by anything on this page itself, which is why it has no WRITE. While
+     *  true, Accounts.qml draws one screen saying the accounts are kept in place of the
+     *  chooser/fields pager, and nothing collected here is applied: the kept system's own /etc
+     *  already has it all (publish() writes accountsMode "kept" and every identity key empty). */
+    Q_PROPERTY( bool keeping READ keeping NOTIFY keepingChanged )
+    Q_PROPERTY( QString keptHeading READ keptHeading NOTIFY retranslated )
+    Q_PROPERTY( QString keptBody READ keptBody NOTIFY retranslated )
+
     explicit AccountsConfig( QObject* parent = nullptr );
     ~AccountsConfig() override;
 
@@ -266,6 +276,20 @@ public:
     QString verifyMessage() const { return m_verifyMessage; }
 
     bool nextEnabled() const;
+
+    bool keeping() const { return m_keeping; }
+    /*! Called from AccountsViewStep::onActivate() only. Releases a managed enrolment made
+     *  earlier in THIS session, exactly the way leaving managed mode already does, so ticking
+     *  Keep after a successful enrol does not leave a device record nobody is going to check
+     *  in — see releaseEnrolment(), which is its own guard. */
+    void setKeeping( bool keeping );
+    QString keptHeading() const { return tr( "Your accounts are kept" ); }
+    QString keptBody() const
+    {
+        return tr( "Everyone who uses this computer signs in as before, with the same "
+                   "password. The computer keeps its name, and stays managed or joined to a "
+                   "domain if it was." );
+    }
 
     // The words (plan/27). One line each; see the property block above for why they exist.
     QString chooserHeading() const { return tr( "How should people sign in to this computer?" ); }
@@ -436,6 +460,7 @@ Q_SIGNALS:
     void enrolStateChanged();
     void verifyStateChanged();
     void nextEnabledChanged();
+    void keepingChanged();
 
 private:
     void setStep( Step step );
@@ -504,6 +529,11 @@ private:
     QStringList m_grantedUsers;
     ActionState m_verifyState = Idle;
     QString m_verifyMessage;
+
+    /*! plan/33 §8. False on construction and unless onActivate() has set it — a disk page that
+     *  has not run yet (offline tests, a standalone load) must never accidentally draw the kept
+     *  screen. */
+    bool m_keeping = false;
 
     QProcess* m_proc = nullptr;
     QTimer* m_timeout = nullptr;

@@ -241,7 +241,11 @@ compute_layout "$ESP_SIZE_MIB" "$ROOT_SLOT_SIZE_MIB" "$VAR_SIZE_MIB" "$PROFILE_R
 log "layout: ${PART_COUNT} partitions, ${PROFILE_ROOT_SLOTS} root slot(s), ${TOTAL_MIB} MiB total"
 rm -f -- "$IMG"
 truncate -s "${TOTAL_MIB}M" "$IMG"
-emit_sfdisk_script "$VERSION" | sfdisk --quiet "$IMG"
+# By role (plan/33 §2): a live image's own partitions carry live_esp/live_root_<v>/live_var, so
+# that booting it on a machine that already has this distro installed — keep mode's whole
+# scenario — cannot resolve a by-partlabel symlink to the wrong disk. A target image's names are
+# unchanged (esp/root_<v>/var), so the desktop and console outputs are byte-identical to before.
+emit_sfdisk_script "$VERSION" "$PROFILE_ROLE" | sfdisk --quiet "$IMG"
 
 # BY ROLE, not by index: with one root slot the var partition is p3, and a hardcoded P4 offset
 # would write the whole var filesystem past the end of the image — into sparse nothing, with dd
@@ -256,6 +260,15 @@ zstd -T0 -f -q "$IMG" -o "$IMG.zst"
 
 # ---- verify ---------------------------------------------------------------------------------
 sfdisk --verify "$IMG" || die "verify: sfdisk rejects partition table"
+# The names actually written, not just the names asked for — emit_sfdisk_script takes ROLE
+# through a default argument, and a default silently reverting to "target" is exactly the kind
+# of drift that would leave a live medium's disk carrying the installed-system identity labels
+# again (plan/33 §2), invisibly: sfdisk --verify above passes on either set of strings.
+IMG_DUMP="$(sfdisk --dump "$IMG")"
+grep -qF "name=\"$IMG_ROOT_PARTLABEL\"" <<<"$IMG_DUMP" \
+  || die "verify: the image's partition table does not name $IMG_ROOT_PARTLABEL"
+grep -qF "name=\"$IMG_VAR_PARTLABEL\"" <<<"$IMG_DUMP" \
+  || die "verify: the image's partition table does not name $IMG_VAR_PARTLABEL"
 # EROFS superblock magic (little-endian e2 e1 f5 e0) at offset 1024 inside p2
 magic="$(dd if="$IMG" bs=1 skip=$(( ROOT_A_START_MIB*1024*1024 + 1024 )) count=4 status=none | od -An -tx1 | tr -d ' \n')"
 [[ $magic == e2e1f5e0 ]] || die "verify: EROFS magic not found in root slot (got: $magic)"

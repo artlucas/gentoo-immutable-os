@@ -38,3 +38,10 @@ minimumDiskSize:  @MIN_INSTALL_DISK_GB@
 # partition table is the job's, because the job is what writes it.
 espSizeMiB:       @ESP_SIZE_MIB@
 rootSlotSizeMiB:  @ROOT_SLOT_SIZE_MIB@
+
+# The same helper modules/disksetup.conf names, run for the same reason (plan/33 §4): asking
+# whether a disk can be KEPT is a statement about the layout, and the GPT type GUIDs must stay in
+# the one file that already owns them — scripts/lib/layout.sh, installed on the medium verbatim
+# and run as a subprocess by both the page and the job, so neither can invent its own answer
+# about a disk that already holds an install.
+layoutHelper:     "/usr/libexec/@DISTRO_ID@-disk-layout"

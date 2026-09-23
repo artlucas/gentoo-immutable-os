@@ -104,6 +104,10 @@
         <translation>%1 はコンピューター名として使用できません。</translation>
     </message>
     <message>
+        <source>Existing accounts and computer name are kept.</source>
+        <translation>既存のアカウントとコンピューター名はそのまま保持されます。</translation>
+    </message>
+    <message>
         <source>Local account %1 on %2.</source>
         <translation>ローカルアカウント %1（%2）。</translation>
     </message>
@@ -122,6 +126,14 @@
     <message>
         <source>No accounts have been set up.</source>
         <translation>アカウントは設定されていません。</translation>
+    </message>
+    <message>
+        <source>Your accounts are kept</source>
+        <translation>アカウントはそのまま維持されます</translation>
+    </message>
+    <message>
+        <source>Everyone who uses this computer signs in as before, with the same password. The computer keeps its name, and stays managed or joined to a domain if it was.</source>
+        <translation>このコンピューターを使う人は誰でも、これまでと同じパスワードでサインインできます。コンピューター名もそのまま保持され、管理対象だった場合やドメインに参加していた場合も、その状態が維持されます。</translation>
     </message>
     <message>
         <source>How should people sign in to this computer?</source>
@@ -481,8 +493,16 @@
         <translation>%1 には、自身が起動していない %2 以上のディスクが必要です。</translation>
     </message>
     <message>
+        <source>%1 is already on it. You can reinstall it and keep your files, apps and settings.</source>
+        <translation>%1 はすでにインストールされています。再インストールしても、ファイル、アプリケーション、設定はそのまま維持できます。</translation>
+    </message>
+    <message>
         <source>%1 will be installed on it, and everything on it now will be erased.</source>
         <translation>%1 がそこにインストールされ、現在そこにあるすべての内容が消去されます。</translation>
+    </message>
+    <message>
+        <source>A disk that already has %1 on it can keep your files, apps and settings. Everything else on the disk you choose is erased.</source>
+        <translation>すでに %1 がインストールされているディスクでは、ファイル、アプリケーション、設定をそのまま維持できます。選んだディスク上のそれ以外のものはすべて消去されます。</translation>
     </message>
     <message>
         <source>Everything on the disk you choose will be erased. Nothing else on this computer is changed.</source>
@@ -501,8 +521,24 @@
         <translation>更新用に予約</translation>
     </message>
     <message>
+        <source>Your files (kept)</source>
+        <translation>ファイル（維持）</translation>
+    </message>
+    <message>
         <source>Your files</source>
         <translation>あなたのファイル</translation>
+    </message>
+    <message>
+        <source>The system on this disk is replaced with %1. Its accounts, files, apps and settings are kept.</source>
+        <translation>このディスク上のシステムは %1 に置き換えられます。アカウント、ファイル、アプリケーション、設定はそのまま維持されます。</translation>
+    </message>
+    <message>
+        <source>%1 and everything saved on it will be deleted, including its accounts, files, apps and settings.</source>
+        <translation>%1 とその中に保存されているすべてのもの（アカウント、ファイル、アプリケーション、設定を含む）が削除されます。</translation>
+    </message>
+    <message>
+        <source>This disk was set up in a way this version of %1 cannot reuse, so they cannot be kept.</source>
+        <translation>このディスクは、このバージョンの %1 では再利用できない形式で設定されているため、それらを維持することはできません。</translation>
     </message>
     <message>
         <source>Everything on this disk will be deleted.</source>
@@ -531,12 +567,24 @@
         <translation>これはリムーバブルディスクです。</translation>
     </message>
     <message>
+        <source>Reinstall on this disk?</source>
+        <translation>このディスクに再インストールしますか？</translation>
+    </message>
+    <message>
+        <source>Reinstall</source>
+        <translation>再インストール</translation>
+    </message>
+    <message>
         <source>%1 — %2</source>
         <translation>%1 — %2</translation>
     </message>
     <message>
         <source>Everything on the selected disk will be erased.</source>
         <translation>選択したディスク上のすべてが消去されます。</translation>
+    </message>
+    <message>
+        <source>Reinstall %3 on %1 (%2), keeping its accounts, files, apps and settings.</source>
+        <translation>%1 (%2) に %3 を再インストールします。アカウント、ファイル、アプリケーション、設定はそのまま維持されます。</translation>
     </message>
     <message>
         <source>Erase %1 (%2) and install %3 on it.</source>
@@ -565,6 +613,14 @@
     <message>
         <source>Not yet available</source>
         <translation>まだ利用できません</translation>
+    </message>
+    <message>
+        <source>Keep my files, apps and settings</source>
+        <translation>ファイル、アプリケーション、設定を維持する</translation>
+    </message>
+    <message>
+        <source>Not possible on this disk</source>
+        <translation>このディスクでは利用できません</translation>
     </message>
     <message>
         <source>Erase this disk?</source>
@@ -620,8 +676,16 @@
 <context>
     <name>DoneConfig</name>
     <message>
+        <source>%1 is reinstalled</source>
+        <translation>%1 の再インストールが完了しました</translation>
+    </message>
+    <message>
         <source>%1 is installed</source>
         <translation>%1 のインストールが完了しました</translation>
+    </message>
+    <message>
+        <source>Restart and sign in as before.</source>
+        <translation>再起動して、これまでと同じようにサインインしてください。</translation>
     </message>
     <message>
         <source>Restart to sign in for the first time.</source>
@@ -715,6 +779,10 @@
         <source>No keyboard layouts could be read from this medium, so the installed system will keep the layout this one booted with.</source>
         <translation>このメディアからキーボード配列を読み取れませんでした。インストールされるシステムは、このメディアが起動した配列をそのまま使います。</translation>
     </message>
+    <message>
+        <source>Kept as it is on this computer</source>
+        <translation>このコンピューターの設定のまま維持されます</translation>
+    </message>
 </context>
 <context>
     <name>KeymapViewStep</name>
@@ -732,6 +800,10 @@
     <message>
         <source>Pick the language you want to use while installing. This becomes the system language, and you can change it later in Settings.</source>
         <translation>インストール中に使用する言語を選んでください。これがシステムの言語になります。あとから設定で変更できます。</translation>
+    </message>
+    <message>
+        <source>Kept as it is on this computer</source>
+        <translation>このコンピューターの設定のまま維持されます</translation>
     </message>
 </context>
 <context>
@@ -903,6 +975,10 @@
         <translation>時計を設定できませんでした。</translation>
     </message>
     <message>
+        <source>Kept as it is on this computer</source>
+        <translation>このコンピューターの設定のまま維持されます</translation>
+    </message>
+    <message>
         <source>The clock could not be set: %1</source>
         <translation>時計を設定できませんでした: %1</translation>
     </message>
@@ -1011,8 +1087,20 @@
         <translation>この時点ではコンピューターにまだ何の変更も加えられていません。ディスクへの書き込みを始める前の最後の画面です。</translation>
     </message>
     <message>
+        <source>this system</source>
+        <translation>このシステム</translation>
+    </message>
+    <message>
+        <source>This reinstalls %1 on %2</source>
+        <translation>%2 に %1 を再インストールします</translation>
+    </message>
+    <message>
         <source>This erases %1 completely</source>
         <translation>%1 は完全に消去されます</translation>
+    </message>
+    <message>
+        <source>The system is replaced with a fresh copy. The accounts, files, apps and settings on that drive are kept, and other drives are left alone.</source>
+        <translation>システムは新しいコピーに置き換えられます。そのドライブ上のアカウント、ファイル、アプリケーション、設定はそのまま維持され、ほかのドライブはそのまま残ります。</translation>
     </message>
     <message>
         <source>Every partition, file and operating system on that drive will be removed. Other drives are left alone.</source>

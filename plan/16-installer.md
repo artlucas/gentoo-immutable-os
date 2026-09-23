@@ -390,7 +390,7 @@ chroot for the same reason — the mechanism this section describes is what make
 | `initramfs` / `dracut` | **Drop** — the initrd is inside the UKI, built by stage 40. The target has no dracut, by design |
 | `machineid` | **Drop** — systemd generates one at first boot into the overlay upper (plan/01) |
 | `packages` / `netinstall` | **Drop** — there is no Portage on the target. This is the toolchain-free guarantee, not an omission |
-| `removeuser` | **Replace** — see 5.4 |
+| `removeuser` | **Replace** — see 5.4. Folded into `accountsetup` by [plan/33](33-reinstall-keeping-files.md) §7: the stock job runs `userdel -f -r <live>` unconditionally, which is exactly wrong on a disk being *kept* — `accountsetup`'s own `remove_live_user()` runs on the erase path only, as the last thing that job does |
 | `displaymanager` | **Replace** — see 5.4 |
 | `luks*` | **Drop** — no encryption in v1 |
 | ~~`managed`~~ | **Absorbed** by `accounts` in [plan/21](21-installer-accounts-page.md). It was a separate page asking, with a checkbox, half of one question — and stage 40 substituted it into the sequence only on an image that had it, which is why the token existed. The page is now mandatory and the token is gone: an absent module is a `die` |
@@ -932,17 +932,21 @@ rather than replacing it:
    252.4 MiB installed, **107.6 MiB after stage 50**. The guess in this line was wrong in an
    interesting direction: boost installs 155.9 MiB but ships 11.8, because 144.1 MiB of it is
    headers this pipeline deletes. GRUB and its Gentoo artwork are 81.7 MiB of the 107.6.
-1b. **Two disks, one set of PARTLABELs.** Recorded here because Phase A is what makes it routine
-   rather than a curiosity. The installed root and var carry `root_<version>` and `var`, the same
-   labels the live medium's own partitions carry, because §3.4 requires those strings not to be
-   profile-suffixed. With the stick still attached at the next boot,
-   `/dev/disk/by-partlabel/<name>` resolves to whichever device udev saw first — independently
-   per partition, so "the live root with the installed /var" is a reachable state, and it is the
-   bad one. Phase A handles it the way every other installer does: the `finished` page says to
-   remove the medium and leaves the reboot box unticked. The real fix is to give a `live` profile
-   its own labels (it is never a sysupdate target, so §3.4 does not actually bind it) at the cost
-   of a profile-conditional `fstab` and cmdline. Deliberately not taken in Phase A, because it
-   changes the live boot path in the phase whose exit criterion is "the live boot path works".
+1b. ~~**Two disks, one set of PARTLABELs.**~~ **ANSWERED by [plan/33](33-reinstall-keeping-files.md)
+   §2.** Recorded here because Phase A is what makes it routine rather than a curiosity. The
+   installed root and var carry `root_<version>` and `var`, the same labels the live medium's own
+   partitions carry, because §3.4 requires those strings not to be profile-suffixed. With the
+   stick still attached at the next boot, `/dev/disk/by-partlabel/<name>` resolves to whichever
+   device udev saw first — independently per partition, so "the live root with the installed
+   /var" is a reachable state, and it is the bad one. Phase A handled it the way every other
+   installer does: the `finished` page says to remove the medium and leaves the reboot box
+   unticked. The real fix — a `live` profile gets its own labels, `live_esp`/`live_root_<v>`/
+   `live_var`, at the cost of a profile-conditional `fstab.in` and cmdline — is exactly what
+   plan/33 §2 does, once keep mode made booting the stick next to an installed disk routine
+   rather than a curiosity. §3.4 does not actually bind a `live` profile's own names, because a
+   live medium is never a sysupdate target — the deferral in Phase A was about not changing the
+   live boot path in a phase whose exit criterion was "the live boot path works", not about the
+   fix being wrong.
 2. ~~**Does `app-admin/calamares-3.4.2-r1` build in the two-root emerge?**~~ **ANSWERED
    2026-08-31: yes, with no `buildhost` entry.** The worry was that a Qt6/KF6 cmake graph would
    surface an RDEPEND-only configure dep, the class of bug `config/portage/sets/buildhost` exists

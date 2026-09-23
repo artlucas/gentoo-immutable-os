@@ -722,13 +722,16 @@ assert_true "...and managed mode gates on a completed enrolment that granted som
 # isAtEnd() is false (ViewManager.cpp). Both default to `return true` in the version this
 # replaced, and that is the failure worth catching — with isAtEnd() true on the chooser, Next
 # leaves the page from the first screen and publishes a mode whose fields nobody filled in.
+# `keeping() ||` on both ends since plan/33 §8: while the chosen disk is being kept there is only
+# the one screen (Accounts.qml draws neither the chooser nor the fields), so both isAtBeginning()
+# and isAtEnd() are true and the window's Back/Next simply leave the page in either direction.
 assert_true "the view step reports which of its two screens is showing" \
-    grep -qF 'return m_config->onChooser();' "$PAGE/AccountsViewStep.cpp"
+    grep -qF 'return m_config->keeping() || m_config->onChooser();' "$PAGE/AccountsViewStep.cpp"
 # ...and the end is the fields screen AND a settled password (plan/26 §3): a complete password
 # that fails libpwquality is the one state in which the window's Next opens the weak-password
 # prompt rather than leaving.
 assert_true "...on both ends, with the password settled" \
-    grep -qF 'return m_config->onFields() && m_config->passwordSettled();' "$PAGE/AccountsViewStep.cpp"
+    grep -qF 'return m_config->keeping() || ( m_config->onFields() && m_config->passwordSettled() );' "$PAGE/AccountsViewStep.cpp"
 assert_true "...so the window's Back moves between them" \
     grep -qF 'm_config->goToChooser();' "$PAGE/AccountsViewStep.cpp"
 assert_true "...and so does its Next" \
@@ -820,11 +823,15 @@ assert_true "the job reads the same GlobalStorage keys the page writes" \
 # anywhere: `gs.value()` returns None, the field the person typed is silently dropped, and the
 # install completes without it. That is how a typed DC address, or an OU, goes missing.
 #
-# Two exemptions, both stated rather than pattern-matched. `rootMountPoint` is Calamares' own
+# Three exemptions, all stated rather than pattern-matched. `rootMountPoint` is Calamares' own
 # key, published by the mount module. `managedOrgName` has no reader on purpose (plan/21 §4) —
 # it is in the log for the operator, and asserting that keeps it from being quietly repurposed.
 # `autoLogin` has its reader in ANOTHER job of this repo: imageidentity writes the plasmalogin
 # drop-in from it (plan/26 §4), and test-installer.sh §6a asserts that side of the contract.
+# `diskKeepData` is published by DiskConfig (the DISK page), not this one — accountsetup reads
+# it to decide whether to run at all (plan/33 §7), and it is the one key on this page's own
+# contract that legitimately comes from a different module: the disk is chosen before accounts
+# are, and the disk page's own publish() is where that answer is published.
 assert_true "every key the job reads is published, and every key published is read or exempt" \
     bash -c "python3 - <<'EOF'
 import pathlib, re, sys
@@ -841,8 +848,9 @@ read |= set(re.findall(r'\(\s*\"(domain[A-Za-z]+)\"\s*,\s*\"--', job))
 CALAMARES_OWN = {'rootMountPoint'}
 WRITE_ONLY = {'managedOrgName'}
 READ_BY_IMAGEIDENTITY = {'autoLogin'}
+PUBLISHED_BY_DISK_PAGE = {'diskKeepData'}
 
-missing = sorted(read - published - CALAMARES_OWN)
+missing = sorted(read - published - CALAMARES_OWN - PUBLISHED_BY_DISK_PAGE)
 if missing:
     sys.exit('the job reads keys the page never publishes: ' + ', '.join(missing))
 orphans = sorted(published - read - WRITE_ONLY - READ_BY_IMAGEIDENTITY)

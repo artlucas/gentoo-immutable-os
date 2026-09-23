@@ -160,7 +160,7 @@ are ours.
 |---|---|
 | `locale`, `keyboard`, `summary`, `finished`, `umount` | **kept**, unmodified |
 | `welcome` | **replaced** by `language` + `greeting` — the language list first and the requirements verdict second, because the stock page's order is in `WelcomePage.cpp` and no config key reaches it ([plan/22](../../plan/22-installer-language-page.md), split in [plan/23](../../plan/23-installer-greeting-page.md)). Its requirements **box** is borrowed rather than rewritten: `checker/` is vendored into the `greeting` module, because those three classes are private to the stock module and no header of theirs is installed |
-| `removeuser` | **kept** — and it works only because of the overlay; see below |
+| `removeuser` | **folded into `accountsetup`**, and removed from the sequence entirely ([plan/33](../../plan/33-reinstall-keeping-files.md) §7). It ran `userdel -f -r <live>` unconditionally, which the overlay made "just work" — see below — but a stock module cannot be told to stand down, and on a disk that is being *kept* rather than erased `<live>` may be the only account there is. `accountsetup`'s own `remove_live_user()` runs the same command, as the last thing that job does, on the erase path only |
 | `partition` | **replaced** by `disk` + `disksetup` ([plan/24](../../plan/24-installer-disk-page.md)). It was *kept and reconfigured* for the whole of Phase A — `allowManualPartitioning: false` plus a fixed `partitionLayout` leaves a device combo box and an Erase radio button — and what that leaves on screen is a partition editor with most of its controls taken away, in upstream's words for an installer that offers manual partitioning and side-by-side installs. Replacing the page replaced the partitioner too: a Calamares view step owns its `jobs()` |
 | `users` | **replaced** by `accounts` + `accountsetup` — one module where the mechanism is a choice, because upstream's could only offer domain join as an *addition* to a local account ([plan/21](../../plan/21-installer-accounts-page.md)) |
 | `unpackfs`, `mount` | **replaced** by `imagedeploy` |
@@ -177,16 +177,18 @@ are ours.
 does** — including mounting the overlay onto its own lowerdir, the same incantation as
 `config/rootfs/usr/lib/dracut/modules.d/90etc-overlay/etc-overlay.sh`.
 
-With that in place, Calamares' stock `locale`, `keyboard` and `removeuser` modules write to
-`/etc/...` exactly as they would on a mutable distro, and the writes land in the upper on `/var`
-because that is what the mount does. Our own `accountsetup` runs `useradd` and `chpasswd` under
-the same chroot for the same reason. **No patched modules anywhere in this installer.**
+With that in place, our own `accountsetup` runs `useradd`, `chpasswd` and, on an erase, `userdel`
+for the live user all under the same chroot, and the writes land in the upper on `/var` because
+that is what the mount does. **No patched modules anywhere in this installer.**
 
-It is also what makes `removeuser` work at all. The live user is baked into `/etc/passwd` inside
-the read-only EROFS *that the installed system also uses*, so the account cannot be deleted — it
-has to be shadowed. `userdel` rewriting a lower file **is** a copy-up: the upper ends up holding
-the file minus that user, and the upper's copy wins. The design in plan/16 §5.4 called for a
-custom step to do this by hand; the overlay does it for free.
+It is also what makes removing the live user work at all. The live user is baked into
+`/etc/passwd` inside the read-only EROFS *that the installed system also uses*, so the account
+cannot be deleted — it has to be shadowed. `userdel` rewriting a lower file **is** a copy-up: the
+upper ends up holding the file minus that user, and the upper's copy wins. The design in
+plan/16 §5.4 called for a custom step to do this by hand; the overlay does it for free. It used
+to be the stock `removeuser` module doing the rewriting — unconditionally, which is exactly wrong
+on a disk being *kept* rather than erased — and is `accountsetup`'s own `remove_live_user()` now
+([plan/33](../../plan/33-reinstall-keeping-files.md) §7).
 
 ## Our modules
 
@@ -198,7 +200,7 @@ custom step to do this by hand; the overlay does it for free.
 | `language` | `welcome` (the page) | the language list, and nothing else. A compiled view module from the overlay, not here; its config is `modules/language.conf.in`, whose `languages:` list stage 40 renders from `config/languages.conf` |
 | `greeting` | `welcome` (the greeting **and** the checker) | the product, the sentence about erasing the disk, and the requirements verdict — in the language the page before it chose. A compiled view module from the overlay, not here; its config is `modules/greeting.conf.in`, which carries the `requirements:` block. Not called `welcome`: a viewmodule of that name would collide with `app-admin/calamares`' own, and `ModuleManager` resolves a duplicate name by search order without saying so |
 | `accounts` | `users` (the page) | the mode choice and its fields — a compiled view module from the overlay, not here; its config is `modules/accounts.conf.in` |
-| `accountsetup` | `users` (the jobs) + `managedenroll` | the local administrator, `/etc/hostname` and `/etc/hosts`, and then the domain join or the enrolment transplant |
+| `accountsetup` | `users` (the jobs) + `managedenroll` + `removeuser` | the local administrator, `/etc/hostname` and `/etc/hosts`, then the domain join or the enrolment transplant, and last — on an erase only — the live user's removal ([plan/33](../../plan/33-reinstall-keeping-files.md) §7) |
 | `disk` | `partition` (the page) | the machine's disks, the ones that cannot be used and why, a to-scale picture of what is about to happen, and the checkbox that has to be ticked before Next lights up. A compiled view module from the overlay, not here; its config is `modules/disk.conf.in` |
 | `disksetup` | `partition` (the jobs) | releases the target's mounts, wipes it, writes the GPT and makes the two filesystems there are to make. The layout comes from `scripts/lib/layout.sh` — **the pipeline's own**, installed on the medium as `/usr/libexec/<id>-disk-layout` — so an installed machine and an image `dd`'d to a disk are partitioned by one description rather than two |
 | `apps` | — (nothing stock asks this) | which extra applications to add from Flathub: the typical set, nothing, or a chosen list. A compiled view module from the overlay, not here; its config is `modules/apps.conf` (not a template — the list is facts about Flathub, not about this build). Offline it forces its own second answer, "nothing extra", and the install is none the worse for it |
@@ -227,6 +229,42 @@ property `systemd-sysupdate` depends on ([plan/16 §3.4](../../plan/16-installer
 `INSTALLER_PAYLOAD_FLATPAKS=0` in `config/build.conf` drops `var.tar.zst` — a smaller stick, and
 an installed system with no preinstalled apps until someone installs them.
 
+## Reinstalling and keeping files
+
+Every install described above is a whole-disk erase. [plan/33](../../plan/33-reinstall-keeping-files.md)
+adds the one case a machine already running this distro needs: reinstalling it — a boot that no
+longer comes up, an update that went badly, a medium newer than anything `systemd-sysupdate`
+reached — without losing the accounts, files, Flatpak apps and `/etc` changes already on it. All
+of that lives on one partition, `var` ([plan/01](../../plan/01-architecture.md)), so keeping it
+and replacing the rest is exactly what `systemd-sysupdate` already does on every update: a new
+root image, a fresh boot entry, the same `/var`.
+
+**How it's decided.** `disk-layout inspect` — a new subcommand of the same `scripts/lib/layout.sh`
+that writes every partition table this pipeline produces — reads an `sfdisk --dump` of a disk on
+stdin and says whether it already holds an install of this distro and, if so, whether *this
+build* can keep it: the ESP and both root slots on the disk have to be at least this build's own
+geometry. The disk page runs it once per eligible disk to draw the checkbox and name the disk by
+product and version instead of its raw partition labels; `disksetup` runs it again before writing
+anything, because a job that erases a disk does not take a page's word for one it is about to
+overwrite.
+
+**What keeping actually does.** `disksetup`'s keep path never calls `write_table()` and never
+`wipefs`es the whole device: it relabels the spare slot `_empty`, then the slot the new root goes
+into, `e2fsck`s and reads back the var filesystem to confirm it really is this distro's, and
+`mkfs.vfat`s only the ESP. The GPT itself and `/var`'s filesystem are never touched. `imagedeploy`
+skips seeding `/var` from the payload's template and the early `/etc/hostname` write;
+`localesetup`, `keyboardsetup`, `imageidentity` and `accountsetup` all stand down entirely,
+because the kept system's own `/etc` already has all of it. `imageidentity`'s stand-down is not a
+nicety: its machine-id guard would otherwise truncate a non-empty `/etc/machine-id` on the
+assumption that a non-empty one only ever got there by mistake — true on an erase, false on a
+kept disk that has booted before.
+
+**What the user sees.** The disk page's panel gains a "Keep my files, apps and settings"
+checkbox, ticked by default, in the slot the encryption row occupies on every other disk — the
+row that cannot apply to a partition being kept as it is. The accounts, language, location and
+keyboard pages all say the kept system keeps its own answers; the summary and finished pages name
+the disk being *reinstalled* rather than erased.
+
 ## Known limits (Phase A)
 
 - ~~**Locales.**~~ **Closed by [plan/22](../../plan/22-installer-language-page.md) §2.** This used
@@ -248,10 +286,22 @@ an installed system with no preinstalled apps until someone installs them.
   `nvme0n1p3` resolve to `nvme0n1` without any rule about trailing digits. It remains the one
   failure in this installer that destroys data, and it is still worth verifying on the first
   hardware run — what changed is that the medium is now *visible* in the list, greyed, saying why.
-- **Remove the medium before rebooting.** The installed root and var carry the same PARTLABELs as
-  the stick's, because those strings are the system's identity and are deliberately not
-  profile-suffixed. With both attached, `/dev/disk/by-partlabel/` resolves each name to whichever
-  udev saw first. The `finished` page says so, and leaves the reboot box unticked.
+- ~~**Remove the medium before rebooting, because the labels clash.**~~ **The clash is fixed by
+  [plan/33](../../plan/33-reinstall-keeping-files.md) §2.** This used to read: the installed root
+  and var carry the same PARTLABELs as the stick's, because those strings are the system's
+  identity and are deliberately not profile-suffixed, so with both attached
+  `/dev/disk/by-partlabel/` resolved each name to whichever udev saw first. It mattered more than
+  a curiosity once keep mode existed to make the two-disks case routine — booting the installer
+  on a machine that already runs this distro *is* keep mode's whole scenario — so a live medium's
+  own image now carries `live_esp`/`live_root_<v>`/`live_var` instead, names an installed disk
+  never carries. A medium built before this document still clashes; only one built after it boots
+  unambiguously next to an installed disk.
+
+  **The reminder stays anyway**, for a different reason: firmware can still boot the stick again
+  regardless of what its partitions are named, if its own NVRAM entry sits ahead of the disk's or
+  is the default. The `finished` page still says to remove the medium and leaves the reboot box
+  unticked — that has nothing to do with PARTLABELs and everything to do with which device the
+  firmware tries first.
 
 ## The accounts page, and the three things it owns
 

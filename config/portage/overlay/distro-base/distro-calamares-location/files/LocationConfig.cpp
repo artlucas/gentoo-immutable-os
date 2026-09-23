@@ -283,6 +283,15 @@ LocationConfig::clockDate() const
 QString
 LocationConfig::prettyStatus() const
 {
+    // KEEPING (plan/33 §1, §8): this page's answer configures the INSTALLER SESSION only — the
+    // kept system keeps its own time zone, and `localesetup` stands down entirely under keep —
+    // so the summary row must say that rather than name a zone that will not be applied.
+    auto* gs = Calamares::JobQueue::instance() ? Calamares::JobQueue::instance()->globalStorage()
+                                              : nullptr;
+    if ( gs && gs->value( QStringLiteral( "diskKeepData" ) ).toBool() )
+    {
+        return tr( "Kept as it is on this computer" );
+    }
     const QString id = zoneId();
     if ( id.isEmpty() )
     {

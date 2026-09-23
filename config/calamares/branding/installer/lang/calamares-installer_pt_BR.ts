@@ -106,6 +106,10 @@
         <translation>%1 não pode ser usado como nome de computador.</translation>
     </message>
     <message>
+        <source>Existing accounts and computer name are kept.</source>
+        <translation>As contas existentes e o nome do computador são mantidos.</translation>
+    </message>
+    <message>
         <source>Local account %1 on %2.</source>
         <translation>Conta local %1 em %2.</translation>
     </message>
@@ -124,6 +128,14 @@
     <message>
         <source>No accounts have been set up.</source>
         <translation>Nenhuma conta foi configurada.</translation>
+    </message>
+    <message>
+        <source>Your accounts are kept</source>
+        <translation>Suas contas são mantidas</translation>
+    </message>
+    <message>
+        <source>Everyone who uses this computer signs in as before, with the same password. The computer keeps its name, and stays managed or joined to a domain if it was.</source>
+        <translation>Todos que usam este computador entram como antes, com a mesma senha. O computador mantém seu nome e continua gerenciado ou associado a um domínio, caso já estivesse.</translation>
     </message>
     <message>
         <source>How should people sign in to this computer?</source>
@@ -484,8 +496,16 @@
         <translation>%1 precisa de um disco de pelo menos %2 do qual ele mesmo não esteja rodando.</translation>
     </message>
     <message>
+        <source>%1 is already on it. You can reinstall it and keep your files, apps and settings.</source>
+        <translation>%1 já está instalado nele. Você pode reinstalá-lo e manter seus arquivos, aplicativos e configurações.</translation>
+    </message>
+    <message>
         <source>%1 will be installed on it, and everything on it now will be erased.</source>
         <translation>%1 será instalado nele, e tudo que estiver nele agora será apagado.</translation>
+    </message>
+    <message>
+        <source>A disk that already has %1 on it can keep your files, apps and settings. Everything else on the disk you choose is erased.</source>
+        <translation>Um disco que já tem %1 instalado pode manter seus arquivos, aplicativos e configurações. Tudo o mais no disco escolhido será apagado.</translation>
     </message>
     <message>
         <source>Everything on the disk you choose will be erased. Nothing else on this computer is changed.</source>
@@ -504,8 +524,24 @@
         <translation>Reservado para atualizações</translation>
     </message>
     <message>
+        <source>Your files (kept)</source>
+        <translation>Seus arquivos (mantidos)</translation>
+    </message>
+    <message>
         <source>Your files</source>
         <translation>Seus arquivos</translation>
+    </message>
+    <message>
+        <source>The system on this disk is replaced with %1. Its accounts, files, apps and settings are kept.</source>
+        <translation>O sistema neste disco é substituído por %1. Suas contas, arquivos, aplicativos e configurações são mantidos.</translation>
+    </message>
+    <message>
+        <source>%1 and everything saved on it will be deleted, including its accounts, files, apps and settings.</source>
+        <translation>%1 e tudo o que estiver salvo nele será excluído, incluindo suas contas, arquivos, aplicativos e configurações.</translation>
+    </message>
+    <message>
+        <source>This disk was set up in a way this version of %1 cannot reuse, so they cannot be kept.</source>
+        <translation>Este disco foi configurado de uma forma que esta versão de %1 não consegue reaproveitar, portanto eles não podem ser mantidos.</translation>
     </message>
     <message>
         <source>Everything on this disk will be deleted.</source>
@@ -536,12 +572,24 @@
         <translation>Este é um disco removível.</translation>
     </message>
     <message>
+        <source>Reinstall on this disk?</source>
+        <translation>Reinstalar neste disco?</translation>
+    </message>
+    <message>
+        <source>Reinstall</source>
+        <translation>Reinstalar</translation>
+    </message>
+    <message>
         <source>%1 — %2</source>
         <translation>%1 — %2</translation>
     </message>
     <message>
         <source>Everything on the selected disk will be erased.</source>
         <translation>Tudo no disco selecionado será apagado.</translation>
+    </message>
+    <message>
+        <source>Reinstall %3 on %1 (%2), keeping its accounts, files, apps and settings.</source>
+        <translation>Reinstalar %3 em %1 (%2), mantendo suas contas, arquivos, aplicativos e configurações.</translation>
     </message>
     <message>
         <source>Erase %1 (%2) and install %3 on it.</source>
@@ -570,6 +618,14 @@
     <message>
         <source>Not yet available</source>
         <translation>Ainda não disponível</translation>
+    </message>
+    <message>
+        <source>Keep my files, apps and settings</source>
+        <translation>Manter meus arquivos, aplicativos e configurações</translation>
+    </message>
+    <message>
+        <source>Not possible on this disk</source>
+        <translation>Não é possível neste disco</translation>
     </message>
     <message>
         <source>Erase this disk?</source>
@@ -625,8 +681,16 @@
 <context>
     <name>DoneConfig</name>
     <message>
+        <source>%1 is reinstalled</source>
+        <translation>%1 foi reinstalado</translation>
+    </message>
+    <message>
         <source>%1 is installed</source>
         <translation>%1 está instalado</translation>
+    </message>
+    <message>
+        <source>Restart and sign in as before.</source>
+        <translation>Reinicie e entre como antes.</translation>
     </message>
     <message>
         <source>Restart to sign in for the first time.</source>
@@ -720,6 +784,10 @@
         <source>No keyboard layouts could be read from this medium, so the installed system will keep the layout this one booted with.</source>
         <translation>Não foi possível ler nenhum layout de teclado desta mídia, então o sistema instalado manterá o layout com que ela foi iniciada.</translation>
     </message>
+    <message>
+        <source>Kept as it is on this computer</source>
+        <translation>Mantido como está neste computador</translation>
+    </message>
 </context>
 <context>
     <name>KeymapViewStep</name>
@@ -737,6 +805,10 @@
     <message>
         <source>Pick the language you want to use while installing. This becomes the system language, and you can change it later in Settings.</source>
         <translation>Escolha o idioma que você quer usar durante a instalação. Ele será o idioma do sistema e pode ser alterado depois nas Configurações.</translation>
+    </message>
+    <message>
+        <source>Kept as it is on this computer</source>
+        <translation>Mantido como está neste computador</translation>
     </message>
 </context>
 <context>
@@ -908,6 +980,10 @@
         <translation>Não foi possível acertar o relógio.</translation>
     </message>
     <message>
+        <source>Kept as it is on this computer</source>
+        <translation>Mantido como está neste computador</translation>
+    </message>
+    <message>
         <source>The clock could not be set: %1</source>
         <translation>Não foi possível acertar o relógio: %1</translation>
     </message>
@@ -1016,8 +1092,20 @@
         <translation>Nada foi alterado no seu computador ainda. Esta é a última etapa antes de o instalador gravar no disco.</translation>
     </message>
     <message>
+        <source>this system</source>
+        <translation>este sistema</translation>
+    </message>
+    <message>
+        <source>This reinstalls %1 on %2</source>
+        <translation>Isto reinstala %1 em %2</translation>
+    </message>
+    <message>
         <source>This erases %1 completely</source>
         <translation>Isto apaga %1 por completo</translation>
+    </message>
+    <message>
+        <source>The system is replaced with a fresh copy. The accounts, files, apps and settings on that drive are kept, and other drives are left alone.</source>
+        <translation>O sistema é substituído por uma cópia nova. As contas, arquivos, aplicativos e configurações desse disco são mantidos, e os demais discos não são alterados.</translation>
     </message>
     <message>
         <source>Every partition, file and operating system on that drive will be removed. Other drives are left alone.</source>

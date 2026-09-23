@@ -284,6 +284,17 @@ LanguageConfig::pageLede() const
 QString
 LanguageConfig::prettyStatus() const
 {
+    // KEEPING (plan/33 §1, §8): the choice on this page configures the INSTALLER SESSION only —
+    // there is no `languagesetup` job, and nothing here is ever applied to the target — so on a
+    // kept disk the row this page owns must say that rather than name a language nobody is
+    // installing. The page itself is unaware of keeping otherwise: it asks GlobalStorage
+    // directly, here, rather than carrying a property nothing else on this page would use.
+    auto* gs = Calamares::JobQueue::instance() ? Calamares::JobQueue::instance()->globalStorage()
+                                              : nullptr;
+    if ( gs && gs->value( QStringLiteral( "diskKeepData" ) ).toBool() )
+    {
+        return tr( "Kept as it is on this computer" );
+    }
     if ( m_currentIndex < 0 || m_currentIndex >= m_model->rowCount() )
     {
         return {};

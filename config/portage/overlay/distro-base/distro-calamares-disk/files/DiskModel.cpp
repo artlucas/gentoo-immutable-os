@@ -101,6 +101,15 @@ DiskModel::data( const QModelIndex& index, int role ) const
         case Block::None:
             break;
         }
+        // A disk that already holds an install NAMES IT, in place of the partition list a plain
+        // disk shows — "Immutable OS 0.3.0" rather than "esp, root_0.3.0, _empty, …" (plan/33
+        // §3, §5). On Offered AND Refused alike: even a disk that cannot be kept is still named
+        // rather than described by its raw labels, which is what makes the erase warning's
+        // "%1 and everything on it will be deleted" (§9) speak of software rather than parts.
+        if ( e.keep != Keep::None && !e.installedVersion.isEmpty() )
+        {
+            return productName() + QLatin1Char( ' ' ) + e.installedVersion;
+        }
         return e.contents.isEmpty() ? tr( "Contents unknown" ) : e.contents;
     case BlockedRole:
         return e.block != Block::None;

@@ -289,11 +289,13 @@ assert_true "a domain controller address is added to the target's /etc/hosts" \
 # ---- 5b. verify, and why a failed join must not fail the install ----------------------------
 # The rule this section pins survived plan/21 unchanged, and the reason it needed changing at all
 # was only ever the plumbing. A Calamares python job fails an install by returning a tuple, and
-# `accountsetup` runs BEFORE `removeuser` and `imageidentity` in the exec list — so a join that
-# returned one on an unreachable DC would leave an installed disk with no chosen account,
-# @LIVE_USER@ still present, and autologin still on: a failed install that boots into the live
-# medium's throwaway session. join_domain() therefore returns None on every path, and
-# $DISTRO_ID-domain verifies before it writes anything.
+# `accountsetup` runs BEFORE `imageidentity` in the exec list and, on an erase, removes the live
+# user itself as the LAST thing it does (remove_live_user(), folded in from the stock
+# `removeuser` module by plan/33 §7 — that module is gone from the sequence entirely now) — so a
+# join that returned a failure tuple on an unreachable DC would leave an installed disk with no
+# chosen account, @LIVE_USER@ still present, and autologin still on: a failed install that boots
+# into the live medium's throwaway session. join_domain() therefore returns None on every path,
+# and $DISTRO_ID-domain verifies before it writes anything.
 #
 # What plan/21 DID change is that the domain can now be checked before the disk is written, as an
 # advisory button on the page — Calamares' own users module kept the domain and credentials in

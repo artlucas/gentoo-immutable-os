@@ -89,5 +89,6 @@ qt6_add_resources(${DISK_TARGET} "disk_qml"
         # fails to load with a QML type error and renders blank.
         qml/Theme.qml
         qml/Button.qml
+        qml/CheckBox.qml
         qml/Disk.qml
 )

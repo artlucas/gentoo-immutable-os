@@ -21,6 +21,11 @@ VERIFY="$([[ $UPDATE_VERIFY == 1 ]] && echo yes || echo no)"
 SPLASH_STATUS_LEFT="$(printf '%s · V%s · AMD64' "$UPDATE_CHANNEL" "$VERSION" | tr '[:lower:]' '[:upper:]')"
 export DISTRO_ID DISTRO_NAME VERSION HOME_URL INTERNET_CHECK_URL UPDATE_URL LIVE_USER VERIFY FLATPAK_PREINSTALL
 export UPDATE_CHANNEL SPLASH_STATUS_LEFT DISTROBOX_DEFAULT_IMAGE NTP_SERVERS
+# THIS PROFILE'S OWN partition names (plan/33 §2), which /etc/fstab.in is rendered from — esp
+# and var for a target image, live_esp and live_var for a live one. init_paths() set them from
+# PROFILE_ROLE; exported here, with the rest of the template tokens, before install_rootfs_overlay
+# renders anything.
+export IMG_ESP_PARTLABEL IMG_ROOT_PARTLABEL IMG_VAR_PARTLABEL
 # ---- CONFIG_PROTECT: apply what the merge deferred, BEFORE our overlay -----------------------
 # Portage does not overwrite a file under CONFIG_PROTECT (/etc, among others) when a package
 # updates it. It writes the new version alongside as ._cfg0000_<name> and leaves it for
@@ -1393,6 +1398,35 @@ if profile_has_set installer; then
   # stage's own shell variables say nothing about what it produced.
   log "installer: the disk layout helper is installed and creates $(grep -c '^start=' <<<"$_layout_probe") partitions"
 
+  # ---- ...and its KEEP PATH, run once against a REAL table (plan/33 §4, §11) ----------------
+  # Everything above proves the helper can WRITE a layout; this proves it can also READ one back
+  # and recognise it as keepable — the other half of the contract the disk page and the
+  # disksetup job both depend on. A scratch FILE, not a block device, for the same reason stage
+  # 60's own sfdisk call uses one: sfdisk operates on a plain file exactly as it does on a disk,
+  # and "everything after this is a stranger's hardware" is exactly the reason the existing probe
+  # above gives for checking the write side here rather than trusting it.
+  _layout_scratch="$WORK/disk-layout-probe.img"
+  truncate -s 64G "$_layout_scratch"
+  printf '%s' "$_layout_probe" | sfdisk --quiet "$_layout_scratch" \
+    || die "installer: could not write the probe layout to a scratch file for the disk layout
+  helper's inspect path to read back"
+  _inspect_probe="$(sfdisk --dump "$_layout_scratch" \
+                     | "$DISK_LAYOUT_DST" inspect --device "$_layout_scratch" \
+                         --esp-mib "$ESP_SIZE_MIB" --slot-mib "$ROOT_SLOT_SIZE_MIB")" \
+    || die "installer: the disk layout helper's inspect path failed against a layout it just wrote"
+  grep -qx 'verdict=keep' <<<"$_inspect_probe" \
+    || die "installer: the disk layout helper wrote a layout it does not recognise as keepable
+  (verdict != keep). The disk page and the disksetup job both depend on \`inspect\` agreeing
+  with \`sfdisk\`/emit_sfdisk_script about what this medium's own layout looks like — a
+  disagreement here means keep mode would refuse every disk this very medium could install onto
+  (plan/33 §4)."
+  grep -qx "installed=$VERSION" <<<"$_inspect_probe" \
+    || die "installer: the disk layout helper's inspect path did not report installed=$VERSION
+  against a layout it just wrote FOR that version. Got:
+  $_inspect_probe"
+  rm -f -- "$_layout_scratch"
+  log "installer: the disk layout helper's inspect path recognises its own layout as keepable"
+
   # The branding logo, composed by the same function that produces the boot splash's two halves.
   # Every raster artefact in this build comes out of one build_block(): the user sees this
   # sidebar a minute after watching that splash, so they must be the same pixels rather than two
@@ -1908,7 +1942,13 @@ esac
 RECOVERY_TOKENS=()
 [[ ${DEBUG_INITRD:-0} == 1 ]] || RECOVERY_TOKENS+=(rd.shell=0 rd.emergency=reboot)
 
-CMDLINE="root=PARTLABEL=$ROOT_PARTLABEL rootfstype=erofs ro nvidia-drm.modeset=1 console=tty0 console=ttyS0 quiet ${SPLASH_TOKENS[*]} loglevel=3 rd.udev.log_level=3 vt.global_cursor_default=0 ${RECOVERY_TOKENS[*]}"
+# IMG_ROOT_PARTLABEL, not ROOT_PARTLABEL (plan/33 §2): this cmdline is baked into THIS image's
+# own UKI and has to find THIS image's own root partition, which for a live medium is labelled
+# live_root_<v> rather than the installed-system identity root_<v> — the two differ precisely so
+# a live medium booted next to an installed disk cannot resolve PARTLABEL=root_<v> to the wrong
+# device. For a target image the two names are the same string, so nothing here changes for the
+# desktop or console builds.
+CMDLINE="root=PARTLABEL=$IMG_ROOT_PARTLABEL rootfstype=erofs ro nvidia-drm.modeset=1 console=tty0 console=ttyS0 quiet ${SPLASH_TOKENS[*]} loglevel=3 rd.udev.log_level=3 vt.global_cursor_default=0 ${RECOVERY_TOKENS[*]}"
 log "splash backend: $SPLASH_BACKEND; initrd emergency shell: ${DEBUG_INITRD:-0}"
 
 # The stub bitmap comes out of the same script and the same PNGs as the KMS splash's sprites in
@@ -1941,6 +1981,24 @@ ensure_dir "$UKI_DIR"
 grep -q "IMAGE_VERSION=$VERSION" "$TARGET/etc/os-release" || die "verify: os-release version mismatch"
 grep -q "ID=$DISTRO_ID" "$TARGET/etc/os-release"          || die "verify: os-release ID mismatch"
 [[ -s $UKI_DIR/$UKI_NAME ]]                               || die "verify: UKI missing/empty"
+
+# fstab: the PARTLABELs THIS IMAGE mounts /var and the ESP by (plan/33 §2). /etc/fstab.in
+# rendered from the IMG_*_PARTLABEL tokens exported near the top of section 1; checked here,
+# beside the other renders this block already asserts about.
+grep -q "PARTLABEL=$IMG_VAR_PARTLABEL" "$TARGET/etc/fstab" \
+  || die "verify: /etc/fstab does not name PARTLABEL=$IMG_VAR_PARTLABEL — /var would not mount"
+grep -q "PARTLABEL=$IMG_ESP_PARTLABEL" "$TARGET/etc/fstab" \
+  || die "verify: /etc/fstab does not name PARTLABEL=$IMG_ESP_PARTLABEL — the ESP would not mount"
+if [[ $PROFILE_ROLE == live ]]; then
+  # THE CHECK THIS WHOLE PHASE EXISTS FOR. A live medium's fstab must never name the installed
+  # system's identity label PARTLABEL=var — booted next to a disk that already has this distro
+  # on it (keep mode's entire scenario, plan/33 §2), that label resolves to whichever device
+  # udev enumerated first: this medium's own var, or the attached disk's.
+  ! grep -qE 'PARTLABEL=var([[:space:]]|$)' "$TARGET/etc/fstab" \
+    || die "verify: a live medium's /etc/fstab names PARTLABEL=var — the installed-system
+  identity label, not this image's own live_var. Mounted next to a disk that already has this
+  distro on it, /var could come from either device (plan/33 §2)."
+fi
 
 # Boot splash. Every piece is checked because the splash is invisible to every automated test
 # we have: stage 70 reads a serial port, so an image that boots to a black screen passes it.

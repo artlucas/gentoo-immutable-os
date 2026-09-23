@@ -133,18 +133,23 @@ sequence:
   #     enrolment the PAGE already made into the target and applying its bundle offline.
   #     Replaces the stock `users` module and our own `managedenroll`, which were two jobs for
   #     one decision (plan/21 §5).
+  #
+  #     THE LIVE USER GOES AWAY HERE TOO, at the end of this same job, on an erase — `userdel` in
+  #     the target, which rewrites /etc/{passwd,shadow,group,gshadow}, a copy-up under the /etc
+  #     overlay exactly as §5.4 asks for. The stock `removeuser` module used to do this as its own
+  #     step; it is GONE from this list and its module.conf deleted (plan/33 §7): stock
+  #     `removeuser` runs unconditionally, and a KEEPING install may have booted a factory image
+  #     whose only account is the live one — `userdel -f -r live` would delete the one home
+  #     directory the whole feature exists to keep. Folding it into accountsetup keeps the
+  #     ordering this project already relied on (the real account exists before the live one
+  #     goes) and lets it stand down exactly like every other job diskKeepData gates.
   - accountsetup
-  # 4. The live user goes away. `removeuser` runs userdel in the target, which rewrites
-  #    /etc/{passwd,shadow,group,gshadow} — and because those are lower files under an overlay,
-  #    the rewrite is a copy-up. The upper's copy then shadows the image's entirely, which is
-  #    exactly what §5.4 asks for, at no cost.
-  - removeuser
-  # 5. What no stock module covers: subordinate UID/GID ranges, the autologin drop-in that turns
+  # 4. What no stock module covers: subordinate UID/GID ranges, the autologin drop-in that turns
   # the live medium's autologin OFF, and the locale/machine-id fixups this image needs. In
   # managed mode there is no local username in GlobalStorage, so it skips the subuid range and
   # says so — correct, because the managed client owns those ranges for managed users.
   - imageidentity
-  # 5b. The applications page's decision, downloaded (plan/25 §5). LAST of the chroot work, for
+  # 4b. The applications page's decision, downloaded (plan/25 §5). LAST of the chroot work, for
   #     two reasons that are the same reason: everything before it writes the machine, this adds
   #     to it, and the one failure it can meet — a download that did not finish — must not run
   #     after a job that would have reacted to it. It installs the refs the page published and
@@ -168,9 +173,10 @@ branding: installer
 prompt-install: true
 
 # false: the target is a real root filesystem mounted at rootMountPoint, and target commands run
-# under chroot. `accountsetup` and `removeuser` need that — they run useradd/chpasswd and
-# userdel. (The domain join and the managed apply deliberately run on the HOST instead, with
-# --root naming the target, which is what keeps the live medium itself unenrolled.)
+# under chroot. `accountsetup` needs that — it runs useradd/chpasswd AND, on an erase, userdel for
+# the live user (plan/33 §7 folded stock `removeuser`'s job in). (The domain join and the managed
+# apply deliberately run on the HOST instead, with --root naming the target, which is what keeps
+# the live medium itself unenrolled.)
 dont-chroot: false
 oem-setup: false
 

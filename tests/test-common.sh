@@ -72,6 +72,39 @@ assert_contains "$GPT_TYPE_ESP" "$script" "ESP type GUID"
 assert_contains "$GPT_TYPE_VAR" "$script" "var type GUID"
 assert_eq 2 "$(grep -c "$GPT_TYPE_ROOT_X64" <<<"$script")" "two root-typed partitions"
 
+# ---- layout_names / role-suffixed live partitions (plan/33 §2) ------------------------------
+# No ROLE argument at all is still the identity names — every existing caller that never learned
+# about ROLE must keep working exactly as before.
+script="$(emit_sfdisk_script 9.9.9)"
+assert_contains 'name="esp"'        "$script" "default role: unsuffixed esp"
+assert_contains 'name="root_9.9.9"' "$script" "default role: unsuffixed root"
+assert_contains 'name="var"'        "$script" "default role: unsuffixed var"
+
+script="$(emit_sfdisk_script 9.9.9 target)"
+assert_contains 'name="esp"'        "$script" "explicit target: unsuffixed esp"
+assert_contains 'name="root_9.9.9"' "$script" "explicit target: unsuffixed root"
+assert_contains 'name="var"'        "$script" "explicit target: unsuffixed var"
+
+# live: PROFILE_ROOT_SLOTS=1, so compute_layout is called with SLOTS=1 first — a live image has
+# no slot B and therefore no "_empty" to relabel.
+compute_layout 1024 6144 4096 1
+script="$(emit_sfdisk_script 9.9.9 live)"
+assert_contains 'name="live_esp"'        "$script" "live role: live_esp"
+assert_contains 'name="live_root_9.9.9"' "$script" "live role: live_root_<v>"
+assert_contains 'name="live_var"'        "$script" "live role: live_var"
+assert_false "live role: no _empty slot" grep -q '_empty' <<<"$script"
+compute_layout 1024 6144 4096   # restore the 2-slot layout for what follows
+
+script="$(emit_install_sfdisk_script 17410 1024 6144 9.9.9)"
+assert_contains 'name="esp"'        "$script" "emit_install_sfdisk_script always uses target: esp"
+assert_contains 'name="root_9.9.9"' "$script" "emit_install_sfdisk_script always uses target: root"
+assert_contains 'name="_empty"'     "$script" "emit_install_sfdisk_script always uses target: _empty"
+assert_contains 'name="var"'        "$script" "emit_install_sfdisk_script always uses target: var"
+assert_false "emit_install_sfdisk_script never live-suffixes" grep -q 'live_' <<<"$script"
+
+( layout_names bogus 9.9.9 ) >/dev/null 2>&1
+assert_eq 1 $? "layout_names dies on an unknown role"
+
 # ---- filter_set_file --------------------------------------------------------------------------
 printf 'pkg/a\npkg/cjk-thing  #cjk\npkg/print-thing #printing\npkg/box-thing #distrobox\n# comment\n' > "$TMP/set"
 INCLUDE_CJK_FONTS=0 INCLUDE_PRINTING=1 INCLUDE_DISTROBOX=1 filter_set_file "$TMP/set" "$TMP/set.out"

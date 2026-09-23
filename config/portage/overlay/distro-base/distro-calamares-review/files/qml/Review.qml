@@ -209,15 +209,23 @@ Item {
                 // The design system's `danger` Alert, and the only one in the installer that is not
                 // reporting a failure: it is reporting what pressing the next button does. The disk is
                 // NAMED, because a sentence about "the selected disk" is a sentence nobody has to read.
+                //
+                // WARNING TONE WHILE KEEPING, DANGER OTHERWISE (plan/33 §8): this panel is still the
+                // one piece of bad-or-notable news on the page, but "your accounts, files and apps are
+                // kept" is not the same order of news as "everything on that drive is removed" — the
+                // colour has to say so before the words are read, the way the disk page's own loss
+                // Alert already does (plan/33 §3).
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.maximumWidth: ds.contentMaxWidth
                     implicitHeight: eraseBody.implicitHeight + eraseTitle.implicitHeight
                         + 2 * ds.space4 + ds.space1
                     radius: ds.radiusMd
-                    color: ds.statusDangerBg
+                    color: review.keeping ? ds.statusWarningBg : ds.statusDangerBg
                     border.width: ds.borderWidth
-                    border.color: ds.mix(ds.statusDanger, ds.statusDangerBg, 0.3)
+                    border.color: review.keeping
+                        ? ds.mix(ds.statusWarning, ds.statusWarningBg, 0.3)
+                        : ds.mix(ds.statusDanger, ds.statusDangerBg, 0.3)
 
                     ColumnLayout {
                         anchors.fill: parent
