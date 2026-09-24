@@ -71,7 +71,13 @@ if [[ $PROFILE_ROLE == live ]]; then
   # the build volumes — see the memory note on that).
   BASE_EXTRACT="$STAGING/base"
   ensure_dir "$BASE_EXTRACT"
-  fsck.erofs --extract="$BASE_EXTRACT" --preserve --overwrite -- "$PAYLOAD_ROOT_EROFS" >/dev/null \
+  # --xattrs: off by default (measured on erofs-utils 1.8.10 — see the note above the sssd
+  # capability check, above), so without it BASE would carry NO xattrs at all and tree-delta's
+  # xattr comparison would be one-sided — any NEW file with an ordinary user.* xattr would read
+  # as CHANGED even when both builds are identical. --xattrs still does not restore
+  # security.capability specifically (also measured there), which is why tree-delta.py excludes
+  # that one xattr name from its comparison rather than relying on this flag for it.
+  fsck.erofs --extract="$BASE_EXTRACT" --preserve --xattrs --overwrite -- "$PAYLOAD_ROOT_EROFS" >/dev/null \
     || die "installer: could not extract $BASE_PROFILE's root.erofs ($PAYLOAD_ROOT_EROFS) for
   the tree-delta comparison"
   grep -q "VERSION_ID=$VERSION" "$BASE_EXTRACT/etc/os-release" \
@@ -167,8 +173,11 @@ else
   #
   # The image half asks dump.erofs for the inode's Xattr size rather than for the capability
   # itself, and that is a deliberate second choice: dump.erofs cannot print xattr VALUES, and
-  # fsck.erofs --extract — the only other way in — silently declines to restore security.* xattrs,
-  # so extracting and running getcap reports "no capability" on an image that has one. Measured, on
+  # fsck.erofs --extract — the only other way in — restores NO xattrs at all by default (the
+  # --[no-]xattrs flag defaults off), and even with --xattrs given still drops security.capability
+  # specifically (measured on erofs-utils 1.8.10: --extract --preserve --xattrs restores a plain
+  # user.* xattr but not a capability), so extracting and running getcap reports "no capability"
+  # on an image that has one either way. Measured, on
   # a two-file probe: a file with a capability gives `Xattr size: 48` and one without gives 0, and
   # `mkfs.erofs -x-1` (xattrs disabled) drops the first to 0. Portage sets no user.* xattrs on
   # these paths, so on a binary whose staging copy has exactly one xattr — the capability, proved
@@ -400,11 +409,16 @@ if [[ $PROFILE_ROLE == live ]]; then
   # Same kernel, same initrd, same os-release, same uname, same splash (when there is one) —
   # only .cmdline differs, because the stick's partitions are live_* on purpose (plan/33 §2).
   #
-  # objcopy --update-section replaces exactly one PE section and leaves every other byte alone,
-  # which is what makes "every OTHER section is byte-identical to the desktop UKI's" true BY
-  # CONSTRUCTION — a from-scratch `ukify build` reassembly (extract every section, hand them all
-  # back to ukify) would need to be TRUSTED to reproduce the same PE layout, padding and
-  # checksums byte for byte, which is a much larger and less certain claim for the same result.
+  # Built with `ukify build` from the desktop UKI's own extracted sections, exactly as plan/34
+  # §8 specifies — NOT objcopy --update-section, which this file tried first. A real build
+  # proved that unsafe: the live cmdline is 15 bytes longer than the desktop's (3x "live_"
+  # substituted into the PARTLABEL tokens), and the readback check below caught objcopy's
+  # rewrapped UKI failing to read back its own .cmdline correctly (confirmed by hand: both
+  # files' extracted .cmdline sections were the same 394 bytes, and the live one was truncated
+  # mid-token — objcopy's in-place update did not grow the PE section to fit the longer write).
+  # ukify building the whole PE fresh does not have that failure mode: nothing here relies on a
+  # section keeping its old size or position, so the verify block below checks CONTENT against
+  # the desktop UKI's own sections rather than position.
   CMDLINE_FILE="$STAGING/desktop.cmdline"
   objcopy -O binary --only-section=.cmdline "$PAYLOAD_UKI" "$CMDLINE_FILE" \
     || die "installer: could not read .cmdline out of the base profile's UKI: $PAYLOAD_UKI"
@@ -435,81 +449,88 @@ if [[ $PROFILE_ROLE == live ]]; then
   LIVE_CMDLINE_FILE="$STAGING/live.cmdline"
   printf '%s' "$LIVE_CMDLINE" > "$LIVE_CMDLINE_FILE"
 
-  ensure_dir "$UKI_DIR"
-  cp -f -- "$PAYLOAD_UKI" "$UKI_DIR/$UKI_NAME"
-  objcopy --update-section ".cmdline=$LIVE_CMDLINE_FILE" "$UKI_DIR/$UKI_NAME" \
-    || die "installer: objcopy could not replace .cmdline in the live UKI"
+  # Extract the sections `ukify build` reassembles from — every one this UKI could carry except
+  # .cmdline, which comes from $LIVE_CMDLINE_FILE instead. .splash is optional: 0.3.1 builds
+  # with SPLASH_BACKEND=kms carry none, and objcopy exiting nonzero or producing an empty file
+  # both mean "not present", not "extraction failed".
+  SEC_DIR="$STAGING/uki-sections"; ensure_dir "$SEC_DIR"
+  for sec in .linux .initrd .osrel .uname .splash; do
+    if objcopy -O binary --only-section="$sec" "$PAYLOAD_UKI" "$SEC_DIR/$sec" 2>/dev/null \
+       && [[ -s $SEC_DIR/$sec ]]; then
+      :
+    else
+      rm -f -- "$SEC_DIR/$sec"
+    fi
+  done
+  [[ -s $SEC_DIR/.linux  ]] || die "installer: no .linux section in the base profile's UKI: $PAYLOAD_UKI"
+  [[ -s $SEC_DIR/.initrd ]] || die "installer: no .initrd section in the base profile's UKI: $PAYLOAD_UKI"
+  [[ -s $SEC_DIR/.osrel  ]] || die "installer: no .osrel section in the base profile's UKI: $PAYLOAD_UKI"
 
-  # ---- verify: every section but .cmdline is byte-identical to the desktop UKI's -------
-  UKI_SEC_LIST="$(objdump -h "$PAYLOAD_UKI" | awk '/^ *[0-9]+ \./{print $2}')"
-  [[ -n $UKI_SEC_LIST ]] || die "installer: objdump -h listed no sections in $PAYLOAD_UKI"
+  ensure_dir "$UKI_DIR"
+  UKIFY_BIN=ukify; [[ -x /usr/lib/systemd/ukify ]] && UKIFY_BIN=/usr/lib/systemd/ukify
+  UKIFY_REWRAP_ARGS=(build
+    --linux="$SEC_DIR/.linux" --initrd="$SEC_DIR/.initrd"
+    --cmdline="@$LIVE_CMDLINE_FILE" --os-release="@$SEC_DIR/.osrel"
+    --output="$UKI_DIR/$UKI_NAME")
+  [[ -s $SEC_DIR/.uname  ]] && UKIFY_REWRAP_ARGS+=(--uname="$(cat "$SEC_DIR/.uname")")
+  [[ -s $SEC_DIR/.splash ]] && UKIFY_REWRAP_ARGS+=(--splash="$SEC_DIR/.splash")
+  "$UKIFY_BIN" "${UKIFY_REWRAP_ARGS[@]}" \
+    || die "installer: ukify build could not assemble the live UKI from $PAYLOAD_UKI's own sections"
+
+  # ---- verify: EVERY section but .cmdline matches the desktop UKI's, content-wise -----------
+  # Not just the five sections fed to ukify build above (kernel/initrd/osrel/uname/splash) — the
+  # stub's own .text/.data/.sbat/.sdmagic/.reloc and anything else objdump lists too. Both UKIs
+  # come out of the same builder's ukify and the same systemd-stub (stage 40 calls `ukify build
+  # --linux --initrd --cmdline="$CMDLINE" [--splash] --os-release=@...`, same binaries, same
+  # builder), so every section that is not .cmdline itself is expected to agree — checked at
+  # full strength, not narrowed to the sections this rewrap happened to feed ukify with. Content,
+  # not PE position: ukify is free to reposition sections when a longer .cmdline changes what
+  # fits where.
+  DESKTOP_SEC_LIST="$(objdump -h "$PAYLOAD_UKI" | awk '/^ *[0-9]+ \./{print $2}')"
+  LIVE_SEC_LIST="$(objdump -h "$UKI_DIR/$UKI_NAME" | awk '/^ *[0-9]+ \./{print $2}')"
+  [[ -n $DESKTOP_SEC_LIST ]] || die "installer: objdump -h listed no sections in $PAYLOAD_UKI"
+  [[ "$(sort <<<"$DESKTOP_SEC_LIST")" == "$(sort <<<"$LIVE_SEC_LIST")" ]] \
+    || die "installer: the live UKI's section names do not match the desktop UKI's.
+  desktop: $(tr '\n' ' ' <<<"$DESKTOP_SEC_LIST")
+  live:    $(tr '\n' ' ' <<<"$LIVE_SEC_LIST")"
+
   sec_checked=0
-  for sec in $UKI_SEC_LIST; do
+  for sec in $DESKTOP_SEC_LIST; do
     [[ $sec == .cmdline ]] && continue
-    A="$STAGING/sec-a"; B="$STAGING/sec-b"
-    objcopy -O binary --only-section="$sec" "$PAYLOAD_UKI"    "$A" 2>/dev/null || : > "$A"
+    A="$STAGING/full-sec-a"; B="$STAGING/full-sec-b"
+    objcopy -O binary --only-section="$sec" "$PAYLOAD_UKI"       "$A" 2>/dev/null || : > "$A"
     objcopy -O binary --only-section="$sec" "$UKI_DIR/$UKI_NAME" "$B" 2>/dev/null || : > "$B"
-    cmp -s -- "$A" "$B" || die "installer: live UKI's $sec section differs from the base
-  profile's — the rewrap is supposed to touch .cmdline only"
+    cmp -s -- "$A" "$B" || die "installer: live UKI's $sec section content differs from the
+  desktop UKI's — both come from the same builder's ukify and stub, so this is unexpected. Do
+  not narrow this check to make it pass; find out why $sec actually differs."
     sec_checked=$((sec_checked + 1))
   done
-  (( sec_checked > 0 )) || die "installer: section-identity check compared nothing — objdump's
-  section list parsed to just .cmdline, which would mean this check proved nothing"
+  (( sec_checked > 0 )) || die "installer: section-content check compared nothing — objdump's
+  section list parsed to just .cmdline"
   READBACK_CMDLINE="$(objcopy -O binary --only-section=.cmdline "$UKI_DIR/$UKI_NAME" "$STAGING/sec-c" \
     && cat "$STAGING/sec-c")"
   [[ $READBACK_CMDLINE == "$LIVE_CMDLINE" ]] \
     || die "installer: live UKI's own .cmdline does not read back as what was written"
-  log "installer: live UKI re-wrapped from $PAYLOAD_UKI — $sec_checked section(s) verified byte-identical, only .cmdline replaced"
+  log "installer: live UKI built from $PAYLOAD_UKI's own sections — $sec_checked of $(wc -w <<<"$DESKTOP_SEC_LIST") section(s) content-verified, .cmdline reads back exactly as substituted"
 
-  # ---- verify: the PE layout survived the resize, not just the section bytes -----------------
-  # objcopy --update-section can leave a PE's own size/overlap bookkeeping wrong while every
-  # section's CONTENT still compares equal above: the live cmdline is 15 bytes longer than the
-  # desktop's (3x "live_" substituted in), so this specifically checks what growing .cmdline
-  # could break — the size field PE tracks per section, and whether .cmdline's new end now
-  # reaches into whatever comes after it.
-  desktop_secs="$(objdump -h "$PAYLOAD_UKI"       | awk '/^ *[0-9]+ \./{printf "%s %s %s\n", $2, $3, $4}')"
+  # ---- verify: no two sections overlap in the newly built UKI (general PE sanity) ------------
+  # Not a comparison to the desktop UKI (ukify choosing its own layout is expected and fine,
+  # per the note above) — just that ukify's own construction is internally consistent, sorted
+  # explicitly by VMA since a PE's section HEADER order is only conventionally the same as VMA
+  # order, never guaranteed by the format itself.
   live_secs="$(objdump -h "$UKI_DIR/$UKI_NAME" | awk '/^ *[0-9]+ \./{printf "%s %s %s\n", $2, $3, $4}')"
-  [[ -n $desktop_secs && -n $live_secs ]] \
-    || die "installer: objdump -h produced no section table for the PE layout check"
-
-  layout_checked=0
-  while read -r d_name d_size d_vma; do
-    [[ $d_name == .cmdline ]] && continue
-    l_line="$(awk -v n="$d_name" '$1==n{print; exit}' <<<"$live_secs")"
-    [[ -n $l_line ]] || die "installer: live UKI has no $d_name section at all (PE layout check)"
-    l_size="$(awk '{print $2}' <<<"$l_line")"; l_vma="$(awk '{print $3}' <<<"$l_line")"
-    [[ $l_size == "$d_size" && $l_vma == "$d_vma" ]] \
-      || die "installer: live UKI's $d_name section has size=$l_size vma=$l_vma, desktop UKI's
-  is size=$d_size vma=$d_vma — objcopy's resize of .cmdline corrupted this section's own PE
-  bookkeeping even though its content compared equal above. Switch the rewrap to \`ukify build\`
-  from the extracted sections (plan/34 §8) instead of objcopy --update-section."
-    layout_checked=$((layout_checked + 1))
-  done <<<"$desktop_secs"
-  (( layout_checked > 0 )) || die "installer: PE layout check compared nothing — objdump's
-  section list parsed to just .cmdline"
-
-  # .cmdline's own new end must not reach the next section by VMA — sorted explicitly by VMA
-  # value, since a PE's section HEADER order is only conventionally the same as VMA order, never
-  # guaranteed by the format itself.
-  cmd_vma_hex="$(awk '$1==".cmdline"{print $3}' <<<"$live_secs")"
-  cmd_size_hex="$(awk '$1==".cmdline"{print $2}' <<<"$live_secs")"
-  [[ -n $cmd_vma_hex && -n $cmd_size_hex ]] \
-    || die "installer: live UKI's .cmdline section is missing from its own section table"
-  cmd_vma=$((16#$cmd_vma_hex)); cmd_size=$((16#$cmd_size_hex)); cmd_end=$((cmd_vma + cmd_size))
-  next_vma=""
-  while read -r _n _s v; do
-    v_dec=$((16#$v))
-    (( v_dec > cmd_vma )) || continue
-    [[ -z $next_vma || $v_dec -lt $next_vma ]] && next_vma=$v_dec
-  done <<<"$live_secs"
-  if [[ -n $next_vma ]]; then
-    (( cmd_end <= next_vma )) \
-      || die "installer: live UKI's .cmdline section (VMA 0x$cmd_vma_hex, size 0x$cmd_size_hex)
-  now ends past the next section's VMA (0x$(printf %x "$next_vma")) — the grown cmdline overlaps
-  whatever comes after it. Switch the rewrap to \`ukify build\` from the extracted sections
-  (plan/34 §8) instead of objcopy --update-section."
-  fi
-  log "installer: PE layout check OK — $layout_checked non-.cmdline section(s) size+VMA unchanged, .cmdline does not overlap the next section"
+  [[ -n $live_secs ]] || die "installer: objdump -h produced no section table for the live UKI"
+  prev_name=""; prev_end=0
+  while read -r s_name s_size s_vma; do
+    s_vma_dec=$((16#$s_vma)); s_end=$((s_vma_dec + 16#$s_size))
+    if [[ -n $prev_name ]]; then
+      (( s_vma_dec >= prev_end )) || die "installer: live UKI's $s_name section (VMA 0x$s_vma)
+  starts before $prev_name ends (0x$(printf %x "$prev_end")) — ukify built an internally
+  inconsistent PE"
+    fi
+    prev_name=$s_name; prev_end=$s_end
+  done < <(sort -k3 <<<"$live_secs")
+  log "installer: live UKI's own sections do not overlap"
 
   # ---- verify: PE DllCharacteristics unchanged (NX_COMPAT etc) -------------------------------
   desktop_dllchar="$(objdump -p "$PAYLOAD_UKI" | grep -A1 '^DllCharacteristics' | head -1)"
@@ -523,7 +544,7 @@ if [[ $PROFILE_ROLE == live ]]; then
   log "installer: PE DllCharacteristics unchanged ($desktop_dllchar), NX_COMPAT present"
 
   # ---- verify: ukify itself can parse the rewrapped UKI and reports the new cmdline -----------
-  UKIFY_BIN=ukify; [[ -x /usr/lib/systemd/ukify ]] && UKIFY_BIN=/usr/lib/systemd/ukify
+  # $UKIFY_BIN is already set, above, to whichever of ukify/systemd's own copy built the UKI.
   if command -v "$UKIFY_BIN" >/dev/null 2>&1; then
     UKIFY_INSPECT="$("$UKIFY_BIN" inspect "$UKI_DIR/$UKI_NAME" 2>&1)" \
       || die "installer: ukify inspect could not parse the live UKI:

@@ -157,15 +157,14 @@ def is_early_boot_blocked(relpath):
 
 # security.capability is excluded from the xattr comparison entirely, on both sides, not
 # allowlisted per path — this is a caller-side tool limitation, not a real difference to name
-# instances of. BASE is populated by `fsck.erofs --extract --preserve` (60-image.sh), and
-# fsck.erofs's own extractor silently declines to restore security.* xattrs no matter what
-# --preserve asks for (the same limitation stage 60's OWN target-role capability check works
-# around, by reading the EROFS's Xattr size directly through dump.erofs instead of extracting
-# it — see the comment above that check). So BASE's extracted copy of every capability-bearing
-# binary (ping, arping, the sssd helpers, several KDE system helpers) reads back with NO
-# security.capability at all, while NEW's real merged tree still has it — a difference that is
-# entirely an artifact of how BASE was read, not something either build actually did
-# differently. Confirmed on a real installer build: usr/bin/ping and
+# instances of. BASE is populated by `fsck.erofs --extract --preserve --xattrs` (60-image.sh).
+# Measured on erofs-utils 1.8.10: without --xattrs, extraction restores NO xattrs at all
+# (--[no-]xattrs defaults off); with it, an ordinary xattr like user.test comes back correctly,
+# but security.capability specifically still does not. stage 60's own target-role capability
+# check already works around the same gap a different way, by reading the EROFS's Xattr size
+# directly through dump.erofs instead of extracting (see the comment above that check).
+#
+# Confirmed on a real installer build, before --xattrs was added here: usr/bin/ping and
 # usr/libexec/sssd/ldap_child's sha256 matched exactly between BASE and NEW; only the
 # capability xattr, present in NEW and silently absent from BASE, made tree-delta call them
 # "changed". Since plan/34 §6 already guarantees identical package versions in both trees, a
