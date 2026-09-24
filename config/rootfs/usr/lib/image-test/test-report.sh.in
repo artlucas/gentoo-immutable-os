@@ -49,7 +49,8 @@ collect_and_report() {
     . /etc/os-release
     local etc_fs graphical failed failed_list machine_id var_size flatpak_remotes
     local resolved dns podman_rootless runuser_bin sound live_uid autologin
-    local sssd nss_local domain managed userdb managed_timer esp_fs esp_what
+    local sssd nss_local domain managed userdb managed_timer esp_fs esp_partlabel
+    local esp_src esp_dev
     local _as _an _ac
     etc_fs="$(findmnt -no FSTYPE /etc 2>/dev/null || echo none)"
     graphical="$(systemctl is-active graphical.target >/dev/null 2>&1 && echo yes || echo no)"
@@ -61,16 +62,41 @@ collect_and_report() {
     machine_id="$(cat /etc/machine-id 2>/dev/null || echo none)"
     var_size="$(findmnt -bno SIZE /var 2>/dev/null || echo 0)"
     # /efi is noauto,x-systemd.automount (plan/34 §4) — nothing is mounted there until something
-    # accesses it, so `stat` is the trigger, the same as any real access would be. What.mount's
-    # `What=` is reported rather than (or beside) findmnt's resolved device node, because `What=`
-    # is the literal cmdline value systemd-fstab-generator wrote the unit from — PARTLABEL=esp or
-    # PARTLABEL=live_esp — which is the one thing that actually proves the mount-extra entry did
-    # this, rather than /efi happening to already be some fixed device.
-    esp_fs=none; esp_what=none
-    if stat /efi >/dev/null 2>&1; then
-        esp_fs="$(findmnt -no FSTYPE /efi 2>/dev/null || echo none)"
-        esp_what="$(systemctl show -p What --value efi.mount 2>/dev/null || echo none)"
-        [[ -n $esp_what ]] || esp_what=none
+    # accesses it. `stat` on the automount ROOT does not trigger it — CONFIRMED against a real
+    # boot, where esp_fs came back "autofs": stat() on the directory autofs itself owns just
+    # reads that pseudo-filesystem's own inode, it does not look THROUGH it the way opening a
+    # path inside does. `ls` forces a readdir, which does.
+    #
+    # Once triggered, the real mount is not necessarily complete the instant the triggering call
+    # returns — findmnt reads a separate, eventually-consistent view of the mount table — so this
+    # samples a few times rather than trusting the first read.
+    #
+    # esp_what used to be systemd's own `What=` for efi.mount, on the theory that it would still
+    # carry the literal PARTLABEL=... value systemd-fstab-generator wrote the unit from — CONFIRMED
+    # WRONG against a real boot: `systemctl show -p What` returns the RESOLVED device (/dev/vda1),
+    # not the specifier. What actually proves the mount-extra entry (and not a coincidental fixed
+    # device) put vfat at /efi is a /dev/disk/by-partlabel/* symlink resolving to that same device
+    # — checked here, in the guest, because the guest can walk /dev/disk/by-partlabel itself and
+    # does not need to know its own build's IMG_ESP_PARTLABEL to do it; stage 70 is what already
+    # knows that value and compares the NAME this reports against it.
+    esp_fs=none; esp_partlabel=none
+    if ls /efi >/dev/null 2>&1; then
+        for _esp_try in 1 2 3 4 5; do
+            esp_fs="$(findmnt -no FSTYPE /efi 2>/dev/null || echo none)"
+            [[ $esp_fs != autofs ]] && break
+            sleep 1
+        done
+        esp_src="$(findmnt -no SOURCE /efi 2>/dev/null)"
+        if [[ -n $esp_src ]]; then
+            esp_dev="$(readlink -f -- "$esp_src" 2>/dev/null || printf '%s' "$esp_src")"
+            for _esp_l in /dev/disk/by-partlabel/*; do
+                [[ -e $_esp_l ]] || continue
+                if [[ "$(readlink -f -- "$_esp_l" 2>/dev/null)" == "$esp_dev" ]]; then
+                    esp_partlabel="$(basename -- "$_esp_l")"
+                    break
+                fi
+            done
+        fi
     fi
     flatpak_remotes="$(flatpak remotes --system 2>/dev/null | grep -c . || true)"
     # DNS comes in two fields on purpose. "resolved" is deterministic — the unit either came
@@ -254,7 +280,7 @@ collect_and_report() {
     nss_local="$(getent passwd '@LIVE_USER@' >/dev/null 2>&1 && echo yes || echo no)"
     report "ok version=${IMAGE_VERSION:-unknown} etc_overlay=$etc_fs graphical=$graphical" \
            "failed_units=$failed machine_id=$machine_id var_size=$var_size" \
-           "esp_fs=$esp_fs esp_what=$esp_what" \
+           "esp_fs=$esp_fs esp_partlabel=$esp_partlabel" \
            "flatpak_remotes=$flatpak_remotes resolved=$resolved dns=$dns" \
            "podman_rootless=$podman_rootless sound=$sound autologin=$autologin" \
            "sssd=$sssd domain=$domain nss_local=$nss_local" \

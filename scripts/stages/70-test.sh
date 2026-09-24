@@ -75,17 +75,21 @@ assert_report() {  # LOG expected_version
   [[ $(field "$slog" etc_overlay) == overlay ]] || die "guest /etc is not an overlay"
   [[ $(field "$slog" failed_units) == 0 ]] || die "guest has failed units"
   # /efi (plan/34 §4): noauto,x-systemd.automount, so the guest's own test-report.sh triggers it
-  # with a plain `stat /efi` before reading findmnt back — the automount unit exists regardless,
-  # but nothing mounts under it until something asks. esp_what is systemd's own `What=` for
-  # efi.mount, the literal cmdline value the fstab-generator wrote the unit from — checked
-  # against THIS image's own IMG_ESP_PARTLABEL rather than just "some vfat got mounted", because
-  # that is the one signal that actually proves the mount-extra entry did this.
+  # (an `ls`, not a `stat` — CONFIRMED against a real boot that `stat` on the automount ROOT does
+  # not trigger it at all) and samples findmnt a few times rather than trusting the instant the
+  # trigger returns, since "autofs" itself is a valid transient FSTYPE reading before the real
+  # mount lands. esp_partlabel is a /dev/disk/by-partlabel/* symlink the GUEST resolved to the
+  # same device findmnt reports mounted at /efi — CONFIRMED against a real boot that systemd's
+  # own `What=` on efi.mount is the RESOLVED device (/dev/vda1), not the PARTLABEL=... specifier,
+  # so the by-partlabel name is the one signal that actually proves the mount-extra entry (and
+  # not a coincidental fixed device) put vfat there, checked against THIS image's own
+  # IMG_ESP_PARTLABEL rather than just "some vfat got mounted".
   [[ $(field "$slog" esp_fs) == vfat ]] \
     || die "guest's /efi did not automount as vfat (esp_fs=$(field "$slog" esp_fs)) — the
   systemd.mount-extra= entry for \$IMG_ESP_PARTLABEL ($IMG_ESP_PARTLABEL) is missing or wrong"
-  [[ $(field "$slog" esp_what) == "PARTLABEL=$IMG_ESP_PARTLABEL" ]] \
-    || die "guest's efi.mount has What=$(field "$slog" esp_what), expected
-  PARTLABEL=$IMG_ESP_PARTLABEL — /efi mounted from the wrong source, or this image's own ESP
+  [[ $(field "$slog" esp_partlabel) == "$IMG_ESP_PARTLABEL" ]] \
+    || die "guest's /efi resolves to /dev/disk/by-partlabel/$(field "$slog" esp_partlabel),
+  expected $IMG_ESP_PARTLABEL — /efi mounted from the wrong source, or this image's own ESP
   label is not what stage 40's cmdline named"
   # DNS: only the resolver's own state is asserted. Whether a name actually resolved is
   # reported as dns=yes/no and left alone — that depends on the build host's network, not on
