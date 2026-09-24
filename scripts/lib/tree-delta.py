@@ -155,6 +155,26 @@ def is_early_boot_blocked(relpath):
     return any(relpath.startswith(p) for p in EARLY_BOOT_BLOCKED_DIR_PREFIXES)
 
 
+# security.capability is excluded from the xattr comparison entirely, on both sides, not
+# allowlisted per path — this is a caller-side tool limitation, not a real difference to name
+# instances of. BASE is populated by `fsck.erofs --extract --preserve` (60-image.sh), and
+# fsck.erofs's own extractor silently declines to restore security.* xattrs no matter what
+# --preserve asks for (the same limitation stage 60's OWN target-role capability check works
+# around, by reading the EROFS's Xattr size directly through dump.erofs instead of extracting
+# it — see the comment above that check). So BASE's extracted copy of every capability-bearing
+# binary (ping, arping, the sssd helpers, several KDE system helpers) reads back with NO
+# security.capability at all, while NEW's real merged tree still has it — a difference that is
+# entirely an artifact of how BASE was read, not something either build actually did
+# differently. Confirmed on a real installer build: usr/bin/ping and
+# usr/libexec/sssd/ldap_child's sha256 matched exactly between BASE and NEW; only the
+# capability xattr, present in NEW and silently absent from BASE, made tree-delta call them
+# "changed". Since plan/34 §6 already guarantees identical package versions in both trees, a
+# file whose CONTENT matches is running the same fcaps.eclass call either way — there is
+# nothing here for this script to catch that stage 40/60's own capability checks (proven
+# against the real, unextracted image) do not already prove more reliably.
+XATTR_COMPARE_EXCLUDE = frozenset({"security.capability"})
+
+
 def walk(root):
     """Every path under root, symlinks not followed, keyed by its path relative to root."""
     entries = {}
@@ -175,6 +195,8 @@ def walk(root):
             xattrs = {}
             try:
                 for xname in os.listxattr(full, follow_symlinks=False):
+                    if xname in XATTR_COMPARE_EXCLUDE:
+                        continue
                     xattrs[xname] = os.getxattr(full, xname, follow_symlinks=False)
             except OSError:
                 pass  # some filesystems/paths do not support xattrs at all; treat as none

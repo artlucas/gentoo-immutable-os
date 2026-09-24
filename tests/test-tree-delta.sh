@@ -163,4 +163,25 @@ fi
 assert_false "tree-delta.py's allowlist names no .so" \
     bash -c "grep -E '\"[^\"]*\.so\"' '$TD' | grep -v '^\s*#'"
 
+# ---- security.capability is excluded from the xattr comparison, both sides -------------------
+# Confirmed on a real installer build: fsck.erofs --extract --preserve (60-image.sh's own BASE
+# extraction) silently drops security.* xattrs no matter what --preserve asks for, so a
+# capability-bearing binary with byte-IDENTICAL content on both sides (ping, the sssd helpers)
+# still showed up as "changed" purely because BASE's extracted copy had no capability at all.
+# Simulated here without needing an actual EROFS round-trip: same content, capability set only
+# on NEW — exactly BASE's lossy-extraction shape.
+if command -v setcap >/dev/null 2>&1 && command -v getcap >/dev/null 2>&1; then
+    fresh capsim
+    printf 'binary content\n' > "$TMP/capsim/base/usr/bin/tool"
+    printf 'binary content\n' > "$TMP/capsim/new/usr/bin/tool"
+    if setcap cap_net_raw+p "$TMP/capsim/new/usr/bin/tool" 2>/dev/null; then
+        run_td capsim; rc=$?
+        assert_eq 0 "$rc" "capability-only difference: exit code (must not be treated as changed)"
+        assert_false "capability-only difference: not routed to the extension" \
+            test -e "$TMP/capsim/out/lib/extensions/immos-installer/usr/bin/tool"
+    else
+        echo "  (setcap requires a capability this sandbox does not grant — capsim skipped)"
+    fi
+fi
+
 finish
