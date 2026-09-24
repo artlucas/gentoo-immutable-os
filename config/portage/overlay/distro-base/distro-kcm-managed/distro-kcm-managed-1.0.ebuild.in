@@ -48,6 +48,19 @@ src_unpack() {
 	# tree exactly as it does from a checkout.
 	mkdir -p "${S}" || die
 	cp -r "${FILESDIR}"/. "${S}"/ || die
+	# Every file cp -r just copied got the CURRENT WALL-CLOCK TIME as its mtime. Qt's rcc embeds
+	# a .qml resource's own mtime into the C++ it generates — QQmlEngine's disk-cache
+	# invalidation key — so two otherwise-identical builds of this package, run moments apart,
+	# link a byte-different kcm_managed.so purely from that. Confirmed by direct reproduction:
+	# recompiling the exact same generated sources twice gave byte-identical .o files and an
+	# identical link, but two independent "configure+compile" runs did not — traced to
+	# ui/main.qml's copy-time mtime landing in qrc_kcm_managed.cpp as a literal millisecond
+	# timestamp (matched main.qml's own mtime to the millisecond). A desktop build and an
+	# installer build of this identical source therefore differed only in their GNU build-id,
+	# which a tree-diff between the two profiles' images could not tell apart from a real
+	# content change. Pinning every copied file's mtime to a fixed point removes the only
+	# remaining source of nondeterminism in this package's output.
+	find "${S}" -exec touch -h -d @0 -- {} + || die
 }
 
 src_configure() {

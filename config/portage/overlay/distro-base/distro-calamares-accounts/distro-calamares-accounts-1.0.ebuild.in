@@ -94,6 +94,13 @@ BDEPEND="
 src_unpack() {
 	mkdir -p "${S}" || die
 	cp -r "${FILESDIR}"/. "${S}"/ || die
+	# Every file cp -r just copied got the CURRENT WALL-CLOCK TIME as its mtime. Qt's rcc
+	# embeds a .qml resource's own mtime into the C++ it generates (QQmlEngine's disk-cache
+	# invalidation key), so two otherwise-identical builds of this package, run moments
+	# apart, would link a byte-different .so purely from that — confirmed by direct
+	# reproduction on distro-kcm-managed's identical src_unpack pattern (see its ebuild).
+	# This module's own view is QML too. Pinned here for the same reason.
+	find "${S}" -exec touch -h -d @0 -- {} + || die
 }
 
 src_configure() {
