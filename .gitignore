@@ -1,5 +1,6 @@
 out/
 *.log
+__pycache__/
 # MkDocs virtualenv for the developer documentation (docs/requirements.txt).
 .venv/
 site/

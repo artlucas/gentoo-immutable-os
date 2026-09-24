@@ -1747,15 +1747,29 @@ if profile_has_set installer; then
   Next, drawing the stock background instead of this medium's own brand mark"
 
   # ---- the payload ---------------------------------------------------------------------
-  # Three files another profile's build produced, copied in unchanged. Under /var because stage
-  # 60 builds the root EROFS with --exclude '/var/*' — it is the only place ~5 GiB can go — and
-  # because the payload is data this medium carries, not part of the system it runs.
+  # plan/34 §7.1. Under /var because stage 60 builds the root EROFS with --exclude '/var/*' —
+  # it is the only place this can go — and because it is data this medium carries, not part of
+  # the system it runs.
   : "${PAYLOAD_ROOT_EROFS:?installer profile without BASE_PROFILE — init_paths set no payload paths}"
   PAYLOAD_STAGE="$TARGET$PAYLOAD_DIR"
   ensure_dir "$PAYLOAD_STAGE"
 
+  # root.erofs is NOT copied here any more. Stage 60 dd's $PAYLOAD_ROOT_EROFS straight into the
+  # root PARTITION (plan/34 §7.2 step 6), so nothing under $PAYLOAD_DIR ever holds a second
+  # ~2.8 GiB copy of it. Only its sha256 and size are recorded — for the manifest imagedeploy
+  # verifies against, and to prove (below) that stage 60 wrote exactly this.
+  [[ -f $PAYLOAD_ROOT_EROFS ]] || die "installer: the root filesystem image is missing from the
+  payload profile's output: $PAYLOAD_ROOT_EROFS
+  Build the base profile first:  scripts/build.sh --profile $BASE_PROFILE"
+  ROOT_SUM="$(sha256_file "$PAYLOAD_ROOT_EROFS")"
+  ROOT_SIZE="$(stat -c%s "$PAYLOAD_ROOT_EROFS")"
+
+  # uki.efi IS still copied: imagebootloader installs it onto the TARGET's ESP after Calamares
+  # writes the disk (plan/34 §9), which is a real file Phase E's job needs, not something stage
+  # 60 can hand it a partition offset for.
+  #
   # Copy only what is not already there, byte-identically. `build.sh --from 40` is the documented
-  # iteration loop, and re-copying 5 GiB on every pass would make it unusable.
+  # iteration loop, and re-copying tens of MiB on every pass would make it unusable.
   # Sets PAYLOAD_SUM/PAYLOAD_SIZE rather than echoing them, and that is not a style choice:
   # log() writes to stdout, so a `$(stage_payload ...)` would swallow every progress line into
   # the captured value — and a die() inside a command substitution exits only the SUBSHELL, so a
@@ -1776,26 +1790,68 @@ if profile_has_set installer; then
     PAYLOAD_SUM="$sum"; PAYLOAD_SIZE="$(stat -c%s "$src")"
   }
 
-  stage_payload "$PAYLOAD_ROOT_EROFS" root.erofs "root filesystem image"
-  ROOT_SUM="$PAYLOAD_SUM"; ROOT_SIZE="$PAYLOAD_SIZE"
-  stage_payload "$PAYLOAD_UKI"        uki.efi    "kernel image (UKI)"
-  UKI_SUM="$PAYLOAD_SUM";  UKI_SIZE="$PAYLOAD_SIZE"
-  VAR_SUM=""; VAR_SIZE=0
-  if [[ ${INSTALLER_PAYLOAD_FLATPAKS:-1} == 1 ]]; then
-    stage_payload "$PAYLOAD_VAR_TAR" var.tar.zst "/var template"
-    VAR_SUM="$PAYLOAD_SUM"; VAR_SIZE="$PAYLOAD_SIZE"
-  else
-    # Not an error, and the difference matters at install time: imagedeploy warns about a MISSING
-    # template and seeds a bare /var, which is the correct behaviour for a medium deliberately
-    # built without one. Remove a stale copy so a rebuild with the switch flipped does not keep
-    # installing Flatpaks the build no longer claims to carry.
-    log "installer: INSTALLER_PAYLOAD_FLATPAKS=0 — no /var template (installed systems get no preinstalled Flatpaks)"
-    rm -f -- "$PAYLOAD_STAGE/var.tar.zst"
-  fi
+  stage_payload "$PAYLOAD_UKI" uki.efi "kernel image (UKI)"
+  UKI_SUM="$PAYLOAD_SUM"; UKI_SIZE="$PAYLOAD_SIZE"
 
-  # The manifest is what imagedeploy verifies the medium against before it writes 2.7 GiB to
+  # var-base.tar.zst: $BASE_PROFILE's own var.tar.zst minus lib/flatpak (plan/34 §7.1).
+  # UNCONDITIONAL on INSTALLER_PAYLOAD_FLATPAKS — the rest of a target build's /var is ~1 MiB of
+  # ownership-bearing skeleton (sss, polkit-1, plasmalogin, lib/immos/flatpak-preinstall.done,
+  # ...) that imagedeploy's erase path needs to seed ANY installed disk's /var, independent of
+  # whether this medium carries preinstalled Flatpaks at all.
+  [[ -f $PAYLOAD_VAR_TAR ]] || die "installer: the /var template is missing from the payload
+  profile's output: $PAYLOAD_VAR_TAR
+  Build the base profile first:  scripts/build.sh --profile $BASE_PROFILE"
+  VAR_BASE="$PAYLOAD_STAGE/var-base.tar.zst"
+  PAYLOAD_VAR_SUM="$(sha256_file "$PAYLOAD_VAR_TAR")"
+  VAR_SRC_STAMP="$PAYLOAD_STAGE/.var-base.src-sha256"
+  need_var_rebuild=1
+  if [[ -f $VAR_BASE && -f $VAR_SRC_STAMP && $(cat "$VAR_SRC_STAMP") == "$PAYLOAD_VAR_SUM" ]] \
+     && { [[ ${INSTALLER_PAYLOAD_FLATPAKS:-1} == 0 ]] || [[ -d $TARGET/var/lib/flatpak/repo ]]; }
+  then
+    need_var_rebuild=0
+  fi
+  if (( need_var_rebuild == 0 )); then
+    log "installer: var-base.tar.zst and the Flatpak store are already staged ($(du -m "$VAR_BASE" | cut -f1) MiB tarball)"
+  else
+    log "installer: repacking $BASE_PROFILE's var.tar.zst minus lib/flatpak -> var-base.tar.zst"
+    VAR_SCRATCH="$WORK/payload-var-scratch"; rm -rf -- "$VAR_SCRATCH"; ensure_dir "$VAR_SCRATCH"
+    tar --extract --zstd --file="$PAYLOAD_VAR_TAR" --directory="$VAR_SCRATCH"
+    [[ -d $VAR_SCRATCH/lib/flatpak ]] || die "installer: $BASE_PROFILE's var.tar.zst has no
+    lib/flatpak — build it with a non-empty FLATPAK_PREINSTALL first."
+    # A fixed, deterministic mtime for the repack, same source as stage 60's own EROFS/var-tar
+    # timestamp (SNAPSHOT_DATE) rather than the moment this stage happened to run.
+    VBASE_EPOCH="$(date -u -d "${SNAPSHOT_DATE:0:4}-${SNAPSHOT_DATE:4:2}-${SNAPSHOT_DATE:6:2}" +%s)" \
+      || die "could not derive a repack timestamp from SNAPSHOT_DATE=$SNAPSHOT_DATE"
+    tar --create --directory="$VAR_SCRATCH" --exclude='./lib/flatpak' \
+        --numeric-owner --sort=name --mtime="@$VBASE_EPOCH" --xattrs --acls . \
+      | zstd -T0 -3 -q -o "$VAR_BASE.tmp"
+    mv -f -- "$VAR_BASE.tmp" "$VAR_BASE"
+    chmod 0444 -- "$VAR_BASE"
+    printf '%s' "$PAYLOAD_VAR_SUM" > "$VAR_SRC_STAMP"
+
+    # The Flatpak store itself: unpacked straight into THIS build's own /var, not staged under
+    # $PAYLOAD_DIR — it is the live session's OWN store as well as the install's source (plan/34
+    # §7.1), so it has to be where a live /var actually looks for it, not a second copy sitting
+    # inside the payload directory.
+    ensure_dir "$TARGET/var/lib"
+    rm -rf -- "$TARGET/var/lib/flatpak"
+    if [[ ${INSTALLER_PAYLOAD_FLATPAKS:-1} == 1 ]]; then
+      cp -a -- "$VAR_SCRATCH/lib/flatpak" "$TARGET/var/lib/flatpak"
+    else
+      # Not an error: a medium deliberately built without preinstalled apps has an empty live
+      # store too, and the difference matters at install time the same way it always has —
+      # imagedeploy copies whatever the live store holds, which here is nothing.
+      log "installer: INSTALLER_PAYLOAD_FLATPAKS=0 — no Flatpak store in the live session either"
+    fi
+    rm -rf -- "$VAR_SCRATCH"
+  fi
+  VAR_SUM="$(sha256_file "$VAR_BASE")"; VAR_SIZE="$(stat -c%s "$VAR_BASE")"
+
+  # The manifest is what imagedeploy verifies the medium against before it writes 2.8 GiB to
   # someone's disk. It is also the only human-readable record on the stick of what this medium
   # installs, which is worth having when someone finds an unlabelled USB stick in a drawer.
+  # root_erofs carries "source": "partition" rather than a "file" key — plan/34 §7.1's whole
+  # point is that there IS no file, only the partition stage 60 wrote directly.
   {
     printf '{\n'
     printf '  "distro_id": "%s",\n'        "$DISTRO_ID"
@@ -1804,13 +1860,9 @@ if profile_has_set installer; then
     printf '  "built_by_profile": "%s",\n' "$BUILD_PROFILE"
     printf '  "root_partlabel": "%s",\n'   "$ROOT_PARTLABEL"
     printf '  "uki_name": "%s",\n'         "$UKI_NAME"
-    printf '  "root_erofs": { "file": "root.erofs", "sha256": "%s", "size": %s },\n' "$ROOT_SUM" "$ROOT_SIZE"
-    printf '  "uki":        { "file": "uki.efi",    "sha256": "%s", "size": %s }'    "$UKI_SUM"  "$UKI_SIZE"
-    if [[ -n $VAR_SUM ]]; then
-      printf ',\n  "var_template": { "file": "var.tar.zst", "sha256": "%s", "size": %s }\n' "$VAR_SUM" "$VAR_SIZE"
-    else
-      printf '\n'
-    fi
+    printf '  "root_erofs": { "source": "partition", "sha256": "%s", "size": %s },\n' "$ROOT_SUM" "$ROOT_SIZE"
+    printf '  "uki":        { "file": "uki.efi",         "sha256": "%s", "size": %s },\n' "$UKI_SUM"  "$UKI_SIZE"
+    printf '  "var_base":   { "file": "var-base.tar.zst", "sha256": "%s", "size": %s }\n' "$VAR_SUM"  "$VAR_SIZE"
     printf '}\n'
   } > "$PAYLOAD_STAGE/manifest.json"
   chmod 0444 -- "$PAYLOAD_STAGE/manifest.json"
@@ -1858,6 +1910,17 @@ fi
 prune_hardware_trees "$TARGET"
 
 # ---- 3. initrd + UKI (built HERE, in the builder — the target has no dracut) --------
+# NOT for the live role (plan/34 §8): the stick boots exactly the kernel and initrd it
+# installs, so its UKI has to be a re-wrap of the DESKTOP's own — same .linux/.initrd/.osrel/
+# .uname/.splash, only .cmdline substituted (stage 60). Building a second, independent initrd
+# and UKI here, from this profile's own kernel/module tree, would be pure waste: dracut's run,
+# the whole dependency-closure verification below, and the UKI itself would all be thrown away
+# unread the moment stage 60 re-wraps the desktop's instead. Every path in this whole section —
+# KVER discovery, dracut, ukify, and everything this section verifies — is target-role-only
+# from here down; nothing outside it reads $KVER, $INITRD, $CMDLINE or $UKI_DIR/$UKI_NAME for
+# a live build (grepped: the only use of any of them outside this block is the "configure
+# complete" log line at the very end of this stage, which is role-gated too).
+if [[ $PROFILE_ROLE != live ]]; then
 # Exactly one, asserted. This used to be `find … | head -n1`, which picks an ARBITRARY directory
 # in readdir order — so a target that ever ended up with two module trees (a kernel bump merged
 # into an existing root, say) would build a UKI for whichever one the filesystem happened to list
@@ -2354,6 +2417,7 @@ else
     die "verify: SPLASH_BACKEND=$SPLASH_BACKEND but the UKI carries a .splash section"
   fi
 fi
+fi   # PROFILE_ROLE != live (initrd + UKI)
 # The transfer files are present on EVERY profile now (plan/34 §6 — section 2e stopped deleting
 # them on a live build): an installable image without them would be a machine that can never
 # take an update, and a live one keeping them is exactly the point of the superset. What still
@@ -2589,8 +2653,13 @@ if profile_has_set installer; then
   #
   # Until plan/24 the first of those three was modules/partition.conf's partitionLayout block. It
   # is gone, along with the module it configured.
-  [[ -s $TARGET$PAYLOAD_DIR/root.erofs && -s $TARGET$PAYLOAD_DIR/uki.efi ]] \
+  # root.erofs is deliberately NOT one of these (plan/34 §7.1) — it is never staged as a file
+  # here, only dd'd into the root partition by stage 60. manifest.json's root_erofs.sha256/size
+  # is what stands in for its presence at this stage.
+  [[ -s $TARGET$PAYLOAD_DIR/uki.efi && -s $TARGET$PAYLOAD_DIR/var-base.tar.zst ]] \
     || die "verify: the payload is missing from $PAYLOAD_DIR"
+  grep -q '"source": "partition"' "$TARGET$PAYLOAD_DIR/manifest.json" \
+    || die "verify: manifest.json's root_erofs is not source:partition"
   grep -q "\"root_partlabel\": \"$ROOT_PARTLABEL\"" "$TARGET$PAYLOAD_DIR/manifest.json" \
     || die "verify: manifest.json's root_partlabel is not $ROOT_PARTLABEL"
   [[ ! -e $TARGET/etc/calamares/modules/partition.conf ]] \
@@ -3010,7 +3079,13 @@ elif profile_has_set desktop; then
       scripts/relock.sh ${DISTRO_ID}-base/${DISTRO_ID}-kcm-managed --profile $BUILD_PROFILE"
 fi
 
-log "configure complete; UKI at $UKI_DIR/$UKI_NAME"
+if [[ $PROFILE_ROLE != live ]]; then
+  log "configure complete; UKI at $UKI_DIR/$UKI_NAME"
+else
+  # No UKI of this profile's own (plan/34 §8) — stage 60 builds the live UKI by re-wrapping
+  # the desktop's, from $PAYLOAD_UKI, not from anything this stage produced.
+  log "configure complete (live: no UKI built here — stage 60 re-wraps $PAYLOAD_UKI)"
+fi
 # The three hardware lists are stage-40 inputs now, not just stage-50 ones: section 2c prunes
 # firmware and microcode before dracut, and the omit list decides what goes into the initrd. A
 # stamp that did not cover them would let an edit to any of the three be skipped on a resume.
@@ -3029,10 +3104,20 @@ mapfile -t CAL_INPUTS < <(find "$REPO/config/calamares" -type f | LC_ALL=C sort)
 # /etc/locale.gen, of language.conf's rendered list and of which .ts files get compiled, and a row
 # added to it leaves no other trace stage 40 could notice. Without it, adding a language would
 # report success and produce a medium that still offers the old list (plan/22 §2b).
+# $PAYLOAD_ROOT_EROFS/$PAYLOAD_UKI/$PAYLOAD_VAR_TAR (plan/34 §7.1): an installer profile's own
+# config/portage/build.conf can be untouched while $BASE_PROFILE's own artifacts move underneath
+# it — a plain `scripts/build.sh --profile desktop` at the same VERSION overwrites
+# out/immos_<v>.root.erofs in place — and without this, stamp_matches would see no difference
+# and `--from 40` would skip re-staging a payload that no longer matches what stage 60 is about
+# to dd into the partition. Empty (skipped by inputs_hash's own missing-file handling) on every
+# profile that is not an installer profile.
+PAYLOAD_STAMP_INPUTS=()
+[[ -n ${BASE_PROFILE:-} ]] \
+  && PAYLOAD_STAMP_INPUTS=("$PAYLOAD_ROOT_EROFS" "$PAYLOAD_UKI" "$PAYLOAD_VAR_TAR")
 stamp_write "$STAGE_NAME" "$(inputs_hash "$REPO/config/build.conf" \
   "$REPO/config/languages.conf" \
   "$REPO/config/prune-firmware.txt" "$REPO/config/prune-microcode.txt" \
   "$REPO/config/dracut-omit-drivers.txt" \
   "$REPO/config/splash/splash.c" "$REPO/config/branding/make-splash-assets.py" \
   "$REPO/scripts/lib/check-translations.py" \
-  "${CAL_INPUTS[@]}")"
+  "${CAL_INPUTS[@]}" "${PAYLOAD_STAMP_INPUTS[@]}")"
