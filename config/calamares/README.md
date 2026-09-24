@@ -55,18 +55,20 @@ The medium exists to run one program, so its task manager pins one program. Left
 four, none of them that one: the Icons-Only Task Manager's `launchers` default (plasma-desktop,
 `applets/taskmanager/main.xml`) is System Settings, Discover, Dolphin, and `preferred://browser`.
 
-**Two of those four are not installed here.** `kde-plasma/discover` is `#not-live` in
-`config/portage/sets/desktop` ([plan/20](../../plan/20-installer-slimming.md) §4.3) — an app
-store on a read-only stick that is discarded in twenty minutes, whose every install is thrown
-away on reboot because what Calamares writes to the target is the *payload's* `/var`, not this
-session's. The browser is a Flatpak this profile does not preinstall: `FLATPAK_PREINSTALL=""` and
-Firefox travels in the payload instead.
+**One of those four points nowhere, and the panel pins one anyway.** `kde-plasma/discover` is on
+this medium too now ([plan/34](../../plan/34-installer-sysext.md) §6 removed the `#not-live`
+marker that used to keep it off) — an app store nobody minds having on a session that autologins
+once, even though every install it makes here is thrown away on reboot: what Calamares writes to
+the target is the *payload's* `/var`, not this session's. `preferred://browser` still resolves to
+nothing: Firefox is a Flatpak on every profile, never a native package, and this profile does not
+install it at build time — its own copy of it, once Phase D lands, is the desktop build's own
+store copied over, not a second `flatpak install` here (plan/34 §6, §9).
 
 That does **not** make this script redundant, and the distinction is worth keeping straight:
 `KService` drops an unresolvable launcher silently rather than leaving a hole, so a medium with
-the stock default and neither package installed comes up with a two-icon panel — System Settings
-and Dolphin — and still no installer. Removing the package changes what is on the stick; only the
-layout script changes what is on the panel.
+the stock default and no Flatpak Firefox installed comes up with a three-icon panel — System
+Settings, Discover and Dolphin — and still no installer. What is INSTALLED changes what CAN
+resolve; only the layout script changes what the panel actually pins.
 
 Changing it costs a Look-and-Feel package, and the indirection is upstream's, not ours:
 

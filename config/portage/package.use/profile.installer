@@ -40,44 +40,15 @@
 dev-qt/qttools                    linguist
 
 # ---------------------------------------------------------------------------------------------
-# kde-apps/thumbnailers[-pdf] — Ghostscript, and 87 MiB of fonts nothing else in the image uses.
+# kde-apps/thumbnailers[-pdf] is GONE (plan/34 §6, was plan/20 §4.2).
 #
-# The chain, read off the pinned tree rather than guessed (plan/20 §4.2):
-#
-#   kde-apps/dolphin
-#     -> kde-apps/thumbnailers[pdf]
-#          -> media-gfx/kio-ps-thumbnailer      RDEPEND: app-text/ghostscript-gpl, app-text/dvipsk
-#               -> app-text/ghostscript-gpl     RDEPEND: >=media-fonts/urw-fonts-2.4.9   (18 MiB)
-#                                                        app-text/poppler-data
-#                                        l10n_zh-CN? / l10n_zh-TW? ( media-fonts/arphicfonts )
-#                                                                                        (69 MiB)
-#               -> app-text/dvipsk -> dev-libs/kpathsea
-#
-# Six packages, 96.0 MiB installed and 70.9 MiB of EROFS measured on the real 0.3.0 medium, and
-# all of it serves ONE Dolphin thumbnailer: /usr/lib64/qt6/plugins/kf6/thumbcreator/gsthumbnail.so
-# draws the little preview for PDF and PostScript files. The arphicfonts half is not even about
-# rendering PDFs — it is ghostscript's l10n_zh-CN/l10n_zh-TW RDEPEND, which is on because
-# LOCALES_KEEP includes those two.
-#
-# app-text/poppler-data (12.3 MiB) DOES go with it, and the first reading of this said the
-# opposite. app-text/poppler names the atom too, so a grep for it finds two consumers — but
-# poppler's is `cjk? ( app-text/poppler-data )` and cjk is not in its default IUSE, so this image
-# never had that half. Ghostscript's is unconditional. Reading a dependency without reading the
-# condition it sits under is how the atom looked load-bearing; the resolver settled it.
-#
-# Nothing is lost by it either, for the same reason: poppler is built -cjk and has never used the
-# encoding tables poppler-data ships.
-#
-# The resolver found nine more orphans that no reading of the ebuilds would have produced by
-# hand — jbig2dec and libidn behind ghostscript, poppler-data as above, and dvipsk's kpathsea.
-# See the note in plan/20 §2.7 about why the lock for a removal has to be REGENERATED rather
-# than edited.
-#
-# INSTALLER ONLY. On the product this is plan/10 finding 6 and a genuine judgement call about
-# whether PDF thumbnails in a file manager are worth 137 MiB. On a medium that boots once to run
-# Calamares and is thrown away it is not a judgement call: nobody browses a PDF library on it.
-# The desktop profile is untouched and still has the thumbnailer.
-#
-# NB this REMOVES packages rather than reshaping one, so it moves installer.lock and
-# expected-packages.installer.txt — unlike the qttools flag above, which costs no atoms.
-kde-apps/thumbnailers             -pdf
+# Through 0.3.1 this dropped the Ghostscript chain — six packages, 96.0 MiB installed, serving
+# one Dolphin PDF/PostScript thumbnailer — from the installer medium only, on the judgement that
+# nobody browses a PDF library on a stick that boots once to run Calamares. That judgement is
+# sound; what changed is that it is no longer one this file gets to make. plan/34 §3 turns the
+# installer's tail into a systemd system extension built as a DIFFERENCE against the desktop's
+# tree, and dropping a USE flag the desktop has is a REMOVAL relative to that tree — the same
+# shape as the `#not-live` markers plan/34 §6 also removed, just through package.use instead of
+# a set file. The installer tree has to be the desktop's plus a tail, at identical versions, so
+# this profile now resolves `pdf` exactly like the desktop does and the whole chain (ghostscript,
+# its fonts, poppler-data, the orphans the resolver used to drop with it) is back.

@@ -925,29 +925,28 @@ assert_true "relock --restamp warns when the lock lacks an overlay package the p
 # The sets, with the same "distro" token the filenames use, rebranded by filter_set_file.
 assert_true "@desktop names the KCM from the overlay" \
     grep -qE '^distro-base/distro-kcm-managed(\s|$)' "$REPO_ROOT/config/portage/sets/desktop"
-# ...and marked `#not-live`, which is what keeps it off the installer medium (plan/20). A live
-# session enrols nothing, so the module would report "not enrolled" until the stick is pulled.
-assert_true "...and marks it #not-live, so no live medium emerges it" \
+# NOT marked `#not-live` any more (plan/34 §6, was plan/20): the marker is gone entirely, so the
+# KCM now reaches every profile that names @desktop, live media included — it is unenrolled and
+# harmless there (plan/34 §10), and #not-live itself must never come back on any set.
+assert_false "@desktop no longer marks the KCM #not-live" \
     grep -qE '^distro-base/distro-kcm-managed\s+#not-live$' "$REPO_ROOT/config/portage/sets/desktop"
-assert_eq "" \
-    "$(printf 'distro-base/distro-kcm-managed  #not-live\n' > "$TMP/s3.in"
-       PROFILE_ROLE=live filter_set_file "$TMP/s3.in" "$TMP/s3.out"; tr -d '[:space:]' < "$TMP/s3.out")" \
-    "filter_set_file drops a #not-live atom on a live profile"
 assert_eq "${DISTRO_ID}-base/${DISTRO_ID}-kcm-managed" \
-    "$(printf 'distro-base/distro-kcm-managed  #not-live\n' > "$TMP/s4.in"
+    "$(printf 'distro-base/distro-kcm-managed\n' > "$TMP/s3.in"
+       PROFILE_ROLE=live filter_set_file "$TMP/s3.in" "$TMP/s3.out"; tr -d '[:space:]' < "$TMP/s3.out")" \
+    "filter_set_file no longer treats PROFILE_ROLE=live specially — nothing to drop any more"
+assert_eq "${DISTRO_ID}-base/${DISTRO_ID}-kcm-managed" \
+    "$(printf 'distro-base/distro-kcm-managed\n' > "$TMP/s4.in"
        PROFILE_ROLE=target filter_set_file "$TMP/s4.in" "$TMP/s4.out"; tr -d '[:space:]' < "$TMP/s4.out")" \
-    "...and keeps it, rebranded and with the marker stripped, on a target profile"
-# The Calamares half is the one a live medium DOES want, and it is in a different set precisely
-# so the two can differ. If this ever picked up a marker, the medium would lose the enrolment
-# page and installs would silently produce unenrolled machines.
-assert_false "the Calamares enrolment page is NOT #not-live — the installer needs it" \
+    "...same rebranded atom on a target profile"
+# No set anywhere may carry the marker again — tests/test-profiles.sh has the general version of
+# this; repeated here because this file is the one that would notice first if it did.
+assert_false "the Calamares enrolment page set carries no #not-live" \
     grep -q '#not-live' "$REPO_ROOT/config/portage/sets/installer"
-# Stage 40 must not warn about the module being absent on a medium that dropped it on purpose:
-# a warning nobody should act on is how the ones that matter get ignored.
-assert_true "stage 40 treats a live profile's missing KCM as deliberate, not as a warning" \
+# Stage 40/50 no longer treat the KCM as deliberately absent on a live profile — it is not.
+assert_false "stage 40 no longer has a 'deliberately absent' branch for the live KCM" \
     grep -q 'the managed System Settings module is deliberately absent' \
         "$REPO_ROOT/scripts/stages/40-configure.sh"
-assert_true "stage 50 fails a live medium that carries the KCM anyway" \
+assert_false "stage 50 no longer fails a live medium for carrying the KCM" \
     grep -q 'It is marked #not-live in config/portage/sets/desktop' \
         "$REPO_ROOT/scripts/stages/50-prune.sh"
 assert_eq "${DISTRO_ID}-base/${DISTRO_ID}-kcm-managed" \

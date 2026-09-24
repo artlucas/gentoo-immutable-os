@@ -1,5 +1,7 @@
-# Root is mounted by the initrd from the UKI cmdline (root=PARTLABEL=@IMG_ROOT_PARTLABEL@).
-# /etc overlay is mounted by the etc-overlay dracut module, NOT here (plan/01: overlay
+# Root is mounted by the initrd from the UKI cmdline (root=PARTLABEL=<this image's own root
+# label> — not spelled out here as a token: this file has to render BYTE-IDENTICAL for every
+# role, plan/34 §6, and the root label is one more thing that differs by role, same as var/esp
+# below). /etc overlay is mounted by the etc-overlay dracut module, NOT here (plan/01: overlay
 # upperdir paths would not be /sysroot-prefixed by the fstab generator in the initrd).
 #
 # /var and /efi are NOT here either (plan/34 §4). This EROFS now boots as more than one role's

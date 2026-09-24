@@ -100,9 +100,9 @@ kde-plasma/plasma-desktop         semantic-desktop -webengine -ibus -scim -sdl
 # There is no "packagekit" flag on discover; the PackageKit backend is not built unless
 # firmware or snap are. Flatpak backend only, exactly as gnome-software was.
 #
-# STAYS IN THIS SHARED FILE even though the package is `#not-live` (plan/20 §4.3), and moving it
-# to package.use/profile.installer would be exactly backwards: USE is resolved per package for
-# the profile that still HAS the package, and a line here is inert on a profile that does not.
+# STAYS IN THIS SHARED FILE: discover is on every profile with @desktop now (plan/34 §6; through
+# 0.3.1 it was `#not-live` and only the product had it), so a shared USE line is correct rather
+# than merely convenient.
 kde-plasma/discover               flatpak -firmware -snap -telemetry -webengine
 # brightness-control is DDC/CI for external monitors via app-misc/ddcutil. Laptop backlight
 # goes through logind either way, so this buys a package and no function we need.

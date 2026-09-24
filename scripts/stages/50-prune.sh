@@ -105,6 +105,18 @@ du -sm "$T"/usr/src "$T"/usr/lib/firmware "$T"/usr/lib/modules "$T"/usr/lib/llvm
        "$T"/usr/share/fonts "$T"/usr/share/locale "$T"/usr/share/icons "$T"/usr/lib64 \
        "$T"/usr "$T"/var > "$REPORT_DIR/size-report.txt"
 
+# GRUB's own VDB CONTENTS, saved here because section 2 immediately below deletes $T/var/db/pkg
+# and section 3j — which needs this list to delete GRUB's files without touching a directory it
+# shares with another package (plan/34 §6) — runs long after that. The audit gate above is the
+# last point in this stage where the VDB is guaranteed to still exist.
+GRUB_CONTENTS_SAVED="$REPORT_DIR/grub-contents.txt"
+GRUB_CONTENTS_SRC="$(compgen -G "$T/var/db/pkg/sys-boot/grub-*/CONTENTS" | head -1)"
+if [[ -n $GRUB_CONTENTS_SRC ]]; then
+  cp -- "$GRUB_CONTENTS_SRC" "$GRUB_CONTENTS_SAVED"
+else
+  rm -f -- "$GRUB_CONTENTS_SAVED"
+fi
+
 # ---- 2. delete Portage artifacts ------------------------------------------------
 rm -rf -- "$T/var/db/pkg" "$T/var/db/repos" "$T/var/cache"/* \
           "$T/etc/portage" "$T/usr/share/portage"
@@ -520,63 +532,24 @@ if [[ -e $T/usr/share/applications/linguist.desktop ]]; then
            "$T/usr/lib64/qt6/bin/linguist"
 fi
 
-# ---- 3i. wallpapers, on live media only (plan/20) --------------------------------------
-# 255 MiB of PNG and JPEG, and the most expensive tree in this image per byte DOWNLOADED: it
-# compresses at 99%, so unlike almost everything else here the installed cost and the shipped
-# cost are the same number (plan/10 §5 measured 256 MiB installed against 254 MiB of EROFS).
-#
-# The set already dropped the larger half: kde-plasma/plasma-workspace-wallpapers is `#not-live`
-# in config/portage/sets/desktop, so on a live profile it is never emerged and 216.8 MiB never
-# reaches the target at all — which is strictly better than deleting it here, because the atom
-# also leaves installer.lock and the package audit.
-#
-# What is left is Breeze's own `Next`, 38.3 MiB, and THAT is why this section exists: it comes
-# from kde-plasma/breeze, which also carries the widget style, the colour scheme, the window
-# decoration and the look-and-feel fallback the whole session resolves through. There is no USE
-# flag for it and no dropping the package, so a file deletion is the only lever.
-#
-# LIVE ONLY, and the role is the reason rather than the profile name: a medium that boots once
-# to run Calamares and is then thrown away is the one case where a desktop background is worth
-# less than the 255 MiB it costs on the stick. The product keeps every wallpaper it has — the
-# desktop lock and expected-packages list are untouched by this change.
-#
-# ONE EXCEPTION, AND IT IS NOT A HOLE IN THE RULE. Stage 40 installs a single wallpaper package of
-# this image's own — $DISTRO_ID, 0.4 MiB, from config/calamares/system/wallpaper — and this
-# section deletes around it rather than over it. That is what changed when the medium stopped
-# using the solid-colour plugin: org.kde.image needs an image, and the cheapest correct one is
-# the brand mark the boot splash has already shown twice. The saving is 254.4 of the 255 MiB, so
-# the exception costs 0.15% of it.
-#
-# It is a DENYLIST-BY-EXCLUSION rather than a `rm -rf` of two named packages, and that direction
-# matters: a new wallpaper arriving in the closure — breeze picking up a second one, or a
-# dependency that ships artwork — is silently kept by a named-target deletion and silently dropped
-# by this one. The saving should not depend on this comment staying current.
-#
-# The containment names that package explicitly, in the live medium's layout script, because
-# org.kde.image with an unresolvable image is an empty desktop rather than a plain one. Deleting
-# the rest and NOT naming what is left is the one combination that produces a visibly broken
-# session, so the assertion in section 4 checks both halves together.
-if [[ $PROFILE_ROLE == live ]]; then
-  if [[ -d $T/usr/share/wallpapers ]]; then
-    wp_mib=$(du -xsm "$T/usr/share/wallpapers" 2>/dev/null | cut -f1)
-    # -mindepth/-maxdepth 1: wallpaper packages are directories directly under this one, and
-    # nothing else belongs here. `! -name` on the one we keep, so the deletion is defined by what
-    # survives rather than by a list of what goes.
-    find "$T/usr/share/wallpapers" -mindepth 1 -maxdepth 1 ! -name "$DISTRO_ID" \
-         -exec rm -rf -- {} +
-    wp_left_mib=$(du -xsm "$T/usr/share/wallpapers" 2>/dev/null | cut -f1)
-    log "live profile ($BUILD_PROFILE): /usr/share/wallpapers pruned to the $DISTRO_ID package
-  alone (${wp_mib:-?} -> ${wp_left_mib:-?} MiB) — the desktop containment and the lock screen
-  both name it by path on this medium"
-  fi
-fi
+# ---- 3i is gone (plan/34 §6) -------------------------------------------------------------
+# It used to delete Breeze's `Next` wallpaper (38.3 MiB) from live media, around a single
+# exception this image's own wallpaper package. That was always a DELETION relative to the
+# desktop tree — the wallpaper collection the set marker below also dropped, and Breeze's own
+# `Next` alongside it, both files the desktop ships and this profile does not. plan/34 §3 turns
+# this profile's tail into a systemd system extension built as a tree-diff against the desktop's,
+# and a diff cannot represent "used to be here, isn't now" — so every deletion in this file that
+# touched something the desktop ships had to go. The wallpaper collection is back, full stop.
 
 # ---- 3j. GRUB, on live media only (plan/20 §4.1) ---------------------------------------
 # 68.4 MiB installed, 41.6 MiB of EROFS, and not one byte of it is ever executed.
 #
 # sys-boot/grub is in this closure because it is an UNCONDITIONAL RDEPEND of app-admin/calamares
-# — there is no USE flag for it and no dropping the package, so this is a file deletion for the
-# same reason section 3i is. config/portage/sets/installer already calls the whole tail out
+# — there is no USE flag for it and no dropping the package, so a file deletion is the only lever.
+# UNLIKE the sections plan/34 §6 removed, this one stays: GRUB exists only because Calamares
+# needs it, so it is never on the desktop tree to begin with — deleting its files here shrinks
+# the installer's own tail and deletes nothing the plan/34 §3 extension's tree-diff would ever
+# see on the desktop side. config/portage/sets/installer already calls the whole tail out
 # ("a UKI-booting, systemd-boot, EROFS distro has no use whatsoever for GRUB"), and
 # config/calamares/modules/imagebootloader.conf.in says the operative half out loud: GRUB "is on
 # this medium only because it is an unconditional RDEPEND of app-admin/calamares, and it is
@@ -601,86 +574,58 @@ fi
 # being removed here, and /usr/libexec/libostree/grub2-15_ostree, which is ostree's file rather
 # than GRUB's. Both measure 0.0 MiB. Deleting a package's contents for no bytes buys nothing
 # except one more path that can silently stop matching.
+#
+# GRUB'S OWN VDB CONTENTS, not a hardcoded path list — found by the real build under plan/34 §6's
+# rule (stage 50 on a live profile may never delete a path the desktop tree also has). The old
+# `rm -rf "$T/etc/grub.d"` took the WHOLE directory, and /etc/grub.d is not GRUB's alone:
+# dev-util/ostree installs /etc/grub.d/15_ostree — a symlink to
+# /usr/libexec/libostree/grub2-15_ostree, which is what the comment above already meant to leave
+# alone — and flatpak's dependency chain pulls libostree onto the desktop tree too, so that
+# symlink is one the desktop ships and this profile must not delete. A hardcoded list cannot
+# express "everything in this directory EXCEPT what one other package also put there"; GRUB's own
+# CONTENTS can, because it simply never names 15_ostree in the first place. This also drops the
+# separate hardcoded `/etc/default/grub` and `/usr/bin/grub-*` lines below — both are already
+# `obj` entries in GRUB's own CONTENTS, so one loop covers everything the package installed.
+#
+# Read from the copy section 2 (above, much earlier in this stage) saved BEFORE deleting the VDB
+# — $T/var/db/pkg is long gone by the time this section runs, so the live tree is not an option.
 if [[ $PROFILE_ROLE == live ]]; then
-  if [[ -d $T/usr/lib/grub || -e $T/usr/bin/grub-install ]]; then
+  GRUB_CONTENTS="$GRUB_CONTENTS_SAVED"
+  if [[ -s $GRUB_CONTENTS ]]; then
     grub_mib=$(du -xscm "$T/usr/lib/grub" "$T/usr/share/grub" 2>/dev/null | tail -n1 | cut -f1)
-    log "live profile ($BUILD_PROFILE): removing GRUB (${grub_mib:-?} MiB of platform modules
-  and data, plus 27 tools and the /etc snippets). It is an unconditional RDEPEND of calamares
-  and is never run — the medium boots a UKI and the install writes systemd-boot (plan/20 §4.1)"
-    rm -rf -- "$T/usr/lib/grub" "$T/usr/share/grub" "$T/etc/grub.d"
-    rm -f  -- "$T/etc/default/grub"
-    find "$T/usr/bin" -maxdepth 1 -name 'grub-*' -delete
+    log "live profile ($BUILD_PROFILE): removing GRUB's own files (${grub_mib:-?} MiB of platform
+  modules and data, plus its tools and /etc snippets — read from sys-boot/grub's own VDB CONTENTS,
+  so a directory it shares with another package is never taken wholesale). It is an unconditional
+  RDEPEND of calamares and is never run — the medium boots a UKI and the install writes
+  systemd-boot (plan/20 §4.1)"
+    grub_removed=0
+    while read -r ftype fpath _; do
+      case $ftype in
+        obj|sym) rm -f -- "$T$fpath"; grub_removed=$((grub_removed + 1)) ;;
+      esac
+    done < "$GRUB_CONTENTS"
+    (( grub_removed > 0 )) \
+      || die "sys-boot/grub's CONTENTS named no obj/sym entries — the CPV glob above is matching
+  something that installed nothing, which should be impossible"
+    # GRUB's own private subtrees, now empty leaf-first — /usr/bin, /usr/share and /etc are NOT
+    # touched here, only the two directories that belong to GRUB alone.
+    find "$T/usr/lib/grub" "$T/usr/share/grub" -depth -type d -empty -delete 2>/dev/null || true
+    log "live profile ($BUILD_PROFILE): removed $grub_removed file(s)/symlink(s) belonging to grub"
   fi
 fi
 
-# ---- 3k. the Emoji Selector, on live media only -----------------------------------------
-# 0.4 MiB, and this section is NOT about the bytes — it is section 3g's argument, one audience
-# further out. 3g and 3h delete the Qt D-Bus Viewer and Qt Linguist because a developer tool has
-# no audience on this image; this deletes an emoji picker because it has no audience on a medium
-# whose entire session is one installer, one language picker and a disk chooser. There is nowhere
-# on a live stick to paste an emoji INTO.
-#
-# It reaches the image inside kde-plasma/plasma-desktop, which is the desktop itself, so there is
-# no set marker and no USE flag — a file deletion is the only lever, the same position 3i and 3j
-# are in. Confirmed against the pinned tree's own binary package rather than inferred from the
-# ebuild, which never mentions it: plasma-desktop-6.6.6 ships /usr/bin/plasma-emojier, the QML
-# plugin under org/kde/plasma/emoji, and TWO descriptors of the same name.
-#
-# BOTH DESCRIPTORS, because they do different jobs and deleting one leaves the feature half
-# present. /usr/share/applications is the launcher entry ("Emoji Selector", which is what a user
-# sees in Kickoff); /usr/share/kglobalaccel is the global-shortcut registration, and a kglobalaccel
-# descriptor whose Exec no longer exists is a shortcut that fails silently rather than one that is
-# gone. The same line 3g draws between a menu entry and a binary, drawn twice here.
-#
-# The QML plugin goes with it and takes nothing else: org/kde/plasma/emoji is imported by no file
-# in the target outside its own qmldir and typeinfo — checked, because Plasma's virtual keyboard
-# and the input-method panel were the plausible second consumers and neither is one.
-#
-# The .mo files are included, unlike the 0.0 MiB tails section 3j deliberately leaves alone. They
-# are named for the binary rather than for a package, so `emojier` is the whole predicate and the
-# sweep cannot quietly start matching something else — which is the property that made 3j's
-# leave-it-alone rule right there and makes the opposite right here.
-if [[ $PROFILE_ROLE == live ]]; then
-  if [[ -e $T/usr/share/applications/org.kde.plasma.emojier.desktop ]]; then
-    log "live profile ($BUILD_PROFILE): removing the Emoji Selector (menu entry, global-shortcut
-  descriptor, binary and QML plugin) — plasma-desktop ships it and a medium that runs one
-  installer has nothing to paste an emoji into"
-    rm -f  -- "$T/usr/share/applications/org.kde.plasma.emojier.desktop" \
-              "$T/usr/share/kglobalaccel/org.kde.plasma.emojier.desktop" \
-              "$T/usr/bin/plasma-emojier"
-    rm -rf -- "$T/usr/lib64/qt6/qml/org/kde/plasma/emoji"
-    find "$T/usr/share/locale" -name 'org.kde.plasma.emojier.mo' -delete
-  fi
-fi
+# ---- 3k is gone (plan/34 §6) -------------------------------------------------------------
+# It used to delete the Emoji Selector (menu entry, global-shortcut descriptor, binary and QML
+# plugin) from live media — all of it files plasma-desktop ships, and plasma-desktop is the
+# desktop itself. Same reasoning as 3i: a deletion relative to the desktop tree that plan/34 §3's
+# tree-diff cannot represent. Gone; nothing replaces it.
 
-# ---- 3m. /usr/share/i18n/SUPPORTED, on the installer medium only (plan/22 §6) --------------
-#
-# THIS USED TO BE A DELETION THAT CHANGED A UI. Calamares' `locale` module reads
-# /usr/share/i18n/SUPPORTED FIRST and only falls back to localeGenPath
-# (modules/locale/Config.cpp:51). That file is glibc's list of every locale glibc CAN build —
-# roughly five hundred — while this image compiles exactly the nine in config/languages.conf, so
-# the stock locale dialog offered `en_CA.UTF-8` and hundreds of others of which the machine being
-# installed could load nine. Removing the file made loadLocales() fall through to /etc/locale.gen,
-# which stage 40 writes from the same table, and the dialog then listed what the target could load.
-#
-# THE PAGE THAT READ IT IS GONE (plan/28 §6). `location` replaced the stock `locale` module and
-# asks for a place rather than a locale — the language page already chose the language — so
-# nothing on this medium consults SUPPORTED any more and the deletion changes no UI at all.
-#
-# IT STAYS, and the reason is now the plain one: 22 KiB of a list this image cannot act on, on a
-# medium that is booted once and thrown away. The line is kept rather than dropped because the
-# file has a way of becoming load-bearing again — anything that shells out to `locale -a`, or a
-# future page that offers formats, would find five hundred entries where the image has nine.
-#
-# LIVE PROFILES ONLY, and the distinction is not cosmetic: on an installed system this file is
-# glibc's own data and nothing here is entitled to an opinion about it.
-if [[ $PROFILE_ROLE == live ]]; then
-  if [[ -e $T/usr/share/i18n/SUPPORTED ]]; then
-    log "live profile ($BUILD_PROFILE): removing /usr/share/i18n/SUPPORTED — this image compiled
-  nine locales and that file lists five hundred it cannot load (plan/22 §6, plan/28 §6)"
-    rm -f -- "$T/usr/share/i18n/SUPPORTED"
-  fi
-fi
+# ---- 3m is gone (plan/34 §6) -------------------------------------------------------------
+# It used to delete /usr/share/i18n/SUPPORTED on live media (plan/22 §6) — glibc's own file,
+# shipped identically on the desktop tree. The comment above it, before removal, already said the
+# deletion no longer changes any UI (plan/28 §6 moved Calamares off the module that read it); what
+# it still did was carry a difference from the desktop's own copy of a glibc file, which plan/34
+# §3's tree-diff has no way to represent. Gone.
 
 # ---- 3n. IBM Plex: keep the two faces the installer renders (plan/28) -------------------
 #
@@ -708,7 +653,7 @@ fi
 #
 # THE RULE IS STATED POSITIVELY, which is the whole point: everything that is not IBMPlexSans-* or
 # IBMPlexMono-* goes. Listing the families to DELETE would be a list that silently stops matching
-# the day upstream adds a twelfth script — the failure mode section 3i's comment warns about —
+# the day upstream adds a twelfth script — the failure mode a denylist-by-name always risks —
 # whereas a keep-list can only ever fail in the direction that is loud, because the assertion
 # below requires both kept families to still be there afterwards. The HYPHEN is what makes the
 # keep-list precise, and it is doing more work than it looks: IBMPlexSansCondensed-Regular.ttf
@@ -817,55 +762,26 @@ if profile_has_set desktop; then
     && violation "linguist.desktop is back in the menu — section 3h's paths no longer match what qttools installs"
   [[ -e $T/usr/lib64/qt6/bin/linguist || -e $T/usr/bin/linguist6 ]] \
     && violation "Qt Linguist binary survived the prune — section 3h deleted the wrong path"
-  # Section 3i (plan/20), BOTH directions, because this change can fail in both and neither
-  # failure is visible to stage 70 — it reads a serial port, and a desktop that comes up empty
-  # reports green.
-  #
-  # On a live medium the two halves have to agree: exactly one wallpaper left, AND the containment
-  # naming it. Either half alone is worse than neither — the collection deleted with nothing named
-  # is an empty desktop, and a name that resolves while 255 MiB is still on the stick is the cost
-  # without the saving.
-  # Section 3m (plan/22 §6), and it is asserted rather than trusted for the same reason the
-  # wallpaper is: the symptom of getting it wrong is a page that draws fine and lists the wrong
-  # things, which no serial-console test can see.
-  if [[ $PROFILE_ROLE == live ]]; then
-    [[ -e $T/usr/share/i18n/SUPPORTED ]] \
-      && violation "/usr/share/i18n/SUPPORTED survived the prune on a live medium. Calamares'
-  locale module reads it BEFORE localeGenPath, so its language dialog will offer the ~500 locales
-  glibc could build instead of the nine this image compiled — and choosing any of the others gives
-  the installed system LANG=en_US.UTF-8 and a warning nobody reads (plan/22 §6)"
-    # The other half, and it has to be the other half: the fallback is only reached if the file
-    # above is gone, and it is only USEFUL if what it falls back to exists.
-    [[ -s $T/etc/locale.gen ]] \
-      || violation "/etc/locale.gen is missing or empty on a live medium. With
-  /usr/share/i18n/SUPPORTED deleted it is the installer's ONLY source of available locales, so the
-  locale page would come up with an empty list and a warning in the log"
-    while IFS='|' read -r li _ _ _; do
-      [[ -n $li && $li != en ]] || continue
-      [[ -s $T/etc/calamares/branding/installer/lang/calamares-installer_${li}.qm ]] \
-        || violation "the compiled translation for '$li' is missing from the branding component.
-  Stage 40 built it from config/calamares/branding/installer/lang/; without it every page this
-  project wrote is English for a user who picked that language (plan/22 §4)"
-    done <<<"$LANGUAGES_TABLE"
-  fi
+  # Sections 3i, 3k and 3m are gone (plan/34 §6) — the wallpaper collection, the Emoji Selector
+  # and /usr/share/i18n/SUPPORTED are all present now on every profile with @desktop, live
+  # included, the same as the product. What is left to assert is the same thing the pre-plan/34
+  # `else` branch always asserted for the desktop: Breeze's own default survived the prune, since
+  # nothing here has any business deleting it.
+  [[ -d $T/usr/share/wallpapers/Next ]] \
+    || violation "/usr/share/wallpapers/Next is missing. It is kde-plasma/breeze's default
+  wallpaper and org.kde.breeze.desktop/contents/defaults names it ([Wallpaper] Image=Next), so
+  the desktop would come up with no background."
 
   if [[ $PROFILE_ROLE == live ]]; then
+    # This medium's OWN wallpaper (config/calamares/system/wallpaper, stage 40) is unrelated to
+    # sections 3i/3k/3m above — it is a branding choice, not a size trim, and it is still made
+    # here: the live session's first-run layout script and its lock screen both point at it
+    # explicitly rather than at Breeze's Next, so the stick looks like the product from the first
+    # frame rather than like plain Breeze.
     [[ -d $T/usr/share/wallpapers/$DISTRO_ID ]] \
       || violation "/usr/share/wallpapers/$DISTRO_ID is missing from a live medium. Stage 40
   installs it from config/calamares/system/wallpaper and the layout script and the lock screen
   both name it by path, so this medium has a wallpaper plugin pointed at nothing"
-    wp_extra="$(find "$T/usr/share/wallpapers" -mindepth 1 -maxdepth 1 ! -name "$DISTRO_ID" \
-                     2>/dev/null || true)"
-    [[ -n $wp_extra ]] \
-      && violation "wallpapers other than $DISTRO_ID survived the prune on a live medium —
-  section 3i did not run, or ran before something reinstalled them, and this is up to 255 MiB
-  of PNG that EROFS gives back 1% of: $wp_extra"
-    # Breeze's own default, named separately from the sweep above because it is the 38.3 MiB half
-    # that has no set marker and no USE flag behind it — if 3i ever stops matching, this is the
-    # one that comes back.
-    [[ -e $T/usr/share/wallpapers/Next ]] \
-      && violation "Breeze's Next wallpaper is back on a live medium — 38.3 MiB that section
-  3i is supposed to delete, because kde-plasma/breeze cannot be dropped as a package"
     WP_LAYOUT="$T/usr/share/plasma/look-and-feel/$DISTRO_ID/contents/layouts/org.kde.plasma.desktop-layout.js"
     if [[ -f $WP_LAYOUT ]]; then
       grep -qF "wallpaperPlugin = 'org.kde.image'" "$WP_LAYOUT" \
@@ -874,12 +790,12 @@ if profile_has_set desktop; then
   that decides what the containment draws"
       grep -qF "'/usr/share/wallpapers/$DISTRO_ID/'" "$WP_LAYOUT" \
         || violation "the live medium's layout script selects org.kde.image but does not name
-  /usr/share/wallpapers/$DISTRO_ID. The unnamed fallback is Breeze's Next, which section 3i
-  has just deleted, so the containment would come up blank"
+  /usr/share/wallpapers/$DISTRO_ID, so the containment would draw Breeze's Next instead of this
+  medium's own brand wallpaper"
     else
       violation "no layout script in the live medium's look-and-feel package
   ($DISTRO_ID/contents/layouts) — stage 40 installs it for live profiles and it is what points
-  the containment at the one wallpaper section 3i left in place"
+  the containment at this medium's own wallpaper"
     fi
     # The lock screen is a different file reading a different config group, and on this medium it
     # is the screen most likely to be facing the room: Autolock stays on, so the shield engages
@@ -888,30 +804,13 @@ if profile_has_set desktop; then
     if [[ -f $LOCKRC ]]; then
       grep -qF "Image=/usr/share/wallpapers/$DISTRO_ID/" "$LOCKRC" \
         || violation "/etc/xdg/kscreenlockerrc does not point the greeter at
-  /usr/share/wallpapers/$DISTRO_ID. kscreenlocker does not read the containment's wallpaper —
-  its own fallback chain ends at Breeze's Next, which section 3i deleted, so the lock screen
-  would draw black behind the unlock UI"
+  /usr/share/wallpapers/$DISTRO_ID. kscreenlocker does not read the containment's wallpaper — its
+  own fallback chain ends at Breeze's Next, so the lock screen would show the wrong background"
     else
       violation "no /etc/xdg/kscreenlockerrc on a live medium — stage 40 installs it from
   config/calamares/system/kscreenlockerrc.in, and it carries both the password-prompt answer and
   the greeter's wallpaper"
     fi
-    # Section 3k, asserted the way 3g and 3h are: one name, both descriptors, and the binary.
-    emoji_left="$(find "$T/usr/share/applications" "$T/usr/share/kglobalaccel" "$T/usr/bin" \
-                       "$T/usr/lib64/qt6/qml/org/kde/plasma" -maxdepth 1 \
-                       \( -name '*emojier*' -o -name 'emoji' \) 2>/dev/null || true)"
-    [[ -n $emoji_left ]] \
-      && violation "the Emoji Selector survived the prune on a live medium — section 3k's paths
-  no longer match what kde-plasma/plasma-desktop installs: $emoji_left"
-  else
-    # ...and the other direction, which is the one that would damage the PRODUCT. If 3i's role
-    # check ever widened, the desktop image would ship with no background and nothing here would
-    # be different — the containment still asks org.kde.image for `Next`, and gets nothing.
-    [[ -d $T/usr/share/wallpapers/Next ]] \
-      || violation "/usr/share/wallpapers/Next is missing from a PROFILE_ROLE=$PROFILE_ROLE
-  image. It is kde-plasma/breeze's default wallpaper and org.kde.breeze.desktop/contents/defaults
-  names it ([Wallpaper] Image=Next), so the desktop would come up with no background. Section 3i
-  is supposed to run on live media only"
   fi
 fi
 # ---- the installer medium (plan/16) ------------------------------------------------------
@@ -932,16 +831,32 @@ if profile_has_set installer; then
   every password on Calamares' users page with 'The password fails the dictionary check -
   error loading dictionary', and the install could never get past it"
   done
-  # Section 3j: GRUB must be gone, and its removal must not have taken the installer with it.
-  # A deletion by path is a silent no-op the moment a path stops matching — sys-boot/grub is
-  # still an unconditional RDEPEND of calamares, so the package will keep arriving and only this
-  # check would notice that 68 MiB of it came back.
-  for g in usr/lib/grub usr/share/grub usr/bin/grub-install usr/bin/grub-mkconfig etc/grub.d \
-           etc/default/grub; do
-    [[ -e $T/$g ]] \
-      && violation "GRUB residue after prune: /$g — section 3j's paths no longer match what
-  sys-boot/grub installs, and this medium is carrying a bootloader it never runs"
-  done
+  # Section 3j: every file GRUB's OWN CONTENTS named must be gone — not a hardcoded path list,
+  # for the same reason 3j itself reads CONTENTS rather than deleting by name: a hardcoded list
+  # here would pass even if 3j's own sweep silently stopped matching a renamed path (this is the
+  # positive control, so it has to prove the sweep RAN, not just that its old guesses are absent).
+  # etc/grub.d is deliberately NOT in this list any more: libostree's 15_ostree lives there too,
+  # the desktop tree carries it, and this medium's own /etc/grub.d directory has to survive with
+  # exactly that one file left in it.
+  [[ -s $GRUB_CONTENTS_SAVED ]] \
+    || violation "no saved GRUB CONTENTS to verify against — section 2's capture (near the top of
+  this stage) found no sys-boot/grub in the VDB, which should be impossible on a live profile"
+  grub_residue=0
+  while read -r ftype fpath _; do
+    case $ftype in
+      obj|sym)
+        [[ -e $T$fpath ]] && { violation "GRUB residue after prune: $fpath — section 3j's
+  CONTENTS-driven sweep did not take it, and this medium is carrying a bootloader it never runs"
+          grub_residue=$((grub_residue + 1)); } ;;
+    esac
+  done < "$GRUB_CONTENTS_SAVED"
+  # The positive control itself: libostree's snippet, which the desktop tree also ships, must
+  # have survived section 3j's narrower sweep. If this is ever missing, 3j widened back into
+  # deleting a path it does not own — the exact bug plan/34 §6 found and fixed.
+  [[ -L $T/etc/grub.d/15_ostree ]] \
+    || violation "etc/grub.d/15_ostree is missing after prune — it belongs to dev-util/ostree,
+  not GRUB, and the desktop tree ships it too. Section 3j's sweep must be reading GRUB's own
+  CONTENTS and nothing wider, or this is exactly the plan/34 §6 regression it exists to catch."
   # ...and the deletion must not have widened into what the install actually writes. The
   # bootloader the INSTALLED machine gets is systemd-boot, read by the imagebootloader module
   # out of the mounted target's own /usr — not from this medium — but this is the assertion
@@ -1162,28 +1077,13 @@ else
     || violation "libnss_systemd.so no longer exports _nss_systemd_getspnam_r — a managed user
   would resolve through getent passwd and have no password to check"
 fi
-# The front end, in whichever direction this profile wants it. On a medium somebody keeps, the
-# /usr/share sweeps above run straight over this path and taking it leaves a wrapper that opens
-# on nothing. On a live medium stage 40 removed all three files on purpose (plan/20 §2.2), and
-# the check that matters is the opposite one — the front end ships from config/rootfs, not from
-# a package, so neither the lock nor the audit would ever mention it coming back.
-if [[ $PROFILE_ROLE == live ]]; then
-  MANAGED_UI_AFTER=""
-  for f in "usr/bin/$DISTRO_ID-managed-ui" \
-           "usr/share/applications/$DISTRO_ID-managed-ui.desktop" \
-           "usr/share/$DISTRO_ID/managed-ui"; do
-    [[ -e $T/$f ]] && MANAGED_UI_AFTER+=" /$f"
-  done
-  [[ -z ${MANAGED_UI_AFTER// /} ]] \
-    || violation "the managed-mode front end survived onto a PROFILE_ROLE=$PROFILE_ROLE medium:$MANAGED_UI_AFTER
-  A live session is never enrolled, so this is a 'Managed Settings' entry in Kickoff that can
-  only answer 'not enrolled'. Stage 40 removes it just after install_rootfs_overlay; if it is
-  here, those paths no longer match what the overlay installs."
-else
-  [[ -f $T/usr/share/$DISTRO_ID/managed-ui/main.qml ]] \
-    || violation "/usr/share/$DISTRO_ID/managed-ui/main.qml missing after prune — the /usr/share
+# The front end, on every profile now (plan/34 §6): stage 40 used to remove all three files on a
+# live medium (plan/20 §2.2), a deletion the plan/34 §3 extension's tree-diff cannot represent,
+# so it no longer does. The /usr/share sweeps above run straight over this path either way, and
+# taking it would leave a wrapper that opens on nothing.
+[[ -f $T/usr/share/$DISTRO_ID/managed-ui/main.qml ]] \
+  || violation "/usr/share/$DISTRO_ID/managed-ui/main.qml missing after prune — the /usr/share
   sweeps run over this path, and without it the front end opens on nothing"
-fi
 # ...and the timer must still be disabled, for exactly the reason sssd must be (plan/19 §8.1).
 MANAGED_ENABLED_AFTER="$(find "$T/etc/systemd/system" -name "$DISTRO_ID-managed*" \
   -printf '%P\n' 2>/dev/null | tr '\n' ' ')"
@@ -1200,17 +1100,10 @@ fi
 # in both directions, and each direction fails differently.
 MANAGED_KCM_SO="$(compgen -G "$T/usr/lib*/qt6/plugins/plasma/kcms/systemsettings/kcm_managed.so" || true)"
 MANAGED_KCM_DESKTOP="$(compgen -G "$T/usr/share/applications/kcm_managed.desktop" || true)"
-# ...except on a live medium, where the answer is that neither half should be here at all
-# (plan/20). The KCM is `#not-live` in config/portage/sets/desktop, so a live build never
-# emerges it — and if one turns up anyway, filter_set_file is not filtering or the profile's
-# lock was resolved before the marker existed. Neither is visible any other way: the module
-# would simply appear in a System Settings nobody opens, on a stick that enrols nothing.
-if [[ $PROFILE_ROLE == live && ( -n $MANAGED_KCM_SO || -n $MANAGED_KCM_DESKTOP ) ]]; then
-  violation "the managed-mode System Settings module is installed on a PROFILE_ROLE=$PROFILE_ROLE
-  medium. It is marked #not-live in config/portage/sets/desktop because a live session is never
-  enrolled; re-resolve this profile's lock:
-      scripts/relock.sh --all --profile $BUILD_PROFILE"
-fi
+# No live-only exception any more (plan/34 §6): the KCM's `#not-live` marker in
+# config/portage/sets/desktop is gone, so a live build emerges it exactly like the desktop's —
+# the only invariant left to check is that both halves of the pair rise and fall together, same
+# as on every other profile.
 if [[ -n $MANAGED_KCM_DESKTOP && -z $MANAGED_KCM_SO ]]; then
   violation "kcm_managed.desktop survived the prune but kcm_managed.so did not — System Settings
   would list a module whose plugin is gone, and opening it is an error dialog"
@@ -1361,11 +1254,12 @@ compgen -G "$T/usr/lib/llvm/"*/lib64/libLLVM.so* >/dev/null \
 # library look droppable to the next person editing that loop. It is not — ghostscript and
 # libqalculate link it.
 #
-# That count is now PROFILE-DEPENDENT and gets smaller, not larger: the installer medium drops
-# ghostscript (package.use/profile.installer) and OpenCV (Spectacle is #not-live), so on a live
-# build libqalculate may be the only consumer left (plan/20 §2.4, §2.5). The assertion is
-# unaffected — it checks that gcc's runtime file is PRESENT, and sys-devel/gcc installs it into
-# every root regardless of who links it — but do not read the sentence above as a live count.
+# Through 0.3.1 that count was PROFILE-DEPENDENT: the installer medium dropped ghostscript
+# (package.use/profile.installer) and OpenCV (Spectacle was `#not-live`), so a live build could
+# have libqalculate as the only consumer left. plan/34 §6 undid both — the installer tree is the
+# desktop's plus the tail now, so every profile with @desktop has the same consumers of libgomp.
+# The assertion was always unaffected either way: it checks that gcc's runtime file is PRESENT,
+# and sys-devel/gcc installs it into every root regardless of who links it.
 for lib in libstdc++.so.6 libgcc_s.so.1 libgomp.so.1; do
   find "$T/usr/lib/gcc" -name "$lib" 2>/dev/null | grep -q . \
     || violation "gcc runtime library $lib missing after prune (toolchain split cut too deep)"

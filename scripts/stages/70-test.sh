@@ -74,6 +74,19 @@ assert_report() {  # LOG expected_version
   [[ $got == "$want_ver" ]] || die "guest version=$got, expected $want_ver"
   [[ $(field "$slog" etc_overlay) == overlay ]] || die "guest /etc is not an overlay"
   [[ $(field "$slog" failed_units) == 0 ]] || die "guest has failed units"
+  # /efi (plan/34 §4): noauto,x-systemd.automount, so the guest's own test-report.sh triggers it
+  # with a plain `stat /efi` before reading findmnt back — the automount unit exists regardless,
+  # but nothing mounts under it until something asks. esp_what is systemd's own `What=` for
+  # efi.mount, the literal cmdline value the fstab-generator wrote the unit from — checked
+  # against THIS image's own IMG_ESP_PARTLABEL rather than just "some vfat got mounted", because
+  # that is the one signal that actually proves the mount-extra entry did this.
+  [[ $(field "$slog" esp_fs) == vfat ]] \
+    || die "guest's /efi did not automount as vfat (esp_fs=$(field "$slog" esp_fs)) — the
+  systemd.mount-extra= entry for \$IMG_ESP_PARTLABEL ($IMG_ESP_PARTLABEL) is missing or wrong"
+  [[ $(field "$slog" esp_what) == "PARTLABEL=$IMG_ESP_PARTLABEL" ]] \
+    || die "guest's efi.mount has What=$(field "$slog" esp_what), expected
+  PARTLABEL=$IMG_ESP_PARTLABEL — /efi mounted from the wrong source, or this image's own ESP
+  label is not what stage 40's cmdline named"
   # DNS: only the resolver's own state is asserted. Whether a name actually resolved is
   # reported as dns=yes/no and left alone — that depends on the build host's network, not on
   # the image.

@@ -174,10 +174,22 @@ log "root erofs: $((root_bytes/1024/1024)) MiB of ${ROOT_SLOT_SIZE_MIB} MiB slot
 # already asserted this of $TARGET/etc, which rsync (above, --exclude '/var/*' only — no /etc
 # special-casing) copied here verbatim; this is the same fact checked on the artifact that
 # actually ships, one rsync+mkfs.erofs away from what stage 40 saw.
-if dump.erofs --cat --path=/etc/passwd "$ROOT_EROFS" 2>/dev/null | grep -qE "^${LIVE_USER}:"; then
-  die "verify: $ROOT_EROFS's /etc/passwd has a $LIVE_USER entry — an installed disk is this EROFS,
+#
+# POSITIVE CONTROL FIRST, and this is not decoration: both checks below assert ABSENCE, and a
+# `dump.erofs --cat` that fails outright — wrong --path syntax, a corrupted image, a future
+# fsck.erofs that changes its error-reporting shape — prints NOTHING to stdout, which is
+# BYTE-IDENTICAL to the passing case. A silent tool failure would make both `die`s below
+# unreachable and the build would report success having checked nothing. Reading a file that
+# MUST exist and MUST match proves the tool can read this image at this path syntax before
+# either negative assertion is trusted.
+ROOT_PASSWD_PROBE="$(dump.erofs --cat --path=/etc/passwd "$ROOT_EROFS" 2>/dev/null)"
+grep -qE '^root:' <<<"$ROOT_PASSWD_PROBE" \
+  || die "verify: dump.erofs --cat --path=/etc/passwd $ROOT_EROFS produced no 'root:' line —
+the tool, the image or the --path syntax is broken, and the live-user/autologin checks right
+after this one would otherwise pass on that same silence."
+grep -qE "^${LIVE_USER}:" <<<"$ROOT_PASSWD_PROBE" \
+  && die "verify: $ROOT_EROFS's /etc/passwd has a $LIVE_USER entry — an installed disk is this EROFS,
 byte for byte (plan/34 §2), and would ship it."
-fi
 if [[ -n "$(dump.erofs --cat --path=/etc/plasmalogin.conf.d/10-autologin.conf "$ROOT_EROFS" 2>/dev/null)" ]]; then
   die "verify: $ROOT_EROFS carries /etc/plasmalogin.conf.d/10-autologin.conf — it must only ever
 be in the /etc overlay's upper (plan/34 §5)."
@@ -227,7 +239,19 @@ if [[ $PROFILE_ROLE == target ]]; then
   # ---- verify: the tarball that seeds an installed disk carries neither (plan/34 §5) ----------
   # --list only (no extraction of the ~GiB Flatpak store inside): the exclude above should leave
   # no member under overlay/etc/upper/ or home/$LIVE_USER at all, so a listing is enough.
+  #
+  # POSITIVE CONTROL: `tar --list` on a truncated write or a corrupted archive can exit non-zero
+  # with partial or empty output — uncaught here, since the pipeline below only pipes the
+  # variable through `grep`, never checks tar's own exit status. Empty output is indistinguishable
+  # from "correctly excluded", so both `die`s after this would go silently unreachable on exactly
+  # the archive most worth catching. `./overlay/etc/work` is unconditional (ensure_dir above,
+  # every var template) and proves the listing itself succeeded before either negative check runs.
   TAR_MEMBERS="$(tar --list --zstd --file="$VAR_TAR")"
+  grep -qF './overlay/etc/work' <<<"$TAR_MEMBERS" \
+    || die "verify: tar --list $VAR_TAR does not show ./overlay/etc/work, which every var
+  template unconditionally carries — the listing itself failed (or the archive is corrupt), and
+  the overlay/etc/upper and home/\$LIVE_USER checks right after this one would otherwise pass on
+  that same silence."
   grep -q '^\./overlay/etc/upper/.' <<<"$TAR_MEMBERS" \
     && die "verify: $VAR_TAR still carries a file under overlay/etc/upper/ — the --exclude above
   did not take, and an installed disk's fresh /var would inherit this build's own live account."

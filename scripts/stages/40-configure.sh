@@ -103,33 +103,14 @@ else
   log "time: fallback NTP servers -> $NTP_SERVERS"
 fi
 
-# The same argument as /etc/distrobox above, one surface further out — and it is the half of
-# plan/20 §2.2 that the set marker cannot reach.
-#
-# The managed-mode KCM is `#not-live` in config/portage/sets/desktop, so a live build never
-# emerges it. The QML front end beside it (plan/19 §7.2) is NOT a package: it is three files in
-# config/rootfs, and install_rootfs_overlay walks the whole tree, so /usr/bin/<id>-managed-ui,
-# its QML and its launcher entry land on every profile including this one. The result is a live
-# medium carrying "Managed Settings" in Kickoff under System — visually the exact row §2.2 was
-# written to remove, arriving by a different road. A live session enrols nothing, so the app
-# opens on "not enrolled" and is discarded with the stick twenty minutes later.
-#
-# THE CLI STAYS, and that split is the whole point. /usr/bin/<id>-managed is what the Calamares
-# accounts page execs — from this session, first with --root pointed at a scratch tree to enrol
-# before the disk is written and then, through the accountsetup job, with --root pointed at the
-# mounted target to apply the bundle there (plan/21 §3, §6) — so it is how the machine BEING
-# INSTALLED gets enrolled, the one managed-mode job a live medium genuinely has. What goes is
-# the front end a person would open; what stays is the tool the installer drives. The polkit
-# action stays with it for the same reason: it authorises `pkexec <id>-managed`, and that
-# binary is still here.
-if [[ $PROFILE_ROLE == live ]]; then
-  rm -f  -- "${TARGET:?}/usr/bin/${DISTRO_ID}-managed-ui" \
-            "${TARGET:?}/usr/share/applications/${DISTRO_ID}-managed-ui.desktop"
-  rm -rf -- "${TARGET:?}/usr/share/${DISTRO_ID}/managed-ui"
-  log "live profile ($BUILD_PROFILE): removed the managed-mode front end (launcher entry,
-  wrapper and QML) — a live session is never enrolled. The CLI stays: Calamares execs it to
-  enrol the installed system"
-fi
+# The managed-mode QML front end (plan/19 §7.2) USED to be removed here on a live profile
+# (plan/20 §2.2) — three files in config/rootfs that install_rootfs_overlay puts on every
+# profile, deleted right back off on this one so a live session did not show "Managed Settings"
+# in Kickoff for a machine nothing here ever enrols. plan/34 §6 undoes it: the extension this
+# tree becomes is a DIFFERENCE against the desktop's, and a file this profile ships and then
+# deletes is a deletion that difference cannot represent. The front end stays, unenrolled and
+# harmless (plan/34 §10) — "Managed Settings" showing up is the one thing this session displays
+# that it did not use to, and nothing on a live session is ever enrolled regardless.
 
 # permissions the generic overlay rules can't know:
 [[ -f $TARGET/etc/sudoers.d/wheel ]] && chmod 0440 "$TARGET/etc/sudoers.d/wheel"
@@ -519,6 +500,22 @@ FL_READBACK="$(chroot_target "$TARGET" "flatpak config --system --get languages"
   || die "flatpak xa.languages reads back as '${FL_READBACK:-<unset>}', expected '$FLATPAK_LANGS'"
 
 if [[ $FLATPAK_PREINSTALL_MODE == build && -n ${FLATPAK_PREINSTALL// /} ]]; then
+ if [[ $PROFILE_ROLE == live ]]; then
+  # NOT installed here (plan/34 §6, §9). FLATPAK_PREINSTALL is no longer overridden to "" on
+  # installer.conf — it has to render the SAME five apps into
+  # usr/lib/systemd/system/@DISTRO_ID@-flatpak-preinstall.service as the desktop build does,
+  # or that unit is a file the plan/34 §3 extension's tree-diff sees as CHANGED (found by the
+  # real build: the rendered ExecStart differed by exactly the app list). But installing them a
+  # second time here, from Flathub, independently of the desktop build's own resolution, is
+  # exactly the redundant-and-slower thing plan/34 §7.1 replaces: once Phase D lands, this
+  # medium's own /var/lib/flatpak is filled by copying the desktop build's var.tar.zst store,
+  # byte for byte, not by a second `flatpak install`. Until then this medium simply ships no
+  # apps at build time, same as today (installer.conf's now-removed override achieved the same
+  # outcome the other way, by naming no apps at all).
+  log "live profile ($BUILD_PROFILE): not installing Flatpaks at build time — Phase D fills this
+  medium's own store from the desktop build's var.tar.zst instead of a second, independently-
+  resolved install from Flathub"
+ else
   # An offline build has no Flathub. The archive carries an OSTree repo holding exactly the
   # locked commits (stage 90), and --sideload-repo is how flatpak is told to read objects from
   # it instead of the network. The remote still has to be configured — it is, above — because
@@ -724,8 +721,12 @@ if [[ $FLATPAK_PREINSTALL_MODE == build && -n ${FLATPAK_PREINSTALL// /} ]]; then
   else
     warn "no config/flatpak/apps.lock — preinstalled Flatpaks are UNPINNED (plan/15 layer 5)"
   fi
+ fi
 
-  # apps are baked in — the firstboot preinstall unit must never fire
+  # Either apps are baked in (target profiles, or a live one once Phase D lands), or this medium
+  # deliberately ships none yet (live, today) — either way the firstboot preinstall unit must
+  # never fire and try a live network install of its own on first boot. Stamped for BOTH branches
+  # above, unconditionally, which is why this sits after their shared `fi` rather than inside one.
   ensure_dir "$TARGET/var/lib/$DISTRO_ID"
   : > "$TARGET/var/lib/$DISTRO_ID/flatpak-preinstall.done"
 fi
@@ -1666,16 +1667,19 @@ if profile_has_set installer; then
   that nothing under config/calamares/system/lookandfeel overwrote the metadata.json section 2c
   rendered from config/plasma/lookandfeel"
 
-  # ---- the one wallpaper this medium carries (plan/20 §2.1) -----------------------------
-  # A Wallpaper/Images KPackage, installed for this profile alone. The live medium dropped the
-  # 216.8 MiB collection from the set and has stage 50 delete Breeze's own 38.3 MiB `Next`, so
-  # without this /usr/share/wallpapers is empty and the containment has nothing to draw. The
-  # answer used to be the solid-colour plugin; this is 0.4 MiB of branded artwork instead, which
-  # keeps all but 0.4 of the 255.1 MiB and gives the medium the same mark the boot splash showed.
+  # ---- the one wallpaper this medium points AT (plan/20 §2.1, plan/34 §6) ---------------
+  # A Wallpaper/Images KPackage, installed for this profile alone. Through 0.3.1 the live medium
+  # also dropped the 216.8 MiB collection from the set and had stage 50 delete Breeze's own
+  # 38.3 MiB `Next`, so without this /usr/share/wallpapers was empty and the containment had
+  # nothing to draw — the answer was the solid-colour plugin before that, and this 0.4 MiB of
+  # branded artwork after. plan/34 §6 restored the full collection AND Breeze's default (a
+  # deletion relative to the desktop tree is not representable in the tree-diff plan/34 §3
+  # builds), so this package is no longer the only wallpaper on the medium — it is a BRANDING
+  # choice now, not a size trim: the layout script below still points org.kde.image at it rather
+  # than at Breeze's `Next`, so the stick looks like the product from the first frame.
   #
-  # LIVE ONLY, like everything else in this block. The PRODUCT keeps the full collection and
-  # Breeze's default — a machine somebody owns gets to choose its own background, and section 3i
-  # of stage 50 asserts that direction too.
+  # LIVE ONLY, like everything else in this block. The PRODUCT keeps Breeze's default and never
+  # installs this package at all — a machine somebody owns gets to choose its own background.
   #
   # THE DIRECTORY NAME IS THE PACKAGE ID and both are $DISTRO_ID, the same string the
   # look-and-feel package above uses. metadata.json.in renders the id, so a renamed distro moves
@@ -1716,13 +1720,13 @@ if profile_has_set installer; then
        "$LNF_DIR/contents/layouts/org.kde.plasma.desktop-layout.js" \
     || die "verify: the live layout script does not point org.kde.image at $WP_DIR — the
   containment would fall back through DefaultWallpaper::defaultWallpaperPackage() to Breeze's
-  Next, which stage 50 section 3i deletes on this medium, and draw nothing"
+  Next, drawing the stock background instead of this medium's own brand mark"
 
   # ---- the payload ---------------------------------------------------------------------
   # Three files another profile's build produced, copied in unchanged. Under /var because stage
   # 60 builds the root EROFS with --exclude '/var/*' — it is the only place ~5 GiB can go — and
   # because the payload is data this medium carries, not part of the system it runs.
-  : "${PAYLOAD_ROOT_EROFS:?installer profile without PAYLOAD_PROFILE — init_paths set no payload paths}"
+  : "${PAYLOAD_ROOT_EROFS:?installer profile without BASE_PROFILE — init_paths set no payload paths}"
   PAYLOAD_STAGE="$TARGET$PAYLOAD_DIR"
   ensure_dir "$PAYLOAD_STAGE"
 
@@ -1736,7 +1740,7 @@ if profile_has_set installer; then
     local src=$1 base=$2 label=$3 dst="$PAYLOAD_STAGE/$2" sum
     [[ -f $src ]] || die "installer: the $label is missing from the payload profile's output:
       $src
-  Build the payload profile first:  scripts/build.sh --profile $PAYLOAD_PROFILE"
+  Build the base profile first:  scripts/build.sh --profile $BASE_PROFILE"
     sum="$(sha256_file "$src")"
     if [[ -f $dst && $(stat -c%s "$dst") == $(stat -c%s "$src") && $(sha256_file "$dst") == "$sum" ]]; then
       log "installer: $label already staged ($(du -m "$dst" | cut -f1) MiB)"
@@ -1772,7 +1776,7 @@ if profile_has_set installer; then
     printf '{\n'
     printf '  "distro_id": "%s",\n'        "$DISTRO_ID"
     printf '  "version": "%s",\n'          "$VERSION"
-    printf '  "payload_profile": "%s",\n'  "$PAYLOAD_PROFILE"
+    printf '  "base_profile": "%s",\n'     "$BASE_PROFILE"
     printf '  "built_by_profile": "%s",\n' "$BUILD_PROFILE"
     printf '  "root_partlabel": "%s",\n'   "$ROOT_PARTLABEL"
     printf '  "uki_name": "%s",\n'         "$UKI_NAME"
@@ -1798,11 +1802,19 @@ fi
 # user cannot act on.
 #
 # This touches the LIVE image only. The installed system's /usr comes from the payload EROFS,
-# which the desktop build produced with its transfers intact — so removing them here cannot make
-# an installed machine unupdatable, and stage 70's T-INST-3 is the assertion that it did not.
+# which the desktop build produced with its transfers intact — so masking the units here cannot
+# make an installed machine unupdatable, and stage 70's T-INST-3 is the assertion that it did not.
+#
+# The MASK stays; the DELETION of usr/lib/sysupdate.d/*.transfer is gone (plan/34 §6). A file
+# this profile ships and then deletes is a deletion the plan/34 §3 extension's tree-diff cannot
+# represent — the transfer definitions are desktop's, unconditionally present on both trees now,
+# and masking the units is what actually stops this medium updating itself; the transfer files
+# themselves are inert without an unmasked timer to read them. The mask itself is a symlink to
+# /dev/null under $TARGET/etc/systemd/system, so it lands in the LOWER /etc on this profile — not
+# routed through the /etc overlay's upper the way the live user's own files are, because Phase D's
+# tree-delta (§7.2) is what will route a live-only /etc change to the upper; nothing does that yet.
 if [[ $PROFILE_ROLE == live ]]; then
-  log "live profile ($BUILD_PROFILE): disabling systemd-sysupdate on the medium itself"
-  rm -f -- "$TARGET"/usr/lib/sysupdate.d/*.transfer
+  log "live profile ($BUILD_PROFILE): masking systemd-sysupdate on the medium itself"
   chroot_target "$TARGET" "systemctl mask systemd-sysupdate.service systemd-sysupdate.timer" \
     >/dev/null 2>&1 || warn "could not mask the systemd-sysupdate units"
 fi
@@ -2318,13 +2330,18 @@ else
     die "verify: SPLASH_BACKEND=$SPLASH_BACKEND but the UKI carries a .splash section"
   fi
 fi
-# Live media have had their transfers removed by section 2e, deliberately; an installable image
-# without them would be a machine that can never take an update.
-if [[ $PROFILE_ROLE == target ]]; then
-  [[ -f $TARGET/usr/lib/sysupdate.d/50-rootfs.transfer ]] || die "verify: sysupdate transfer missing"
-else
-  compgen -G "$TARGET/usr/lib/sysupdate.d/*.transfer" >/dev/null \
-    && die "verify: $BUILD_PROFILE is a live profile but still carries sysupdate transfers"
+# The transfer files are present on EVERY profile now (plan/34 §6 — section 2e stopped deleting
+# them on a live build): an installable image without them would be a machine that can never
+# take an update, and a live one keeping them is exactly the point of the superset. What still
+# differs by role is whether systemd-sysupdate is MASKED, which section 2e does instead.
+[[ -f $TARGET/usr/lib/sysupdate.d/50-rootfs.transfer ]] || die "verify: sysupdate transfer missing"
+if [[ $PROFILE_ROLE == live ]]; then
+  compgen -G "$TARGET/etc/systemd/system/systemd-sysupdate.service" >/dev/null \
+    && [[ -L $TARGET/etc/systemd/system/systemd-sysupdate.service ]] \
+    && [[ $(readlink -- "$TARGET/etc/systemd/system/systemd-sysupdate.service") == /dev/null ]] \
+    || die "verify: $BUILD_PROFILE is a live profile but systemd-sysupdate.service is not masked
+  (section 2e should have masked it) — this medium would offer to update itself into a slot the
+  live layout (PROFILE_ROOT_SLOTS=1) does not have"
 fi
 [[ -L $TARGET/home ]]                                     || die "verify: /home symlink missing"
 
@@ -2858,33 +2875,16 @@ MANAGED_ENABLED="$(find "$TARGET/etc/systemd/system" -name "${DISTRO_ID}-managed
 # The front end §7.2 measured as possible. Each half fails silently without the other: a wrapper
 # with no QML shows nothing, and QML with no qml6 is a file nobody can open.
 #
-# ...on a medium somebody keeps. On a live one the assertion runs the other way: section 1
-# deletes all three files right after install_rootfs_overlay, so what is checked here is that
-# the deletion actually matched. It is the only thing that would notice a rename — the overlay
-# would keep installing the front end under a new basename and the removal would keep silently
-# matching nothing, which is precisely how "Managed Settings" reached a live medium the set
-# marker was already excluding.
-if [[ $PROFILE_ROLE == live ]]; then
-  MANAGED_UI_LEFT=""
-  for f in "usr/bin/${DISTRO_ID}-managed-ui" \
-           "usr/share/applications/${DISTRO_ID}-managed-ui.desktop" \
-           "usr/share/$DISTRO_ID/managed-ui"; do
-    [[ -e $TARGET/$f ]] && MANAGED_UI_LEFT+=" /$f"
-  done
-  [[ -z ${MANAGED_UI_LEFT// /} ]] \
-    || die "verify: the managed-mode front end is on a PROFILE_ROLE=$PROFILE_ROLE medium:$MANAGED_UI_LEFT
-  A live session enrols nothing, so this is a Settings entry that can only ever say 'not
-  enrolled' (plan/20 §2.2). It ships from config/rootfs rather than from a package, so no set
-  marker can drop it — check the removal in section 1 of this stage against the paths above."
-  log "live profile ($BUILD_PROFILE): the managed-mode front end is deliberately absent"
-else
-  [[ -x $TARGET/usr/bin/${DISTRO_ID}-managed-ui ]] \
-    || die "verify: /usr/bin/${DISTRO_ID}-managed-ui is missing or not executable"
-  [[ -f $TARGET/usr/share/$DISTRO_ID/managed-ui/main.qml ]] \
-    || die "verify: /usr/share/$DISTRO_ID/managed-ui/main.qml is missing. install_rootfs_overlay
+# On EVERY profile now, live included (plan/34 §6): the front end used to be deleted right back
+# off a live build so "Managed Settings" did not show up for a session nothing here ever enrols
+# (plan/20 §2.2), but a file this profile ships and then deletes is a deletion the plan/34 §3
+# extension's tree-diff cannot represent. It stays, unenrolled and harmless (plan/34 §10).
+[[ -x $TARGET/usr/bin/${DISTRO_ID}-managed-ui ]] \
+  || die "verify: /usr/bin/${DISTRO_ID}-managed-ui is missing or not executable"
+[[ -f $TARGET/usr/share/$DISTRO_ID/managed-ui/main.qml ]] \
+  || die "verify: /usr/share/$DISTRO_ID/managed-ui/main.qml is missing. install_rootfs_overlay
   rebrands the 'distro' segment in DIRECTORY names too (render_dest_dir); if this is absent,
   check whether it landed at /usr/share/distro/ instead."
-fi
 [[ -f $TARGET/usr/share/polkit-1/actions/org.$DISTRO_ID.managed.policy ]] \
   || die "verify: the managed-mode polkit action file is missing — the QML front end would have
   to be setuid or run under sudo to change anything"
@@ -2892,10 +2892,7 @@ fi
   || die "verify: the NetworkManager dispatcher hook is missing or not executable. NetworkManager
   silently skips a non-executable dispatcher script, so sync-on-connect would never fire and
   nothing would say why."
-# Only where the front end above survived: on a live medium qml6 has no managed-mode caller,
-# and demanding it there would fail a build over a dependency of something this profile just
-# deleted on purpose.
-if [[ $PROFILE_ROLE != live ]] && profile_has_set desktop; then
+if profile_has_set desktop; then
   [[ -x $TARGET/usr/bin/qml6 ]] \
     || die "verify: /usr/bin/qml6 is not in the image, so the pure-QML managed front end cannot
   run. plan/19 §7.2 rests on it shipping; if dev-qt/qtdeclarative stopped installing it, the
@@ -2944,15 +2941,10 @@ if [[ -n $MANAGED_KCM ]]; then
     || warn "kcm_managed.so is installed but /usr/share/applications/kcm_managed.desktop is not.
   The module will be in System Settings and will not come up when someone searches for it."
   log "managed mode: the System Settings module is installed"
-elif [[ $PROFILE_ROLE == live ]]; then
-  # Not a warning here, and not an omission either: on a live medium the module is absent ON
-  # PURPOSE (plan/20). It is marked `#not-live` in config/portage/sets/desktop, so filter_set_file
-  # drops it before the set is ever emerged — a live session enrols nothing, so a "which policy
-  # is applied?" page would answer "not enrolled" for twenty minutes and then be thrown away
-  # with the stick. The Calamares enrolment page, which is the half a live medium DOES need, is
-  # checked separately above.
-  log "live profile ($BUILD_PROFILE): the managed System Settings module is deliberately absent"
 elif profile_has_set desktop; then
+  # Live included, since plan/34 §6: the `#not-live` marker that used to make this module
+  # deliberately absent on a live build is gone — the KCM is desktop's, and the installer tree
+  # must be a superset of desktop's at identical versions, so it emerges here too now.
   warn "the managed-mode System Settings module is not installed (plan/19 §7.2, Phase D).
   The QML app at /usr/bin/${DISTRO_ID}-managed-ui still works and is in the launcher. The KCM
   comes from ${DISTRO_ID}-base/${DISTRO_ID}-kcm-managed in config/portage/overlay, which reaches

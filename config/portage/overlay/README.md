@@ -12,11 +12,11 @@ therefore cannot be built the way everything else in `config/rootfs/` is:
 | `<id>-calamares-disk` | The installer's disk page ([plan/24](../../../plan/24-installer-disk-page.md)), replacing the stock `partition` module outright rather than configuring it into a picker. Same wall as the others; what is particular to it is what it does **not** link against — no kpmcore, no libparted. It reads `/sys/block` for the disks and asks `lsblk` for what is on them, and the partitioning itself is a python job running the pipeline's own `scripts/lib/layout.sh` |
 
 They go to different images, and the split is deliberate rather than incidental. The KCM is in
-`@desktop` marked `#not-live`, so it reaches the product and **not** the installer medium — a live
-session is never enrolled, so a "which policy is applied?" page there answers a question nobody
-can ask ([plan/20](../../../plan/20-installer-slimming.md) §2.2). All three Calamares pages are in
-`@installer` and are therefore the exact opposite: installer-only, because they are how the machine
-*being installed* gets its language and its accounts. No package here is ever on both images, and
+`@desktop`, reaching every profile that names that set — product and live medium alike, since
+[plan/34](../../../plan/34-installer-sysext.md) §6 removed the `#not-live` marker that used to
+keep it off the installer (it is unenrolled and harmless there, plan/34 §10). All three Calamares
+pages are in `@installer` and stay installer-only, because they are how the machine *being
+installed* gets its language and its accounts — nothing makes them appear on the product, and
 `config/portage/expected-packages.desktop.txt` is what says so.
 
 One difference is worth knowing before a relock: **all three Calamares pages are mandatory, and
@@ -104,9 +104,10 @@ overlay uses, and it is why `ebuild ... digest` is not part of anyone's workflow
 ## Adding a package
 
 1. Write `distro-base/<name>/<name>-<version>.ebuild.in` and its `files/`.
-2. Name it in the profile set that should carry it (`config/portage/sets/desktop`, `installer`…),
-   with `#not-live` after the atom if a medium that boots once and is discarded should not have
-   it — `filter_set_file` strips those lines on any profile whose `PROFILE_ROLE` is `live`.
+2. Name it in the profile set that should carry it (`config/portage/sets/desktop`, `installer`…).
+   There is no `#not-live` marker any more (plan/34 §6): a live-role profile's tree has to be a
+   superset of the desktop's at identical versions, so an atom in `@desktop` reaches every
+   profile that names that set, live or not.
 3. **Re-resolve the lock**, because a locked build emerges `@locked-image` and nothing else:
 
    ```sh

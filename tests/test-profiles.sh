@@ -97,6 +97,14 @@ render_template "$FSTAB_SRC" "$TMP/fstab.target"
 assert_false "fstab: no PARTLABEL of any kind on a DATA line" bash -c \
     "grep -vE '^[[:space:]]*#' '$TMP/fstab.target' | grep -q PARTLABEL"
 assert_contains 'tmpfs' "$(cat "$TMP/fstab.target")" "fstab: /tmp survives"
+# The SOURCE, not just the rendered output: an @IMG_*@ token anywhere in fstab.in — even inside
+# a comment — makes the file differ by role again the moment render_template substitutes it,
+# which is exactly the bug a stray @IMG_ROOT_PARTLABEL@ in the header comment turned out to be
+# (found by the real build's tree-delta: etc/fstab differed by 5 bytes, "live_", between the
+# desktop and installer trees). Checked on the template source so this catches the token before
+# anything renders it, not just after.
+assert_false "fstab.in carries no @IMG_*@ token anywhere, comments included" \
+    grep -qE '@IMG_[A-Z_]*@' "$FSTAB_SRC"
 
 # ---- the cmdline carries /var and /efi instead, by role (plan/34 §4) -------------------------
 assert_eq "systemd.mount-extra=PARTLABEL=var:/var:ext4:defaults,x-initrd.mount,x-systemd.growfs,x-systemd.after=systemd-repart.service" \
@@ -260,5 +268,22 @@ assert_true "...and writes it through the same variable" \
     grep -qF '> "$TARGET_HASH_FILE"' "$S30"
 assert_false "...and nowhere spells the unsuffixed path by hand" \
     grep -q 'WORK/target-config-hash"' "$S30"
+
+# ---- the #not-live marker must never come back, on any set, on any atom (plan/34 §6) --------
+# A comprehensive scan, not the four per-package checks elsewhere (tests/test-managed.sh,
+# tests/test-installer.sh) that happen to know which atoms used to carry it: this is the guard
+# that catches the marker reappearing on an atom nobody has written a specific test for yet.
+# filter_set_file's own parsing of it is gone too (scripts/lib/common.sh) — checked here so the
+# two facts ("no set names it" and "nothing would honour it if one did") cannot drift apart.
+# Comment-only lines are excluded from both checks below: this section's OWN prose has to be
+# able to say "#not-live" while explaining that it is gone, without tripping the guard it adds.
+# A real marker is a trailing annotation on a DATA line (`atom  #not-live`), never a whole-line
+# comment, so stripping lines that start with '#' is exact, not a heuristic.
+for f in "$REPO_ROOT"/config/portage/sets/*; do
+    assert_false "$(basename -- "$f") carries no #not-live marker on a data line" bash -c \
+        "grep -vE '^[[:space:]]*#' '$f' | grep -q '#not-live'"
+done
+assert_false "filter_set_file no longer parses a #not-live marker" bash -c \
+    "grep -vE '^[[:space:]]*#' '$REPO_ROOT/scripts/lib/common.sh' | grep -q '#not-live'"
 
 finish

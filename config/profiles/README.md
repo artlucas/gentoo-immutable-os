@@ -35,13 +35,14 @@ over both.
 | `PROFILE_ROLE` | yes | `target` (installable; may be released) or `live` (install media; never released) |
 | `PROFILE_SETS` | yes | Space-separated set names from `config/portage/sets/`. Must include `base` |
 | `PROFILE_ROOT_SLOTS` | no (2) | Root slots. `2` is the A/B pair every installable image needs; `1` is for live media, which are never updated. A `target` profile with `1` is refused — it would build a machine that boots and can never be updated |
-| `PAYLOAD_PROFILE` | no | An installer profile only: the `target` profile whose artifacts this medium writes to disk. Its root EROFS, UKI and `/var` tarball are staged into this image's `/var` by stage 40 |
+| `BASE_PROFILE` | no | An installer profile only: the `target` profile whose root this medium boots and installs. Its root EROFS, UKI and `/var` tarball are staged into this image's `/var` by stage 40 (renamed from `PAYLOAD_PROFILE`, plan/34 §6) |
 
 `live` is not a label. It changes what stage 40 does: `systemd-sysupdate` is disabled on the
-medium (its transfer definitions are removed and its units masked), because a stick that is
-booted once and thrown away has nothing to update and a half-working update path is worse than
-none. It touches the medium only — the installed system's `/usr` comes from the payload, whose
-transfers are intact.
+medium (its units are masked in the upper — plan/34 §6 stopped deleting the transfer definitions
+themselves, so the diff a live tree is against the desktop's has nothing to reconcile there),
+because a stick that is booted once and thrown away has nothing to update and a half-working
+update path is worse than none. It touches the medium only — the installed system's `/usr` comes
+from the payload, whose transfers are intact.
 
 Anything else in the file is a `build.conf` override — `INCLUDE_DISTROBOX`, `FLATPAK_PREINSTALL`,
 `VAR_SIZE_MIB` and so on.

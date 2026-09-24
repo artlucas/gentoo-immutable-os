@@ -49,7 +49,7 @@ collect_and_report() {
     . /etc/os-release
     local etc_fs graphical failed failed_list machine_id var_size flatpak_remotes
     local resolved dns podman_rootless runuser_bin sound live_uid autologin
-    local sssd nss_local domain managed userdb managed_timer
+    local sssd nss_local domain managed userdb managed_timer esp_fs esp_what
     local _as _an _ac
     etc_fs="$(findmnt -no FSTYPE /etc 2>/dev/null || echo none)"
     graphical="$(systemctl is-active graphical.target >/dev/null 2>&1 && echo yes || echo no)"
@@ -60,6 +60,18 @@ collect_and_report() {
     [[ -z $failed_list ]] && failed_list=none
     machine_id="$(cat /etc/machine-id 2>/dev/null || echo none)"
     var_size="$(findmnt -bno SIZE /var 2>/dev/null || echo 0)"
+    # /efi is noauto,x-systemd.automount (plan/34 §4) — nothing is mounted there until something
+    # accesses it, so `stat` is the trigger, the same as any real access would be. What.mount's
+    # `What=` is reported rather than (or beside) findmnt's resolved device node, because `What=`
+    # is the literal cmdline value systemd-fstab-generator wrote the unit from — PARTLABEL=esp or
+    # PARTLABEL=live_esp — which is the one thing that actually proves the mount-extra entry did
+    # this, rather than /efi happening to already be some fixed device.
+    esp_fs=none; esp_what=none
+    if stat /efi >/dev/null 2>&1; then
+        esp_fs="$(findmnt -no FSTYPE /efi 2>/dev/null || echo none)"
+        esp_what="$(systemctl show -p What --value efi.mount 2>/dev/null || echo none)"
+        [[ -n $esp_what ]] || esp_what=none
+    fi
     flatpak_remotes="$(flatpak remotes --system 2>/dev/null | grep -c . || true)"
     # DNS comes in two fields on purpose. "resolved" is deterministic — the unit either came
     # up or it did not — and the harness asserts on it. "dns" is a real query through nss, so
@@ -242,6 +254,7 @@ collect_and_report() {
     nss_local="$(getent passwd '@LIVE_USER@' >/dev/null 2>&1 && echo yes || echo no)"
     report "ok version=${IMAGE_VERSION:-unknown} etc_overlay=$etc_fs graphical=$graphical" \
            "failed_units=$failed machine_id=$machine_id var_size=$var_size" \
+           "esp_fs=$esp_fs esp_what=$esp_what" \
            "flatpak_remotes=$flatpak_remotes resolved=$resolved dns=$dns" \
            "podman_rootless=$podman_rootless sound=$sound autologin=$autologin" \
            "sssd=$sssd domain=$domain nss_local=$nss_local" \
