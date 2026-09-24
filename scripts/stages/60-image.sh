@@ -460,6 +460,82 @@ if [[ $PROFILE_ROLE == live ]]; then
   [[ $READBACK_CMDLINE == "$LIVE_CMDLINE" ]] \
     || die "installer: live UKI's own .cmdline does not read back as what was written"
   log "installer: live UKI re-wrapped from $PAYLOAD_UKI — $sec_checked section(s) verified byte-identical, only .cmdline replaced"
+
+  # ---- verify: the PE layout survived the resize, not just the section bytes -----------------
+  # objcopy --update-section can leave a PE's own size/overlap bookkeeping wrong while every
+  # section's CONTENT still compares equal above: the live cmdline is 15 bytes longer than the
+  # desktop's (3x "live_" substituted in), so this specifically checks what growing .cmdline
+  # could break — the size field PE tracks per section, and whether .cmdline's new end now
+  # reaches into whatever comes after it.
+  desktop_secs="$(objdump -h "$PAYLOAD_UKI"       | awk '/^ *[0-9]+ \./{printf "%s %s %s\n", $2, $3, $4}')"
+  live_secs="$(objdump -h "$UKI_DIR/$UKI_NAME" | awk '/^ *[0-9]+ \./{printf "%s %s %s\n", $2, $3, $4}')"
+  [[ -n $desktop_secs && -n $live_secs ]] \
+    || die "installer: objdump -h produced no section table for the PE layout check"
+
+  layout_checked=0
+  while read -r d_name d_size d_vma; do
+    [[ $d_name == .cmdline ]] && continue
+    l_line="$(awk -v n="$d_name" '$1==n{print; exit}' <<<"$live_secs")"
+    [[ -n $l_line ]] || die "installer: live UKI has no $d_name section at all (PE layout check)"
+    l_size="$(awk '{print $2}' <<<"$l_line")"; l_vma="$(awk '{print $3}' <<<"$l_line")"
+    [[ $l_size == "$d_size" && $l_vma == "$d_vma" ]] \
+      || die "installer: live UKI's $d_name section has size=$l_size vma=$l_vma, desktop UKI's
+  is size=$d_size vma=$d_vma — objcopy's resize of .cmdline corrupted this section's own PE
+  bookkeeping even though its content compared equal above. Switch the rewrap to \`ukify build\`
+  from the extracted sections (plan/34 §8) instead of objcopy --update-section."
+    layout_checked=$((layout_checked + 1))
+  done <<<"$desktop_secs"
+  (( layout_checked > 0 )) || die "installer: PE layout check compared nothing — objdump's
+  section list parsed to just .cmdline"
+
+  # .cmdline's own new end must not reach the next section by VMA — sorted explicitly by VMA
+  # value, since a PE's section HEADER order is only conventionally the same as VMA order, never
+  # guaranteed by the format itself.
+  cmd_vma_hex="$(awk '$1==".cmdline"{print $3}' <<<"$live_secs")"
+  cmd_size_hex="$(awk '$1==".cmdline"{print $2}' <<<"$live_secs")"
+  [[ -n $cmd_vma_hex && -n $cmd_size_hex ]] \
+    || die "installer: live UKI's .cmdline section is missing from its own section table"
+  cmd_vma=$((16#$cmd_vma_hex)); cmd_size=$((16#$cmd_size_hex)); cmd_end=$((cmd_vma + cmd_size))
+  next_vma=""
+  while read -r _n _s v; do
+    v_dec=$((16#$v))
+    (( v_dec > cmd_vma )) || continue
+    [[ -z $next_vma || $v_dec -lt $next_vma ]] && next_vma=$v_dec
+  done <<<"$live_secs"
+  if [[ -n $next_vma ]]; then
+    (( cmd_end <= next_vma )) \
+      || die "installer: live UKI's .cmdline section (VMA 0x$cmd_vma_hex, size 0x$cmd_size_hex)
+  now ends past the next section's VMA (0x$(printf %x "$next_vma")) — the grown cmdline overlaps
+  whatever comes after it. Switch the rewrap to \`ukify build\` from the extracted sections
+  (plan/34 §8) instead of objcopy --update-section."
+  fi
+  log "installer: PE layout check OK — $layout_checked non-.cmdline section(s) size+VMA unchanged, .cmdline does not overlap the next section"
+
+  # ---- verify: PE DllCharacteristics unchanged (NX_COMPAT etc) -------------------------------
+  desktop_dllchar="$(objdump -p "$PAYLOAD_UKI" | grep -A1 '^DllCharacteristics' | head -1)"
+  live_dllchar="$(objdump -p "$UKI_DIR/$UKI_NAME" | grep -A1 '^DllCharacteristics' | head -1)"
+  [[ -n $desktop_dllchar ]] || die "installer: objdump -p found no DllCharacteristics in $PAYLOAD_UKI"
+  [[ $desktop_dllchar == "$live_dllchar" ]] \
+    || die "installer: PE DllCharacteristics changed by the rewrap: desktop '$desktop_dllchar',
+  live '$live_dllchar'"
+  objdump -p "$UKI_DIR/$UKI_NAME" | grep -qF NX_COMPAT \
+    || die "installer: live UKI's DllCharacteristics has no NX_COMPAT"
+  log "installer: PE DllCharacteristics unchanged ($desktop_dllchar), NX_COMPAT present"
+
+  # ---- verify: ukify itself can parse the rewrapped UKI and reports the new cmdline -----------
+  UKIFY_BIN=ukify; [[ -x /usr/lib/systemd/ukify ]] && UKIFY_BIN=/usr/lib/systemd/ukify
+  if command -v "$UKIFY_BIN" >/dev/null 2>&1; then
+    UKIFY_INSPECT="$("$UKIFY_BIN" inspect "$UKI_DIR/$UKI_NAME" 2>&1)" \
+      || die "installer: ukify inspect could not parse the live UKI:
+  $UKIFY_INSPECT"
+    grep -qF "$LIVE_ROOT_TOKEN" <<<"$UKIFY_INSPECT" \
+      || die "installer: ukify inspect did not report the live UKI's own root token
+  ($LIVE_ROOT_TOKEN) in its cmdline:
+  $UKIFY_INSPECT"
+    log "installer: ukify inspect parses the live UKI and reports the live cmdline"
+  else
+    warn "installer: ukify not found in the builder — skipping the ukify-inspect cross-check"
+  fi
 fi
 
 # ---- 3. ESP vfat via mtools ------------------------------------------------------------
