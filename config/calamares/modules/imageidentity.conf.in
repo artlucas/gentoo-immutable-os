@@ -1,9 +1,10 @@
 # imageidentity — the per-machine settings no stock module covers (plan/16 §5.4).
 ---
-# The autologin drop-in, written either way: an empty User turns the live medium's autologin off
-# on the installed system, and — when the accounts page's checkbox asked for it (plan/26 §4) —
-# the created user turns it on instead. 20- sorts after the image's 10-autologin.conf, which
-# lives in the read-only root and cannot be deleted through the overlay.
+# The autologin drop-in, written ONLY when the accounts page's checkbox asked for it (plan/26
+# §4). The installed system's /etc ships no autologin config of its own to override — plan/34
+# §5 moved 10-autologin.conf out of the read-only root entirely, into the live medium's own
+# overlay upper — so the not-requested case needs no file at all, and this name is only ever
+# used when autologin is being turned on.
 autologinDropIn: "/etc/plasmalogin.conf.d/20-autologin.conf"
 
 # Subordinate ID ranges for rootless podman (plan/13). The same window stage 40 gives the live

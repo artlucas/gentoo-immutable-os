@@ -3095,8 +3095,13 @@ assert_true "accountsetup reads diskKeepData in run()" \
     bash -c "sed -n '/^def run/,\$p' '$ACCOUNTSETUP_JOB' | grep -q 'diskKeepData'"
 assert_true "...and does nothing but the secrets-file unlink while keeping" \
     bash -c "sed -n '/^def run/,\$p' '$ACCOUNTSETUP_JOB' | grep -A2 'diskKeepData' | grep -q 'return None'"
-assert_true "accountsetup's userdel on the live user is outside keep only" \
-    bash -c "sed -n '/^def run/,\$p' '$ACCOUNTSETUP_JOB' | grep -q 'remove_live_user(root)'"
+assert_true "accountsetup's live-user check runs, outside keep only (plan/34 §5)" \
+    bash -c "sed -n '/^def run/,\$p' '$ACCOUNTSETUP_JOB' | grep -q 'check_no_live_user(root)'"
+assert_false "...there is no userdel-style removal left to run" \
+    grep -q '^def remove_live_user' "$ACCOUNTSETUP_JOB"
+assert_true "...and it FAILS the install rather than best-effort tidying" \
+    bash -c "sed -n '/^def check_no_live_user/,/^def /p' '$ACCOUNTSETUP_JOB' |
+             grep -q 'Installation failed'"
 IMAGEDEPLOY_JOB="$CAL/local-modules/imagedeploy/main.py"
 assert_true "imagedeploy reads diskKeepData too" grep -q 'diskKeepData' "$IMAGEDEPLOY_JOB"
 assert_true "...and skips the var template extraction under it" \
@@ -3106,11 +3111,109 @@ assert_true "...and skips the early /etc/hostname write under it too" \
 assert_true "...the directory belt-and-braces still runs unconditionally" \
     bash -c "! sed -n '/Belt and braces/,/chmod.*roothome/p' '$IMAGEDEPLOY_JOB' | grep -q 'if keep'"
 
+# ---- imagedeploy: the root image is this medium's own partition, not a staged file
+# (plan/34 §7.2 step 6, checkpoint 4) ------------------------------------------------------------
+IMAGEDEPLOY_CONF_IN="$CAL/modules/imagedeploy.conf.in"
+assert_false "imagedeploy.conf.in no longer names a staged root image" \
+    grep -qE '^rootImage:' "$IMAGEDEPLOY_CONF_IN"
+assert_false "...nor a var template key by its old name" \
+    grep -qE '^varTemplate:' "$IMAGEDEPLOY_CONF_IN"
+assert_false "...nor the old optional verifyPayload toggle — verification is unconditional now" \
+    grep -qE '^verifyPayload:' "$IMAGEDEPLOY_CONF_IN"
+for key in 'payloadDir:' 'varBase:' 'manifest:' 'liveRootPartLabel:' 'rootPartLabel:' 'liveUser:'; do
+    assert_true "imagedeploy.conf.in declares $key" \
+        grep -qE "^${key}" "$IMAGEDEPLOY_CONF_IN"
+done
+assert_true "liveRootPartLabel renders from THIS build's own IMG_ROOT_PARTLABEL, not rootPartLabel" \
+    grep -qE '^liveRootPartLabel:[[:space:]]+"@IMG_ROOT_PARTLABEL@"' "$IMAGEDEPLOY_CONF_IN"
+assert_true "liveUser renders from LIVE_USER" \
+    grep -qE '^liveUser:[[:space:]]+"@LIVE_USER@"' "$IMAGEDEPLOY_CONF_IN"
+
+assert_true "imagedeploy finds this medium's own root device with findmnt, not a staged path" \
+    bash -c "grep -q 'def find_live_root_source' '$IMAGEDEPLOY_JOB' &&
+             sed -n '/^def find_live_root_source/,/^def /p' '$IMAGEDEPLOY_JOB' |
+             grep -qF '[\"findmnt\", \"-no\", \"SOURCE\", \"/\"]'"
+assert_true "...and cross-checks it against liveRootPartLabel before trusting it" \
+    bash -c "sed -n '/^def run/,\$p' '$IMAGEDEPLOY_JOB' | grep -q 'partlabel_of(live_root_device)' &&
+             sed -n '/^def run/,\$p' '$IMAGEDEPLOY_JOB' | grep -q 'live_root_actual_label != live_root_label'"
+assert_true "...and refuses to run without both liveRootPartLabel and liveUser configured" \
+    bash -c "sed -n '/^def run/,\$p' '$IMAGEDEPLOY_JOB' |
+             grep -q 'not live_root_label or not live_user'"
+
+assert_true "write_and_verify() copies and hashes in the SAME pass (one read of the medium)" \
+    bash -c "sed -n '/^def write_and_verify/,/^def /p' '$IMAGEDEPLOY_JOB' |
+             grep -q 'h.update(chunk)' &&
+             sed -n '/^def write_and_verify/,/^def /p' '$IMAGEDEPLOY_JOB' |
+             grep -q 'dst.write(chunk)'"
+assert_true "...size and hash are both checked against the manifest" \
+    bash -c "sed -n '/^def write_and_verify/,/^def /p' '$IMAGEDEPLOY_JOB' |
+             grep -q 'written != expected_size' &&
+             sed -n '/^def write_and_verify/,/^def /p' '$IMAGEDEPLOY_JOB' |
+             grep -q 'actual != expected_sha256'"
+assert_true "the manifest's root_erofs size/sha256 are read, not an optional verify toggle" \
+    bash -c "grep -qF 'manifest.get(\"root_erofs\"' '$IMAGEDEPLOY_JOB' &&
+             grep -qF 'root_erofs_meta.get(\"size\")' '$IMAGEDEPLOY_JOB' &&
+             grep -qF 'root_erofs_meta.get(\"sha256\")' '$IMAGEDEPLOY_JOB'"
+
+assert_true "erase mode copies the live session's own Flatpak store with hard links preserved" \
+    grep -qF '["cp", "-a", "--", live_flatpak, dest_flatpak]' "$IMAGEDEPLOY_JOB"
+assert_true "...from THIS session's /var/lib/flatpak, not a payload file" \
+    grep -qF 'live_flatpak = "/var/lib/flatpak"' "$IMAGEDEPLOY_JOB"
+assert_true "...and progress is reported to Calamares while it copies" \
+    bash -c "sed -n '/---- 3\\. seed/,/---- 3b\\./p' '$IMAGEDEPLOY_JOB' |
+             grep -q 'libcalamares.job.setprogress'"
+assert_true "keep mode skips both the var seed and the Flatpak copy" \
+    bash -c "sed -n '/---- 3\\. seed/,/---- 3b\\./p' '$IMAGEDEPLOY_JOB' | grep -q 'if keep:'"
+
+# The leak list (plan/34 §356): what an installed disk's /var must never carry from THIS
+# build's own live session — the sysext, the live user's home, and the live user's entry in the
+# /etc overlay's own upper. check_no_live_leakage() is the post-condition that proves it, on the
+# actual target disk after the copy, not merely by construction of var-base.tar.zst.
+assert_true "check_no_live_leakage() exists and runs after the var seed/Flatpak copy, every mode" \
+    bash -c "grep -q 'def check_no_live_leakage' '$IMAGEDEPLOY_JOB' &&
+             sed -n '/^def run/,\$p' '$IMAGEDEPLOY_JOB' | grep -q 'check_no_live_leakage(root_mount_point, live_user)'"
+for leaked in '"lib", "extensions", "immos-installer"' \
+              '"home", live_user' \
+              'upper_passwd'; do
+    assert_true "check_no_live_leakage() checks $leaked" \
+        bash -c "sed -n '/^def check_no_live_leakage/,/^def /p' '$IMAGEDEPLOY_JOB' | grep -qF '$leaked'"
+done
+assert_true "...and the sysext entry names the string var/lib/extensions" \
+    bash -c "sed -n '/^def check_no_live_leakage/,/^def /p' '$IMAGEDEPLOY_JOB' |
+             grep -qF 'var/lib/extensions'"
+assert_true "...and it fails the install, not a warning" \
+    bash -c "sed -n '/^def check_no_live_leakage/,/^def /p' '$IMAGEDEPLOY_JOB' |
+             grep -q 'raise DeployError'"
+
 # imagebootloader: the NVRAM dedup applies in both modes, by PARTUUID, not by reading diskKeepData
 # at all — see scripts/run-vm.sh's note and the module's own header on why.
 BOOTLOADER_JOB="$CAL/local-modules/imagebootloader/main.py"
 assert_true "imagebootloader skips a duplicate NVRAM entry by PARTUUID" \
     bash -c "grep -q 'def blkid_partuuid' '$BOOTLOADER_JOB' && grep -q 'def existing_boot_entry' '$BOOTLOADER_JOB'"
+# The header used to say both files "come from the payload" — wrong since Phase D:
+# systemd-bootx64.efi is read out of the MOUNTED TARGET's own /usr, uki.efi genuinely is a
+# payload file. checkpoint 4 fixed the comment only; behaviour (what gets copied, and from
+# where) did not change, so this just pins the corrected wording.
+assert_true "imagebootloader's header distinguishes the two files' real sources" \
+    bash -c "grep -q 'THE TWO FILES COME FROM TWO DIFFERENT PLACES' '$BOOTLOADER_JOB' &&
+             grep -q 'MOUNTED TARGET.s own /usr/lib/systemd/boot/efi' '$BOOTLOADER_JOB' &&
+             grep -q 'uki.efi, by contrast, genuinely IS a payload file' '$BOOTLOADER_JOB'"
+assert_true "...and SDBOOT still reads the mounted target, not payloadDir" \
+    grep -qF 'SDBOOT = "usr/lib/systemd/boot/efi/systemd-bootx64.efi"' "$BOOTLOADER_JOB"
+
+# ---- imageidentity: autologin is written ONLY when it was actually chosen (plan/34 §5,
+# checkpoint 4) -------------------------------------------------------------------------------
+# Post-Phase-D, 10-autologin.conf never ships in the read-only root and var-base.tar.zst never
+# carries it either (both plan/34 §5) — so an installed system's /etc starts with no autologin
+# config at all, and there is nothing left to override with an explicit "disabled" drop-in.
+IDENTITY_JOB="$CAL/local-modules/imageidentity/main.py"
+assert_true "write_autologin_dropin() returns early, writing nothing, when not requested" \
+    bash -c "sed -n '/^def write_autologin_dropin/,/^def /p' '$IDENTITY_JOB' |
+             grep -q 'if not username:' &&
+             sed -n '/^def write_autologin_dropin/,/^def /p' '$IDENTITY_JOB' |
+             grep -A3 'if not username:' | grep -q 'return'"
+assert_false "...there is no more empty-User disable branch" \
+    bash -c "sed -n '/^def write_autologin_dropin/,/^def /p' '$IDENTITY_JOB' | grep -q 'User=\\\\n'"
 
 # ---- the pages after the disk (plan/33 §8) ------------------------------------------------------
 assert_true "AccountsViewStep::onActivate() reads diskKeepData" \

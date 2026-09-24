@@ -11,21 +11,27 @@
 #
 # What makes this short: installing this distro is not unpack-and-configure. There is no squashfs
 # to rsync, no package manager to run and no bootloader to generate — the root filesystem is an
-# EROFS image built by the pipeline, and installing it is copying it onto a partition.
+# EROFS image built by the pipeline, and installing it is copying it onto a partition. As of
+# plan/34 §7.2/§9 (checkpoint 4) it is not even a staged FILE any more: it is THIS medium's own
+# root partition, read straight off the disk this installer is running from.
 #
-#   1. write <payload>/root.erofs into the root_<version> partition, byte for byte
+#   1. find this medium's own root device (findmnt -no SOURCE /, cross-checked by PARTLABEL) and
+#      copy it into the root_<version> partition, byte for byte, hashing while copying
 #   2. mount it read-only, and /var over it
-#   3. unpack the var template — overlay skeleton, homes, the Flatpak store
+#   3. seed /var from var-base.tar.zst, then copy the LIVE SESSION's own Flatpak store (hard
+#      links preserved) — skipped entirely under keep mode
 #   4. mount /etc as an overlay whose upper lives on /var, exactly as the initrd does
 #   5. mount the ESP and the API filesystems, and hand rootMountPoint to the stock modules
 #
 # Step 4 is the one that matters. It is the same incantation as
 # config/rootfs/usr/lib/dracut/modules.d/90etc-overlay/etc-overlay.sh, including mounting the
 # overlay onto its own lowerdir — and with it in place, every job downstream (localesetup,
-# keyboardsetup, accountsetup — accountsetup's own userdel for the live user included, since
-# plan/33 §7 folded stock `removeuser`'s job into it) writes to /etc/... exactly as a stock
-# module would on a mutable distro, and the writes land in the upper on /var because that is
-# what the mount does. No patched modules anywhere in this installer (plan/16 §5.2).
+# keyboardsetup, accountsetup) writes to /etc/... exactly as a stock module would on a mutable
+# distro, and the writes land in the upper on /var because that is what the mount does. No
+# patched modules anywhere in this installer (plan/16 §5.2). accountsetup no longer removes a
+# live user from the TARGET here — plan/34 §5 moved that account off the root image entirely,
+# so there is nothing on an installed disk's lower /etc for a removeuser-style job to find; this
+# module's own check_no_live_leakage() is what proves the upper carries none either.
 
 import json
 import os
@@ -132,46 +138,113 @@ def find_partitions(root_label):
     return found
 
 
-def sha256_of(path, progress=None):
+def find_live_root_source():
+    """The device backing THIS medium's own `/` — not /usr.
+
+    The systemd-sysext extension merges only /usr; `/` itself is unaffected by that overlay and
+    is still, exactly as always, whatever device the medium's UKI cmdline named at
+    root=PARTLABEL=.... findmnt reports the RESOLVED device, which is what a raw open() needs.
+    """
+    out = sh(["findmnt", "-no", "SOURCE", "/"], capture_output=True, text=True)
+    device = out.stdout.strip()
+    if not device:
+        raise DeployError(
+            _("Internal error"),
+            _("findmnt could not resolve this medium's own root device."),
+        )
+    return device
+
+
+def partlabel_of(device):
+    out = sh(["lsblk", "-no", "PARTLABEL", device], capture_output=True, text=True)
+    return out.stdout.strip()
+
+
+def write_and_verify(source_device, dest_device, expected_size, expected_sha256, progress):
+    """Copy exactly `expected_size` bytes from the medium's own root device to the target
+    partition, hashing while copying, and fail if either the byte count or the hash disagrees
+    with the manifest.
+
+    ONE READ of the source, not a separate verify pass then a write: the old design (plan/16)
+    sha256'd a staged payload FILE before writing it, which meant reading the medium twice —
+    the whole point of hashing while copying is that the medium (now the live root device
+    itself, not a file under it) is read once, which matters more on a USB stick than it did on
+    a staged file. A Python loop rather than `dd`: dd reports progress only to a tty, and the
+    thing a user stares at for a minute or two should have a moving bar. os.fsync at the end
+    (not just close) because the next thing that happens is a mount of this very device.
+    """
     import hashlib
 
+    debug("copying {} bytes from {} to {}, hashing while copying".format(
+        expected_size, source_device, dest_device))
     h = hashlib.sha256()
-    total = os.path.getsize(path)
-    done = 0
-    with open(path, "rb") as f:
-        while True:
-            chunk = f.read(CHUNK)
-            if not chunk:
-                break
-            h.update(chunk)
-            done += len(chunk)
-            if progress and total:
-                progress(done / total)
-    return h.hexdigest()
-
-
-def write_image(source, device, progress):
-    """Copy `source` onto the block device `device`, with progress.
-
-    A Python loop rather than `dd`: dd reports progress only to a tty, and the thing a user
-    stares at for three minutes should have a moving bar. os.fsync at the end (not just close)
-    because the next thing that happens is a mount of this very device.
-    """
-    total = os.path.getsize(source)
-    debug("writing {} ({} bytes) to {}".format(source, total, device))
-
     written = 0
-    with open(source, "rb") as src, open(device, "r+b") as dst:
-        while True:
-            chunk = src.read(CHUNK)
+    with open(source_device, "rb") as src, open(dest_device, "r+b") as dst:
+        while written < expected_size:
+            chunk = src.read(min(CHUNK, expected_size - written))
             if not chunk:
                 break
             dst.write(chunk)
+            h.update(chunk)
             written += len(chunk)
-            progress(written / total)
+            progress(written / expected_size)
         dst.flush()
         os.fsync(dst.fileno())
+
+    if written != expected_size:
+        raise DeployError(
+            _("Installation failed"),
+            _(
+                "Only {!s} of {!s} expected bytes were read from this medium's own root "
+                "device — the install medium may be damaged."
+            ).format(written, expected_size),
+        )
+    actual = h.hexdigest()
+    if actual != expected_sha256:
+        raise DeployError(
+            _("Installation failed"),
+            _(
+                "The system image read from this medium does not match its own manifest: "
+                "got {!s}, expected {!s}. The install medium may be damaged; write it again."
+            ).format(actual[:16], expected_sha256[:16]),
+        )
     return written
+
+
+def check_no_live_leakage(root_mount_point, live_user):
+    """The installed disk's /var must carry none of THIS build's own live-medium state.
+
+    Three specific things, because they are the three places live-only state lives (plan/34
+    §2, §5): the sysext itself (nothing merges it on an installed system — there is no
+    /var/lib/extensions/immos-installer to merge), the live user's home, and the live user's
+    entry in the /etc overlay's own upper passwd. var-base.tar.zst (§7.1) already excludes all
+    three by construction; this re-proves it against what is ACTUALLY on the target disk after
+    the copy, the same "trust the built artifact, not the recipe" principle stage 60's own
+    checks use.
+    """
+    var = os.path.join(root_mount_point, "var")
+    bad = []
+    if os.path.isdir(os.path.join(var, "lib", "extensions", "immos-installer")):
+        bad.append("var/lib/extensions/immos-installer")
+    if os.path.lexists(os.path.join(var, "home", live_user)):
+        bad.append("var/home/{}".format(live_user))
+    upper_passwd = os.path.join(var, "overlay", "etc", "upper", "passwd")
+    if os.path.isfile(upper_passwd):
+        with open(upper_passwd, encoding="utf-8", errors="replace") as f:
+            if any(
+                line.split(":", 1)[0] == live_user
+                for line in f
+                if line.strip() and not line.startswith("#")
+            ):
+                bad.append("var/overlay/etc/upper/passwd names {}".format(live_user))
+    if bad:
+        raise DeployError(
+            _("Installation failed"),
+            _(
+                "The installed system's /var still carries live-medium state that must "
+                "never reach an installed disk: {!s}."
+            ).format(", ".join(bad)),
+        )
 
 
 def check_erofs_magic(device):
@@ -222,16 +295,25 @@ def run():
             _("Configuration Error"),
             _("<pre>{!s}</pre> does not name rootPartLabel.").format("imagedeploy"),
         )
+    live_root_label = conf.get("liveRootPartLabel")
+    live_user = conf.get("liveUser")
+    if not live_root_label or not live_user:
+        return (
+            _("Configuration Error"),
+            _("<pre>{!s}</pre> does not name liveRootPartLabel and liveUser.").format(
+                "imagedeploy"
+            ),
+        )
 
-    root_image = os.path.join(payload_dir, conf.get("rootImage", "root.erofs"))
-    var_template = os.path.join(payload_dir, conf.get("varTemplate", "var.tar.zst"))
+    var_base = os.path.join(payload_dir, conf.get("varBase", "var-base.tar.zst"))
     manifest_path = os.path.join(payload_dir, conf.get("manifest", "manifest.json"))
 
     try:
         parts = find_partitions(root_label)
 
-        # ---- 0. the payload is there, and it is the payload we think ------------------------
-        for label, path in (("root image", root_image), ("manifest", manifest_path)):
+        # ---- 0. the payload that IS still a file, and the manifest describing the one that
+        # is not (plan/34 §7.1/§7.2) ------------------------------------------------------------
+        for label, path in (("/var seed", var_base), ("manifest", manifest_path)):
             if not os.path.isfile(path):
                 raise DeployError(
                     _("Installation failed"),
@@ -239,28 +321,16 @@ def run():
                 )
         with open(manifest_path, encoding="utf-8") as f:
             manifest = json.load(f)
+        root_erofs_meta = manifest.get("root_erofs", {})
+        expected_size = root_erofs_meta.get("size")
+        expected_sha256 = root_erofs_meta.get("sha256")
+        if not expected_size or not expected_sha256:
+            raise DeployError(
+                _("Installation failed"),
+                _("The manifest names no root_erofs size and sha256 to install from."),
+            )
 
-        if conf.get("verifyPayload", True):
-            libcalamares.job.setprogress(0.0)
-            expected = manifest.get("root_erofs", {}).get("sha256")
-            if expected:
-                debug("verifying {} against the manifest".format(root_image))
-                actual = sha256_of(
-                    root_image, lambda f: libcalamares.job.setprogress(f * 0.10)
-                )
-                if actual != expected:
-                    raise DeployError(
-                        _("Installation failed"),
-                        _(
-                            "The system image on the install medium is corrupt: its checksum is "
-                            "{!s}, the manifest says {!s}. Write the installer to the USB stick "
-                            "again."
-                        ).format(actual[:16], expected[:16]),
-                    )
-            else:
-                warning("manifest carries no sha256 for the root image; skipping verification")
-
-        # ---- 1. the root filesystem, byte for byte ------------------------------------------
+        # ---- 1. the root filesystem, byte for byte, straight off this medium's own disk ------
         # This is the install. Everything after it is mounting and identity.
         #
         # settle first. The partition module has just rewritten the GPT and run mkfs, and the
@@ -281,10 +351,29 @@ def run():
                     ),
                 )
 
-        write_image(
-            root_image,
+        # The medium's OWN root device, cross-checked against its own PARTLABEL before it is
+        # trusted as the install source — plan/34 §2's whole guarantee ("a machine installed
+        # from this medium is indistinguishable from one dd'd from the desktop image") depends
+        # on this actually being that byte-for-byte artifact, not merely "whatever / happens to
+        # be mounted from" on a machine running an unexpected kernel command line.
+        live_root_device = find_live_root_source()
+        live_root_actual_label = partlabel_of(live_root_device)
+        if live_root_actual_label != live_root_label:
+            raise DeployError(
+                _("Internal error"),
+                _(
+                    "This medium's own root device ({!s}) is labelled '{!s}', expected '{!s}' "
+                    "— refusing to install from a device that is not what this build's own "
+                    "UKI says it booted."
+                ).format(live_root_device, live_root_actual_label, live_root_label),
+            )
+
+        write_and_verify(
+            live_root_device,
             parts["root"]["device"],
-            lambda f: libcalamares.job.setprogress(0.10 + f * 0.60),
+            expected_size,
+            expected_sha256,
+            lambda f: libcalamares.job.setprogress(f * 0.70),
         )
         check_erofs_magic(parts["root"]["device"])
         libcalamares.job.setprogress(0.72)
@@ -296,48 +385,74 @@ def run():
         mount(parts["root"]["device"], root_mount_point, "erofs", "ro", mkdir=False)
         mount(parts["var"]["device"], os.path.join(root_mount_point, "var"), "ext4", "defaults")
 
-        # ---- 3. seed /var -------------------------------------------------------------------
-        # The var template is the payload profile's own /var, packed by stage 60 from the same
-        # staging tree its var.img is built from — so a seeded /var and a dd'd one are the same
-        # bytes. It carries the overlay skeleton, /home, /roothome and the preinstalled Flatpak
-        # store, which is what lets an install with no network at all produce a machine with its
-        # apps already on it.
+        # ---- 3. seed /var, then copy the LIVE SESSION's own Flatpak store (plan/34 §7.1/§9) ---
+        # var-base.tar.zst is the payload profile's own /var minus lib/flatpak — packed by
+        # stage 40 from the same var.tar.zst stage 60's var.img is built from, so a seeded /var
+        # and a dd'd one agree on everything except the store. It carries the overlay skeleton,
+        # /home, /roothome and lib/immos/flatpak-preinstall.done, which is what lets an install
+        # with no network at all produce a machine whose firstboot unit stays quiet.
         if keep:
             # KEEPING (plan/33 §7): the var partition already has an overlay skeleton, homes and
             # a Flatpak store of its own — they are the entire reason var was kept rather than
-            # erased. Extracting the template over them would replace the accounts, files and
-            # apps this feature exists to keep with the image's own factory defaults.
-            debug("imagedeploy: keeping — not extracting the var template over the kept /var")
-        elif os.path.isfile(var_template):
-            debug("unpacking {} into the target /var".format(var_template))
-            sh(
-                [
-                    "tar",
-                    "--extract",
-                    # Explicit rather than relying on tar's magic sniffing: the failure mode of a
-                    # missed detection is tar reading 2 GiB of compressed bytes as a tar stream
-                    # and reporting a corrupt archive, which reads as a corrupt PAYLOAD.
-                    "--zstd",
-                    "--numeric-owner",
-                    "--xattrs",
-                    "--acls",
-                    "--file", var_template,
-                    "--directory", os.path.join(root_mount_point, "var"),
-                ]
-            )
+            # erased. Extracting the seed over them, or overwriting the store, would replace the
+            # accounts, files and apps this feature exists to keep with the image's own factory
+            # defaults.
+            debug("imagedeploy: keeping — not reseeding /var or the Flatpak store over the kept one")
         else:
-            # Not fatal: build.conf's INSTALLER_PAYLOAD_FLATPAKS=0 produces a medium with no
-            # template at all, and the directories below are all an installed system strictly
-            # needs. Say so, so a MISSING template is distinguishable from an omitted one.
-            warning("no var template at {} — seeding a bare /var".format(var_template))
-        libcalamares.job.setprogress(0.90)
+            if os.path.isfile(var_base):
+                debug("unpacking {} into the target /var".format(var_base))
+                sh(
+                    [
+                        "tar",
+                        "--extract",
+                        # Explicit rather than relying on tar's magic sniffing: the failure mode
+                        # of a missed detection is tar reading compressed bytes as a tar stream
+                        # and reporting a corrupt archive, which reads as a corrupt PAYLOAD.
+                        "--zstd",
+                        "--numeric-owner",
+                        "--xattrs",
+                        "--acls",
+                        "--file", var_base,
+                        "--directory", os.path.join(root_mount_point, "var"),
+                    ]
+                )
+            else:
+                # Not fatal: the skeleton directories below are all an installed system strictly
+                # needs. Say so, so a MISSING seed is distinguishable from an omitted one.
+                warning("no /var seed at {} — seeding a bare /var".format(var_base))
+            libcalamares.job.setprogress(0.85)
+
+            # The Flatpak store: copied from THIS LIVE SESSION's own /var/lib/flatpak, not
+            # unpacked from any payload file — plan/34 §7.1 unpacks it into the medium's own
+            # /var once, at build time, and it is from there (as possibly modified by whatever
+            # the person running this installer did in Discover before clicking Install) that
+            # an install's store comes. This is intended, not a bug: a Flatpak added during the
+            # live session carries over to the installed machine (plan/34 §9), the same as any
+            # other live-session write to /var would.
+            #
+            # cp -a, not tar or rsync -a: Flatpak's OSTree-backed store relies on hard links
+            # between repo objects for its own deduplication, and cp -a (unlike a plain cp -r
+            # or rsync without -H) detects and recreates hard links among the files it copies
+            # together in one invocation.
+            live_flatpak = "/var/lib/flatpak"
+            if os.path.isdir(live_flatpak):
+                dest_flatpak = os.path.join(root_mount_point, "var", "lib", "flatpak")
+                os.makedirs(os.path.dirname(dest_flatpak), exist_ok=True)
+                debug("copying the live session's own Flatpak store to the target (hard links preserved)")
+                sh(["cp", "-a", "--", live_flatpak, dest_flatpak])
+            else:
+                warning("no Flatpak store at {} in the live session".format(live_flatpak))
+            libcalamares.job.setprogress(0.90)
 
         # Belt and braces: the overlay dirs and the home trees must exist whether they came out
-        # of the template or not. /home and /root in the image are symlinks into /var (plan/01),
-        # so a missing var/home is a system where the user has no home directory.
+        # of the seed or not. /home and /root in the image are symlinks into /var (plan/01), so
+        # a missing var/home is a system where the user has no home directory.
         for d in ("overlay/etc/upper", "overlay/etc/work", "home", "roothome"):
             os.makedirs(os.path.join(root_mount_point, "var", d), exist_ok=True)
         os.chmod(os.path.join(root_mount_point, "var", "roothome"), 0o700)
+
+        # ---- 3b. post-condition: none of THIS build's own live-medium state reached the disk -
+        check_no_live_leakage(root_mount_point, live_user)
 
         # ---- 4. THE /etc OVERLAY ------------------------------------------------------------
         # The line this whole installer is built around. lowerdir is the target's own /etc — the

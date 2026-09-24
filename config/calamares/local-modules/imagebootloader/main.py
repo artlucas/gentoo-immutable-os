@@ -9,12 +9,15 @@
 # shaped PE binary, built by stage 40 — through systemd-boot. So the entire boot configuration
 # is four file copies and a three-line loader.conf, and nothing here generates anything.
 #
-# THE FILES COME FROM THE PAYLOAD, NOT FROM THE LIVE SYSTEM. systemd-bootx64.efi is read out of
-# the mounted target's own /usr/lib/systemd/boot/efi/, so the EFI binary on the installed ESP is
-# the one that belongs to the systemd the installed system runs. The live medium happens to
-# carry the same version today — both profiles resolve from one config root and one lock — but
-# "happens to" is exactly the kind of assumption that stops being true the first time the two
-# profiles are relocked apart.
+# THE TWO FILES COME FROM TWO DIFFERENT PLACES, DELIBERATELY. systemd-bootx64.efi is read out of
+# the MOUNTED TARGET's own /usr/lib/systemd/boot/efi/ — the disk imagedeploy just wrote, not this
+# live medium's own /usr — so the EFI binary on the installed ESP is the one that belongs to the
+# systemd the installed system actually runs. The live medium happens to carry the same version
+# today — both profiles resolve from one config root and one lock — but "happens to" is exactly
+# the kind of assumption that stops being true the first time the two profiles are relocked
+# apart. uki.efi, by contrast, genuinely IS a payload file (plan/34 §7.1: unchanged by Phase D,
+# still copied under payloadDir) — it is the desktop build's own UKI, not anything this profile's
+# own target carries, since the installer profile builds no UKI of its own (plan/34 §8).
 #
 # This mirrors section 3 of scripts/stages/60-image.sh, which builds the factory image's ESP.
 # The two produce the same ESP contents, which is what makes an installed machine

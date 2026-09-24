@@ -5,21 +5,29 @@
 # what it is installing.
 ---
 # Where stage 40 staged the payload inside the LIVE image. Under /var because stage 60 builds
-# the root EROFS with --exclude '/var/*' — it is the only place ~5 GiB of payload can go.
+# the root EROFS with --exclude '/var/*'. Only var-base.tar.zst and manifest.json actually live
+# here now (plan/34 §7.1) — root.erofs is not a staged file at all any more, see liveRootPartLabel
+# below.
 payloadDir:    "@PAYLOAD_DIR@"
-rootImage:     "root.erofs"
-varTemplate:   "var.tar.zst"
+varBase:       "var-base.tar.zst"
 manifest:      "manifest.json"
 
-# Which partition receives the root image, by PARTLABEL. This string is the installed system's
+# The root image is no longer a file under payloadDir (plan/34 §7.2 step 6): it is THIS
+# medium's own root partition, dd'd there directly by stage 60 and never staged a second time.
+# imagedeploy reads it by finding the live session's own `/` — findmnt -no SOURCE / — and
+# checking that partition's PARTLABEL against liveRootPartLabel before trusting it as the
+# source. Not /usr: the systemd-sysext extension overlays /usr only, so `/` itself is still
+# backed by whatever device this medium's own UKI cmdline named at root=PARTLABEL=....
+liveRootPartLabel: "@IMG_ROOT_PARTLABEL@"
+
+# Which partition RECEIVES the root image, by PARTLABEL. This string is the installed system's
 # identity: the UKI cmdline says root=PARTLABEL=root_@VERSION@, baked in at build time and
 # identical on every machine, so the label the partitioner writes and the label the initrd looks
 # for have to be the same string. The `disksetup` job creates it, out of the layout in
 # scripts/lib/layout.sh (plan/24); this finds it.
 rootPartLabel: "@ROOT_PARTLABEL@"
 
-# sha256 the root image against the manifest before writing it. ~10 seconds off a good USB stick
-# and several minutes off a bad one — which is the point: a stick that has started to rot writes
-# a system that boots once and then does not, and the failure appears to be the distro's.
-# Set false only for a QEMU test where the medium is a file.
-verifyPayload: true
+# The live user's own account name, so imagedeploy's post-install check can confirm none of
+# this build's own live-session state (its home, its upper passwd entry, the sysext itself)
+# reached the installed disk's /var.
+liveUser: "@LIVE_USER@"

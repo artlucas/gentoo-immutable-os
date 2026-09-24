@@ -162,7 +162,7 @@ are ours.
 |---|---|
 | `locale`, `keyboard`, `summary`, `finished`, `umount` | **kept**, unmodified |
 | `welcome` | **replaced** by `language` + `greeting` — the language list first and the requirements verdict second, because the stock page's order is in `WelcomePage.cpp` and no config key reaches it ([plan/22](../../plan/22-installer-language-page.md), split in [plan/23](../../plan/23-installer-greeting-page.md)). Its requirements **box** is borrowed rather than rewritten: `checker/` is vendored into the `greeting` module, because those three classes are private to the stock module and no header of theirs is installed |
-| `removeuser` | **folded into `accountsetup`**, and removed from the sequence entirely ([plan/33](../../plan/33-reinstall-keeping-files.md) §7). It ran `userdel -f -r <live>` unconditionally, which the overlay made "just work" — see below — but a stock module cannot be told to stand down, and on a disk that is being *kept* rather than erased `<live>` may be the only account there is. `accountsetup`'s own `remove_live_user()` runs the same command, as the last thing that job does, on the erase path only |
+| `removeuser` | **removed from the sequence entirely**, and there is no longer anything for a replacement to remove. It used to run `userdel -f -r <live>` unconditionally, which the `/etc` overlay made "just work" as a copy-up — but a stock module cannot be told to stand down, and on a disk being *kept* rather than erased `<live>` may be the only account there is ([plan/33](../../plan/33-reinstall-keeping-files.md) §7 folded the removal into `accountsetup`, erase-path only). [plan/34](../../plan/34-installer-sysext.md) §5 went further: the live account no longer reaches the root image's lower `/etc` at all, so there is nothing left on an installed disk for a removal step to find. `accountsetup`'s own `check_no_live_user()` proves that, as a post-condition that fails the install rather than a `userdel` with something to do |
 | `partition` | **replaced** by `disk` + `disksetup` ([plan/24](../../plan/24-installer-disk-page.md)). It was *kept and reconfigured* for the whole of Phase A — `allowManualPartitioning: false` plus a fixed `partitionLayout` leaves a device combo box and an Erase radio button — and what that leaves on screen is a partition editor with most of its controls taken away, in upstream's words for an installer that offers manual partitioning and side-by-side installs. Replacing the page replaced the partitioner too: a Calamares view step owns its `jobs()` |
 | `users` | **replaced** by `accounts` + `accountsetup` — one module where the mechanism is a choice, because upstream's could only offer domain join as an *addition* to a local account ([plan/21](../../plan/21-installer-accounts-page.md)) |
 | `unpackfs`, `mount` | **replaced** by `imagedeploy` |
@@ -179,30 +179,41 @@ are ours.
 does** — including mounting the overlay onto its own lowerdir, the same incantation as
 `config/rootfs/usr/lib/dracut/modules.d/90etc-overlay/etc-overlay.sh`.
 
-With that in place, our own `accountsetup` runs `useradd`, `chpasswd` and, on an erase, `userdel`
-for the live user all under the same chroot, and the writes land in the upper on `/var` because
-that is what the mount does. **No patched modules anywhere in this installer.**
+With that in place, our own `accountsetup` runs `useradd` and `chpasswd` for the created account
+under the same chroot, and the writes land in the upper on `/var` because that is what the mount
+does. **No patched modules anywhere in this installer.**
 
-It is also what makes removing the live user work at all. The live user is baked into
+There used to be a `userdel` here too, and understanding why there is not one any more is worth
+doing explicitly, because the overlay is *still* the mechanism that made the old design possible
+at all. Before [plan/34](../../plan/34-installer-sysext.md) §5, the live user was baked into
 `/etc/passwd` inside the read-only EROFS *that the installed system also uses*, so the account
-cannot be deleted — it has to be shadowed. `userdel` rewriting a lower file **is** a copy-up: the
-upper ends up holding the file minus that user, and the upper's copy wins. The design in
-plan/16 §5.4 called for a custom step to do this by hand; the overlay does it for free. It used
-to be the stock `removeuser` module doing the rewriting — unconditionally, which is exactly wrong
-on a disk being *kept* rather than erased — and is `accountsetup`'s own `remove_live_user()` now
-([plan/33](../../plan/33-reinstall-keeping-files.md) §7).
+could not be deleted from an installed disk — it had to be shadowed. `userdel` rewriting the
+target's `/etc/passwd` was a copy-up: the upper ended up holding the file minus that user, and
+the upper's copy won. The design in plan/16 §5.4 called for a custom step to do this by hand; the
+overlay did it for free — and it was still the stock `removeuser` module doing the rewriting,
+unconditionally, until [plan/33](../../plan/33-reinstall-keeping-files.md) §7 folded it into
+`accountsetup`'s own `remove_live_user()`, erase-path only, because a disk being *kept* might
+have no other account.
+
+plan/34 §5 removed the live account from the root image's lower `/etc` entirely — it lives only
+in `/var`, seeded fresh for every boot of a live-role image and excluded, by construction, from
+`var-base.tar.zst` — so there is nothing left on an installed disk's lower `/etc` for a
+removal step to find. `remove_live_user()` is gone; what replaced it, `check_no_live_user()`,
+reads the **merged** view this job's own writes went through (both the lower and the upper's own
+copy of `passwd`, belt and braces) and **fails the install** if the live user is there anyway —
+a post-condition proving the upstream guarantees still hold, not a cleanup step with work to do.
 
 ## Our modules
 
 | module | replaces | what it does |
 |---|---|---|
-| `imagedeploy` | `unpackfs` + `mount` | verifies the payload against `manifest.json`, writes the root EROFS into the `root_<version>` partition, mounts root/var/**the /etc overlay**/ESP and the API filesystems, unpacks the `/var` template, sets `rootMountPoint` |
-| `imagebootloader` | `bootloader` | systemd-boot (taken from the **payload's** `/usr`, not the live system's) and the UKI onto the ESP, plus a best-effort `efibootmgr` entry |
-| `imageidentity` | — | autologin off, subuid/subgid, the first-boot hostname stamp, `/etc/locale.conf` |
+| `imagedeploy` | `unpackfs` + `mount` | finds **this medium's own** root device (`findmnt`, cross-checked against `liveRootPartLabel` by PARTLABEL) and copies it into the `root_<version>` partition byte-for-byte **while hashing it**, checked against `manifest.json`'s `root_erofs`; mounts root/var/**the /etc overlay**/ESP and the API filesystems; on an erase, seeds `/var` from `var-base.tar.zst` and copies **this live session's own** `/var/lib/flatpak` (`cp -a`, hard links preserved); proves none of this build's own live-medium state reached the target (`check_no_live_leakage()`); sets `rootMountPoint` |
+| `imagebootloader` | `bootloader` | systemd-boot (taken from the **mounted target's own** `/usr`, not the payload, not the live system's) and the UKI (a genuine payload file, unchanged by Phase D) onto the ESP, plus a best-effort `efibootmgr` entry |
+| `imageidentity` | — | autologin, written only when the accounts page asked for it (the target otherwise has no autologin config to override — [plan/34](../../plan/34-installer-sysext.md) §5), subuid/subgid, the first-boot hostname stamp, `/etc/locale.conf` |
 | `language` | `welcome` (the page) | the language list, and nothing else. A compiled view module from the overlay, not here; its config is `modules/language.conf.in`, whose `languages:` list stage 40 renders from `config/languages.conf` |
 | `greeting` | `welcome` (the greeting **and** the checker) | the product, the sentence about erasing the disk, and the requirements verdict — in the language the page before it chose. A compiled view module from the overlay, not here; its config is `modules/greeting.conf.in`, which carries the `requirements:` block. Not called `welcome`: a viewmodule of that name would collide with `app-admin/calamares`' own, and `ModuleManager` resolves a duplicate name by search order without saying so |
 | `accounts` | `users` (the page) | the mode choice and its fields — a compiled view module from the overlay, not here; its config is `modules/accounts.conf.in` |
-| `accountsetup` | `users` (the jobs) + `managedenroll` + `removeuser` | the local administrator, `/etc/hostname` and `/etc/hosts`, then the domain join or the enrolment transplant, and last — on an erase only — the live user's removal ([plan/33](../../plan/33-reinstall-keeping-files.md) §7) |
+| `accountsetup` | `users` (the jobs) + `managedenroll` + `removeuser` | the local administrator, `/etc/hostname` and `/etc/hosts`, then the domain join or the enrolment transplant, and last a post-condition — `check_no_live_user()` — that **fails the install** if the live user reached the target's `/etc/passwd`, lower or upper ([plan/34](../../plan/34-installer-sysext.md) §5) |
 | `disk` | `partition` (the page) | the machine's disks, the ones that cannot be used and why, a to-scale picture of what is about to happen, and the checkbox that has to be ticked before Next lights up. A compiled view module from the overlay, not here; its config is `modules/disk.conf.in` |
 | `disksetup` | `partition` (the jobs) | releases the target's mounts, wipes it, writes the GPT and makes the two filesystems there are to make. The layout comes from `scripts/lib/layout.sh` — **the pipeline's own**, installed on the medium as `/usr/libexec/<id>-disk-layout` — so an installed machine and an image `dd`'d to a disk are partitioned by one description rather than two |
 | `apps` | — (nothing stock asks this) | which extra applications to add from Flathub: the typical set, nothing, or a chosen list. A compiled view module from the overlay, not here; its config is `modules/apps.conf` (not a template — the list is facts about Flathub, not about this build). Offline it forces its own second answer, "nothing extra", and the install is none the worse for it |
@@ -215,21 +226,56 @@ the bootloader. Both stage 40 and `tests/test-installer.sh` assert it.
 
 ## The payload
 
-The medium carries what it installs, in `/var/lib/<id>-install/`:
+Since [plan/34](../../plan/34-installer-sysext.md) §7 (the sysext redesign, "Phase D") the root
+filesystem is **not a staged file any more**. It is *this medium's own* `root_<version>`
+partition — the same EROFS this live session is itself running from, built once by stage 60 and
+never copied a second time onto the stick. `imagedeploy` finds it with `findmnt -no SOURCE /`
+(not `/usr`: `systemd-sysext` overlays `/usr` only, so `/` is still whatever device the medium's
+own UKI cmdline named), cross-checks that device's PARTLABEL against `liveRootPartLabel` before
+trusting it, and then copies it into the target's `root_<version>` partition **while hashing it**
+— one read of the medium, not a staged copy followed by a separate verify pass.
+
+What's left in `/var/lib/<id>-install/` is smaller for exactly that reason:
 
 ```
-root.erofs      the desktop profile's root filesystem, written to the target byte-for-byte
-uki.efi         the desktop profile's UKI, copied onto the target ESP
-var.tar.zst     its /var: overlay skeleton, homes, the preinstalled Flatpak store
-manifest.json   versions, sizes and sha256s — checked before anything is written
+uki.efi           the desktop profile's UKI, copied onto the target ESP — unchanged by Phase D
+var-base.tar.zst  the desktop profile's /var, minus lib/flatpak: overlay skeleton, homes,
+                  lib/immos/flatpak-preinstall.done
+manifest.json     root_erofs's source ("partition", not a file), size and sha256 — checked
+                  against what was just copied — plus uki.efi's and var-base.tar.zst's own
+                  sizes and sha256s
 ```
 
-All four are staged by stage 40 from **another profile's** build output, unmodified. That is what
-makes an installed machine indistinguishable from one `dd`'d from the desktop `.img`, which is the
-property `systemd-sysupdate` depends on ([plan/16 §3.4](../../plan/16-installer.md)).
+`imagebootloader` copies `uki.efi` onto the target's ESP exactly as before Phase D, but it now
+reads `systemd-bootx64.efi` — the *other* file it installs — from the **mounted target's own**
+`/usr` (the disk `imagedeploy` just wrote), not from a payload file, so the two files on the ESP
+come from two different places on purpose. See its own module row below.
 
-`INSTALLER_PAYLOAD_FLATPAKS=0` in `config/build.conf` drops `var.tar.zst` — a smaller stick, and
-an installed system with no preinstalled apps until someone installs them.
+The Flatpak store is not staged at all. `var-base.tar.zst` excludes `lib/flatpak` on purpose:
+Phase D moved the store to being unpacked into **the medium's own** `/var/lib/flatpak` at *build*
+time ([plan/34](../../plan/34-installer-sysext.md) §7.1), so by the time somebody clicks Install
+it is an ordinary part of this live session — installable apps from Discover during the session
+land in the very same directory. An erase-mode install copies that directory into the target with
+`cp -a` (hard links preserved — Flatpak's OSTree-backed store depends on them for
+deduplication), so **whatever was in the store at the moment Install was clicked ships on the
+disk**, including anything added live. That is a feature, not a staging shortcut
+([plan/34](../../plan/34-installer-sysext.md) §9): the alternative would be reading the same
+Flatpak state off the disk this installer is already running from a second time.
+
+Two artefacts moved off `/var` and off the payload directory entirely and onto the medium's own
+`/usr`: the extension `lib/extensions/immos-installer` that `systemd-sysext` merges over the live
+session's `/usr` (nothing merges it on an installed system — there is no persistent counterpart)
+and the desktop/live `/etc` difference `tree-delta.py` computed at build time, now living in the
+medium's own `/etc` overlay upper rather than duplicated under a payload path.
+
+`imagedeploy`'s own `check_no_live_leakage()` is the post-install proof that none of this build's
+own live-session state — the sysext, the live user's home, the live user's entry in the target's
+`/etc` overlay upper — reached the installed disk, checked directly against what is actually on
+the target after the copy rather than trusted from `var-base.tar.zst`'s own construction.
+
+`INSTALLER_PAYLOAD_FLATPAKS=0` in `config/build.conf` still drops the Flatpak store from the
+image `stage 60` builds this medium's own `/var/lib/flatpak` from — a smaller stick, and an
+installed system with no preinstalled apps until someone installs them.
 
 ## Reinstalling and keeping files
 

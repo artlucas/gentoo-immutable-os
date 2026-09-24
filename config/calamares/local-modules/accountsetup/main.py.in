@@ -51,7 +51,7 @@ _ = gettext.translation(
 ).gettext
 
 ID = "@DISTRO_ID@"
-# The live session's own account — for remove_live_user() only, below (plan/33 §7).
+# The live session's own account — for check_no_live_user() only, below (plan/34 §5).
 LIVE_USER = "@LIVE_USER@"
 
 # Absolute, and named rather than spelled inline at the two call sites. Absolute because these
@@ -277,30 +277,56 @@ def write_hostname(root, gs, conf):
 # ---------------------------------------------------------------------------------------------
 
 
-def remove_live_user(root):
-    """`userdel -f -r` the live session's own account, in the target. THE STOCK `removeuser`
-    MODULE'S OWN JOB, FOLDED IN HERE (plan/33 §7), because a stock module cannot be told to stand
-    down: `RemoveUserJob.cpp` (calamares-3.4.2) runs unconditionally, and on a KEPT disk installed
-    by dd'ing the factory image, @LIVE_USER@ may be the only account there is — `-r` would delete
-    the one home directory the whole feature exists to keep. Never reached while keeping: run()
-    returns before this point on that path.
+def check_no_live_user(root):
+    """Post-condition, not cleanup: LIVE_USER must not appear in the target's passwd, in
+    either the lower (the read-only image) or the upper (the /etc overlay's own writable copy).
 
-    Runs AFTER the real account exists (create_local_user(), above, in the same job) — the
-    ordering plan/16 §5.4 relied on when this was a separate step, preserved by being the LAST
-    thing this job does: a machine with neither account and no root password is unreachable.
+    There used to be a userdel here (plan/33 §7's removeuser fold-in) — the STOCK `removeuser`
+    module's own job, needed because on a disk installed by dd'ing the factory image, LIVE_USER
+    could be the only account there was, and RemoveUserJob.cpp ran unconditionally. plan/34 §5
+    changed what there is to remove: the live account no longer reaches the root image's lower
+    /etc at all — it moves to /var, seeded fresh for every boot of a live-role image and
+    excluded, by construction, from var-base.tar.zst (plan/34 §7.1) and from the check
+    imagedeploy's own check_no_live_leakage() already ran against the upper before this job
+    started. So there is nothing left for a removal step to do on an ERASE install — and on a
+    KEEP install, there never was: this function was never reached on that path even before.
 
-    NEVER FAILS THE INSTALL — the stock job's own tolerance. `-f` and `-r` both exist because the
-    live user's home is routinely busy (it is quite possibly still the session running this
-    installer), and userdel here is best-effort tidying, not a step anything downstream depends
-    on: a machine that keeps an empty live-user home around is cosmetic, and failing the whole
-    install over a noisy removal would not be.
+    What is still worth proving, here, on the actual merged view this job itself writes to
+    (imagedeploy already mounted the /etc overlay before this job runs): that none of those
+    upstream guarantees quietly stopped holding. `getent` reads the SAME merged /etc/passwd
+    every other write in this job goes through; the upper is also read directly, belt and
+    braces, since a corrupted or hand-edited upper could in principle shadow a clean lower with
+    an unclean one without the merged read alone making that distinction obvious in the failure
+    message.
+
+    FAILS THE INSTALL, unlike the userdel it replaces — this is no longer "best-effort tidying
+    of an account that also might not be there"; a LIVE_USER surviving to an installed disk is
+    exactly the wheel-group, published-password account plan/34 §5 exists to make impossible.
     """
-    proc = in_target(root, ["userdel", "-f", "-r", LIVE_USER])
-    if proc.returncode != 0:
-        warning("accountsetup: could not remove the live user %s: %s" % (
-            LIVE_USER, (proc.stdout or "").strip()))
-    else:
-        debug("accountsetup: removed the live user %s from the target" % LIVE_USER)
+    proc = in_target(root, ["getent", "passwd", LIVE_USER])
+    if proc.returncode == 0:
+        return (
+            _("Installation failed"),
+            _(
+                "The live medium's own account ({!s}) is still in the installed system's "
+                "/etc/passwd. This should be impossible; please file a bug."
+            ).format(LIVE_USER),
+        )
+    upper_passwd = os.path.join(root, "var/overlay/etc/upper/passwd")
+    if os.path.isfile(upper_passwd):
+        with open(upper_passwd, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if line.strip() and not line.startswith("#") and line.split(":", 1)[0] == LIVE_USER:
+                    return (
+                        _("Installation failed"),
+                        _(
+                            "The live medium's own account ({!s}) is in the installed "
+                            "system's /etc overlay upper. This should be impossible; "
+                            "please file a bug."
+                        ).format(LIVE_USER),
+                    )
+    debug("accountsetup: confirmed the live user %s is not on the target" % LIVE_USER)
+    return None
 
 
 # ---------------------------------------------------------------------------------------------
@@ -601,9 +627,12 @@ def run():
         elif mode == "domain":
             join_domain(root, gs, secrets.get("domainJoinPassword"))
 
-        # LAST, after the real account exists — see remove_live_user()'s own note on why the
-        # order matters. Not reached on the keep path, which returned above.
-        remove_live_user(root)
+        # LAST, after the real account exists — a post-condition, not a step with its own work
+        # to do (see check_no_live_user()'s own note). Not reached on the keep path, which
+        # returned above.
+        failure = check_no_live_user(root)
+        if failure:
+            return failure
 
         os.sync()
     finally:

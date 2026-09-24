@@ -8,14 +8,18 @@
 # whose upper lives on /var — so each write is a copy-up that shadows the read-only image's own
 # copy (plan/16 §5.2, §5.4).
 #
-#   1. AUTOLOGIN, EITHER WAY. The live medium autologins, and it has to: that is how it reaches a
-#      Plasma session to run this installer from. That autologin lives in the image's
-#      /etc/plasmalogin.conf.d/10-autologin.conf, inside the read-only EROFS the installed system
-#      also uses, so it cannot be deleted — deleting a lower file through an overlay needs a
-#      whiteout device, which is not something to leave on a user's disk. Drop-ins sort
-#      lexically, so a 20- file in the upper wins. Since plan/26 §4 the accounts page can ask for
-#      the same arrangement on the installed machine: when GlobalStorage says autoLogin and names
-#      the created user, the drop-in carries that user instead of an empty one.
+#   1. AUTOLOGIN, ONLY WHEN ASKED FOR. The live medium autologins, and it has to: that is how it
+#      reaches a Plasma session to run this installer from. But that autologin's own
+#      /etc/plasmalogin.conf.d/10-autologin.conf is not in the read-only root at all any more —
+#      plan/34 §5 moved it out of config/rootfs into config/live-seed, which stage 40 renders
+#      straight into THIS BUILD'S OWN live medium's /etc overlay upper, never into the lower
+#      EROFS both profiles ship. var-base.tar.zst (what imagedeploy seeds the target's /var from)
+#      is the desktop build's var, which never renders that live-only template either. So an
+#      installed system's /etc starts with no autologin config of any kind, and there is nothing
+#      here for this job to override. Since plan/26 §4 the accounts page can ask for autologin on
+#      the installed machine too — when GlobalStorage says autoLogin and names the created user,
+#      this job writes the one file that turns it on. When it was not asked for, it writes
+#      nothing, because nothing needs overriding.
 #
 #   2. SUBUID/SUBGID. Rootless podman needs subordinate ID ranges; stage 40 allocates them for
 #      the live user and Calamares' `users` module has no concept of them (plan/13, plan/16 §5.4).
@@ -56,8 +60,13 @@ def target_path(root, path):
 
 
 def write_autologin_dropin(root, conf, username):
-    """Write the autologin drop-in — for the created user when the accounts page asked for that
-    (plan/26 §4), and against the live medium's autologin otherwise.
+    """Write the autologin drop-in — but ONLY when the accounts page asked for it (plan/26 §4).
+
+    There is no "otherwise" branch any more. Post-plan/34 §5, 10-autologin.conf never ships in
+    the read-only root and var-base.tar.zst (the desktop build's own var) never renders it
+    either — see the module docstring above. An installed system's /etc simply has no autologin
+    config until this job writes one, so the not-requested case needs no file: the login screen
+    is already what a normal install without this job's help would produce.
 
     A drop-in, not an edit. And the MTIME matters here in a way nothing about the file's content
     reveals: Plasma Login Manager only re-reads plasmalogin.conf.d when its newest mtime beats a
@@ -66,48 +75,33 @@ def write_autologin_dropin(root, conf, username):
     mtime, decades after the image's, so the directory is re-read and this file is seen. That is
     the right outcome by luck rather than by design, so it is written down.
 
-    The enabled branch mirrors 10-autologin.conf.in key for key — User, Session, Relogin — so an
-    installed machine that logs itself in is the live medium's arrangement with one name swapped,
-    not an improvisation.
+    The keys mirror 10-autologin.conf.in key for key — User, Session, Relogin — so an installed
+    machine that logs itself in is the live medium's arrangement with one name swapped, not an
+    improvisation.
     """
+    if not username:
+        debug("autologin was not requested; the target's /etc has no autologin config to begin "
+              "with, so there is nothing to write")
+        return
     path = target_path(root, conf.get("autologinDropIn", "/etc/plasmalogin.conf.d/20-autologin.conf"))
     if not os.path.isdir(os.path.dirname(path)):
-        # No Plasma Login Manager in this payload (a console profile, say). Nothing to turn off
-        # or on.
+        # No Plasma Login Manager in this payload (a console profile, say). Nothing to turn on.
         debug("no plasmalogin.conf.d in the target; skipping the autologin drop-in")
         return
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    if username:
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(
-                "# Written by the installer at the request the accounts page recorded: this\n"
-                "# machine logs straight in as the created user. Drop-ins sort lexically, so\n"
-                "# this later file wins over 10-autologin.conf, which ships inside the\n"
-                "# read-only system image and cannot be deleted from it. Delete this file — or\n"
-                "# empty User below — to put the login screen back.\n"
-                "[Autologin]\n"
-                "User={}\n"
-                "Session=plasma\n"
-                "Relogin=false\n".format(username)
-            )
-        os.chmod(path, 0o644)
-        debug("autologin enabled for {} via {}".format(username, path))
-        return
     with open(path, "w", encoding="utf-8") as f:
         f.write(
-            "# Written by the installer. Overrides 10-autologin.conf, which ships inside the\n"
-            "# read-only system image and cannot be deleted from it — drop-ins sort lexically,\n"
-            "# so this later file wins.\n"
-            "#\n"
-            "# An empty User is what actually disables autologin: Plasma Login Manager's\n"
-            "# autologin branch is never entered for an empty username. Delete this file to\n"
-            "# restore the image's autologin.\n"
+            "# Written by the installer at the request the accounts page recorded: this\n"
+            "# machine logs straight in as the created user. Nothing else in the target's /etc\n"
+            "# ships an autologin config (plan/34 §5) — this file is the only one. Delete it to\n"
+            "# put the login screen back.\n"
             "[Autologin]\n"
-            "User=\n"
-            "Session=\n"
+            "User={}\n"
+            "Session=plasma\n"
+            "Relogin=false\n".format(username)
         )
     os.chmod(path, 0o644)
-    debug("autologin disabled via {}".format(path))
+    debug("autologin enabled for {} via {}".format(username, path))
 
 
 def write_subids(root, username, conf):
@@ -245,7 +239,7 @@ def run():
         if autologin and not username:
             warning(
                 "autoLogin is set but no username is in GlobalStorage; "
-                "writing the no-autologin drop-in instead"
+                "leaving the target's /etc with no autologin config"
             )
         write_autologin_dropin(root, conf, autologin and username)
         if username:
