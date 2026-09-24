@@ -756,6 +756,30 @@ fi
 # finalizers (guarded: console-only images lack the GUI tools)
 chroot_target "$TARGET" "ldconfig"
 chroot_target "$TARGET" "systemd-hwdb update --usr"
+# The target has TWO hwdb databases after that call, and only one of them is meant to ship.
+# /usr/lib/udev/hwdb.bin is the one --usr just built, fresh, from every hwdb.d fragment this
+# build installed. /etc/udev/hwdb.bin is a SEPARATE, STALE copy: sys-apps/systemd-udev-hwdb's
+# (or udev-provider's) pkg_postinst runs its own `systemd-hwdb --root=$ROOT update` with no
+# --usr, at EMERGE time, into $ROOT=$TARGET — this build's own build root, not the shipped
+# image's. That copy's compiled entries carry the source path of every contributing hwdb.d
+# file, so it embeds the build root's own path (confirmed: readelf/strings on the /etc copy
+# shows the build's $TARGET path where the /usr copy has none). Two independent builds of the
+# same image at different work-volume paths therefore ship a DIFFERENT /etc/udev/hwdb.bin,
+# despite installing byte-identical packages — this was misread as filesystem readdir-order
+# nondeterminism in an earlier pass; it is not. It is a real, explainable product bug.
+#
+# It also matters which one udev reads. systemd's HWDB_BIN_PATHS (hwdb-internal.h) tries
+# /etc/udev/hwdb.bin BEFORE /usr/lib/udev/hwdb.bin, so a shipped /etc copy is not just extra
+# weight, it is the copy udev actually uses — an emerge-time snapshot, not this stage's fresh
+# one, and the one whose device matches would only be tested by accident.
+#
+# systemd-hwdb-update.service (ConditionNeedsUpdate=/etc, ConditionPathExists=|/etc/udev/hwdb.bin)
+# would also fire after every A/B update once the file exists there, rewriting the file (~13 MB)
+# into the /etc upper for no purpose the image needs — /usr/lib/udev/hwdb.bin is already current
+# because THIS stage rebuilds it every time. Deleting the /etc copy removes the file and the
+# rewrite-after-update it invites, and leaves only the copy that must exist for udev to work at
+# all.
+rm -f -- "$TARGET/etc/udev/hwdb.bin"
 chroot_target "$TARGET" "command -v glib-compile-schemas >/dev/null && glib-compile-schemas /usr/share/glib-2.0/schemas || true"
 chroot_target "$TARGET" "command -v fc-cache >/dev/null && fc-cache -f || true"
 chroot_target "$TARGET" "command -v update-desktop-database >/dev/null && update-desktop-database || true"
@@ -2680,6 +2704,40 @@ if ! profile_has_set installer; then
       && die "verify: $BUILD_PROFILE does not include @installer, but /$leak exists in the target.
   Wipe the work volume and rebuild — a stale target is carrying installer files into a product image."
   done
+fi
+
+# /etc/udev/hwdb.bin: proven gone, not just "the rm -f above didn't error". A missing source
+# file makes rm silently succeed on nothing, so the fact that matters is the ABSENCE of the
+# path, checked here after every other finalizer has had its chance to write it back.
+[[ -e $TARGET/etc/udev/hwdb.bin ]] \
+  && die "verify: /etc/udev/hwdb.bin exists — systemd reads this copy BEFORE
+/usr/lib/udev/hwdb.bin (HWDB_BIN_PATHS), so a stray /etc copy from some package's pkg_postinst
+would ship as the database udev actually uses, stamped with this BUILD's own work-volume path"
+# The /usr copy is the one that must exist — --usr above is what builds it, and its absence
+# would leave udev with no hwdb at all, not just the stale one this checks for above.
+[[ -s $TARGET/usr/lib/udev/hwdb.bin ]] \
+  || die "verify: /usr/lib/udev/hwdb.bin is missing or empty — systemd-hwdb update --usr did not
+run or produced nothing; udev would have no hardware database at all"
+# The positive control for the path-leak this fix removes: the file must not merely be gone,
+# the STRING that made it a build-specific artifact must not be reachable through the copy that
+# ships either. grep -a treats the binary as text; -q short-circuits on the first hit.
+grep -qa '/work/' "$TARGET/usr/lib/udev/hwdb.bin" \
+  && die "verify: /usr/lib/udev/hwdb.bin contains a /work/ byte sequence — the same build-root
+leak that made the /etc copy build-specific has reached the copy meant to ship. Something is
+compiling hwdb.d source paths into this database again"
+# /etc/udev/hwdb.d is where a local override would live, never populated by this build's own
+# rootfs (nothing under config/rootfs ships to it) or, ordinarily, by any upstream ebuild
+# (hwdb.d fragments install to /usr/lib/udev/hwdb.d). If some package's `.ebuild` ever changes
+# that, systemd-hwdb-update.service's `ConditionPathExists=|/etc/udev/hwdb.bin` would go back to
+# true on every boot the moment ANYTHING recreates the file this fix just deleted — so this
+# reports what's there rather than assuming empty, and does not merely warn: a nonempty
+# hwdb.d/ silently reopens the exact bug the deletion above just closed.
+if compgen -G "$TARGET/etc/udev/hwdb.d/*" >/dev/null 2>&1; then
+  die "verify: /etc/udev/hwdb.d is not empty ($(compgen -G "$TARGET/etc/udev/hwdb.d/*" | wc -l)
+entries) — something installs local hwdb overrides there, which is exactly what would make
+systemd-hwdb-update.service recreate /etc/udev/hwdb.bin on the next boot and reopen the bug
+this fix removes. Find what installed there and either drop it from the image or extend this
+fix to sweep it too."
 fi
 
 # DNS wiring: every piece of it, because each half is useless alone — nsswitch pointing at a

@@ -379,6 +379,26 @@ does not. Every figure here is an estimate until the first build replaces it.
 - **The live session can change the install.** Flatpaks added on the stick are copied (§9). A store
   corrupted on the stick would be copied too; the job copies, it does not verify apps.
 - **Sticks made before this document** still carry the payload and install it, as before.
+- **Fixed during this document's implementation: a stray `/etc/udev/hwdb.bin`, on every profile,
+  not specific to the installer.** `systemd-hwdb update --usr` (stage 40) builds
+  `/usr/lib/udev/hwdb.bin`, the one meant to ship. But `sys-apps/systemd`'s own `pkg_postinst`
+  also runs an unqualified `systemd-hwdb --root=$ROOT update` at EMERGE time, into `$ROOT` =
+  this build's own `$TARGET`, writing a SECOND copy to `/etc/udev/hwdb.bin`. That copy's
+  compiled entries carry the source path of every hwdb.d fragment that fed it — so it embeds
+  the build's own work-volume path (`/work/target` or `/work/target-installer`), which is why
+  a tree-diff between two separately-built profiles ever saw it as "changed" at all: it is a
+  build-specific artifact, not a difference in what was installed. It was first misdiagnosed as
+  filesystem readdir-order nondeterminism (an earlier pass compared file lists across two
+  independently-populated roots and found the source .conf fragments byte-identical); that
+  explanation was wrong; the actual cause is the emerge-time copy's embedded build path.
+  Worse than merely extra weight: systemd's `HWDB_BIN_PATHS` tries `/etc/udev/hwdb.bin` BEFORE
+  `/usr/lib/udev/hwdb.bin`, so the copy that shipped was the *stale, build-tainted* one, not the
+  fresh one this stage rebuilds every time — and `systemd-hwdb-update.service`
+  (`ConditionPathExists=|/etc/udev/hwdb.bin`) would have rewritten ~13 MB into every installed
+  machine's `/etc` upper after every future update, for a file the image never needed at all.
+  Fixed by deleting `/etc/udev/hwdb.bin` in stage 40 right after the `--usr` rebuild, verified
+  three ways: the path is gone, `/usr/lib/udev/hwdb.bin` exists and is nonempty, and it contains
+  no `/work/` byte sequence.
 - **Built, not yet driven**, until:
   - `run-vm.sh` has booted the stick (autologin, `systemd-sysext status` listing
     `immos-installer`, Firefox launching);

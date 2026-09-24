@@ -286,4 +286,17 @@ done
 assert_false "filter_set_file no longer parses a #not-live marker" bash -c \
     "grep -vE '^[[:space:]]*#' '$REPO_ROOT/scripts/lib/common.sh' | grep -q '#not-live'"
 
+# ---- /etc/udev/hwdb.bin is deleted after every build, on every profile -----------------------
+# A pkg_postinst at EMERGE time writes a second, stale hwdb.bin to /etc/udev — a build-root-
+# specific artifact systemd's own path order (HWDB_BIN_PATHS) reads BEFORE the fresh one this
+# build's finalizer writes to /usr/lib/udev. Grep regression only, like the guard above: the
+# actual absence/content facts need a real $TARGET and are proven by stage 40's own verify
+# block and by stage 70, not host-side. This just proves the two lines that make the fix are
+# still there for every profile — nothing here is profile-gated.
+S40="$REPO_ROOT/scripts/stages/40-configure.sh"
+assert_true "stage 40 deletes /etc/udev/hwdb.bin after the --usr rebuild" \
+    grep -qF 'rm -f -- "$TARGET/etc/udev/hwdb.bin"' "$S40"
+assert_true "...and verifies it stays gone" \
+    grep -qF '[[ -e $TARGET/etc/udev/hwdb.bin ]]' "$S40"
+
 finish
