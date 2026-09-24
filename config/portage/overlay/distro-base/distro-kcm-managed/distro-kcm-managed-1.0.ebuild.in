@@ -50,17 +50,41 @@ src_unpack() {
 	cp -r "${FILESDIR}"/. "${S}"/ || die
 	# Every file cp -r just copied got the CURRENT WALL-CLOCK TIME as its mtime. Qt's rcc embeds
 	# a .qml resource's own mtime into the C++ it generates — QQmlEngine's disk-cache
-	# invalidation key — so two otherwise-identical builds of this package, run moments apart,
-	# link a byte-different kcm_managed.so purely from that. Confirmed by direct reproduction:
+	# invalidation key (QResourceRoot::lastModified(), read back by QV4::Unit::verifyHeader() at
+	# runtime) — so two otherwise-identical builds of this package, run moments apart, link a
+	# byte-different kcm_managed.so purely from that. Confirmed by direct reproduction:
 	# recompiling the exact same generated sources twice gave byte-identical .o files and an
 	# identical link, but two independent "configure+compile" runs did not — traced to
 	# ui/main.qml's copy-time mtime landing in qrc_kcm_managed.cpp as a literal millisecond
 	# timestamp (matched main.qml's own mtime to the millisecond). A desktop build and an
 	# installer build of this identical source therefore differed only in their GNU build-id,
 	# which a tree-diff between the two profiles' images could not tell apart from a real
-	# content change. Pinning every copied file's mtime to a fixed point removes the only
-	# remaining source of nondeterminism in this package's output.
-	find "${S}" -exec touch -h -d @0 -- {} + || die
+	# content change.
+	#
+	# A flat, fixed stamp (this fix's first version: touch -h -d @0) traded that bug for a worse
+	# one. verifyHeader() treats a ZERO embedded mtime as INVALID and falls back to
+	# QCoreApplication::applicationFilePath()'s own mtime — systemsettings, the host binary,
+	# which comes from a reused binpkg with a CONSTANT mtime across every rebuild. The cache key
+	# would then stop changing across CONTENT changes too: an A/B update that edits ui/main.qml
+	# but rebuilds neither Qt nor systemsettings would keep loading the OLD compiled QML out of
+	# the updated machine's own ~/.cache/*/qmlcache/ — silently, since the cache file is named
+	# from a hash of the source PATH alone, not its content.
+	#
+	# The stamp has to satisfy both constraints Qt's own mechanism actually needs: DETERMINISTIC
+	# across two independent builds of identical source (reproducibility — the property that
+	# started this), and DIFFERENT when the source itself differs (a real, working cache-
+	# invalidation key — the property @0 broke). Derived from each file's own content hash, it
+	# is both: the same source hashes to the same stamp on every rebuild, and a one-byte edit to
+	# ui/main.qml changes it. Directories and symlinks carry no content of their own to derive
+	# from and are not resource payloads rcc reads a timestamp out of, so they keep a fixed,
+	# nonzero stamp; only regular files get a content-derived one. "+ 1" keeps the result nonzero
+	# even in the astronomical case a hash's low bits are all zero — never @0's specific failure
+	# mode again, by construction, not by the odds of hitting it.
+	find "${S}" \( -type d -o -type l \) -exec touch -h -d @1 -- {} + || die
+	while IFS= read -r -d '' f; do
+		h=$(sha256sum -- "${f}" | cut -c1-8) || die
+		touch -h -d "@$(( 16#${h} + 1 ))" -- "${f}" || die
+	done < <(find "${S}" -type f -print0)
 }
 
 src_configure() {

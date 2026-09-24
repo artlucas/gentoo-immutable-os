@@ -94,13 +94,21 @@ BDEPEND="
 src_unpack() {
 	mkdir -p "${S}" || die
 	cp -r "${FILESDIR}"/. "${S}"/ || die
-	# Every file cp -r just copied got the CURRENT WALL-CLOCK TIME as its mtime. Qt's rcc
-	# embeds a .qml resource's own mtime into the C++ it generates (QQmlEngine's disk-cache
-	# invalidation key), so two otherwise-identical builds of this package, run moments
-	# apart, would link a byte-different .so purely from that — confirmed by direct
-	# reproduction on distro-kcm-managed's identical src_unpack pattern (see its ebuild).
-	# This module's own view is QML too. Pinned here for the same reason.
-	find "${S}" -exec touch -h -d @0 -- {} + || die
+	# Every file cp -r just copied got the CURRENT WALL-CLOCK TIME as its mtime, and Qt's rcc
+	# embeds a .qml resource's own mtime into the generated C++ (QQmlEngine's disk-cache
+	# invalidation key) — confirmed by direct reproduction on distro-kcm-managed's identical
+	# src_unpack pattern (see its ebuild for the full story, including why a flat @0 stamp is
+	# ALSO wrong: verifyHeader() treats a zero embedded mtime as invalid and falls back to the
+	# systemsettings BINARY's own mtime instead — constant across rebuilds via a reused binpkg
+	# — which would silently break cache invalidation across a real content change). The stamp
+	# has to be deterministic across two builds of the same source AND different when the
+	# source itself differs, so it is derived from each file's own content hash. Directories
+	# and symlinks keep a fixed, nonzero stamp; only regular files get a content-derived one.
+	find "${S}" \( -type d -o -type l \) -exec touch -h -d @1 -- {} + || die
+	while IFS= read -r -d '' f; do
+		h=$(sha256sum -- "${f}" | cut -c1-8) || die
+		touch -h -d "@$(( 16#${h} + 1 ))" -- "${f}" || die
+	done < <(find "${S}" -type f -print0)
 }
 
 src_configure() {
