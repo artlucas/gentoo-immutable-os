@@ -1,8 +1,12 @@
-# Updated 2026-09-22 (0.3.1): +1 entry, kde-plasma/kinfocenter. Deliberately NOT #not-live,
-# unlike Spectacle and Discover: 2.2 MiB with zero new dependencies is nothing to trim
-# against, and a session that exists to troubleshoot a failed install is the one that most
-# wants to ask "what hardware is this?" — the same keep-decision dolphin and partitionmanager
-# carry in config/profiles/installer.conf.
+# Updated 2026-09-23 (0.3.1, plan/34 §6): +38 entries. The installer tree is now the
+# desktop tree plus its own tail, at identical versions — every #not-live marker in
+# config/portage/sets/desktop is gone, and kde-apps/thumbnailers[-pdf] in
+# package.use/profile.installer is gone with it, so the ghostscript chain, Spectacle +
+# OpenCV, the wallpaper collection, Discover + purpose and the managed KCM all reach this
+# medium now, same as INCLUDE_DISTROBOX (podman + distrobox, no longer overridden to 0).
+# Two offline invariants (tests/test-pin-policy.sh) keep it that way: every atom in
+# desktop.lock is in installer.lock at the identical CPV, and this file is now checked as
+# a superset of expected-packages.desktop.txt.
 acct-group/adm
 acct-group/audio
 acct-group/avahi
@@ -88,6 +92,17 @@ app-arch/ncompress
 app-arch/tar
 app-arch/xz-utils
 app-arch/zstd
+app-containers/aardvark-dns
+app-containers/catatonit
+app-containers/conmon
+app-containers/containers-common
+app-containers/containers-image
+app-containers/containers-shortnames
+app-containers/containers-storage
+app-containers/crun
+app-containers/distrobox
+app-containers/netavark
+app-containers/podman
 app-crypt/adcli
 app-crypt/argon2
 app-crypt/gnupg
@@ -107,10 +122,15 @@ app-misc/editor-wrapper
 app-misc/mime-types
 app-misc/pax-utils
 app-shells/bash
+app-text/dvipsk
 app-text/editorconfig-core-c
+app-text/ghostscript-gpl
 app-text/iso-codes
 app-text/libpaper
 app-text/poppler
+app-text/poppler-data
+dev-cpp/abseil-cpp
+dev-cpp/eigen
 dev-cpp/highway
 dev-cpp/yaml-cpp
 dev-db/lmdb
@@ -130,6 +150,7 @@ dev-libs/double-conversion
 dev-libs/elfutils
 dev-libs/ell
 dev-libs/expat
+dev-libs/flatbuffers
 dev-libs/fribidi
 dev-libs/glib
 dev-libs/gmp
@@ -141,6 +162,7 @@ dev-libs/jansson
 dev-libs/json-c
 dev-libs/json-glib
 dev-libs/kirigami-addons
+dev-libs/kpathsea
 dev-libs/leancrypto
 dev-libs/libassuan
 dev-libs/libatomic_ops
@@ -182,6 +204,7 @@ dev-libs/nspr
 dev-libs/nss
 dev-libs/openssl
 dev-libs/popt
+dev-libs/protobuf
 dev-libs/qcoro
 dev-libs/snowball-stemmer
 dev-libs/userspace-rcu
@@ -209,6 +232,7 @@ dev-python/urllib3
 dev-qt/qt5compat
 dev-qt/qtbase
 dev-qt/qtdeclarative
+dev-qt/qtimageformats
 dev-qt/qtlocation
 dev-qt/qtmultimedia
 dev-qt/qtpositioning
@@ -242,6 +266,7 @@ immos-base/immos-calamares-keymap
 immos-base/immos-calamares-language
 immos-base/immos-calamares-location
 immos-base/immos-calamares-review
+immos-base/immos-kcm-managed
 kde-apps/baloo-widgets
 kde-apps/dolphin
 kde-apps/kio-extras
@@ -306,6 +331,7 @@ kde-frameworks/kxmlgui
 kde-frameworks/modemmanager-qt
 kde-frameworks/networkmanager-qt
 kde-frameworks/prison
+kde-frameworks/purpose
 kde-frameworks/qqc2-desktop-style
 kde-frameworks/solid
 kde-frameworks/sonnet
@@ -315,6 +341,7 @@ kde-plasma/aurorae
 kde-plasma/bluedevil
 kde-plasma/breeze
 kde-plasma/breeze-gtk
+kde-plasma/discover
 kde-plasma/kactivitymanagerd
 kde-plasma/kde-cli-tools
 kde-plasma/kde-cli-tools-common
@@ -348,15 +375,18 @@ kde-plasma/plasma-nm
 kde-plasma/plasma-pa
 kde-plasma/plasma-systemmonitor
 kde-plasma/plasma-workspace
+kde-plasma/plasma-workspace-wallpapers
 kde-plasma/plasma5support
 kde-plasma/polkit-kde-agent
 kde-plasma/powerdevil
 kde-plasma/print-manager
 kde-plasma/qqc2-breeze-style
+kde-plasma/spectacle
 kde-plasma/systemsettings
 kde-plasma/xdg-desktop-portal-kde
 llvm-core/llvm
 llvm-core/llvm-common
+media-fonts/arphicfonts
 media-fonts/font-util
 media-fonts/hack
 media-fonts/ibm-plex
@@ -364,8 +394,10 @@ media-fonts/liberation-fonts
 media-fonts/noto
 media-fonts/noto-cjk
 media-fonts/noto-emoji
+media-fonts/urw-fonts
 media-gfx/exiv2
 media-gfx/graphite2
+media-gfx/kio-ps-thumbnailer
 media-gfx/qrencode
 media-libs/alsa-lib
 media-libs/alsa-topology-conf
@@ -381,6 +413,8 @@ media-libs/giflib
 media-libs/glu
 media-libs/gmmlib
 media-libs/harfbuzz
+media-libs/jbig2dec
+media-libs/kquickimageeditor
 media-libs/lcms
 media-libs/libaom
 media-libs/libass
@@ -398,6 +432,7 @@ media-libs/libjpeg-turbo
 media-libs/libjxl
 media-libs/libldac
 media-libs/libmad
+media-libs/libmng
 media-libs/libogg
 media-libs/libpng
 media-libs/libpulse
@@ -408,6 +443,7 @@ media-libs/libva-intel-media-driver
 media-libs/libvorbis
 media-libs/libwebp
 media-libs/mesa
+media-libs/opencv
 media-libs/openjpeg
 media-libs/opus
 media-libs/pcaudiolib
@@ -432,8 +468,10 @@ net-dialup/ppp-scripts
 net-dns/avahi
 net-dns/bind
 net-dns/c-ares
+net-dns/libidn
 net-dns/libidn2
 net-firewall/iptables
+net-firewall/nftables
 net-fs/cifs-utils
 net-fs/samba
 net-libs/glib-networking
@@ -464,6 +502,7 @@ net-misc/mobile-broadband-provider-info
 net-misc/modemmanager
 net-misc/networkmanager
 net-misc/openssh
+net-misc/passt
 net-misc/rsync
 net-misc/socat
 net-nds/openldap
@@ -528,6 +567,7 @@ sys-fs/dosfstools
 sys-fs/e2fsprogs
 sys-fs/fuse
 sys-fs/fuse-common
+sys-fs/fuse-overlayfs
 sys-fs/lvm2
 sys-fs/squashfs-tools
 sys-fs/udev-init-scripts
@@ -567,6 +607,7 @@ virtual/acl
 virtual/dist-kernel
 virtual/editor
 virtual/glu
+virtual/jpeg
 virtual/krb5
 virtual/ldb
 virtual/libcrypt
