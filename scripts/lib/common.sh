@@ -298,6 +298,11 @@ validate_config() {
   # Root slots. NOT a build.conf key — it is a per-PROFILE geometry choice, so it is defaulted
   # rather than required, and config/profiles/installer.conf is the only file that sets it.
   : "${PROFILE_ROOT_SLOTS=2}"
+  # The MEDIUM's own ESP (plan/34 §7.2 step 5), not the installed layout's ESP_SIZE_MIB: the
+  # stick carries exactly one UKI, ever, so it needs nowhere near the 1024 MiB the installed
+  # layout budgets for systemd-boot's tries-counter renames of an A/B pair. Defaulted the same
+  # way PROFILE_ROOT_SLOTS is — a target build never reads it.
+  : "${MEDIUM_ESP_SIZE_MIB=256}"
   local v
   for v in DISTRO_ID DISTRO_NAME VERSION HOME_URL UPDATE_URL UPDATE_CHANNEL UPDATE_VERIFY \
            BUILDER_IMAGE SNAPSHOT_DATE SNAPSHOT_SHA256 PROFILE BINHOST_URI \
@@ -309,7 +314,7 @@ validate_config() {
     || die "build.conf: DISTRO_ID must match [a-z][a-z0-9-]* (got: $DISTRO_ID)"
   version_valid "$VERSION" || die "build.conf: VERSION must be X.Y.Z (got: $VERSION)"
   local n
-  for n in ESP_SIZE_MIB ROOT_SLOT_SIZE_MIB VAR_SIZE_MIB; do
+  for n in ESP_SIZE_MIB ROOT_SLOT_SIZE_MIB VAR_SIZE_MIB MEDIUM_ESP_SIZE_MIB; do
     [[ ${!n} =~ ^[0-9]+$ ]] || die "build.conf: $n must be an integer MiB count"
   done
   [[ $MIN_INSTALL_DISK_GB =~ ^[0-9]+$ ]] \

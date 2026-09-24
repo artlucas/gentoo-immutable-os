@@ -81,11 +81,15 @@ assert_contains "start=${P4_START_MIB}MiB" "$script" "var offset consistent"
 # unix_chkpwd lost gid shadow, so PAM could not verify a password for a non-root caller.
 # See plan/04 step 1 and the note above mkfs.erofs in stage 60.
 STAGE60="$REPO_ROOT/scripts/stages/60-image.sh"
-# Anchored at column 0: the real invocation is top-level, and an indented match would also pick
-# up the die message below it, which names --all-root on purpose. Reading your own error text as
-# if it were code is exactly the false positive this suite has been bitten by before.
-mkfs_line="$(grep -E '^mkfs\.erofs ' "$STAGE60")"
-assert_true  "stage 60 still invokes mkfs.erofs"  test -n "$mkfs_line"
+# Matched on the real invocation's own flags, not anchored at column 0: plan/34 §7.2 put the
+# target-role branch (this call included) inside an if/else, so the real invocation is indented
+# now, the same as the die message below it that names --all-root on purpose — column-0 anchoring
+# would no longer tell the two apart. `-z "$EROFS_COMPRESSION"` is the disambiguator instead: it
+# is exact command-line syntax nowhere else in this file, least of all inside a prose die message,
+# which is exactly the false positive this suite has been bitten by before (reading your own
+# error text as if it were code).
+mkfs_line="$(grep -E 'mkfs\.erofs -z "\$EROFS_COMPRESSION"' "$STAGE60")"
+assert_true  "stage 60 still invokes mkfs.erofs (target role)"  test -n "$mkfs_line"
 assert_false "mkfs.erofs invocation is free of --all-root" \
   grep -q -- '--all-root' <<<"$mkfs_line"
 assert_match 'dump\.erofs' "$(grep -E '^require_cmds' "$STAGE60")" \
