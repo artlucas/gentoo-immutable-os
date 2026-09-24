@@ -615,9 +615,18 @@ if [[ $PROFILE_ROLE == live ]]; then
     "$TARGET$PAYLOAD_DIR/manifest.json")"
   [[ -n $MANIFEST_ROOT_SUM ]] || die "installer: could not read root_erofs.sha256 out of
   $TARGET$PAYLOAD_DIR/manifest.json"
-  root_mib_span=$(( (root_bytes + 1024 * 1024 - 1) / (1024 * 1024) ))
-  READBACK_SUM="$(dd if="$IMG" bs=1MiB skip="$ROOT_A_START_MIB" count="$root_mib_span" status=none \
-    | head -c "$root_bytes" | sha256sum | cut -d' ' -f1)"
+  # iflag=count_bytes, not `dd ... | head -c N`: piping into head lets head close its end of the
+  # pipe the instant it has its N bytes, which SIGPIPEs dd if dd still had more queued to write
+  # (it does here — skip is in MiB, so dd's own count would otherwise need to be MiB-rounded up
+  # and over-read past root_bytes). Under this file's set -eo pipefail, that SIGPIPE'd dd makes
+  # the whole pipeline — and the assignment capturing it — fail with NO error message printed
+  # anywhere: bash's own set -e exit is silent by construction, and nothing here was wrapped in
+  # a die() to say otherwise. Measured against a real installer build: the script simply stopped
+  # right after the "layout:" log line, with no ERROR line, no die, nothing — this is why.
+  # count_bytes makes dd's own count= argument exact bytes regardless of bs, so it reads exactly
+  # root_bytes and no more; nothing downstream ever needs to truncate its input.
+  READBACK_SUM="$(dd if="$IMG" bs=1MiB skip="$ROOT_A_START_MIB" iflag=count_bytes \
+      count="$root_bytes" status=none | sha256sum | cut -d' ' -f1)"
   [[ $READBACK_SUM == "$MANIFEST_ROOT_SUM" ]] \
     || die "installer: the root partition just written does not match manifest.json's
   root_erofs.sha256 (manifest: $MANIFEST_ROOT_SUM, read back: $READBACK_SUM) — the dd above wrote
