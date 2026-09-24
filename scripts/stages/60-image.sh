@@ -336,17 +336,34 @@ if [[ $PROFILE_ROLE == target ]]; then
 fi
 
 # The var partition has to actually HOLD what stage 40 staged into it. For the desktop profile
-# that has always been slack; for an installer profile the payload is ~5 GiB and a var sized by
-# habit rather than by measurement produces an mkfs.ext4 that succeeds and an image that is
-# missing files. mkfs.ext4 -d does not fail on a full filesystem — it warns, and the warning
-# scrolls past — so check the free space and name the value to raise.
+# that has always been slack; for an installer profile the payload is several GiB and a var
+# sized by habit rather than by measurement produces an mkfs.ext4 that succeeds and an image
+# that is missing files. mkfs.ext4 -d does not fail on a full filesystem — it warns, and the
+# warning scrolls past — so check the free space and name the value to raise.
 var_used_kib="$(du -sk "$VAR_STAGE" | cut -f1)"
 var_need_mib=$(( var_used_kib / 1024 + var_used_kib / 1024 / 20 + 64 ))   # +5% metadata, +64 MiB
-(( VAR_SIZE_MIB >= var_need_mib )) || die "var partition is too small for its contents:
+if [[ $PROFILE_ROLE == live ]]; then
+  # The medium's own var, DERIVED from what stage 40 actually staged into it — the same
+  # principle section 1 already applies to the root slot, sized from the EROFS's own bytes
+  # rather than trusted from a config value. VAR_SIZE_MIB is just build.conf's target-profile
+  # default here, inherited and unused by this role.
+  #
+  # Headroom, not exactness: repart.d/50-var.conf grows /var to the end of whatever disk the
+  # image ends up on at first boot, so the SHIPPED size only has to be enough to boot and start
+  # growing from — baked-in headroom beyond that only ever helps on a stick that happens to be
+  # exactly the image's own size, which is not the common case. 256 MiB is slack for the live
+  # session's own first-boot writes before that first repart run completes.
+  VAR_HEADROOM_MIB=256
+  var_raw_mib=$(( var_need_mib + VAR_HEADROOM_MIB ))
+  VAR_SIZE_MIB=$(( (var_raw_mib + 63) / 64 * 64 ))
+  log "installer: var sized from contents — staged $(( var_used_kib / 1024 )) MiB, need ${var_need_mib} MiB, +${VAR_HEADROOM_MIB} MiB headroom, rounded to ${VAR_SIZE_MIB} MiB"
+else
+  (( VAR_SIZE_MIB >= var_need_mib )) || die "var partition is too small for its contents:
   staged $(( var_used_kib / 1024 )) MiB, need >= ${var_need_mib} MiB (ext4 metadata + slack),
   VAR_SIZE_MIB is ${VAR_SIZE_MIB}.
   Raise VAR_SIZE_MIB in $( [[ $BUILD_PROFILE == "$DEFAULT_BUILD_PROFILE" ]] \
       && echo config/build.conf || echo "config/profiles/$BUILD_PROFILE.conf" )"
+fi
 
 truncate -s "${VAR_SIZE_MIB}M" "$VAR_IMG"
 mkfs.ext4 -q -F -L var -d "$VAR_STAGE" "$VAR_IMG"
@@ -593,6 +610,19 @@ LAYOUT_ESP_MIB=$ESP_SIZE_MIB
 [[ $PROFILE_ROLE == live ]] && LAYOUT_ESP_MIB=$MEDIUM_ESP_SIZE_MIB
 compute_layout "$LAYOUT_ESP_MIB" "$ROOT_SLOT_SIZE_MIB" "$VAR_SIZE_MIB" "$PROFILE_ROOT_SLOTS"
 log "layout: ${PART_COUNT} partitions, ${PROFILE_ROOT_SLOTS} root slot(s), ${TOTAL_MIB} MiB total"
+# The medium's own hard budget (plan/34 §11): a deliberate product promise, not a derived
+# number, with margin below the 7629 MiB an "8 GB" stick actually delivers (8*10^9 bytes) so a
+# real 8 GB stick — not a hypothetical exact one — still holds it. Root and ESP are already each
+# sized from their own contents (sections 1 and 3); var was just sized from ITS contents above.
+# If the total still will not fit, that is real content growth to report, not a size to creep.
+if [[ $PROFILE_ROLE == live ]]; then
+  MEDIUM_BUDGET_MIB=7168
+  (( TOTAL_MIB <= MEDIUM_BUDGET_MIB )) || die "installer: the medium is ${TOTAL_MIB} MiB
+  (ESP ${LAYOUT_ESP_MIB} MiB + root ${ROOT_SLOT_SIZE_MIB} MiB + var ${VAR_SIZE_MIB} MiB, plus GPT
+  alignment), over the ${MEDIUM_BUDGET_MIB} MiB budget (plan/34 §11 — margin below the 7629 MiB
+  an '8 GB' stick actually delivers at 8*10^9 bytes). This is real content growth to account
+  for, not a number to raise without asking why the medium got bigger."
+fi
 rm -f -- "$IMG"
 truncate -s "${TOTAL_MIB}M" "$IMG"
 # By role (plan/33 §2): a live image's own partitions carry live_esp/live_root_<v>/live_var, so

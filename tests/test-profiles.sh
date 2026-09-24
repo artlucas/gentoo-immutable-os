@@ -299,4 +299,14 @@ assert_true "stage 40 deletes /etc/udev/hwdb.bin after the --usr rebuild" \
 assert_true "...and verifies it stays gone" \
     grep -qF '[[ -e $TARGET/etc/udev/hwdb.bin ]]' "$S40"
 
+# ---- installer.conf does not set VAR_SIZE_MIB (plan/34 §7.2 step 5, checkpoint 4) -------------
+# stage 60 now DERIVES the live medium's var size from what stage 40 actually staged (the same
+# principle it already applies to the root slot) — a leftover VAR_SIZE_MIB override here would
+# either be silently ignored (if stage 60 stopped reading it, as it now does for this role) or,
+# worse, reintroduce exactly the bug checkpoint 4 fixed: a hand-measured constant nobody revisits
+# as the staged content shrinks or grows, shipping stale slack or an image that no longer fits
+# the medium's own promised size.
+assert_false "installer.conf sets no VAR_SIZE_MIB" \
+    grep -qE '^[[:space:]]*VAR_SIZE_MIB=' "$REPO_ROOT/config/profiles/installer.conf"
+
 finish

@@ -1803,7 +1803,11 @@ if profile_has_set installer; then
   Build the base profile first:  scripts/build.sh --profile $BASE_PROFILE"
   VAR_BASE="$PAYLOAD_STAGE/var-base.tar.zst"
   PAYLOAD_VAR_SUM="$(sha256_file "$PAYLOAD_VAR_TAR")"
-  VAR_SRC_STAMP="$PAYLOAD_STAGE/.var-base.src-sha256"
+  # OUTSIDE $TARGET, deliberately: $PAYLOAD_STAGE is under $TARGET/var, which stage 60 packs
+  # wholesale into var.img — a stamp living there would ship on the medium as product, when it
+  # is build-cache bookkeeping for `--from 40` re-runs only. $WORK is this build's own state
+  # directory (target-config-hash lives beside $TARGET the same way), never packed into anything.
+  VAR_SRC_STAMP="$WORK/var-base-src-sha256$(profile_suffix)"
   need_var_rebuild=1
   if [[ -f $VAR_BASE && -f $VAR_SRC_STAMP && $(cat "$VAR_SRC_STAMP") == "$PAYLOAD_VAR_SUM" ]] \
      && { [[ ${INSTALLER_PAYLOAD_FLATPAKS:-1} == 0 ]] || [[ -d $TARGET/var/lib/flatpak/repo ]]; }
