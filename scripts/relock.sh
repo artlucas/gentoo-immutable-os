@@ -144,11 +144,12 @@ if [[ ${RELOCK_IN_CONTAINER:-0} != 1 ]]; then
         # noise in a warning that is usually silent is how a real one gets ignored.
         (
           BUILD_PROFILE="${name%.lock}"; load_profile
-          # THROUGH filter_set_file, not straight off the raw set file. The markers decide
-          # membership: `#not-live` drops the KCM on a live profile (plan/20), and a raw grep
-          # would then warn that installer.lock is missing a package the installer must not
-          # have, and send whoever read it to relock one in. Filtering also does the "distro"
-          # rebranding, so the sed that used to do it here is gone with it.
+          # THROUGH filter_set_file, not straight off the raw set file. The remaining markers
+          # (`#cjk`, `#printing`, `#distrobox`) still decide membership per build.conf switch,
+          # and a raw grep would warn about an atom a switch had genuinely turned off. Filtering
+          # also does the "distro" rebranding, so the sed that used to do it here is gone with
+          # it. (`#not-live` is gone entirely as of plan/34 §6 — every profile's sets now emerge
+          # the same atoms, live or not.)
           ovl_tmp="$(mktemp)"
           # The SET NAME travels with the atom rather than being read from the loop variable.
           # These are two stages of one pipeline, so each runs in its own subshell and `$ps` from
@@ -405,6 +406,34 @@ else
   log "relock set: $held atoms held at their locked versions, $freed released to re-resolve"
   rm -f -- "$REPORT_DIR/.relock-released"
   SETS=(@relock-target)
+fi
+
+# BASE_PROFILE pins (plan/34 §6): a live profile's tree has to be the base profile's tree plus a
+# tail, at IDENTICAL versions — that is what makes the plan/34 §3 extension a pure addition. A
+# plain re-resolve does not guarantee that: two independent `emerge --update --deep` runs, even
+# against the same pinned tree snapshot, can settle on different versions of a shared package
+# when more than one satisfies the same dependency atom (found by the real build: desktop.lock
+# pinned net-libs/libssh-0.11.4, an unconstrained installer relock picked 0.11.5 — both are in
+# SNAPSHOT_DATE's tree, and "changed-use --update" has no reason to prefer one). The historical
+# answer for this ("harmless, per-profile locks resolve fresh", commit 745c832) stops being true
+# once a live profile is diffed against its base as a tree, byte for byte.
+#
+# The fix is the SAME mechanism `@locked-image` already uses for an ordinary (non-relock) build
+# (stage 20, lock_atoms written to a generated set of exact `=cat/pkg-version` atoms) — not a
+# second one. Every atom in the base profile's OWN lock becomes an exact pin here too, laid over
+# whatever SETS above already asks for; portage's resolver treats an exact atom pulled in via a
+# set exactly like one named on the command line; the base's own build is never run so its VDB is
+# not needed, only its lock file.
+if [[ -n ${BASE_PROFILE:-} ]]; then
+  BASE_LOCK="$LOCK_DIR/$BASE_PROFILE.lock"
+  [[ -f $BASE_LOCK ]] || die "profile $BUILD_PROFILE names BASE_PROFILE=$BASE_PROFILE, but
+  $BASE_LOCK does not exist — relock $BASE_PROFILE first."
+  BASE_PINS="$PC/sets/relock-base-pins"
+  lock_atoms "$BASE_LOCK" > "$BASE_PINS"
+  base_pin_n=$(wc -l < "$BASE_PINS")
+  (( base_pin_n > 0 )) || die "$BASE_LOCK named no atoms — lock_atoms found nothing to pin"
+  log "pinning $base_pin_n atom(s) to their $BASE_PROFILE.lock versions (BASE_PROFILE=$BASE_PROFILE)"
+  SETS+=(@relock-base-pins)
 fi
 
 # The relock EMERGE, unlike the detection above, does need the real target root: it re-resolves

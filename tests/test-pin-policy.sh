@@ -277,4 +277,31 @@ assert_true "build.sh dies on an empty BUILDER_DIGEST" \
     grep -q 'BUILDER_DIGEST is empty' "$BUILD"
 assert_true "…with ALLOW_UNPINNED as the deliberate escape" grep -q 'ALLOW_UNPINNED' "$BUILD"
 
+# ---- Phase C superset (plan/34 §6): installer is the desktop tree plus a tail, at IDENTICAL
+# versions — not just the same names. Found necessary by the real build's tree-delta comparison:
+# an independently re-resolved installer.lock picked net-libs/libssh-0.11.5 where desktop.lock
+# pinned 0.11.4 — both valid in the same pinned tree snapshot, "harmless" before plan/34
+# (commit 745c832) and fatal after, because it showed up as a changed/deleted file in the
+# installed EROFS. scripts/relock.sh's BASE_PROFILE pin block is the structural fix; these two
+# checks are what would have caught the drift before a real build ever had to.
+DESKTOP_LOCK="$REPO_ROOT/config/portage/lock/desktop.lock"
+INSTALLER_LOCK="$REPO_ROOT/config/portage/lock/installer.lock"
+INSTALLER_ATOMS_FILE="$TMP/installer-atoms.txt"
+lock_atoms "$INSTALLER_LOCK" > "$INSTALLER_ATOMS_FILE"
+while read -r atom; do
+    [[ -n $atom ]] || continue
+    assert_true "installer.lock carries $atom at the identical CPV (desktop.lock)" \
+        grep -qxF -- "$atom" "$INSTALLER_ATOMS_FILE"
+done < <(lock_atoms "$DESKTOP_LOCK")
+
+EXP_DESKTOP="$REPO_ROOT/config/portage/expected-packages.desktop.txt"
+EXP_INSTALLER="$REPO_ROOT/config/portage/expected-packages.installer.txt"
+assert_file "$EXP_DESKTOP" "expected-packages.desktop.txt exists"
+assert_file "$EXP_INSTALLER" "expected-packages.installer.txt exists"
+while read -r pkg; do
+    [[ -n $pkg ]] || continue
+    assert_true "expected-packages.installer.txt carries $pkg (desktop.txt's superset)" \
+        grep -qxF -- "$pkg" "$EXP_INSTALLER"
+done < <(grep -v '^#' "$EXP_DESKTOP" | sed '/^[[:space:]]*$/d')
+
 finish
