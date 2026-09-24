@@ -79,14 +79,28 @@ collect_and_report() {
     # — checked here, in the guest, because the guest can walk /dev/disk/by-partlabel itself and
     # does not need to know its own build's IMG_ESP_PARTLABEL to do it; stage 70 is what already
     # knows that value and compares the NAME this reports against it.
+    #
+    # Once triggered, `findmnt ... /efi` (no -r) prints BOTH stacked mounts at that path — the
+    # autofs shell AND the real vfat mount underneath it — one per line, oldest first. CONFIRMED
+    # on the host against systemd's own binfmt_misc automount: `findmnt -no FSTYPE
+    # /proc/sys/fs/binfmt_misc` returns "autofs\nbinfmt_misc" once triggered, not just the live
+    # mount. Plain (non -r) `findmnt -no FSTYPE /efi` therefore returned "autofs\nvfat" here, which
+    # broke three things at once: the retry loop's `!= autofs` check compared the whole two-line
+    # string and never matched, esp_fs ended up carrying an embedded newline into the report line,
+    # and reading SOURCE the same way produced "systemd-1\n/dev/vda1", which readlink -f rejects.
+    # `-r` (raw, one mount per line, un-decorated) plus `tail -n1` picks the topmost — i.e. most
+    # recently stacked, i.e. real — mount for FSTYPE; filtering SOURCE with `-t vfat` instead
+    # (confirmed the same way: `findmnt -rno SOURCE -t binfmt_misc ...` returns only the one line)
+    # gets a single source line directly, or nothing at all while only autofs is mounted.
     esp_fs=none; esp_partlabel=none
     if ls /efi >/dev/null 2>&1; then
         for _esp_try in 1 2 3 4 5; do
-            esp_fs="$(findmnt -no FSTYPE /efi 2>/dev/null || echo none)"
-            [[ $esp_fs != autofs ]] && break
+            esp_fs="$(findmnt -rno FSTYPE /efi 2>/dev/null | tail -n1)"
+            [[ -n $esp_fs && $esp_fs != autofs ]] && break
             sleep 1
         done
-        esp_src="$(findmnt -no SOURCE /efi 2>/dev/null)"
+        [[ -n $esp_fs ]] || esp_fs=none
+        esp_src="$(findmnt -rno SOURCE -t vfat /efi 2>/dev/null | head -n1)"
         if [[ -n $esp_src ]]; then
             esp_dev="$(readlink -f -- "$esp_src" 2>/dev/null || printf '%s' "$esp_src")"
             for _esp_l in /dev/disk/by-partlabel/*; do
@@ -98,6 +112,14 @@ collect_and_report() {
             done
         fi
     fi
+    # Belt and braces: report() (above) joins every field into ONE line and word-splits it back
+    # apart on whitespace, so a single field that ever contains a space or newline silently
+    # shifts or truncates every field after it on the line — exactly the failure this stacked-
+    # automount bug caused. Neither derived field should ever legitimately contain whitespace
+    # (a bare fstype name; a bare by-partlabel basename), so this is defense in depth, not a fix
+    # in itself — the real fix is the -r/tail/-t handling above.
+    esp_fs="${esp_fs//[[:space:]]/_}"
+    esp_partlabel="${esp_partlabel//[[:space:]]/_}"
     flatpak_remotes="$(flatpak remotes --system 2>/dev/null | grep -c . || true)"
     # DNS comes in two fields on purpose. "resolved" is deterministic — the unit either came
     # up or it did not — and the harness asserts on it. "dns" is a real query through nss, so
