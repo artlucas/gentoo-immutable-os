@@ -22,10 +22,12 @@ build stamps every inode with the same build timestamp (60-image.sh's SOURCE_DAT
 so comparing them would either always agree for the wrong reason or never agree for no reason at
 all.
 
-THE FOUR OUTCOMES, in the order this script actually decides them (plan/34 §7.2 step 2's table,
-resolved into one procedure — the checkpoint-3 coordinator's explicit ruling on the one case the
-table's row order left ambiguous: an already-upper path is decided BEFORE the allowlist or any
-fail check, not after):
+THE OUTCOMES, in the order this script actually decides them (plan/34 §7.2 step 2's table,
+resolved into one procedure — the checkpoint-3 coordinator's explicit rulings on the two things
+the table's row order and prose left ambiguous: an already-upper path is decided BEFORE the
+allowlist or any fail check, not after; and /etc gets the SAME "changed needs an allowlist,
+added does not" split as /usr, not a free pass just because the overlay mechanism can carry any
+content once it is there):
 
   1. DELETED (in BASE, missing from NEW)               → the build FAILS. §6 is what is supposed
                                                            to make this list empty; a non-empty
@@ -37,24 +39,31 @@ fail check, not after):
                                                            byte-for-byte content is not needed on
                                                            top of a file that is deliberately not
                                                            the base's content any more.
-  3. changed or added, under etc/, not already upper    → routed to OUT's upper. This is the
-                                                           installer's own deliberate edit (kdeglobals'
-                                                           appended palette is the one this build
-                                                           currently makes) — the /etc overlay's
-                                                           existing upper/lower split already
-                                                           means "this shadows the base", so no
-                                                           allowlist applies to /etc at all.
-  4. changed or added, under usr/, names a path sysext   → the build FAILS regardless of anything
+  3. ADDED, under etc/, not already upper                → routed to OUT's upper freely. Pure new
+                                                           content the desktop's /etc never had —
+                                                           the installer config, the sysupdate
+                                                           masks, the polkit rule, and so on.
+  4. CHANGED (not added), under etc/, not already        → routed to OUT's upper if on
+     upper                                                 ALLOWED_CHANGED_ETC, else the build
+                                                           FAILS. A changed /etc file is the SAME
+                                                           kind of claim a changed /usr file is —
+                                                           "this build's own tree legitimately
+                                                           differs from the base's here, reviewed
+                                                           and named" — and the hwdb.bin episode
+                                                           (this same checkpoint) is exactly the
+                                                           silent, unreviewed drift this rule exists
+                                                           to catch before it reaches a live medium.
+  5. changed or added, under usr/, names a path sysext   → the build FAILS regardless of anything
      cannot deliver (os-release, or a unit/sysusers.d/     else. A sysext merges over /usr only
      tmpfiles.d/udev-rule directory)                       after early boot has already read every
                                                            one of these once; shipping a changed
                                                            or added one in the extension is a
                                                            silent no-op at best.
-  5. ADDED, under usr/, nothing else applies             → routed to the extension. Pure new
+  6. ADDED, under usr/, nothing else applies             → routed to the extension. Pure new
                                                            content the desktop never had — the
                                                            reason a difference-based sysext works
                                                            at all.
-  6. CHANGED (not added), under usr/, on the allowlist   → routed to the extension. The allowlist
+  7. CHANGED (not added), under usr/, on the allowlist   → routed to the extension. The allowlist
                                                            is deliberately small: caches stage 40
                                                            regenerates from content already in
                                                            both trees, whose bytes an independent
@@ -68,12 +77,12 @@ fail check, not after):
                                                            to be byte-identical, so a binary that
                                                            differs is a build bug to fix at the
                                                            source, not a difference to accommodate.
-  7. CHANGED (not added), under usr/, not on the         → the build FAILS. An unexplained,
+  8. CHANGED (not added), under usr/, not on the         → the build FAILS. An unexplained,
      allowlist                                              unreviewed content difference between
                                                            two builds of the same package versions
                                                            is exactly the drift plan/34 §6 exists
                                                            to make loud.
-  8. changed or added, outside usr/ and etc/             → the build FAILS. Neither mechanism can
+  9. changed or added, outside usr/ and etc/             → the build FAILS. Neither mechanism can
                                                            carry it: a sysext only ever merges
                                                            /usr (and /opt, unused here); the /etc
                                                            overlay only ever merges /etc.
@@ -97,13 +106,28 @@ EXCLUDE_PREFIXES = ("var/", "proc/", "sys/", "dev/", "tmp/", "run/", "efi/")
 # present in both trees (so an independent run's bytes are not expected to match another
 # independent run's — see the hwdb.bin and kcm_managed.so findings this same checkpoint fixed
 # for the two ways "unexplained" can turn out to mean "explainable, but not by this list"), plus
-# the one file this build deliberately edits. A NAME, not a directory: each entry is the exact
-# relative path, checked verbatim, so a same-named cache appearing somewhere new still fails —
-# the allowlist describes known instances, not a class of file.
+# files this build deliberately edits or whose content is inherently tail-specific. A NAME, not
+# a directory: each entry is the exact relative path, checked verbatim, so a same-named cache
+# appearing somewhere new still fails — the allowlist describes known instances, not a class of
+# file.
+#
+# usr/share/immos/manifest.txt: on the stick it describes the MERGED /usr — the desktop's own
+# packages plus the extension's — which is correct and expected to differ from the base's own
+# manifest describing only itself.
 ALLOWED_CHANGED_USR = frozenset({
     "usr/share/applications/mimeinfo.cache",
+    "usr/share/immos/manifest.txt",
 })
-ALLOWED_CHANGED_ETC = frozenset()  # every etc/ change routes to upper regardless (case 2/3 above)
+# Same principle as ALLOWED_CHANGED_USR, applied to /etc: a CHANGED (not added) /etc path still
+# needs a named, reviewed reason, even though the /etc overlay mechanism could technically carry
+# any content once routed. Silent, unreviewed drift is exactly what plan/34 §6 exists to make
+# loud, and it does not stop being loud just because the destination happens to be the upper
+# instead of the extension — the hwdb.bin episode (this same checkpoint) was precisely a /etc
+# (well, /etc/udev) file whose changed content nobody had reviewed the reason for.
+ALLOWED_CHANGED_ETC = frozenset({
+    "etc/ld.so.cache",
+    "etc/xdg/kdeglobals",
+})
 
 # A .so (or any other compiled binary) must never be added here (checkpoint 3's explicit rule):
 # two independent builds of identical package versions are expected to be byte-identical, and a
@@ -282,6 +306,12 @@ def main():
             upper_target = os.path.join(upper_dir, etc_rel)
             if os.path.lexists(upper_target):
                 skipped_upper_wins.append(relpath)
+                continue
+            if (not is_added) and relpath not in ALLOWED_CHANGED_ETC:
+                failures.append(
+                    f"CHANGED, not on the /etc allowlist (unexplained content drift between two "
+                    f"builds of the same package versions): {relpath}"
+                )
                 continue
             upper_actions.append((relpath, upper_target))
             continue

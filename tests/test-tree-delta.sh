@@ -41,6 +41,34 @@ run_td notallow; rc=$?
 assert_eq 1 "$rc" "changed-not-allowlisted: exit code"
 assert_true "changed-not-allowlisted: stderr names it" grep -qF "usr/bin/tool" "$TMP/notallow/stderr"
 
+# ---- changed under etc/, not allowlisted, fails --------------------------------------------
+fresh etc_notallow
+printf 'cfg2\n' > "$TMP/etc_notallow/new/etc/thing.conf"
+run_td etc_notallow; rc=$?
+assert_eq 1 "$rc" "changed-etc-not-allowlisted: exit code"
+assert_true "changed-etc-not-allowlisted: stderr names it" \
+    grep -qF "etc/thing.conf" "$TMP/etc_notallow/stderr"
+assert_false "changed-etc-not-allowlisted: nothing routed to the upper" \
+    test -e "$TMP/etc_notallow/out/overlay/etc/upper/thing.conf"
+
+# ---- changed under etc/, allowlisted, routes to the upper -----------------------------------
+fresh etc_allow
+printf 'old-cache\n' > "$TMP/etc_allow/base/etc/ld.so.cache"
+printf 'new-cache\n' > "$TMP/etc_allow/new/etc/ld.so.cache"
+run_td etc_allow; rc=$?
+assert_eq 0 "$rc" "changed-etc-allowlisted: exit code"
+assert_eq "new-cache" "$(cat "$TMP/etc_allow/out/overlay/etc/upper/ld.so.cache")" \
+    "changed-etc-allowlisted: routed to the upper with the new content"
+
+# ---- added under etc/ routes to the upper freely, no allowlist needed -----------------------
+fresh etc_added
+mkdir -p "$TMP/etc_added/new/etc/xdg"
+printf 'new-file\n' > "$TMP/etc_added/new/etc/xdg/newconf.conf"
+run_td etc_added; rc=$?
+assert_eq 0 "$rc" "added-etc: exit code"
+assert_eq "new-file" "$(cat "$TMP/etc_added/out/overlay/etc/upper/xdg/newconf.conf")" \
+    "added-etc: routed to the upper freely"
+
 # ---- change outside usr/ and etc/ fails --------------------------------------------------------
 fresh outside
 mkdir -p "$TMP/outside/base/opt" "$TMP/outside/new/opt"
@@ -104,7 +132,8 @@ ln -s data.txt "$TMP/route/new/usr/share/newapp/data-link.txt"
 if command -v setfattr >/dev/null 2>&1 && command -v getfattr >/dev/null 2>&1; then
     setfattr -n user.tree_delta_test -v marker "$TMP/route/new/usr/share/newapp/data.txt" 2>/dev/null || true
 fi
-printf 'cfg2\n' > "$TMP/route/new/etc/thing.conf"
+mkdir -p "$TMP/route/new/etc/xdg"
+printf 'new-conf\n' > "$TMP/route/new/etc/xdg/added.conf"   # ADDED, not changed — routes freely
 touch -d "2020-01-01" "$TMP/route/base/usr/bin/tool"
 touch -d "2030-06-15" "$TMP/route/new/usr/bin/tool"   # content identical, mtime wildly different
 run_td route; rc=$?
@@ -119,8 +148,8 @@ assert_true "route: symlink preserved as a symlink" test -L "$EXT/share/newapp/d
 assert_eq "data.txt" "$(readlink "$EXT/share/newapp/data-link.txt")" "route: symlink target preserved"
 assert_true "route: parent directory mode matches the source" \
     bash -c "[[ \$(stat -c%a '$TMP/route/new/usr/share/newapp') == \$(stat -c%a '$EXT/share/newapp') ]]"
-assert_file "$UPPER/thing.conf" "route: changed etc/ file routed to the upper"
-assert_eq "cfg2" "$(cat "$UPPER/thing.conf")" "route: upper file carries the new content"
+assert_file "$UPPER/xdg/added.conf" "route: added etc/ file routed to the upper"
+assert_eq "new-conf" "$(cat "$UPPER/xdg/added.conf")" "route: upper file carries the new content"
 assert_false "route: usr/bin/tool (identical content, only mtime differs) was NOT routed" \
     test -e "$EXT/bin/tool"
 if command -v getfattr >/dev/null 2>&1 && getfattr -n user.tree_delta_test --only-values \
