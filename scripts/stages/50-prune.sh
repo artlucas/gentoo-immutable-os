@@ -109,13 +109,21 @@ du -sm "$T"/usr/src "$T"/usr/lib/firmware "$T"/usr/lib/modules "$T"/usr/lib/llvm
 # and section 3j — which needs this list to delete GRUB's files without touching a directory it
 # shares with another package (plan/34 §6) — runs long after that. The audit gate above is the
 # last point in this stage where the VDB is guaranteed to still exist.
+#
+# EVERY package the glob matches, concatenated — not just the first. `sys-boot/grub-*` matches
+# BOTH sys-boot/grub itself and sys-boot/grub-themes-gentoo (the theme package's name also
+# starts with "grub-"), and a first build of this section took `head -1` of that glob and
+# silently dropped whichever one sorted second — found by the real build leaving 70 PNGs under
+# usr/share/grub/themes/gentoo_glass after section 3j reported success. `head -1` is gone.
 GRUB_CONTENTS_SAVED="$REPORT_DIR/grub-contents.txt"
-GRUB_CONTENTS_SRC="$(compgen -G "$T/var/db/pkg/sys-boot/grub-*/CONTENTS" | head -1)"
-if [[ -n $GRUB_CONTENTS_SRC ]]; then
-  cp -- "$GRUB_CONTENTS_SRC" "$GRUB_CONTENTS_SAVED"
-else
-  rm -f -- "$GRUB_CONTENTS_SAVED"
-fi
+: > "$GRUB_CONTENTS_SAVED"
+GRUB_PKG_N=0
+while read -r c; do
+  [[ -n $c ]] || continue
+  cat -- "$c" >> "$GRUB_CONTENTS_SAVED"
+  GRUB_PKG_N=$((GRUB_PKG_N + 1))
+done < <(compgen -G "$T/var/db/pkg/sys-boot/grub-*/CONTENTS")
+(( GRUB_PKG_N > 0 )) || rm -f -- "$GRUB_CONTENTS_SAVED"
 
 # ---- 2. delete Portage artifacts ------------------------------------------------
 rm -rf -- "$T/var/db/pkg" "$T/var/db/repos" "$T/var/cache"/* \
@@ -831,13 +839,27 @@ if profile_has_set installer; then
   every password on Calamares' users page with 'The password fails the dictionary check -
   error loading dictionary', and the install could never get past it"
   done
-  # Section 3j: every file GRUB's OWN CONTENTS named must be gone — not a hardcoded path list,
-  # for the same reason 3j itself reads CONTENTS rather than deleting by name: a hardcoded list
-  # here would pass even if 3j's own sweep silently stopped matching a renamed path (this is the
-  # positive control, so it has to prove the sweep RAN, not just that its old guesses are absent).
-  # etc/grub.d is deliberately NOT in this list any more: libostree's 15_ostree lives there too,
-  # the desktop tree carries it, and this medium's own /etc/grub.d directory has to survive with
-  # exactly that one file left in it.
+  # Section 3j: every non-dir path GRUB's OWN CONTENTS named must be gone — not a hardcoded path
+  # list, for the same reason 3j itself reads CONTENTS rather than deleting by name: a hardcoded
+  # list here would pass even if 3j's own sweep silently stopped matching a renamed path (this is
+  # the positive control, so it has to prove the sweep RAN, not just that its old guesses are
+  # absent). etc/grub.d is deliberately NOT in this list any more: libostree's 15_ostree lives
+  # there too, the desktop tree carries it, and this medium's own /etc/grub.d directory has to
+  # survive with exactly that one file left in it.
+  #
+  # THIS LOOP WAS ALREADY WRITTEN THIS WAY and did NOT catch the 70 gentoo_glass PNGs a first
+  # version of section 2's capture left behind — the gap was never in this loop's own logic (it
+  # already walks every obj/sym entry and violations on any that still exists), it was that
+  # $GRUB_CONTENTS_SAVED itself was missing them: section 2 used to take `head -1` of the
+  # sys-boot/grub-* glob, which matches BOTH sys-boot/grub and sys-boot/grub-themes-gentoo, and
+  # silently dropped whichever package sorted second. A verify reading an incomplete list cannot
+  # notice what the list itself never named — it can only be as fail-closed as its INPUT, which
+  # is why section 2 now concatenates every matching package's CONTENTS rather than truncating to
+  # one. With that fixed, this same loop is what makes stage 50 fail on the PNGs, not the tree-
+  # delta three stages later: run it against a $GRUB_CONTENTS_SAVED that (as it did before the
+  # fix) never mentions usr/share/grub/themes/gentoo_glass/icons/*.png, and every one of those
+  # files is absent from the loop's input by construction — no `-e` test ever runs on them, so no
+  # violation is possible no matter how thoroughly the loop checks what it WAS given.
   [[ -s $GRUB_CONTENTS_SAVED ]] \
     || violation "no saved GRUB CONTENTS to verify against — section 2's capture (near the top of
   this stage) found no sys-boot/grub in the VDB, which should be impossible on a live profile"
