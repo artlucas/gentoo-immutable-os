@@ -75,14 +75,19 @@ src_unpack() {
 	# src_unpack pattern (see its ebuild for the full story, including why a flat @0 stamp is
 	# ALSO wrong: verifyHeader() treats a zero embedded mtime as invalid and falls back to the
 	# systemsettings BINARY's own mtime instead — constant across rebuilds via a reused binpkg
-	# — which would silently break cache invalidation across a real content change). The stamp
-	# has to be deterministic across two builds of the same source AND different when the
-	# source itself differs, so it is derived from each file's own content hash. Directories
-	# and symlinks keep a fixed, nonzero stamp; only regular files get a content-derived one.
+	# — which would silently break cache invalidation across a real content change, and why the
+	# FIRST content-derived fix bounded the stamp into the past rather than just "8 hex digits":
+	# that range reached 2106, and cmake's own ninja regenerates build.ninja forever when an
+	# input is newer than the generator output — this package's own compile failed exactly that
+	# way, with "manifest 'build.ninja' still dirty after 100 tries"). The stamp has to be
+	# deterministic across two builds of the same source, different when the source itself
+	# differs, and always in the past, so it is 1000000000 plus 7 hex digits of the file's own
+	# content hash (2001-09-09..2010-03-12). Directories and symlinks keep a fixed, nonzero
+	# stamp; only regular files get a content-derived one.
 	find "${S}" \( -type d -o -type l \) -exec touch -h -d @1 -- {} + || die
 	while IFS= read -r -d '' f; do
-		h=$(sha256sum -- "${f}" | cut -c1-8) || die
-		touch -h -d "@$(( 16#${h} + 1 ))" -- "${f}" || die
+		h=$(sha256sum -- "${f}" | cut -c1-7) || die
+		touch -h -d "@$(( 1000000000 + 16#${h} ))" -- "${f}" || die
 	done < <(find "${S}" -type f -print0)
 }
 

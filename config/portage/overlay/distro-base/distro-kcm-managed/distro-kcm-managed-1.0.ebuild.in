@@ -77,13 +77,22 @@ src_unpack() {
 	# is both: the same source hashes to the same stamp on every rebuild, and a one-byte edit to
 	# ui/main.qml changes it. Directories and symlinks carry no content of their own to derive
 	# from and are not resource payloads rcc reads a timestamp out of, so they keep a fixed,
-	# nonzero stamp; only regular files get a content-derived one. "+ 1" keeps the result nonzero
-	# even in the astronomical case a hash's low bits are all zero — never @0's specific failure
-	# mode again, by construction, not by the odds of hitting it.
+	# nonzero stamp; only regular files get a content-derived one.
+	#
+	# Bounded into the PAST, not just "8 hex digits": that range reaches the year 2106, and a
+	# stamp anywhere past "now" broke the build outright rather than merely losing determinism.
+	# cmake's own ninja regenerates build.ninja whenever it finds an input (CMakeLists.txt among
+	# them) newer than the generator output — a file this loop dated past "now" satisfies that
+	# check forever, and ninja's own retry counter gives up after 100 tries with "manifest
+	# 'build.ninja' still dirty after 100 tries, perhaps system time is not set". 7 hex digits
+	# (not 8) plus a fixed epoch offset keeps every possible stamp inside 2001-09-09..2010-03-12
+	# — always in the past of any build this repo will ever run, always after 1980 (the FAT/zip
+	# epoch some tools still assume), and never zero (the QQmlEngine cache-invalidation failure
+	# this whole mechanism exists to avoid).
 	find "${S}" \( -type d -o -type l \) -exec touch -h -d @1 -- {} + || die
 	while IFS= read -r -d '' f; do
-		h=$(sha256sum -- "${f}" | cut -c1-8) || die
-		touch -h -d "@$(( 16#${h} + 1 ))" -- "${f}" || die
+		h=$(sha256sum -- "${f}" | cut -c1-7) || die
+		touch -h -d "@$(( 1000000000 + 16#${h} ))" -- "${f}" || die
 	done < <(find "${S}" -type f -print0)
 }
 
