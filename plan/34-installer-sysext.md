@@ -332,18 +332,15 @@ partition.
 
   Autostart stays: the stick still opens the installer.
 
-  **Worth flagging, not silently carried over.** `ec691b9`'s own reasoning for emptying the panel
-  was that two of the four stock pins were already dead on that branch's medium — Discover was
-  `#not-live` and no browser was preinstalled, so nothing was lost beyond the pin itself. Neither
-  premise survives this document: §6 put `kde-plasma/discover` back on every profile including
-  live, and §7.1/§9 make the live session's own `/var/lib/flatpak` the very same store an
-  installed disk gets, Firefox included — the live session **is** the full desktop now, not the
-  trimmed one `ec691b9` assumed. Under that premise all four of the stock pins — System Settings,
-  Discover, Dolphin, Firefox — would actually resolve to something a session this rich could use.
-  This checkpoint ports `ec691b9`'s behaviour (empty panel, desktop shortcut) unchanged rather
-  than deciding unilaterally whether "pin nothing" is still the right call now that the four
-  defaults are no longer three dead icons and an installer: that is a product decision, not an
-  implementation one, and belongs to whoever reads the checkpoint 4 report next.
+  **The panel stays empty — decided again, on this document's premise.** `ec691b9` emptied it
+  partly because two of the four stock pins were dead on its medium: Discover was `#not-live` and
+  no browser was preinstalled. Neither holds here — §6 puts Discover back on every profile and
+  §7/§9 give the live session the installed disk's own Flatpak store, Firefox included — so all
+  four stock pins (System Settings, Discover, Dolphin, Firefox) would resolve. The question was
+  put to the owner on that premise and the answer was the same: empty. The stick exists to
+  install, and autostart, the desktop icon and the application menu already put the installer in
+  front of the user. The layout is live-only (it reaches `/usr` through the extension, §7), so an
+  installed machine keeps upstream's four pins.
 - **What the session gains, with no further work:** the whole product — the wallpaper collection,
   Spectacle, Discover, KInfoCenter, distrobox and podman (the live user already has subuid/subgid
   ranges) — and Firefox, Okular, Gwenview, Ark and KWrite. `live_var` grows to fill the stick on
@@ -351,20 +348,25 @@ partition.
 - **What it shows that it did not:** "Managed Settings" in Kickoff, from the base. Nothing on a stick
   is ever enrolled, and the entry is harmless.
 
-## 11. Size, estimated
+## 11. Size, estimated and measured
 
-| | 0.3.1 today | Estimated |
-|---|---:|---:|
-| live root | 2366 MiB installer EROFS | 2777 MiB desktop EROFS |
-| payload root EROFS | 2777 MiB | — |
-| Flatpaks | 899 MiB `.zst` inside the payload | ~2757 MiB deployed in `live_var` |
-| extension | — | tens of MiB (plan/16 §2.2: 107.6 MiB tail, 68 of it GRUB and deleted) |
-| UKIs | 60 + 60 MiB | 60 + 60 MiB |
-| **`.img`** | **12290 MiB** | **~6.3 GiB** (256 + ~2816 + ~3200) |
-| **`.img.zst`** | **4769 MiB** | **~3.1 GiB**: close to `desktop.img.zst` (3022 MiB), which holds the same root and store |
+| | 0.3.1 before | Estimated | Measured |
+|---|---:|---:|---:|
+| live root | 2366 MiB installer EROFS | 2777 MiB desktop EROFS | 2773 MiB desktop EROFS, byte for byte, in a 2816 MiB slot |
+| payload root EROFS | 2777 MiB | — | — |
+| Flatpaks | 899 MiB `.zst` inside the payload | ~2757 MiB deployed in `live_var` | 2749 MiB deployed in `live_var` |
+| extension | — | tens of MiB (plan/16 §2.2: 107.6 MiB tail, 68 of it GRUB and deleted) | 36 MiB, 689 paths (`usr/lib64` 25 MB, `usr/share` 7 MB, `usr/bin` 3 MB) |
+| `live_var` | 5120 MiB, fixed | ~3200 MiB | 2846 MiB staged, 3051 MiB needed, 3328 MiB partition (+256 MiB headroom, rounded to 64) |
+| UKIs | 60 + 60 MiB | 60 + 60 MiB | 60 + 60 MiB (the live UKI on `live_esp`, the desktop UKI in the payload) |
+| **`.img`** | **12290 MiB** | **~6.3 GiB** (256 + ~2816 + ~3200) | **6402 MiB** (256 + 2816 + 3328, plus the GPT) |
+| **`.img.zst`** | **4769 MiB** | **~3.1 GiB**: close to `desktop.img.zst` (3022 MiB), which holds the same root and store | **3079 MiB**, against `desktop.img.zst` at 3010 MiB from the same build |
 
-The raw number matters as much as the compressed one: ~6.3 GiB fits an 8 GB stick, and 12290 MiB
-does not. Every figure here is an estimate until the first build replaces it.
+The raw number matters as much as the compressed one. An 8 GB stick holds 7629 MiB: 6402 MiB fits
+with 1227 MiB to spare, and 12290 MiB never did. Stage 60 sizes `live_var` from what it holds
+rather than from `VAR_SIZE_MIB`, and refuses any medium over 7168 MiB, so a store that grows past
+the stick fails the build instead of the user. An erase install of the measured medium, from a
+KVM guest's virtio disk, takes about six minutes. The measured column is the build at `de78ad3`,
+2026-09-25.
 
 ## 12. Tests
 

@@ -62,16 +62,14 @@ on the live user's desktop, and the application menu. Left alone the task manage
 the Icons-Only Task Manager's `launchers` default (plasma-desktop, `applets/taskmanager/main.xml`)
 is System Settings, Discover, Dolphin, and `preferred://browser`.
 
-**All four resolve on this medium now, and that is a change worth flagging rather than restating
-as settled.** When `ec691b9` was written, two of the four were dead — `kde-plasma/discover` was
-`#not-live` and no browser was preinstalled — so emptying the panel cost nothing extra beyond
-what removing the pin already lost. Neither is true since Phase D landed:
-`kde-plasma/discover` is back on every profile including live (plan/34 §6 removed the `#not-live`
-marker), and Firefox travels to the live session as part of its own Flatpak store rather than a
-separate `flatpak install` (plan/34 §7.1, §9) — the live session **is** the full desktop now, not
-the trimmed one `ec691b9`'s reasoning assumed. This port keeps `ec691b9`'s behaviour (empty
-panel, desktop shortcut) unchanged rather than deciding unilaterally whether that conclusion still
-holds; see the checkpoint 4 report for the open question.
+**All four would resolve on this medium now, and the panel stays empty anyway — decided, not
+inherited.** When `ec691b9` was written, two of the four were dead (`kde-plasma/discover` was
+`#not-live` and no browser was preinstalled), so emptying the panel cost little. Since plan/34
+both resolve: Discover is back on every profile (§6) and Firefox comes with the live session's own
+Flatpak store (§7, §9). The decision was re-taken on that premise and came out the same, for the
+reason above: the stick exists to install, and autostart, the desktop icon and the application
+menu already put the installer in front of the user. The installed desktop is unaffected; this
+layout ships only on the medium, and an installed machine keeps upstream's four pins.
 
 That does **not** make the layout script redundant even if the pins were left stock: `KService`
 drops an unresolvable launcher silently rather than leaving a hole, so a deleted write would not
