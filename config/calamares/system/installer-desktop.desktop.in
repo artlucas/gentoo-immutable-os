@@ -1,0 +1,30 @@
+[Desktop Entry]
+# The installer's shortcut on the live user's desktop (plan/34 §10, hand-ported from `ec691b9` on
+# the unmerged `installer-desktop-shortcut` branch). The task manager pins nothing on this
+# medium, so the desktop is where a user who closed the autostarted window looks.
+#
+# LIVE MEDIUM ONLY — stage 40 installs this into the live user's ~/Desktop for the `installer`
+# profile and nowhere else.
+#
+# It is a SEPARATE FILE from app-admin/calamares's own /usr/share/applications/calamares.desktop
+# rather than a symlink to it, for the same two reasons the autostart copy is separate: the menu
+# entry keeps behaving like the menu entry, and translated-name/OnlyShowIn concerns cannot leak
+# between the two in either direction.
+#
+# EXECUTABLE (0755), set by stage 40 at install time: Plasma will not launch a .desktop file from
+# the desktop without the exec bit — it stops to ask whether to mark it executable, which is a
+# prompt on the one action this medium exists for.
+Type=Application
+Version=1.0
+Name=Install @DISTRO_NAME@
+GenericName=System Installer
+Comment=Install @DISTRO_NAME@ @VERSION@ to a disk
+Icon=calamares
+# pkexec, matching upstream's own calamares.desktop: the installer needs root, and 49-installer.rules
+# grants this one action to the live user without a prompt.
+Exec=sh -c "pkexec calamares"
+TryExec=calamares
+Terminal=false
+StartupNotify=true
+Categories=Qt;System;
+X-AppStream-Ignore=true

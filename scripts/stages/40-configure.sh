@@ -1600,6 +1600,27 @@ if profile_has_set installer; then
               "$TARGET/etc/xdg/autostart/$DISTRO_ID-installer.desktop"
   cal_install "$CAL_SRC/system/kscreenlockerrc.in" "$TARGET/etc/xdg/kscreenlockerrc"
 
+  # The desktop shortcut (plan/34 §10, hand-ported from `ec691b9`), and the one place this build
+  # writes into a home directory. DIRECTLY INTO /home/$LIVE_USER/Desktop, NOT /etc/skel: `useradd
+  # -m` in section 2 has already created the home by the time this section runs, so a skel copy
+  # would arrive after the only account that could have copied it — it would miss the medium's
+  # only user. This is the deliberate, documented exception to config/plasma/README.md's "no skel
+  # copy" position: that position is about Plasma CONFIG, which /etc/xdg cascades into every
+  # account for free, and a document sitting on the desktop has no cascade and exactly one reader.
+  #
+  # 0755, not cal_install's 0644, because Plasma will not launch a .desktop from the desktop
+  # without the exec bit — it prompts to mark it executable instead, a prompt on the one action
+  # this medium exists for. chown by the uid:gid parsed out of the TARGET's /etc/passwd because
+  # the builder has no user of that name; the account was created in section 2, into that file.
+  DESKTOP_SC="$TARGET/home/$LIVE_USER/Desktop/$DISTRO_ID-installer.desktop"
+  cal_install "$CAL_SRC/system/installer-desktop.desktop.in" "$DESKTOP_SC"
+  chmod 0755 -- "$DESKTOP_SC"
+  LIVE_OWNER="$(awk -F: -v u="$LIVE_USER" '$1 == u { print $3 ":" $4; exit }' "$TARGET/etc/passwd")"
+  [[ -n $LIVE_OWNER ]] \
+    || die "verify: $LIVE_USER has no entry in the target's /etc/passwd — section 2 is supposed to
+  have created the account before this runs, and the desktop shortcut has to belong to it"
+  chown "$LIVE_OWNER" -- "$TARGET/home/$LIVE_USER/Desktop" "$DESKTOP_SC"
+
   # NO /usr/bin/realm HERE ANY MORE, and its absence is asserted below. The shim existed for one
   # caller: Calamares' stock users module, whose ActiveDirectoryJob hardcodes the command name
   # `realm` and which realmd — not in the Gentoo tree — would otherwise have had to provide. With
@@ -1607,11 +1628,13 @@ if profile_has_set installer; then
   # $DISTRO_ID-domain directly, and a /usr/bin/realm on the medium would be a command with no
   # caller that answers to a name people expect to mean realmd.
 
-  # The live session's panel. Same argument one step further out: the medium exists to run one
-  # application, so the task manager pins that application and nothing else. Left alone, the
-  # Icons-Only Task Manager pins its KConfigXT defaults — System Settings, Discover, Dolphin and
-  # a browser this profile does not install — and Calamares, the one thing here, is not among
-  # them.
+  # The live session's panel (plan/34 §10). The task manager pins NOTHING: a panel is where a
+  # running session's windows go, and this session is one installer for ten minutes. Left alone,
+  # the Icons-Only Task Manager pins its KConfigXT defaults — System Settings, Discover, Dolphin
+  # and a browser — every one of which resolves on this medium since Phase D (kde-plasma/discover
+  # is back on every profile including live, plan/34 §6, and Firefox travels with the live
+  # session's own Flatpak store, plan/34 §7.1) — which is worse than nothing, not better: a panel
+  # carrying defaults nobody chose on a medium that chose none.
   #
   # It takes a Look-and-Feel package to change that, and the indirection is not ours: an applet's
   # KConfigXT default can only be beaten by a layout SCRIPT (Plasma::Corona::config() opens the
@@ -1668,14 +1691,15 @@ if profile_has_set installer; then
     cal_install "$f" "$LNF_DIR/${rel%.in}"
   done < <(find "$CAL_SRC/system/lookandfeel" -type f -print0)
 
-  # The pin resolves through KService, which resolves through /usr/share/applications — so the
-  # launcher is only as real as the .desktop file app-admin/calamares installs. A rename upstream
-  # would leave a panel with one dead icon on it and no other way to start the installer once the
-  # autostarted window is closed, and nothing else in this build would notice.
+  # Kickoff lists /usr/share/applications, so the menu entry — the installer's third way in,
+  # behind the autostarted window and the desktop shortcut — is only as real as the .desktop file
+  # app-admin/calamares installs, and it is the TRANSLATED one, which matters on a medium whose
+  # first control is a language picker. A rename upstream would leave a menu with no installer in
+  # it and nothing else in this build would notice.
   [[ -f $TARGET/usr/share/applications/calamares.desktop ]] \
-    || die "verify: /usr/share/applications/calamares.desktop is missing from the target, but the
-  panel layout pins applications:calamares.desktop — the live session's only visible launcher
-  would resolve to nothing"
+    || die "verify: /usr/share/applications/calamares.desktop is missing from the target — the
+  application menu would have no installer entry in it, and the menu's is the one that carries
+  the translated name"
   # Both halves in the one package. Section 2c built it for the splash and this section added the
   # layout to it; a copy that overwrote contents/splash, or a metadata.json.in reappearing under
   # config/calamares/system/lookandfeel and replacing 2c's, would leave the medium with a
@@ -2721,25 +2745,41 @@ if profile_has_set installer; then
 
   # The panel. Read back for the same reason: /etc/xdg/kdeglobals existing says nothing about
   # whether it names the package, and the package existing says nothing about whether its one
-  # script is the one that pins the installer. Both halves have to hold or the live session comes
-  # up with Plasma's stock pins — System Settings, Discover, Dolphin, an absent browser — and the
-  # installer reachable only from the menu.
+  # script is the one that empties the task manager. Both halves have to hold or the live session
+  # comes up with Plasma's stock pins — System Settings, Discover, Dolphin, a browser — every one
+  # of which resolves on this medium since Phase D, from defaults nobody chose on a medium that
+  # pins nothing (plan/34 §10).
   LNF_LAYOUT="$TARGET/usr/share/plasma/look-and-feel/$DISTRO_ID/contents/layouts/org.kde.plasma.desktop-layout.js"
   grep -qx "LookAndFeelPackage=$DISTRO_ID" "$TARGET/etc/xdg/kdeglobals" 2>/dev/null \
     || die "verify: /etc/xdg/kdeglobals does not select the $DISTRO_ID look-and-feel package —
   plasmashell would fall back to Breeze's layout and pin Plasma's stock four. The layout script
   went into that package, so this key has to be the package that has it."
-  grep -qF 'writeConfig("launchers", ["applications:calamares.desktop"])' "$LNF_LAYOUT" 2>/dev/null \
-    || die "verify: $LNF_LAYOUT does not write applications:calamares.desktop into the task
-  manager's launchers — the medium's panel would carry every application except the one it
-  exists to run. Matched on the writeConfig call, not the string: this file explains the pin in
-  a comment, and a comment is not a pin."
-  # loadTemplate() is what builds the panel in the first place. A layout script that pins the
-  # installer onto a panel it forgot to create is a live session with no panel at all, and this
+  grep -qF 'writeConfig("launchers", [])' "$LNF_LAYOUT" 2>/dev/null \
+    || die "verify: $LNF_LAYOUT does not write an empty launchers list into the task manager —
+  the medium's panel would come up carrying Plasma's stock pins, all of which resolve since Phase
+  D, on a medium that pins nothing. Matched on the writeConfig call, not the string: this file
+  explains the empty list in a comment, and a comment is not a write."
+  # loadTemplate() is what builds the panel in the first place. A layout script that empties a
+  # task manager on a panel it forgot to create is a live session with no panel at all, and this
   # script runs exactly once, at first login, where nothing is left to correct it.
   grep -q 'loadTemplate("org.kde.plasma.desktop.defaultPanel")' "$LNF_LAYOUT" 2>/dev/null \
     || die "verify: $LNF_LAYOUT never loads the default panel template — the live session would
   start with no panel, no clock and no system tray"
+
+  # The desktop shortcut, read back for the same reason the autostart entry above is: the medium
+  # has three ways into the installer — the autostarted window, this shortcut, the menu — and the
+  # panel contributes none of them. Executable is part of the contract, not tidiness: Plasma will
+  # not launch a .desktop from the desktop without the exec bit, so a mode that slipped back to
+  # 0644 leaves the icon sitting there opening a "mark as executable" prompt instead of the
+  # installer — the user can see the shortcut and cannot use it.
+  DESKTOP_SC="$TARGET/home/$LIVE_USER/Desktop/$DISTRO_ID-installer.desktop"
+  [[ -x $DESKTOP_SC ]] \
+    || die "verify: $DESKTOP_SC is missing or not executable — the desktop is where a user who
+  closed the autostarted window looks, and Plasma will not launch a .desktop without the exec
+  bit: the shortcut would prompt to be marked executable instead of opening the installer"
+  grep -qF 'pkexec calamares' "$DESKTOP_SC" \
+    || die "verify: $DESKTOP_SC does not run pkexec calamares — clicking the shortcut would start
+  something that is not the installer"
 
   # The password dictionary, built by section 2's finalizer because cracklib's own pkg_postinst
   # cannot (see there). Read back here rather than trusted, because this is the one installer
@@ -2768,6 +2808,7 @@ fi
 if ! profile_has_set installer; then
   for leak in etc/calamares "usr/share/calamares/local-modules" \
               "etc/xdg/autostart/$DISTRO_ID-installer.desktop" \
+              "home/$LIVE_USER/Desktop/$DISTRO_ID-installer.desktop" \
               "etc/polkit-1/rules.d/49-$DISTRO_ID-installer.rules" \
               "etc/xdg/kscreenlockerrc" \
               "usr/share/plasma/look-and-feel/$DISTRO_ID/contents/layouts" \

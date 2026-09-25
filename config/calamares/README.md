@@ -22,8 +22,9 @@ its job — the one pair that adds to the image rather than writing it — are
 | `local-modules/<name>/*` | `/usr/share/calamares/local-modules/<name>/` | a second `modules-search` entry, so "which of these did we write?" is answered by the path |
 | `system/49-installer.rules.in` | `/etc/polkit-1/rules.d/49-<id>-installer.rules` | lets the live user start the installer without a password prompt |
 | `system/installer-autostart.desktop.in` | `/etc/xdg/autostart/<id>-installer.desktop` | opens the installer on login |
+| `system/installer-desktop.desktop.in` | `/home/<live-user>/Desktop/<id>-installer.desktop` | the installer's shortcut on the desktop — installed straight into the home, mode 0755, because the panel pins nothing ([plan/34](../../plan/34-installer-sysext.md) §10, hand-ported from `ec691b9`) |
 | `system/kscreenlockerrc.in` | `/etc/xdg/kscreenlockerrc` | drops the lock screen's password prompt — the live account's password is public — and gives the greeter the wallpaper below |
-| `system/lookandfeel/contents/layouts/**` | `/usr/share/plasma/look-and-feel/<id>/contents/layouts/` | the Plasma layout script that pins Calamares — and nothing else — to the task manager, and points the desktop at the wallpaper below; added to the image's own Look-and-Feel package |
+| `system/lookandfeel/contents/layouts/**` | `/usr/share/plasma/look-and-feel/<id>/contents/layouts/` | the Plasma layout script that empties the task manager's pins — all of them — and points the desktop at the wallpaper below; added to the image's own Look-and-Feel package |
 | `system/wallpaper/**` | `/usr/share/wallpapers/<id>/` | the medium's only wallpaper — see below |
 | `branding/installer/lang/*.ts` | `/etc/calamares/branding/installer/lang/*.qm` | compiled by stage 40 with `lrelease`; Calamares loads them as its **branding** translator, which is how our own pages get translated with no mechanism of our own ([plan/22](../../plan/22-installer-language-page.md) §4) |
 
@@ -49,26 +50,34 @@ Its one reader is `setWindowIcon()`, which takes the value through `QIcon( QStri
 (`QIcon::fromTheme()` finds it) and then produce a null icon in silence. Stage 40 checks the path
 is in the target, because Branding reports a missing image at startup, on the medium.
 
-## The panel pins one application
+## The panel pins nothing; the desktop carries the shortcut
 
-The medium exists to run one program, so its task manager pins one program. Left alone it pins
-four, none of them that one: the Icons-Only Task Manager's `launchers` default (plasma-desktop,
-`applets/taskmanager/main.xml`) is System Settings, Discover, Dolphin, and `preferred://browser`.
+Since [plan/34](../../plan/34-installer-sysext.md) §10 (hand-ported from `ec691b9` on the
+unmerged `installer-desktop-shortcut` branch, which cannot be cherry-picked because its own
+`plan/33-*.md` clashes with this branch's history) the task manager comes up EMPTY. A panel is
+where a running session's windows go, and this session is one installer for ten minutes; a
+live-medium user looks for that installer on the desktop, not in a tray of launchers. It stays
+reachable three ways: the window `/etc/xdg/autostart` opens on login, the shortcut stage 40 puts
+on the live user's desktop, and the application menu. Left alone the task manager pins four:
+the Icons-Only Task Manager's `launchers` default (plasma-desktop, `applets/taskmanager/main.xml`)
+is System Settings, Discover, Dolphin, and `preferred://browser`.
 
-**One of those four points nowhere, and the panel pins one anyway.** `kde-plasma/discover` is on
-this medium too now ([plan/34](../../plan/34-installer-sysext.md) §6 removed the `#not-live`
-marker that used to keep it off) — an app store nobody minds having on a session that autologins
-once, even though every install it makes here is thrown away on reboot: what Calamares writes to
-the target is the *payload's* `/var`, not this session's. `preferred://browser` still resolves to
-nothing: Firefox is a Flatpak on every profile, never a native package, and this profile does not
-install it at build time — its own copy of it, once Phase D lands, is the desktop build's own
-store copied over, not a second `flatpak install` here (plan/34 §6, §9).
+**All four resolve on this medium now, and that is a change worth flagging rather than restating
+as settled.** When `ec691b9` was written, two of the four were dead — `kde-plasma/discover` was
+`#not-live` and no browser was preinstalled — so emptying the panel cost nothing extra beyond
+what removing the pin already lost. Neither is true since Phase D landed:
+`kde-plasma/discover` is back on every profile including live (plan/34 §6 removed the `#not-live`
+marker), and Firefox travels to the live session as part of its own Flatpak store rather than a
+separate `flatpak install` (plan/34 §7.1, §9) — the live session **is** the full desktop now, not
+the trimmed one `ec691b9`'s reasoning assumed. This port keeps `ec691b9`'s behaviour (empty
+panel, desktop shortcut) unchanged rather than deciding unilaterally whether that conclusion still
+holds; see the checkpoint 4 report for the open question.
 
-That does **not** make this script redundant, and the distinction is worth keeping straight:
-`KService` drops an unresolvable launcher silently rather than leaving a hole, so a medium with
-the stock default and no Flatpak Firefox installed comes up with a three-icon panel — System
-Settings, Discover and Dolphin — and still no installer. What is INSTALLED changes what CAN
-resolve; only the layout script changes what the panel actually pins.
+That does **not** make the layout script redundant even if the pins were left stock: `KService`
+drops an unresolvable launcher silently rather than leaving a hole, so a deleted write would not
+mean "no pins" — it would mean whichever of the four KConfigXT defaults happen to resolve, which
+today is all of them. Only the layout script's explicit `writeConfig("launchers", [])` actually
+empties the panel.
 
 Changing it costs a Look-and-Feel package, and the indirection is upstream's, not ours:
 
@@ -100,11 +109,21 @@ and style all still resolve to Breeze, unchanged.
 The script itself makes two edits and writes nothing else. It calls
 `loadTemplate("org.kde.plasma.desktop.defaultPanel")` so the panel stays upstream's by
 reference — kickoff, pager, tray, clock, and the input-method widget it adds for the languages
-that need one — and then writes `launchers` on the icontasks widget it finds there. The pin is
-`applications:calamares.desktop`, `app-admin/calamares`'s own menu entry rather than our
-`/etc/xdg/autostart` copy: only the former is in an applications directory where `KService` can
-resolve it, and only the former is translated, which matters on a medium whose first control is a
-language picker.
+that need one — and then writes an **empty** `launchers` list on the icontasks widget it finds
+there. The installer is reached from the desktop shortcut, the autostarted window and the
+application menu — whose entry is `app-admin/calamares`'s own `applications:calamares.desktop`,
+the one in an applications directory `KService` can resolve and the one that is translated, which
+matters on a medium whose first control is a language picker.
+
+The shortcut itself, `system/installer-desktop.desktop.in`, is modelled on the autostart entry
+minus every autostart key, installed by stage 40 **straight into `/home/<live-user>/Desktop`**
+rather than via `/etc/skel` — `useradd -m` has already created the home by the time stage 40
+runs, so a skel copy would miss the medium's only account. That is the one deliberate exception
+to [`config/plasma/README.md`](../plasma/README.md)'s "no skel copy" position, which is about
+Plasma *config* and the `/etc/xdg` cascade; a document on the desktop has no cascade and one
+reader. And it is mode **0755**, because Plasma will not launch a `.desktop` from the desktop
+without the exec bit — it stops to ask whether to mark it executable, a prompt on the one action
+this medium exists for.
 
 The second edit is the containment's wallpaper, and it is here for the *same* reason the first
 one is: a KConfigXT default is not beatable from a config file, so the layout script is the only

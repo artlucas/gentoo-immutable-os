@@ -1,6 +1,6 @@
-// The live medium's Plasma desktop: upstream's panel, with the task manager's pins rewritten and
-// the containment's wallpaper named. Two edits, both of which have to be made HERE rather than in
-// a config file, and for the same reason — see below.
+// The live medium's Plasma desktop: upstream's panel, with the task manager carrying no pins at
+// all and the containment's wallpaper named. Two edits, both of which have to be made HERE rather
+// than in a config file, and for the same reason — see below.
 //
 // LIVE MEDIUM ONLY. Stage 40 installs this (and the /etc/xdg/kdeglobals that selects the package
 // carrying it) for the `installer` profile alone.
@@ -11,16 +11,27 @@
 //     applications:systemsettings.desktop,applications:org.kde.discover.desktop,
 //     preferred://filemanager,preferred://browser
 //
-// which on this medium is: System Settings, Discover, Dolphin, and a browser. Four pins, three of
-// them wrong, and not one of them the thing this medium exists to do — and TWO of the four now
-// resolve to nothing at all, because neither package is installed here: kde-plasma/discover is
-// `#not-live` in config/portage/sets/desktop (an app store on a read-only stick that is thrown
-// away in twenty minutes), and the browser is a Flatpak this profile does not preinstall, since
-// FLATPAK_PREINSTALL="" and Firefox travels in the payload instead.
+// which on this medium is: System Settings, Discover, Dolphin, and a browser. Hand-ported from
+// `ec691b9` on the unmerged `installer-desktop-shortcut` branch (plan/34 §10): the panel pins
+// NOTHING now, because a panel is where a running session's windows go and this session is one
+// installer for ten minutes — the installer stays reachable through the autostarted window, the
+// desktop shortcut (installer-desktop.desktop.in) and the application menu, none of which is a
+// panel pin.
 //
-// That the package is gone does NOT make this script redundant. KService silently drops a
-// launcher whose .desktop file it cannot resolve, so without the rewrite below the panel would
-// come up with two icons on it — System Settings and Dolphin — and still not the installer.
+// WORTH FLAGGING, NOT SILENTLY CARRIED OVER: `ec691b9` reasoned that emptying the panel cost
+// nothing extra because two of the four stock pins were already dead here — Discover was
+// `#not-live` and no browser was preinstalled. Neither is true on this medium any more. plan/34
+// §6 put kde-plasma/discover back on every profile including live, and FLATPAK_PREINSTALL (which
+// now includes Firefox) is no longer overridden to empty for the installer profile — the live
+// session's own /var/lib/flatpak carries the same store an installed disk gets (plan/34 §7.1).
+// So System Settings, Discover, Dolphin AND a browser would all four resolve today, on a session
+// that is, since Phase D, the full desktop rather than the trimmed one this design assumed.
+// Ported as instructed, not reconsidered here — see the checkpoint 4 report.
+//
+// That does NOT make this script redundant even if the pins were left stock. KService silently
+// drops a launcher whose .desktop file it cannot resolve, so a deleted write is a panel back at
+// whatever subset of the KConfigXT defaults happens to resolve, not "no pins" — the write has to
+// stay explicitly empty for "no pins" to mean no pins.
 //
 // A KConfigXT default cannot be overridden by a config file: Plasma::Corona::config() opens
 // plasma-org.kde.plasma.desktop-appletsrc with KConfig::SimpleConfig (libplasma, corona.cpp),
@@ -33,18 +44,23 @@
 // those 70 lines here to edit one widget's config would silently freeze them at 6.6.6.
 loadTemplate("org.kde.plasma.desktop.defaultPanel")
 
-// The first change. applications:calamares.desktop is app-admin/calamares's own menu entry in
-// /usr/share/applications — not our /etc/xdg/autostart copy, which is not in an applications
-// directory and could not be resolved from here. Upstream's entry is also the translated one
-// ("Instalar el sistema", "システムをインストール", …), which matters on a medium whose first
-// control is a language picker.
+// The first change (plan/34 §10). The panel pins NOTHING. The installer is still reachable three
+// ways: the window /etc/xdg/autostart opens on login, the shortcut stage 40 installs on the live
+// user's desktop (installer-desktop.desktop.in), and the application menu, where
+// app-admin/calamares's own entry carries the translated name ("Instalar el sistema",
+// "システムをインストール", …) that matters on a medium whose first control is a language picker.
+// None of the three is a panel pin.
+//
+// The write itself stays, EXPLICITLY EMPTY, because of the stock defaults above: deleting it
+// would not mean "no pins", it would mean the KConfigXT defaults, all four of which resolve on
+// this medium today (see the note above).
 var pinned = 0;
 var allPanels = panels();
 for (var i = 0; i < allPanels.length; i++) {
     var tasks = allPanels[i].widgets("org.kde.plasma.icontasks");
     for (var t = 0; t < tasks.length; t++) {
         tasks[t].currentConfigGroup = ["General"];
-        tasks[t].writeConfig("launchers", ["applications:calamares.desktop"]);
+        tasks[t].writeConfig("launchers", []);
         tasks[t].reloadConfig();
         pinned++;
     }

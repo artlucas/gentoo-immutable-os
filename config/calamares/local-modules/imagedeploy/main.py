@@ -37,6 +37,7 @@ import json
 import os
 import subprocess
 import tempfile
+import time
 
 import libcalamares
 
@@ -64,6 +65,17 @@ CHUNK = 8 * 1024 * 1024
 # after it dd's the image into the .img — see the verify block in scripts/stages/60-image.sh.
 EROFS_MAGIC = bytes((0xE2, 0xE1, 0xF5, 0xE0))
 EROFS_MAGIC_OFFSET = 1024
+
+# The live session's own Flatpak store — see step 3's own comment for why this, and not a
+# payload file, is an install's source.
+LIVE_FLATPAK = "/var/lib/flatpak"
+
+# The progress bar's tail: mounting the /etc overlay, the ESP and the API filesystems. Fast and
+# byte-count-free, so it is a fixed slice rather than something tracked live.
+TAIL_BAND = 0.03
+# The tar-seed extraction between the root copy and the Flatpak copy: a few MiB, done in under a
+# second, not worth polling — a fixed nudge marks that it happened.
+SEED_BAND = 0.01
 
 
 def pretty_name():
@@ -211,32 +223,40 @@ def write_and_verify(source_device, dest_device, expected_size, expected_sha256,
     return written
 
 
-def check_no_live_leakage(root_mount_point, live_user):
+def check_no_live_leakage(root_mount_point, live_user, keep):
     """The installed disk's /var must carry none of THIS build's own live-medium state.
 
-    Three specific things, because they are the three places live-only state lives (plan/34
-    §2, §5): the sysext itself (nothing merges it on an installed system — there is no
-    /var/lib/extensions/immos-installer to merge), the live user's home, and the live user's
-    entry in the /etc overlay's own upper passwd. var-base.tar.zst (§7.1) already excludes all
-    three by construction; this re-proves it against what is ACTUALLY on the target disk after
-    the copy, the same "trust the built artifact, not the recipe" principle stage 60's own
-    checks use.
+    Two different guarantees, checked differently, because they fail differently on a KEPT disk.
+
+    var/lib/extensions/immos-installer can never legitimately exist on ANY installed disk, kept
+    or erased — nothing on an installed system ever merges it (there is no persistent sysext
+    counterpart), so its presence always means a build leak. Checked on both paths.
+
+    home/<live_user> and an upper passwd entry naming <live_user> are different on a KEPT disk:
+    plan/34 §5's own risk note is that a disk `dd`'d from an OLDER desktop.img may legitimately
+    carry `live` as a real account with real files — kept on purpose by this very feature, not
+    a build artifact. Raising on that is not a leak check any more, it is refusing a legitimate
+    reinstall, and it would do so AFTER step 1 has already overwritten the root partition — a
+    half-reinstalled machine reported as a failure, not a caught bug. So these two are checked on
+    the ERASE path only, matching accountsetup's check_no_live_user(), which already skips keep
+    for the same reason.
     """
     var = os.path.join(root_mount_point, "var")
     bad = []
     if os.path.isdir(os.path.join(var, "lib", "extensions", "immos-installer")):
         bad.append("var/lib/extensions/immos-installer")
-    if os.path.lexists(os.path.join(var, "home", live_user)):
-        bad.append("var/home/{}".format(live_user))
-    upper_passwd = os.path.join(var, "overlay", "etc", "upper", "passwd")
-    if os.path.isfile(upper_passwd):
-        with open(upper_passwd, encoding="utf-8", errors="replace") as f:
-            if any(
-                line.split(":", 1)[0] == live_user
-                for line in f
-                if line.strip() and not line.startswith("#")
-            ):
-                bad.append("var/overlay/etc/upper/passwd names {}".format(live_user))
+    if not keep:
+        if os.path.lexists(os.path.join(var, "home", live_user)):
+            bad.append("var/home/{}".format(live_user))
+        upper_passwd = os.path.join(var, "overlay", "etc", "upper", "passwd")
+        if os.path.isfile(upper_passwd):
+            with open(upper_passwd, encoding="utf-8", errors="replace") as f:
+                if any(
+                    line.split(":", 1)[0] == live_user
+                    for line in f
+                    if line.strip() and not line.startswith("#")
+                ):
+                    bad.append("var/overlay/etc/upper/passwd names {}".format(live_user))
     if bad:
         raise DeployError(
             _("Installation failed"),
@@ -267,6 +287,65 @@ def check_erofs_magic(device):
                 "may be faulty."
             ).format(device, EROFS_MAGIC_OFFSET, magic.hex()),
         )
+
+
+def dir_size_bytes(path):
+    """Total apparent size of a directory tree, in bytes — `du -sb`. Used only to WEIGHT the
+    progress bar between the root copy and the Flatpak copy, so an estimate that is close is
+    enough; a Python os.walk()+os.stat() loop would do the same work `du` does, slower, for no
+    more accuracy. Returns 0 on any failure — the caller's fallback (no live tracking, a coarse
+    jump instead) is not worth failing an install over.
+    """
+    try:
+        out = sh(["du", "-sb", "--", path], capture_output=True, text=True)
+        return int(out.stdout.split()[0])
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError, ValueError, IndexError):
+        return 0
+
+
+def copy_dir_with_progress(src, dest, total_bytes, progress):
+    """cp -a SRC/. DEST, reporting progress by polling DEST's filesystem's used-byte count
+    against a baseline taken just before the copy starts.
+
+    SRC/. rather than SRC, and DEST created first: makes this correct whether or not DEST
+    already has content, unlike `cp -a SRC DEST`, which nests SRC's basename a level deeper the
+    moment DEST already exists (`cp -a /var/lib/flatpak /x/var/lib/flatpak` becomes
+    /x/var/lib/flatpak/flatpak/... when /x/var/lib/flatpak is already a directory) — true today
+    only by construction, because var-base.tar.zst's --exclude drops the flatpak directory ENTRY
+    along with its contents, but not a fact worth depending on staying true.
+
+    statvfs, not a directory walk: one syscall against the destination filesystem, so polling it
+    once a second does not compete with the copy itself for I/O on the same device the way
+    `du`-ing the growing destination tree every second would.
+    """
+    os.makedirs(dest, exist_ok=True)
+    baseline_used = None
+    try:
+        st = os.statvfs(dest)
+        baseline_used = (st.f_blocks - st.f_bfree) * st.f_frsize
+    except OSError as e:
+        warning("could not read the target filesystem's usage before the Flatpak copy: {}".format(e))
+
+    debug("copying {} -> {} ({} bytes), hard links preserved".format(src, dest, total_bytes))
+    proc = subprocess.Popen(["cp", "-a", "--", src.rstrip("/") + "/.", dest])
+    try:
+        while proc.poll() is None:
+            if baseline_used is not None and total_bytes > 0:
+                try:
+                    st = os.statvfs(dest)
+                    now_used = (st.f_blocks - st.f_bfree) * st.f_frsize
+                    progress(min(1.0, max(0.0, now_used - baseline_used) / total_bytes))
+                except OSError:
+                    pass
+            time.sleep(1)
+    finally:
+        rc = proc.wait()
+    if rc != 0:
+        raise DeployError(
+            _("Installation failed"),
+            _("Copying the Flatpak store failed (cp exit code {!s}).").format(rc),
+        )
+    progress(1.0)
 
 
 def mount(source, target, fstype=None, options=None, mkdir=True):
@@ -330,6 +409,20 @@ def run():
                 _("The manifest names no root_erofs size and sha256 to install from."),
             )
 
+        # The progress bar is weighted by REAL byte counts, not a fixed split. The root copy and
+        # the Flatpak copy are both multi-GiB reads off the same USB stick — on a typical build
+        # they are close enough in size that a fixed "root gets 70%, Flatpak gets a frozen jump
+        # from 85% to 90%" bar sits still for as long as it moves, which is what a stalled
+        # install looks like. flatpak_bytes is 0 (and so is its whole band) on keep — nothing is
+        # copied there — and on a medium built with no preinstalled apps.
+        flatpak_bytes = 0
+        if not keep and os.path.isdir(LIVE_FLATPAK):
+            flatpak_bytes = dir_size_bytes(LIVE_FLATPAK)
+        root_bytes = expected_size
+        total_bytes = root_bytes + flatpak_bytes
+        root_end = (1.0 - TAIL_BAND) * (root_bytes / total_bytes) if total_bytes > 0 else 1.0 - TAIL_BAND
+        root_end = max(0.05, min(root_end, 1.0 - TAIL_BAND))
+
         # ---- 1. the root filesystem, byte for byte, straight off this medium's own disk ------
         # This is the install. Everything after it is mounting and identity.
         #
@@ -373,10 +466,10 @@ def run():
             parts["root"]["device"],
             expected_size,
             expected_sha256,
-            lambda f: libcalamares.job.setprogress(f * 0.70),
+            lambda f: libcalamares.job.setprogress(f * root_end),
         )
         check_erofs_magic(parts["root"]["device"])
-        libcalamares.job.setprogress(0.72)
+        libcalamares.job.setprogress(root_end)
 
         # ---- 2. mount the target the way the initrd does ------------------------------------
         root_mount_point = tempfile.mkdtemp(prefix="calamares-root-")
@@ -420,7 +513,8 @@ def run():
                 # Not fatal: the skeleton directories below are all an installed system strictly
                 # needs. Say so, so a MISSING seed is distinguishable from an omitted one.
                 warning("no /var seed at {} — seeding a bare /var".format(var_base))
-            libcalamares.job.setprogress(0.85)
+            flatpak_start = max(root_end, min(root_end + SEED_BAND, 1.0 - TAIL_BAND))
+            libcalamares.job.setprogress(flatpak_start)
 
             # The Flatpak store: copied from THIS LIVE SESSION's own /var/lib/flatpak, not
             # unpacked from any payload file — plan/34 §7.1 unpacks it into the medium's own
@@ -433,16 +527,19 @@ def run():
             # cp -a, not tar or rsync -a: Flatpak's OSTree-backed store relies on hard links
             # between repo objects for its own deduplication, and cp -a (unlike a plain cp -r
             # or rsync without -H) detects and recreates hard links among the files it copies
-            # together in one invocation.
-            live_flatpak = "/var/lib/flatpak"
-            if os.path.isdir(live_flatpak):
+            # together in one invocation. copy_dir_with_progress's own docstring is why it is
+            # SRC/. into a pre-made DEST rather than `cp -a SRC DEST`.
+            if os.path.isdir(LIVE_FLATPAK):
                 dest_flatpak = os.path.join(root_mount_point, "var", "lib", "flatpak")
-                os.makedirs(os.path.dirname(dest_flatpak), exist_ok=True)
                 debug("copying the live session's own Flatpak store to the target (hard links preserved)")
-                sh(["cp", "-a", "--", live_flatpak, dest_flatpak])
+                flatpak_span = (1.0 - TAIL_BAND) - flatpak_start
+                copy_dir_with_progress(
+                    LIVE_FLATPAK, dest_flatpak, flatpak_bytes,
+                    lambda f: libcalamares.job.setprogress(flatpak_start + f * flatpak_span),
+                )
             else:
-                warning("no Flatpak store at {} in the live session".format(live_flatpak))
-            libcalamares.job.setprogress(0.90)
+                warning("no Flatpak store at {} in the live session".format(LIVE_FLATPAK))
+            libcalamares.job.setprogress(1.0 - TAIL_BAND)
 
         # Belt and braces: the overlay dirs and the home trees must exist whether they came out
         # of the seed or not. /home and /root in the image are symlinks into /var (plan/01), so
@@ -452,7 +549,7 @@ def run():
         os.chmod(os.path.join(root_mount_point, "var", "roothome"), 0o700)
 
         # ---- 3b. post-condition: none of THIS build's own live-medium state reached the disk -
-        check_no_live_leakage(root_mount_point, live_user)
+        check_no_live_leakage(root_mount_point, live_user, keep)
 
         # ---- 4. THE /etc OVERLAY ------------------------------------------------------------
         # The line this whole installer is built around. lowerdir is the target's own /etc — the

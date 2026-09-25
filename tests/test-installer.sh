@@ -3156,12 +3156,18 @@ assert_true "the manifest's root_erofs size/sha256 are read, not an optional ver
              grep -qF 'root_erofs_meta.get(\"sha256\")' '$IMAGEDEPLOY_JOB'"
 
 assert_true "erase mode copies the live session's own Flatpak store with hard links preserved" \
-    grep -qF '["cp", "-a", "--", live_flatpak, dest_flatpak]' "$IMAGEDEPLOY_JOB"
+    grep -qF 'copy_dir_with_progress(' "$IMAGEDEPLOY_JOB"
+assert_true "...via cp -a, which preserves hard links (Flatpak's OSTree store needs them)" \
+    grep -qF '["cp", "-a", "--", src.rstrip("/") + "/.", dest]' "$IMAGEDEPLOY_JOB"
 assert_true "...from THIS session's /var/lib/flatpak, not a payload file" \
-    grep -qF 'live_flatpak = "/var/lib/flatpak"' "$IMAGEDEPLOY_JOB"
-assert_true "...and progress is reported to Calamares while it copies" \
+    grep -qF 'LIVE_FLATPAK = "/var/lib/flatpak"' "$IMAGEDEPLOY_JOB"
+assert_true "...robust to the destination already existing (SRC/. into a pre-made DEST)" \
+    bash -c "sed -n '/^def copy_dir_with_progress/,/^def /p' '$IMAGEDEPLOY_JOB' |
+             grep -q 'os.makedirs(dest, exist_ok=True)'"
+assert_true "...and progress is reported to Calamares while it copies, weighted by real bytes" \
     bash -c "sed -n '/---- 3\\. seed/,/---- 3b\\./p' '$IMAGEDEPLOY_JOB' |
-             grep -q 'libcalamares.job.setprogress'"
+             grep -q 'libcalamares.job.setprogress' &&
+             grep -qF 'flatpak_bytes = dir_size_bytes(LIVE_FLATPAK)' '$IMAGEDEPLOY_JOB'"
 assert_true "keep mode skips both the var seed and the Flatpak copy" \
     bash -c "sed -n '/---- 3\\. seed/,/---- 3b\\./p' '$IMAGEDEPLOY_JOB' | grep -q 'if keep:'"
 
@@ -3171,7 +3177,7 @@ assert_true "keep mode skips both the var seed and the Flatpak copy" \
 # actual target disk after the copy, not merely by construction of var-base.tar.zst.
 assert_true "check_no_live_leakage() exists and runs after the var seed/Flatpak copy, every mode" \
     bash -c "grep -q 'def check_no_live_leakage' '$IMAGEDEPLOY_JOB' &&
-             sed -n '/^def run/,\$p' '$IMAGEDEPLOY_JOB' | grep -q 'check_no_live_leakage(root_mount_point, live_user)'"
+             sed -n '/^def run/,\$p' '$IMAGEDEPLOY_JOB' | grep -q 'check_no_live_leakage(root_mount_point, live_user, keep)'"
 for leaked in '"lib", "extensions", "immos-installer"' \
               '"home", live_user' \
               'upper_passwd'; do
@@ -3184,6 +3190,67 @@ assert_true "...and the sysext entry names the string var/lib/extensions" \
 assert_true "...and it fails the install, not a warning" \
     bash -c "sed -n '/^def check_no_live_leakage/,/^def /p' '$IMAGEDEPLOY_JOB' |
              grep -q 'raise DeployError'"
+assert_true "check_no_live_leakage() takes a keep flag" \
+    grep -qF 'def check_no_live_leakage(root_mount_point, live_user, keep):' "$IMAGEDEPLOY_JOB"
+
+# ---- check_no_live_leakage(): keep skips the live-user checks, never the sysext one (review
+# fix, checkpoint 4) ----------------------------------------------------------------------------
+# Driven for real, not grepped: which checks run under which mode is exactly the branching a
+# source grep cannot tell apart from the outside. Same harness tests/test-domain.sh drives
+# accountsetup through (plan/34 §7.2/§9).
+LEAK_DRIVER="$TESTS_DIR/lib-accountsetup-driver.py"
+assert_file "$LEAK_DRIVER" "the job driver exists"
+drive_leakage() {  # ROOT KEEP
+    LIVE_USER="live" KEEP="$2" GS_JSON='{}' CONF_JSON='{}' \
+        python3 "$LEAK_DRIVER" "$IMAGEDEPLOY_JOB" check_no_live_leakage "$1" 2>&1 \
+        | sed -E 's/^(debug|warning): //'
+}
+
+# A KEPT disk legitimately carries a live user from an OLDER desktop.img (plan/34 §5's own risk
+# note) — home and an upper passwd entry are the user's own kept data, not a build leak.
+KROOT="$TMP/leak-kept"; rm -rf -- "$KROOT"
+mkdir -p "$KROOT/var/home/live" "$KROOT/var/overlay/etc/upper"
+printf 'live:x:1000:1000::/home/live:/bin/bash\n' > "$KROOT/var/overlay/etc/upper/passwd"
+assert_eq "None" "$(drive_leakage "$KROOT" 1)" \
+    "keep: a kept var/home/live and upper passwd entry pass — the user's own data, not a leak"
+
+# The sysext can never legitimately be on ANY installed disk — checked on keep too.
+mkdir -p "$KROOT/var/lib/extensions/immos-installer"
+KOUT2="$(drive_leakage "$KROOT" 1)"
+assert_contains "Installation failed" "$KOUT2" \
+    "keep: the sysext itself still fails the install — nothing merges it on an installed system"
+assert_contains "var/lib/extensions/immos-installer" "$KOUT2" "...and the message names it"
+rm -rf -- "$KROOT/var/lib/extensions"
+
+# On erase, the same home/passwd ARE a leak — this build's own live session should never have put
+# them there (var-base.tar.zst excludes both by construction; this is the disk-side proof).
+EOUT="$(drive_leakage "$KROOT" 0)"
+assert_contains "Installation failed" "$EOUT" "erase: the same var/home/live now fails the install"
+assert_contains "var/home/live" "$EOUT" "...naming the home directory"
+assert_contains "upper/passwd names live" "$EOUT" "...and the upper passwd entry"
+
+# A clean var — neither path complains.
+CROOT="$TMP/leak-clean"; mkdir -p "$CROOT/var"
+assert_eq "None" "$(drive_leakage "$CROOT" 1)" "keep: a clean var passes"
+assert_eq "None" "$(drive_leakage "$CROOT" 0)" "erase: a clean var passes too"
+
+# ---- copy_dir_with_progress(): robust to a pre-existing, non-empty destination (review fix,
+# checkpoint 4) -----------------------------------------------------------------------------
+# `cp -a SRC DEST` nests SRC's basename a level deeper the moment DEST already has content —
+# true of the Flatpak copy only by construction (var-base.tar.zst's --exclude drops the
+# directory ENTRY, not just its contents), and not a fact worth depending on staying true.
+COPY_SRC="$TMP/copy-src"; COPY_DEST="$TMP/copy-dest"
+rm -rf -- "$COPY_SRC" "$COPY_DEST"
+mkdir -p "$COPY_SRC/a"; echo hi > "$COPY_SRC/a/file.txt"
+mkdir -p "$COPY_DEST"; echo pre-existing > "$COPY_DEST/already-here.txt"
+SRC="$COPY_SRC" DEST="$COPY_DEST" TOTAL_BYTES=0 \
+    python3 "$LEAK_DRIVER" "$IMAGEDEPLOY_JOB" copy_dir_with_progress /nonexistent >/dev/null 2>&1
+assert_true "the pre-existing file in DEST survives the copy" \
+    test -f "$COPY_DEST/already-here.txt"
+assert_true "SRC's own contents land AT DEST's top level, not nested under SRC's basename" \
+    test -f "$COPY_DEST/a/file.txt"
+assert_false "...specifically, not nested as DEST/copy-src/a/file.txt" \
+    test -e "$COPY_DEST/copy-src"
 
 # imagebootloader: the NVRAM dedup applies in both modes, by PARTUUID, not by reading diskKeepData
 # at all — see scripts/run-vm.sh's note and the module's own header on why.
@@ -3415,9 +3482,9 @@ assert_true "stage 50 asserts the dictionary survived the prune" \
 # config/calamares/system/ is not Calamares configuration at all: it is what makes a medium whose
 # account password is published usable without ever typing it. Each file is installed by stage 40
 # for this profile only, and each would be wrong on a product image — a security regression for
-# the three here, a Plasma panel pinning an installer nobody installed for the two in section 11
-# — so both halves are asserted: the file says what it should, and stage 40 both writes it on the
-# medium and refuses to let it exist anywhere else.
+# the three here, a Plasma session configured for a medium nobody installed for the files
+# section 11 covers — so both halves are asserted: the file says what it should, and stage 40
+# both writes it on the medium and refuses to let it exist anywhere else.
 LOCKRC="$RENDER/system/kscreenlockerrc"
 assert_file "$LOCKRC" "the live session's kscreenlockerrc rendered"
 # TWO groups now, and that is exactly why this needs a parser rather than a grep. The file used
@@ -3457,14 +3524,19 @@ assert_true "stage 40 installs kscreenlockerrc into /etc/xdg on the medium" \
     grep -qF 'cal_install "$CAL_SRC/system/kscreenlockerrc.in" "$TARGET/etc/xdg/kscreenlockerrc"' "$STAGE40"
 assert_true "...and reads the key back out of the target before building the medium" \
     grep -qF "grep -qx 'RequirePassword=false'" "$STAGE40"
-# ---- 11. the panel pins the installer and nothing else --------------------------------------
-# The medium runs one program, so its task manager pins one program. Left alone it pins four and
-# none of them is that one: the Icons-Only Task Manager's launchers come from a KConfigXT default
-# (plasma-desktop applets/taskmanager/main.xml) of System Settings, Discover, a file manager and
-# preferred://browser — an app store on a stick that is discarded in twenty minutes, and a
-# browser that is never a NATIVE package on any profile: Firefox is a Flatpak (plan/34 §6 stopped
-# this profile from installing it a second time at build; the medium's own copy of it, once
-# Phase D lands, is the desktop build's own store, not a fresh `flatpak install` here).
+# ---- 11. the panel pins nothing; the desktop carries the shortcut (plan/34 §10) --------------
+# Hand-ported from `ec691b9` on the unmerged `installer-desktop-shortcut` branch, which cannot be
+# cherry-picked (its own plan/33-*.md clashes with this branch's history). The task manager comes
+# up EMPTY: a panel is where a running session's windows go, and this session is one installer for
+# ten minutes. Left alone it pins four, and EVERY ONE of them resolves on this medium now — the
+# Icons-Only Task Manager's launchers come from a KConfigXT default (plasma-desktop
+# applets/taskmanager/main.xml) of System Settings, Discover, a file manager and preferred://
+# browser, and since Phase D: kde-plasma/discover is back on every profile including live
+# (plan/34 §6 removed the #not-live marker), and the browser resolves to Firefox, which travels
+# to the live session as part of its own Flatpak store (plan/34 §7.1) rather than needing a
+# native package. `ec691b9`'s own port reasoned that two of the four were already dead here —
+# that premise no longer holds, and is worth re-examining (see the checkpoint 4 report); this
+# suite still asserts the ported behaviour (empty launchers, desktop shortcut) as instructed.
 #
 # The failure this section guards is not "the wrong icons": it is that a KConfigXT default cannot
 # be beaten by a config file, so the FIX is a layout script run once at first login — and a
@@ -3515,18 +3587,18 @@ else
     echo "  (node absent — skipping the layout script's parse check)"
 fi
 
-# The pin itself, and the one string it turns on: app-admin/calamares's own menu entry, which is
-# in /usr/share/applications where KService can resolve it. Our /etc/xdg/autostart copy is not,
-# and would resolve to nothing.
-assert_true "the layout pins applications:calamares.desktop on the task manager" \
-    grep -qF 'writeConfig("launchers", ["applications:calamares.desktop"])' "$LAYOUT"
-# ONE pin. The whole request is that nothing else is pinned, and the cheapest way to catch a
-# second one creeping in is to count the launcher URLs the script contains. Counted over the code
+# The write itself, and the one string it turns on: an EXPLICITLY EMPTY launchers list. Deleting
+# the write would not mean "no pins", it would mean the KConfigXT defaults — all four of which
+# resolve on this medium now (see the section header above).
+assert_true "the layout writes an empty launchers list on the task manager" \
+    grep -qF 'writeConfig("launchers", [])' "$LAYOUT"
+# ZERO launcher URLs. The whole request is that nothing at all is pinned, and the cheapest way to
+# catch one creeping in is to count the launcher URLs the script contains. Counted over the code
 # with the comments stripped, because the comments quote the stock defaults this replaces.
 LAYOUT_CODE="$TMP/layout-code.js"
 grep -v '^[[:space:]]*//' "$LAYOUT" > "$LAYOUT_CODE"
-assert_eq "1" "$(grep -oF 'applications:' "$LAYOUT_CODE" | wc -l)" \
-    "exactly one launcher is written — no other application is pinned"
+assert_eq "0" "$(grep -oF 'applications:' "$LAYOUT_CODE" | wc -l)" \
+    "no launcher is written — no application is pinned, not even the installer"
 assert_false "the layout pins none of Plasma's stock four" \
     grep -qE 'systemsettings\.desktop|org\.kde\.discover|preferred://' "$LAYOUT_CODE"
 # The panel has to exist before anything can be pinned to it, and loadTemplate() is what builds
@@ -3557,6 +3629,30 @@ assert_true "...into the wallpaper plugin's own config group" \
 # and which one that is depends on statement order.
 assert_false "...and no longer falls back to the solid-colour plugin" \
     grep -qF "wallpaperPlugin = 'org.kde.color'" "$LAYOUT_CODE"
+
+# The shortcut that replaces the pin: the installer's icon on the live user's desktop, where a
+# user who closed the autostarted window actually looks. Asserted against the TEMPLATE (with its
+# @TOKENS@) rather than the rendered copy, because the token is part of the contract — a shortcut
+# named for anything but the distro the build renders is a rebranding that missed a file.
+DESKTOP_IN="$CAL/system/installer-desktop.desktop.in"
+assert_file "$DESKTOP_IN" "the installer's desktop shortcut template"
+assert_true "...that runs the installer the way upstream's own menu entry does" \
+    grep -qF 'Exec=sh -c "pkexec calamares"' "$DESKTOP_IN"
+assert_true "...under Calamares' own icon, which the medium already carries" \
+    grep -qF 'Icon=calamares' "$DESKTOP_IN"
+assert_true "...and a name the build renders from DISTRO_NAME" \
+    grep -qF 'Name=Install @DISTRO_NAME@' "$DESKTOP_IN"
+# NOT an autostart entry — and the keys would not even do anything here: Plasma reads autostart
+# .desktop files from /etc/xdg/autostart and ~/.config/autostart, never off the desktop. Their
+# absence is asserted anyway because the division of labour is the contract: opening a window on
+# login is the autostart template's job, and a shortcut file that grew those keys would be a
+# copy-paste of the wrong parent. The autostart template keeps its own.
+assert_eq "0" "$(grep -cE '^(X-KDE-autostart-after|X-GNOME-Autostart-Delay)=' "$DESKTOP_IN")" \
+    "the desktop shortcut carries no autostart keys"
+assert_file "$CAL/system/installer-autostart.desktop.in" \
+    "the autostart template still exists beside it"
+assert_true "...and keeps its delay keys, which the desktop copy must not inherit" \
+    grep -qF 'X-KDE-autostart-after=panel' "$CAL/system/installer-autostart.desktop.in"
 
 # ---- wallpapers: the collection is on every profile now (plan/34 §6, was plan/20) ----------
 # Through 0.3.1 the live medium dropped the 216.8 MiB collection from the SET and had stage 50
@@ -3747,11 +3843,11 @@ assert_true "...while expected-packages.desktop.txt still does" \
 # which every profile reads, and Discover is now on every profile with @desktop.
 assert_true "Discover's USE flags stay in the shared package.use" \
     grep -qE '^kde-plasma/discover\s' "$REPO_ROOT/config/portage/package.use/image"
-# The panel is a separate mechanism and is NOT made redundant by the package going away: KService
-# drops an unresolvable launcher silently, so without the rewrite the medium's panel would come
-# up with the two stock pins that DO resolve and still not the installer.
-assert_true "the layout script still rewrites the stock pins rather than relying on the removal" \
-    grep -qF 'writeConfig("launchers"' "$LAYOUT_CODE"
+# The panel is a separate mechanism and is not made redundant by Discover being back on this
+# profile: KService drops an unresolvable launcher silently, so without the empty-launchers write
+# the medium's panel would come up with all four stock pins resolving, on a medium that pins none.
+assert_true "the layout script still empties the stock pins rather than relying on removals" \
+    grep -qF 'writeConfig("launchers", [])' "$LAYOUT_CODE"
 
 # ---- the Emoji Selector: on every profile now (plan/34 §6, was a stage-50 file deletion) -----
 # Through 0.3.1 stage 50 deleted plasma-desktop's Emoji Selector (menu entry, global-shortcut
@@ -3782,9 +3878,13 @@ assert_true "...into LNF_DIR=the image's own package id, not a -installer one" \
     grep -qF 'LNF_ID="$DISTRO_ID"' "$STAGE40"
 assert_true "...and refuses a package that lost either half" \
     grep -qF 'contents/splash/Splash.qml contents/layouts/org.kde.plasma.desktop-layout.js' "$STAGE40"
-assert_true "...and reads the pin back out of the target before building the medium" \
-    grep -qF 'writeConfig("launchers", ["applications:calamares.desktop"])' "$STAGE40"
-assert_true "...and refuses a target whose calamares.desktop the pin could not resolve" \
+assert_true "...and reads the empty launchers write back out of the target before building" \
+    grep -qF 'writeConfig("launchers", [])' "$STAGE40"
+assert_true "...and installs the desktop shortcut straight into the live user's home" \
+    grep -qF 'home/$LIVE_USER/Desktop/$DISTRO_ID-installer.desktop' "$STAGE40"
+assert_true "...and reads the shortcut back, exec bit and all, before the medium is built" \
+    grep -qF 'grep -qF '"'"'pkexec calamares'"'"' "$DESKTOP_SC"' "$STAGE40"
+assert_true "...and refuses a target whose calamares.desktop the menu could not resolve" \
     grep -qF 'usr/share/applications/calamares.desktop' "$STAGE40"
 
 # The leak list, which is the only thing standing between these files and a product image: an
@@ -3793,6 +3893,7 @@ for leaked in 'etc/xdg/kscreenlockerrc' \
               'usr/share/plasma/look-and-feel/$DISTRO_ID/contents/layouts' \
               'usr/share/wallpapers/$DISTRO_ID' \
               'etc/xdg/autostart/$DISTRO_ID-installer.desktop' \
+              'home/$LIVE_USER/Desktop/$DISTRO_ID-installer.desktop' \
               'etc/polkit-1/rules.d/49-$DISTRO_ID-installer.rules'; do
     assert_true "stage 40 refuses to let /$leaked reach a non-installer profile" \
         grep -qF "\"$leaked\"" "$STAGE40"

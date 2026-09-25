@@ -318,14 +318,32 @@ partition.
 - **The installer icon**, ported by hand from `ec691b9` on `installer-desktop-shortcut`. That commit
   cannot be cherry-picked: its `plan/33-*.md` clashes, and it predates plan/33's stage 40.
   - `config/calamares/system/installer-desktop.desktop.in` is the autostart entry minus its
-    autostart keys, installed at `home/live/Desktop/<ID>-installer.desktop`, mode 0755, under the
-    live user's uid.
-  - The installer layout writes the task manager's `launchers` explicitly empty. A deleted write
-    would leave the KConfigXT defaults, of which KService keeps System Settings and Dolphin.
+    autostart keys, installed at `home/$LIVE_USER/Desktop/<ID>-installer.desktop`, mode 0755,
+    chowned to the uid:gid `useradd -m` gave the live user (parsed out of the target's own
+    `/etc/passwd`, since the builder has no account of that name). Stage 40 reads it back —
+    present, executable, running `pkexec calamares` — and the path joins the leak list every
+    non-installer profile is refused.
+  - The installer layout writes the task manager's `launchers` explicitly empty
+    (`writeConfig("launchers", [])`). A deleted write would leave the KConfigXT defaults, and
+    `KService` resolves them silently rather than leaving a hole.
   - That exact string is asserted in the script, in stage 40's read-back and in
-    `tests/test-installer.sh`.
+    `tests/test-installer.sh` (both the write and a zero-count of `applications:` URLs in the
+    comment-stripped script).
 
   Autostart stays: the stick still opens the installer.
+
+  **Worth flagging, not silently carried over.** `ec691b9`'s own reasoning for emptying the panel
+  was that two of the four stock pins were already dead on that branch's medium — Discover was
+  `#not-live` and no browser was preinstalled, so nothing was lost beyond the pin itself. Neither
+  premise survives this document: §6 put `kde-plasma/discover` back on every profile including
+  live, and §7.1/§9 make the live session's own `/var/lib/flatpak` the very same store an
+  installed disk gets, Firefox included — the live session **is** the full desktop now, not the
+  trimmed one `ec691b9` assumed. Under that premise all four of the stock pins — System Settings,
+  Discover, Dolphin, Firefox — would actually resolve to something a session this rich could use.
+  This checkpoint ports `ec691b9`'s behaviour (empty panel, desktop shortcut) unchanged rather
+  than deciding unilaterally whether "pin nothing" is still the right call now that the four
+  defaults are no longer three dead icons and an installer: that is a product decision, not an
+  implementation one, and belongs to whoever reads the checkpoint 4 report next.
 - **What the session gains, with no further work:** the whole product — the wallpaper collection,
   Spectacle, Discover, KInfoCenter, distrobox and podman (the live user already has subuid/subgid
   ranges) — and Firefox, Okular, Gwenview, Ark and KWrite. `live_var` grows to fill the stick on

@@ -37,6 +37,13 @@ Calamares job:
 | the live user on the installer medium | same file, same root |
 | an account Calamares creates | the installed system **is** the desktop profile's root EROFS written to disk, so the file is there before the account exists |
 
+The one deliberate exception to "no skel copy" is not a config file at all: the installer
+medium's desktop shortcut, which stage 40 installs straight into the live home because
+`useradd -m` has already run by then ([plan/34](../../plan/34-installer-sysext.md) §10,
+hand-ported from `ec691b9` on the unmerged `installer-desktop-shortcut` branch). A document on
+one account's desktop has no `/etc/xdg` cascade to ride and exactly one reader, so the position
+above — which is about Plasma *config* — does not apply to it.
+
 ## LookAndFeelPackage, not Theme
 
 This is the correction to the original design, and it cost a release to find. The splash is
@@ -67,10 +74,11 @@ beats `/etc/xdg`. Ours said `<id>` and was never read; the medium's session was 
 where no `kdeglobals` was shipped at all, the built-in default `org.kde.breeze.desktop` did the
 same thing. Both images booted to Breeze while every config file in them said otherwise.
 
-**One package per image, therefore.** The installer medium's task-manager layout script
-([plan/16](../../plan/16-installer.md)) goes into *this* package, added by stage 40 for that
-profile only, instead of into a second package that `kdeglobals` would have to name instead. The
-product's copy has no `contents/layouts` and the layout resolves to Breeze's.
+**One package per image, therefore.** The installer medium's layout script — the one that empties
+the task manager's pins and names the desktop's wallpaper ([plan/16](../../plan/16-installer.md),
+[plan/34](../../plan/34-installer-sysext.md) §10) — goes into *this* package, added by stage 40
+for that profile only, instead of into a second package that `kdeglobals` would have to name
+instead. The product's copy has no `contents/layouts` and the layout resolves to Breeze's.
 
 Everything the package does not ship still resolves to Breeze: plasma-workspace installs
 `org.kde.breeze.desktop` as the fallback package for any id but its own, so colours, style, lock
