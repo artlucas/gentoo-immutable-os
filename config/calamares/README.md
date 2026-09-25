@@ -241,7 +241,7 @@ All but `accounts`, `disk` and `apps` are Python job modules — a directory, a 
 module when they differ, which produces an install that runs to "finished" having never written
 the bootloader. Both stage 40 and `tests/test-installer.sh` assert it.
 
-## The payload
+## What the stick installs from
 
 Since [plan/34](../../plan/34-installer-sysext.md) §7 (the sysext redesign, "Phase D") the root
 filesystem is **not a staged file any more**. It is *this medium's own* `root_<version>`

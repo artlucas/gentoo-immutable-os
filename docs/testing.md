@@ -74,6 +74,17 @@ bash scripts/run-vm.sh out/immos-<v>-installer.img --extra-disk-keep            
 bash scripts/run-vm.sh out/immos-<v>-installer.img.extra-disk.qcow2 --writable          # 4. check it
 ```
 
+### The installer, end to end
+
+Since [plan/34](../plan/34-installer-sysext.md) the medium *is* the desktop, and Calamares ships
+as a `systemd-sysext` extension on the stick's own `/var` rather than in any root image
+(plan/34 §3). None of this has an automated boot test in stage 70 — it is driven by hand with
+`run-vm.sh`, the way the reinstall walkthrough below is. An erase install has been verified end
+to end against the `de78ad3` build (plan/34 §11's own measured build): the installed root's
+sha256 equals `out/immos_0.3.1.root.erofs`, there is no `calamares` and no `live` user on the
+target, the preinstalled Flatpaks run, and there are no failed units. A `--extra-disk-keep`
+reinstall has not had the same pass yet — walk it by hand with the loop above.
+
 ### Reinstall and keep, by hand
 
 The installer's "Keep my files, apps and settings" checkbox (plan/33) has no automated boot test — walk it with the loop above:

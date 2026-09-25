@@ -225,6 +225,16 @@ contain `app-admin/calamares`, `sys-boot/grub`, `sys-boot/os-prober`, `dev-libs/
 not get into the installed system" is not a convention anyone has to remember — it is an
 assertion that breaks the build, which is how every other invariant in this project is held.
 
+**Updated by [plan/34 §3](34-installer-sysext.md):** the audit gate above still runs, and still
+guards `desktop`/`console`. But it stopped being the *only* thing holding the guarantee. Calamares
+and its dependency tail no longer live in any root image, including the installer's own — the
+installer's own built tree exists only long enough for stage 60 to diff it against the desktop
+base and turn the difference into a systemd system extension on the stick's `var` partition, which
+an installed disk never receives. The guarantee is now structural as well as audited: there is no
+root EROFS an installed machine could ever boot that has Calamares compiled into its expected-
+packages closure at all, because the closure that ships is always the `desktop` one, byte for
+byte.
+
 ### 3.4 What must *not* carry the profile name
 
 The profile is a **build-time** concept and must not leak into the installed system's identity.
@@ -238,6 +248,13 @@ These stay exactly as they are today, or updates break:
 
 A system installed from the `installer` profile's payload is indistinguishable from one dd'd
 from the `desktop` image. That is the point.
+
+**Sharpened by [plan/34 §9](34-installer-sysext.md):** "indistinguishable" is now "identical
+bytes". `imagedeploy` copies the stick's own `root_<version>` partition — the same EROFS this
+live session itself boots from, not a staged copy of one — into the target while hashing it, and
+checks the result against `manifest.json`'s recorded sha256. There is no longer an `installer`
+profile *payload* that is merely built to match the `desktop` profile; there is one `desktop` root
+EROFS, and the medium carries and writes that exact object.
 
 One live-only exception: `systemd-sysupdate` should be **masked** in the `installer` profile.
 A live medium offering to update itself is confusing at best.
@@ -337,6 +354,14 @@ a container where loop devices are flaky ([plan/04](04-image-and-boot.md)). The 
 on real hardware with a real kernel: it can simply `mount` things. `mtools` is in `builder.lock`
 and not in `image.lock`, and it does not need to be.
 
+**Step 3, updated by [plan/34 §9](34-installer-sysext.md):** at the time this was written, "the
+root EROFS" that step 3 `dd`s meant a copy of it staged onto the medium's own `/var` alongside the
+UKI and the `/var` tarball (§7.2 below, as it stood then). It is not staged any more. `imagedeploy`
+finds the block device behind the live session's own `/` (`findmnt`, cross-checked by PARTLABEL
+against `liveRootPartLabel`) and `dd`s *that partition* straight into the target's `root_<version>`
+slot, hashing it as it goes. Step 3 copies a partition, not a file — one read of the medium instead
+of a staged copy plus a separate verify pass.
+
 ### 5.2 The `/etc` overlay makes stock Calamares modules work
 
 The interesting part. `/etc` on this system is an overlayfs whose upper lives on `/var`
@@ -424,6 +449,16 @@ recoverable machine and an install presented as failed.
 
 ### 5.4 Three things that need custom steps
 
+**The first of these — live-user removal — is gone. [plan/34 §5](34-installer-sysext.md) removed
+its premise.** The live user no longer reaches any root image's lower `/etc` at all: stage 40
+still creates it exactly as described below, but then moves the touched account files straight
+into `$TARGET/var/overlay/etc/upper` and restores the lower to its pristine state, so an installed
+disk's fresh `/var` never receives them. There is nothing left to shadow and nothing left to
+remove — `accountsetup`'s `remove_live_user()` is deleted, and a post-condition
+(`check_no_live_user()`) fails the install if the target's `passwd` names `LIVE_USER` anyway. The
+paragraph immediately below is kept as the record of the shadow-and-remove mechanism this repo
+actually shipped and ran, from plan/21 through [plan/33 §7](33-reinstall-keeping-files.md).
+
 **Removing the live user.** `LIVE_USER` is baked into the image's `/etc/passwd` and
 `/etc/shadow`, which live in the read-only EROFS *that the installed system also uses*. It
 cannot be deleted. It must be **shadowed**: copy `passwd`, `shadow`, `group`, `gshadow` up into
@@ -443,6 +478,16 @@ later file wins. Clean, inspectable, and reversible by the user.
 > ([plan/04](04-image-and-boot.md) step 1). Installer-written files carry a real current mtime,
 > well after the EROFS's `SOURCE_DATE_EPOCH`, so this is safe — but it is exactly the kind of
 > thing that fails silently, so stage 70's install test must assert the greeter appears.
+
+**Inverted by [plan/34 §5](34-installer-sysext.md).** `10-autologin.conf.in` moved out of
+`config/rootfs` entirely; a live-role image (the stick, `desktop.img`, `console.img`) gets it
+rendered straight into `$TARGET/var/overlay/etc/upper` by stage 40, and no root image's lower
+`/etc` carries it any more. An installed disk therefore starts with **no** autologin config of any
+kind — there is nothing left to override, so `imageidentity` no longer writes a
+`20-no-autologin.conf` to cancel one. The mtime rule above still applies, in reverse:
+`imageidentity` writes `20-autologin.conf` (mirroring `10-autologin.conf.in` key for key) *only*
+when the accounts page asked for autologin ([plan/26](26-installer-ux-tweaks.md) §4), and skips
+the write entirely otherwise. Same drop-in mechanism, same mtime carefulness, opposite default.
 
 **subuid/subgid.** [plan/13](13-distrobox.md) flags this: rootless podman needs subordinate ID
 ranges, stage 40 allocates them for `LIVE_USER`, and a real user created by the installer needs
@@ -578,6 +623,14 @@ from — `90etc-overlay` and `90repart-sysroot`.
 
 ### 7.4 Size, with real numbers
 
+**Superseded by [plan/34 §11](34-installer-sysext.md).** These estimates are for the stage-65 ISO
+this section designs, which was never built — Phase B (§8) still hasn't shipped. What did ship,
+instead of an ISO, is [plan/34](34-installer-sysext.md): the medium's own root partition *became*
+the payload rather than duplicating it, which is the §7.5 optimisation below realised a different
+way, for the raw `.img` rather than for a hypothetical ISO. Its real, measured numbers — 6402 MiB
+raw, 3079 MiB `.zst`, well under an 8 GB stick — are in plan/34 §11 and supersede the estimates
+below. The estimates are kept for the ISO's own arithmetic, if Phase B is ever picked back up.
+
 From the 0.3.0 build: root EROFS **2761.7 MiB**, UKI **59.8 MiB**, Flatpak payload ~2.7 GiB.
 
 | Configuration | Estimated ISO |
@@ -600,6 +653,19 @@ build the live root as an overlay of payload + a small `calamares-layer.erofs`, 
 
 It is elegant, it roughly halves the ISO, and it makes the live boot path materially more
 complex. Not in Phase B. Revisit once the ISO exists and its real size is measured.
+
+**Overtaken by [plan/34 §3](34-installer-sysext.md), for the raw image rather than the ISO this
+section is about.** The "revisit" above never happened for the ISO — Phase B is still unbuilt —
+but the underlying idea did ship, in a different shape: instead of computing the difference
+between two EROFS trees at build time and overlaying it back together at boot (`rsync
+--compare-dest` producing `calamares-layer.erofs`, mounted under the ISO's live root), plan/34
+computes the same kind of difference and ships it as a `systemd-sysext` extension merged over
+`/usr` — a mechanism the kernel and systemd already provide, so it needed no new dracut module.
+`live root + payload root` collapses to one root partition; only the Calamares tail differs, and
+it lives on `/var`, not in a second EROFS. plan/34 §3's "Alternatives considered" table looked at
+literally this document's shared-layer idea (as "plan/16 §7.5's shared-layer root") and gives the
+specific reason `systemd-repart` rules it out for an *initrd-composited* `/sysroot`, which is the
+gap this section's own optimisation would have had to close.
 
 ## 8. Phasing
 
@@ -904,6 +970,12 @@ matters.
 sleep hook from §6.4, then stage 65 and `90live-root`.
 *Exit:* installed system hibernates and resumes on real hardware; the ISO boots in QEMU and
 from a Ventoy stick.
+
+**The ISO half of Phase B gets simpler, if it is ever picked up.** [plan/34](34-installer-sysext.md)
+made the raw image's live root and payload root the same partition, so `90live-root` and stage 65's
+contents block (§7.2) would carry one root EROFS, not two, and the shared-layer question §7.5
+raised is already answered by the sysext mechanism rather than needing its own `calamares-layer.erofs`.
+The swap/hibernation half is unaffected.
 
 **Phase C — Polish.** Grub tail trimming (§2.1), the shared-layer ISO (§7.5), Secure Boot
 enrolment in the installer (plan/08 roadmap 2, which the installer is the natural home for).

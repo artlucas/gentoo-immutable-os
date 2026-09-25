@@ -1,5 +1,24 @@
 # 20 — Slimming the installer medium
 
+> **Superseded by [plan/34 §6](34-installer-sysext.md).** This document's whole premise — that
+> the installer profile should be smaller than the desktop's, and that slimming it means removing
+> things from it — is reversed there. plan/34 makes the medium's own root partition *the desktop
+> root EROFS, byte for byte*: not the installer profile's own build at all. Every `#not-live`
+> marker and USE-flag drop this document made is undone by plan/34 §6, because a systemd system
+> extension can only ever *add* to the tree it is diffed against — it cannot represent "this file
+> used to be here and now it's gone" — and turning any of this document's subtractions back on
+> would fail that build. The one exception is §2.3 (GRUB): it stays gone,
+> because it was never a subtraction from the desktop tree to begin with — GRUB is an
+> unconditional dependency of Calamares alone, a file-only deletion (stage 50 §3j) of files that
+> exist nowhere in the desktop tree for the diff to complain about. §2.1 (wallpapers), §2.2
+> (the managed surfaces), §2.4 (ghostscript) and §2.5 (Spectacle/OpenCV) are all reversed; the live
+> medium is now *closer* to the desktop than "trimmed" ever suggested it should be. What follows
+> is kept for the numbers and the reasoning — several of its measurement techniques (per-tree
+> EROFS rebuilds rather than the
+> image-wide compression average) are reused verbatim in plan/34 — but no removal described below
+> ships any more. The stick is slimmed today by carrying the product *once*, not by trimming a
+> second copy of it.
+
 The live medium is not a product. It boots once, runs Calamares, writes the desktop profile's
 artifacts to a disk, and is thrown away. plan/16 established the profile that makes that
 affordable — Calamares' ~25-package dependency tail is acceptable *on the stick* and would be

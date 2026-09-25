@@ -20,10 +20,14 @@ The result and the reason it went the way it did:
   `expected-packages` audit gate fails the build if any of that tail appears. The cost stops
   being permanent and becomes transient, and the mature installer with ~80 languages wins on
   the merits.
-- The prediction that the ISO would reuse "the *same* root EROFS" did **not** survive: the live
-  root and the payload root are now different profiles. They differ only by the Calamares tail,
-  so [16](16-installer.md) §7.5 keeps the shared-layer idea as a documented, deferred
-  optimisation.
+- The prediction that the ISO would reuse "the *same* root EROFS" did **not** survive at the time
+  this entry was written: the live root and the payload root became different profiles, differing
+  only by the Calamares tail, and [16](16-installer.md) §7.5 kept the shared-layer idea as a
+  documented, deferred optimisation for an ISO that was never built. **It is true again as of
+  [34](34-installer-sysext.md).** The medium's own root partition *is* the desktop root EROFS,
+  byte for byte — not a second, merely-similar build of it — and the Calamares tail differs by
+  living on `/var` as a systemd system extension instead of in a second root, which is what §7.5's
+  deferred optimisation was reaching for in the first place.
 - The thin responsibility set sketched here was right, and [16](16-installer.md) §5 is that list
   with the mechanisms filled in.
 - The v1 groundwork this entry banked on did hold: identical image on any medium,
@@ -98,7 +102,7 @@ Secure Boot for a full trust chain.
 | UEFI-only, no BIOS | 5-year hardware window is UEFI-universal |
 | Full-image (non-delta) updates | Simplicity + sysupdate stock behavior; roadmap #4 |
 | No hibernation (zram-only swap) | Avoids swap-partition sizing and resume-offset fragility on an immutable, repartition-on-first-boot design |
-| Baked `live` autologin user in v1 images | The image doubles as live media; real user management arrives with the installer. Note the live user cannot be *deleted* by the installer — it lives in the read-only EROFS the installed system also uses — so it is shadowed through the `/etc` overlay instead ([16](16-installer.md) §5.4) |
+| ~~Baked `live` autologin user in v1 images, shadowed rather than deleted by the installer~~ | **RESOLVED by [plan/34 §5](34-installer-sysext.md).** The `live` user no longer reaches any root image's read-only lower `/etc` at all — stage 40 creates it and immediately relocates the touched account files to `$TARGET/var/overlay/etc/upper`, so it exists only on `/var`. Every image that boots as live (the stick, `desktop.img`, `console.img`) still autologins, because its own `/var` still carries the seed; an installed disk gets a fresh `/var` and never receives the account, so there is nothing left for the installer to shadow or delete |
 | Native apps limited to Konsole/Dolphin | Everything else Flatpak — the point of the distro; portals make it seamless. Ark, Kate, Okular and Gwenview are deliberately absent for the same reason file-roller and gnome-text-editor were dropped after 0.1.0 ([03](03-package-set.md), "Dropped from the native set"). One genuine regression to note: Dolphin does **not** get archive handling for free the way nautilus did through gnome-autoar. A user who wants any of these installs it from Discover |
 | Generic x86-64 (no AVX2 floor) | Budget Atom-class CPUs sold within the window lack AVX2 |
 | No browser engine natively (`USE=-webengine` + hard masks on `net-libs/webkit-gtk` and `dev-qt/qtwebengine`) | Biggest single build/system-size win; browser ships as Flatpak Firefox. Under GNOME this was `-gnome-online-accounts` + `evolution-data-server[-oauth]` holding webkit-gtk out; under Plasma it is a global USE flag plus the mask, i.e. structural rather than flag-dependent |
