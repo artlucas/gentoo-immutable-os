@@ -1610,15 +1610,19 @@ if profile_has_set installer; then
   #
   # 0755, not cal_install's 0644, because Plasma will not launch a .desktop from the desktop
   # without the exec bit — it prompts to mark it executable instead, a prompt on the one action
-  # this medium exists for. chown by the uid:gid parsed out of the TARGET's /etc/passwd because
-  # the builder has no user of that name; the account was created in section 2, into that file.
+  # this medium exists for. chown by the uid:gid parsed out of $UPPER_ETC/passwd, NOT
+  # $TARGET/etc/passwd: by this point in the script the live-account swap above (LIVE_ACCT_FILES,
+  # plan/34 §5) has already moved live's entry into the /etc overlay's upper and restored the
+  # LOWER to its pristine, live-user-free snapshot — ec691b9's own port read $TARGET/etc/passwd
+  # because it predates that swap existing in this stage; there is no longer a live entry there
+  # to read.
   DESKTOP_SC="$TARGET/home/$LIVE_USER/Desktop/$DISTRO_ID-installer.desktop"
   cal_install "$CAL_SRC/system/installer-desktop.desktop.in" "$DESKTOP_SC"
   chmod 0755 -- "$DESKTOP_SC"
-  LIVE_OWNER="$(awk -F: -v u="$LIVE_USER" '$1 == u { print $3 ":" $4; exit }' "$TARGET/etc/passwd")"
+  LIVE_OWNER="$(awk -F: -v u="$LIVE_USER" '$1 == u { print $3 ":" $4; exit }' "$UPPER_ETC/passwd")"
   [[ -n $LIVE_OWNER ]] \
-    || die "verify: $LIVE_USER has no entry in the target's /etc/passwd — section 2 is supposed to
-  have created the account before this runs, and the desktop shortcut has to belong to it"
+    || die "verify: $LIVE_USER has no entry in $UPPER_ETC/passwd — section 2's live-account swap
+  is supposed to have moved it there before this runs, and the desktop shortcut has to belong to it"
   chown "$LIVE_OWNER" -- "$TARGET/home/$LIVE_USER/Desktop" "$DESKTOP_SC"
 
   # NO /usr/bin/realm HERE ANY MORE, and its absence is asserted below. The shim existed for one
