@@ -13,9 +13,11 @@ A fixed version reaches the image only through the whole chain: a tree pin that 
 #    Capture the pin while it is live: distfiles.gentoo.org keeps ~9 days of snapshots.
 bash scripts/build.sh --only 10                # reconcile the tree volume with the new pin
 
-# 2. Rebuild each profile's config root and target (stage 50 deleted the VDB after the
-#    last completed build; a re-resolve merges against the installed set). RELOCK=1 because
-#    the pin edit moved the config hash and the committed locks do not carry it yet.
+# 2. Rebuild each profile's config root and target (stage 50 deleted the VDB after the last
+#    completed build, so a re-resolve merges against the installed set — stage 30 restores the
+#    target from its snapshot and merges only the delta, so this step is minutes, not a full
+#    re-merge). RELOCK=1 because the pin edit moved the config hash and the committed locks
+#    do not carry it yet.
 for p in desktop console installer; do
   RELOCK=1 bash scripts/build.sh --profile $p --only 20
   RELOCK=1 bash scripts/build.sh --profile $p --only 30
@@ -66,7 +68,7 @@ Add the atom to the appropriate set — `config/portage/sets/base`, `hardware`, 
 ```sh
 $EDITOR config/portage/sets/desktop            # add the atom
 RELOCK=1 bash scripts/build.sh --only 20       # the set edit moved the config hash
-RELOCK=1 bash scripts/build.sh --only 30       # populate the target if the VDB is empty
+RELOCK=1 bash scripts/build.sh --only 30       # restore the target from its snapshot if the VDB is empty
 scripts/relock.sh app-editors/helix --profile desktop
 less out/reports/lock.diff                     # expect ADDED PACKAGES with the new closure
 cp out/reports/desktop.lock.generated config/portage/lock/desktop.lock
@@ -88,9 +90,9 @@ bash scripts/build.sh --from 20                # stage 20 rebuilds the config ro
 
 `--restamp` refuses to run when a closure-shaping key (`SNAPSHOT_*`, `PROFILE`, `INCLUDE_*`, `PROFILE_ROLE`, `BUILD_PROFILE`, `PROFILE_SETS`) actually moved — that lock is genuinely stale and needs a re-resolve.
 
-## Stale target guard fired: wipe the work volume, keep the cache
+## Stale target guard fired: no snapshot to restore
 
-Stage 30 aborts when the config changed in a way that alters package membership: an existing target root keeps every package the current config would drop, because `--changed-use` rebuilds but never removes (for example after a set entry was removed). The recovery keeps the binary cache:
+Stage 30 refuses a stale target only when it has no valid snapshot to restore: an existing target root keeps every package the current config would drop, because `--changed-use` rebuilds but never removes (for example after a set entry was removed), and the restore-plus-reconcile path is what normally makes that safe. The guard firing at all therefore means the snapshot is absent (a first build), unreadable, or disabled with `NO_TARGET_SNAPSHOT=1`. The recovery keeps the binary cache:
 
 ```sh
 docker volume rm -f immos-work

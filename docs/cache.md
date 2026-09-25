@@ -10,12 +10,14 @@ The first build compiles every package the image ships. Every later build runs a
 | `/cache/distfiles` (portage `DISTDIR`) | Source tarballs for both roots — target packages and builder-root dependencies | Stages 10, 20, 30; relock |
 | `/cache/distfiles/gentoo-<date>.tar.xz` (+ `.gpgsig`, `.md5sum`) | The pinned tree snapshot with upstream's signature, parked so it survives the stage that fetched it | Stage 10 |
 | `/var/db/repos` (tree volume) | The pinned ebuild tree and the `.tree-pin` marker | Stage 10 |
+| `/work/target-snap[-<profile>]` (+ `.manifest`) | The target rootfs exactly as a successful stage 30 left it — package database intact, nothing configured, nothing pruned — restored at the top of the next stage 30 whenever the live target is not a merge base | Stage 30 |
 
-The volumes are named `immos-cache` and `immos-tree`; the work volume `immos-work` is not a cache — it holds the target rootfs and config root.
+The volumes are named `immos-cache` and `immos-tree`; the work volume `immos-work` is not a cache — it holds the target rootfs and config root. The target snapshot lives there anyway, deliberately: `--clean` and any work-volume wipe retire a snapshot together with the target it describes, so a snapshot can never outlive its lineage.
 
 ## Reuse rules
 
 - Target merges run with `--usepkg` and without `getbinpkg`: a package present in `/cache/binpkgs` merges in seconds; a missing one compiles. The target never consumes `PORTAGE_BINHOST` — everything the image ships was compiled by this pipeline or reused from its own earlier builds.
+- A package merging in seconds is still a merge, and a stage-30 re-run after a finished build makes ~675 of them: stage 50 deletes the target's package database, so portage treats the root as empty. The snapshot fixes the re-run, not the single merge: stage 30 restores it (minutes of local file copying) whenever the live target is absent, has no package database, or is stale by the closure hash, then merges only the delta and unmerges what the current lock no longer names.
 - Binhost-sourced packages never enter the cache: stage 20 deletes any signed `.gpkg` in `/cache/binpkgs` (provenance is readable off the package — the Gentoo binhost signs, this pipeline does not).
 - Packages from `config/portage/overlay/` are excluded from binary reuse and recompiled from the checkout on every stage-30 run.
 - One `DISTDIR` serves both the builder's own `/` and the target, and anything stranded in a container-local distfiles directory is swept across at the end of each stage. Both exist so an offline rebuild has every source it needs.
@@ -26,7 +28,8 @@ The volumes are named `immos-cache` and `immos-tree`; the work volume `immos-wor
 | Condition | Detection | Recovery |
 |---|---|---|
 | `config/portage` or `config/build.conf` changed, stage 20 not re-run | Stage 30 guard: `portage_config_hash()` vs the config root's recorded `.inputs-hash` | `bash scripts/build.sh --only 20`, then continue |
-| Target root carries package membership the current config would drop | Stage 30 guard: `target_closure_hash()` vs `/work/target-config-hash*` | `docker volume rm -f immos-work`, then rebuild; the binary cache survives, so the re-merge mostly reinstalls |
+| Target root carries package membership the current config would drop | Stage 30 guard: `target_closure_hash()` vs `/work/target-config-hash*` | Automatic: stage 30 restores the snapshot, merges the delta and unmerges what the lock dropped; the guard dies only when no valid snapshot exists for the profile, and then `docker volume rm -f immos-work` and rebuild (the binary cache survives, so the re-merge mostly reinstalls) |
+| Target snapshot absent, unreadable, or from another profile | Stage 30 logs one warning naming the path and continues without a restore | None required — the build falls back to the full merge; delete the stale `/work/target-snap*`, or set `NO_TARGET_SNAPSHOT=1` to disable the mechanism |
 | Tree pin moved | `tree_assert()` in every depgraph stage and in `relock.sh`, against `.tree-pin` | `bash scripts/build.sh --only 10` repopulates the tree volume |
 | Builder image stale | Docker layer cache: keyed on the base digest, `BINHOST_URI`, the `SNAPSHOT_DATE` build argument, and the copied `builder.lock` | Rebuilt automatically on the next `build.sh`; edits under `config/portage` outside `builder.lock` never trigger it |
 | Snapshot no longer on distfiles.gentoo.org (~9 days retention) | webrsync fails in stage 10 | Restore from a vendored archive (below); a moved pin must be captured while live |

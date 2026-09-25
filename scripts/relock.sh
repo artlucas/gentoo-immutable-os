@@ -415,7 +415,11 @@ VDB_N=$( { vdb_atoms "$TARGET" || true; } | wc -l )
 (( VDB_N > 0 )) || die "$TARGET holds no installed packages — stage 50 deletes the VDB at the end
   of a build, so a relock needs the target root rebuilt first:
       scripts/build.sh --only 20 && scripts/build.sh --only 30
-  (detection above needs none of this; it reads config/portage/lock/${BUILD_PROFILE}.lock.)"
+  (stage 30 restores the target from its snapshot and merges only the delta, so that rebuild is
+   minutes — with NO_TARGET_SNAPSHOT=1, or before the first snapshot exists, it is the full
+   ~675-package re-merge. --only, not --from: nothing downstream skips on stamps, so --from 20
+   would re-run stage 50 and delete the VDB all over again.
+   detection above needs none of this; it reads config/portage/lock/${BUILD_PROFILE}.lock.)"
 log "relocking against $VDB_N packages installed in $TARGET"
 
 # Clear the target root's set memberships first. Stage 30 records @locked-image in

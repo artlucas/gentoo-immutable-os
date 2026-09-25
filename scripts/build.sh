@@ -186,7 +186,7 @@ ENV_ARGS=()
 # reach a stage through this script. Without it the relock recipe in plan/15 and plan/18 dies on
 # its own first line.
 for v in VERSION_OVERRIDE UPDATE_URL_OVERRIDE UPDATE_VERIFY_OVERRIDE BUILD_PROFILE_OVERRIDE \
-         FORCE_STAGE VENDOR VENDOR_PROFILE ALLOW_UNPINNED RELOCK; do
+         FORCE_STAGE VENDOR VENDOR_PROFILE ALLOW_UNPINNED RELOCK NO_TARGET_SNAPSHOT; do
   [[ -n ${!v:-} ]] && ENV_ARGS+=(-e "$v=${!v}")
 done
 [[ $FORCE == 1 ]] && ENV_ARGS+=(-e FORCE_STAGE=1)

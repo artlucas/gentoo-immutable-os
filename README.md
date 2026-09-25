@@ -95,7 +95,10 @@ Target machines must have Secure Boot disabled (v1; see plan/08).
 
 Everything the image ships is **compiled** by the build — no binary packages are downloaded
 into it, so the first build takes hours. Those builds are cached as binpkgs in the
-`immos-cache` volume, which later builds reuse, and which `--clean` deliberately keeps. The
+`immos-cache` volume, which later builds reuse, and which `--clean` deliberately keeps; stage
+30 also snapshots the assembled target root in `immos-work`, so a re-run after a finished
+build (a relock, an added package, resumed iteration) restores it and merges only the delta
+instead of re-merging every cached binpkg. The
 *builder's* own tools are the opposite: installed as binaries from the Gentoo binhost
 (`BINHOST_URI`). See [plan/02](plan/02-build-pipeline.md#where-binaries-come-from).
 

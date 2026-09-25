@@ -67,6 +67,7 @@ Every stage reached by the dispatcher runs. Stages are idempotent and cache-back
 | `VENDOR_PROFILE` | Stage 90 vendoring depth |
 | `ALLOW_UNPINNED` | `1` permits an empty `BUILDER_DIGEST` — development builds only; marks the build unreleasable |
 | `RELOCK` | `1` relaxes stage 20's assertions (config hash, closure-shaping keys, stale atoms) during a re-resolve; set by `scripts/relock.sh`, or exported for a manual `--only 20`/`--only 30` preparation run |
+| `NO_TARGET_SNAPSHOT` | `1` disables both halves of the target snapshot: stage 30 neither writes one nor restores one — for tight disks, or to debug the pre-snapshot behaviour |
 | `RELEASE_GPG_KEY` | Key ID that signs `SHA256SUMS` in stage 80; required when `UPDATE_VERIFY=1` |
 
 ## Artifacts

@@ -56,11 +56,22 @@ REC_CFG_HASH="$(cat "$CONFIG_ROOT/.inputs-hash" 2>/dev/null || echo none)"
 #    could have been dropped from the graph, which a .cpp cannot do and which the
 #    --reinstall-atoms below covers from the other side. Using the wide hash here refused a stage
 #    30 over one const qualifier on 2026-09-13 and demanded a full wipe for it.
+#
+#    THE SNAPSHOT (plan/34) CHANGES THE SHAPE, NOT THE STRENGTH, of this guard. When the live
+#    target is not a merge base — absent, VDB-less (stage 50 ran), or carrying this very stale
+#    hash — and a valid same-profile snapshot exists, snapshot_restore replaces the target here
+#    and the die below is UNREACHABLE for that condition: the reconcile step after the emerge
+#    unmerges what the current lock no longer names, which answers the "--changed-use cannot
+#    remove packages" objection this guard exists for. On every run where no restore happened,
+#    the guard refuses exactly as before.
 TGT_CFG_HASH="$(target_closure_hash)"
 PREV_TGT_HASH="$(cat "$TARGET_HASH_FILE" 2>/dev/null || echo none)"
-if [[ -d $TARGET/var/db/pkg && $PREV_TGT_HASH != none && $PREV_TGT_HASH != "$TGT_CFG_HASH" ]]; then
+snapshot_restore
+if [[ -d $TARGET/var/db/pkg && $PREV_TGT_HASH != none && $PREV_TGT_HASH != "$TGT_CFG_HASH" \
+      && $SNAPSHOT_RESTORED != 1 ]]; then
   die "config changed since $TARGET was populated, and --changed-use cannot remove packages
   from an existing root — anything a USE flag was meant to DELETE would still ship.
+  No valid snapshot for this profile exists, so there is nothing to restore.
   Wipe the target and rebuild:  ${RUNTIME:-docker} volume rm -f ${DISTRO_ID}-work
   (the binpkg cache volume is separate and is kept, so the re-merge is mostly reinstalls)"
 fi
@@ -170,6 +181,32 @@ ROOT="$TARGET" PORTAGE_CONFIGROOT="$CONFIG_ROOT" \
   emerge --verbose --usepkg --with-bdeps=n --changed-use --quiet-build=y \
     "${OWN_CODE[@]}" "${SETS[@]}"
 
+# ---- the reconcile (plan/34 §5) --------------------------------------------------------
+# What makes restore-plus-changed-config safe. Guard 2's refusal exists because --changed-use
+# rebuilds flag-changed packages but never REMOVES dropped ones — and that objection splits in
+# two, needing two mechanisms: a PACKAGE dropping out of the graph needs the unmerge below, and
+# a FILE dropping out of a kept package (the kwin[-lock] example) is a USE change, which
+# --changed-use rebuilds. Together they cover what the wholesale wipe used to be the only
+# guarantee of, and the bidirectional lock verify below still stands behind both.
+# Nothing unmerged here is needed by anything kept: the lock is the FULL closure, so a package
+# whose dependent survived would mean the dependent is in the lock — and then so is its
+# dependency. LOCKED only: an unlocked build has no intended closure to reconcile against (and
+# no snapshot to have restored either).
+if [[ $LOCKED == 1 ]]; then
+  mapfile -t RECONCILE_DROP < <(reconcile_drop_list)
+  if (( ${#RECONCILE_DROP[@]} )); then
+    log "reconcile: unmerging ${#RECONCILE_DROP[@]} atoms the current lock does not name: ${RECONCILE_DROP[*]}"
+    for a in "${RECONCILE_DROP[@]}"; do
+      # existence-guarded, the pattern stage 50 §1 uses for its build-only unmerges
+      [[ -d $TARGET/var/db/pkg/${a#=} ]] || continue
+      ROOT="$TARGET" PORTAGE_CONFIGROOT="$CONFIG_ROOT" emerge --unmerge --quiet "$a" >/dev/null 2>&1 \
+        || warn "reconcile: could not unmerge $a"
+    done
+  else
+    log "reconcile: nothing to remove"
+  fi
+fi
+
 # quick pre-prune report (full manifest + gate in stage 50)
 ensure_dir "$REPORT_DIR"
 # the target now matches this config; record it for the staleness guard above. Through
@@ -251,4 +288,10 @@ if [[ ${INCLUDE_DISTROBOX:-1} == 1 ]]; then
   have_exe pasta     || die "verify: pasta missing from target (net-misc/passt) — rootless networking"
 fi
 log "target rootfs emerged OK"
+# The last act of a successful stage 30: snapshot the target — VDB intact, nothing configured,
+# nothing pruned — so the next re-run restores it instead of re-merging 675 binpkgs (plan/34).
+# Deliberately AFTER the verify block above: only a target that passed everything is worth
+# keeping, and the manifest written last is what makes an interrupted write un-restorable.
+# NO_TARGET_SNAPSHOT=1 turns this (and the restore up top) into no-ops.
+snapshot_write
 stamp_write "$STAGE_NAME" "$(inputs_hash "$REPO/config/build.conf" "$REPO"/config/portage/sets/* "$REPO"/config/portage/package.use/*)"

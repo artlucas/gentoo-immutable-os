@@ -198,7 +198,7 @@ The alternatives the constraint (or the cost) rejects:
 |---|---|
 | `scripts/lib/common.sh` | Path variables and the three helpers of §3–§4; `snapshot_restore` returns the reason the live target was not a base, for the log line |
 | `scripts/stages/30-target-rootfs.sh` | The restore block between guard 1 and guard 2; guard 2's new arm (die only when no restore happened); the reconcile step between the emerge and the lock verify; the snapshot write before `stamp_write`; both halves behind `NO_TARGET_SNAPSHOT` |
-| `scripts/relock.sh` | The VDB-missing die points at the short path: *"rebuild it from the snapshot — `scripts/build.sh --from 20` (stage 30 restores the target and merges the delta), then re-run this script"* — replacing `--only 20 && --only 30` |
+| `scripts/relock.sh` | The VDB-missing die keeps `--only 20 && --only 30` — the two stages a relock needs and nothing more — and its prose now says the rebuild is minutes because stage 30 restores the snapshot and merges the delta. *(Corrected at implementation time: this plan first prescribed `--from 20` here, which is wrong — nothing downstream skips on stamps, so `--from 20` re-runs stage 50 and deletes the VDB all over again, and the relock would die on re-run. `--only 20 && --only 30` was already right; the snapshot is what makes it fast.)* |
 | `scripts/build.sh` | `NO_TARGET_SNAPSHOT` joins the pass-through whitelist, beside `ALLOW_UNPINNED` and `RELOCK` |
 
 `--clean` is deliberately untouched: it already removes the work volume wholesale, snapshot
@@ -275,5 +275,7 @@ paths as inline code.
 - **[plan/06](06-pruning.md)** — Where the VDB deletion is specified: a note that it costs every
   post-build stage-30 re-run a full re-merge, and that [plan/34](34-target-snapshot.md) is the
   recovery.
-- **[plan/15](15-version-pinning.md)** — The relock recipe's rebuild step shortens to `--from 20`.
+- **[plan/15](15-version-pinning.md)** — The relock recipe's rebuild step keeps `--only 20 &&
+  --only 30` (see the correction in §7: `--from 20` re-runs stage 50, which deletes the VDB
+  again) and gains the note that the snapshot makes it minutes.
 - **`docs/`** — as §10 lists, at implementation time.

@@ -266,7 +266,17 @@ virtualization on Win11), falls back to TCG with longer timeouts.
 ## Caching & rebuild speed
 
 - `/cache/distfiles` + `/cache/binpkgs` named volumes persist across builds; after the first
-  build, `--usepkg` makes a clean target rebuild minutes-fast.
+  build, `--usepkg` turns a re-merge into reinstalls rather than compiles. "Minutes-fast" was
+  this section's original claim for a clean target rebuild, and 2026-09-22 measured what the
+  cache actually buys: a binpkg merges in seconds, and a target whose VDB is gone re-merges
+  ~675 of them — **50m13s**. The snapshot below is what keeps that from being re-paid.
+- **Stage 30 snapshots the target ([plan/34](34-target-snapshot.md)).** The last act of a
+  successful stage 30 copies `$TARGET` — VDB intact, nothing configured, nothing pruned — to
+  `/work/target-snap<profile>` beside it, and the next stage 30 restores it whenever the live
+  target is not a merge base (absent, VDB-less after stage 50, or stale by closure hash),
+  merges only the delta, and unmerges what the current lock no longer names. Everything is
+  rsync/`rm`/one atomic `mv` inside the work volume — rootless-Podman-safe by construction —
+  and `--clean` and volume wipes retire snapshot and target together.
 - Those cached binpkgs are this pipeline's own (`FEATURES=buildpkg`), which is the whole
   mechanism: the image is compiled once and reused, rather than downloaded.
 - First full build estimate: several hours — the entire target set compiles, not just the

@@ -69,6 +69,11 @@ Order matters — audit artifacts are saved *before* deletion:
      breaks the build rather than a convention anyone has to remember.
 2. **Delete Portage artifacts:** `/var/db/pkg` (VDB), `/var/db/repos`, `/var/cache/{distfiles,binpkgs,edb}`,
    `/etc/portage`, `/usr/share/portage`, any `/usr/lib/python*/site-packages/portage*`.
+   *The VDB half of this deletion has a standing cost:* every stage 30 that runs after a
+   finished build — a relock, an added package, a GLSA bump, a `--from 30` iteration — finds
+   a root portage can only treat as empty and re-merges the whole closure as binpkgs
+   (50m13s, measured 2026-09-22). [plan/34](34-target-snapshot.md) is the recovery: stage 30
+   keeps a snapshot of the pre-prune target and restores it at the top of the next re-run.
 3. **Delete runtime-useless residue:** `*.la` files; static `*.a` that escaped
    INSTALL_MASK; `/usr/share/locale/<not in LOCALES_KEEP>`; `/usr/lib/firmware` blobs for
    hardware classes outside scope (`liquidio`, `netronome`, `mellanox`, `qed` — server NICs;

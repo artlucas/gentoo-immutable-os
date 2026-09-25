@@ -452,6 +452,18 @@ init_paths() {
   # that was genuinely stale because the other profile had just stamped the current hash over it.
   # Defined here rather than in the stage so it cannot drift from $TARGET again.
   TARGET_HASH_FILE="$WORK/target-config-hash$sfx"
+  # The snapshot of $TARGET exactly as a successful stage 30 left it (plan/34): VDB intact,
+  # nothing configured, nothing pruned. Beside $TARGET in the SAME volume for lifecycle reasons —
+  # --clean and any work-volume wipe destroy target and snapshot together, so a snapshot can never
+  # outlive its lineage — and suffixed for the same reason $TARGET is: desktop and installer
+  # snapshots cannot cross. The manifest lives BESIDE the directory rather than inside it because
+  # it is written last and is the only thing that declares the snapshot valid: an interrupted
+  # write leaves a manifest naming content the rm/mv never finished replacing, which validity
+  # checking treats as absent.
+  TARGET_SNAP="$WORK/target-snap$sfx"
+  TARGET_SNAP_TMP="$WORK/.target-snap$sfx.tmp"
+  TARGET_SNAP_MANIFEST="$WORK/target-snap$sfx.manifest"
+  TARGET_RESTORE_TMP="$WORK/.target-restore$sfx.tmp"
   UKI_DIR="$OUT/uki$sfx"
   STATE_DIR="$OUT/state$sfx"
   LOG_DIR="$OUT/logs$sfx"
@@ -738,6 +750,154 @@ target_closure_hash() {
       sha256sum config/build.conf
     } | sha256sum | cut -d' ' -f1
   )
+}
+
+# ---- the target snapshot (plan/34) ------------------------------------------------------
+# Stage 50 deletes $TARGET/var/db/pkg at the end of every build, so the next stage 30 to run
+# after a finished build finds a root Portage can only treat as empty and re-merges all ~675
+# packages — 50m13s of the 2026-09-22 desktop build, paid by every relock, add-a-package, GLSA
+# bump and post-build --from 30. The snapshot is a second copy of the target taken before any of
+# that: written as the last act of a successful stage 30, restored at the top of the next one
+# whenever the live target is not a merge base. Everything here is rsync, rm and one atomic mv
+# inside $WORK — no host snapshot primitive, no loop device, no reflink — so it works identically
+# self-hosted under rootless Podman inside an Immos installation (plan/34 §6).
+
+# vdb_count ROOT — how many atoms a root's VDB names, 0 for "no VDB". find, not a glob: an empty
+# var/db/pkg makes `printf '%s\n' */*` print the literal pattern (vdb_atoms shares that shape and
+# is only ever called on a populated root), and "is this root a merge base" must not hinge on it.
+vdb_count() {
+  local r=${1:?vdb_count: root required}
+  find "$r/var/db/pkg" -mindepth 2 -maxdepth 2 -type d 2>/dev/null | wc -l
+}
+
+# snapshot_manifest_get KEY — one value out of the snapshot manifest, or nothing.
+snapshot_manifest_get() {
+  local k=${1:?snapshot_manifest_get: key required}
+  [[ -f $TARGET_SNAP_MANIFEST ]] || return 1
+  sed -nE "s/^${k}=(.+)$/\1/p" -- "$TARGET_SNAP_MANIFEST" | head -n1
+}
+
+# snapshot_manifest_valid — the snapshot is usable as a restore source: its directory exists,
+# its manifest parses with every key present, and it was taken for the profile being built.
+# False for a first build's absent snapshot (not an error), for a truncated or hand-mangled
+# manifest, for a manifest whose snapshot directory an interrupted write never replaced, and for
+# a foreign profile's snapshot parked where this one would live. Callers degrade to the
+# no-snapshot path on false; only a manifest that LIES about its content dies (in
+# snapshot_restore's atom-count assertion).
+snapshot_manifest_valid() {
+  [[ -d $TARGET_SNAP && -f $TARGET_SNAP_MANIFEST ]] || return 1
+  local k
+  for k in TARGET_CLOSURE_HASH PORTAGE_CONFIG_HASH BUILD_PROFILE VERSION \
+           SNAPSHOT_DATE SNAPSHOT_SHA256 VDB_COUNT TIMESTAMP_UTC; do
+    [[ -n $(snapshot_manifest_get "$k") ]] || return 1
+  done
+  [[ $(snapshot_manifest_get BUILD_PROFILE) == "$BUILD_PROFILE" ]]
+}
+
+# snapshot_write — copy $TARGET into $TARGET_SNAP. The manifest is written LAST, itself via
+# tmp+mv: it is the only thing that declares the snapshot valid, so an interrupted write can
+# never restore half a tree — the previous generation's manifest simply names a directory that
+# no longer exists, and validity checking treats that as absent. Between the rm and the mv is a
+# window with no snapshot; a crash there costs the next run the old full merge, nothing worse.
+# One generation, rewritten in full every successful stage 30: a no-op re-run pays one ~5 GiB
+# copy to re-snapshot what it just restored — minutes, against the fifty it saved. rsync failure
+# warns and keeps the previous generation (the old snapshot is untouched until the mv); a failed
+# mv is a filesystem-level problem that should stop the line, not be papered over.
+snapshot_write() {
+  [[ ${NO_TARGET_SNAPSHOT:-0} == 1 ]] && return 0
+  local n; n=$(vdb_count "$TARGET")
+  (( n > 0 )) || { warn "no VDB in $TARGET — not snapshotting"; return 0; }
+  rm -rf -- "$TARGET_SNAP_TMP"
+  if ! rsync -aHAX --numeric-ids --delete "$TARGET/" "$TARGET_SNAP_TMP/"; then
+    rm -rf -- "$TARGET_SNAP_TMP"
+    warn "snapshot: rsync of $TARGET failed — keeping the previous generation"
+    return 0
+  fi
+  # The old manifest goes BEFORE the directory swap, not with it: a crash between the mv below
+  # and the new manifest write must leave "manifest absent" (which reads as no snapshot, the
+  # cheap fallback), never "old manifest naming new content" (which reads as corruption).
+  rm -f -- "$TARGET_SNAP_MANIFEST"
+  rm -rf -- "$TARGET_SNAP"
+  mv -- "$TARGET_SNAP_TMP" "$TARGET_SNAP"
+  local mtmp="$TARGET_SNAP_MANIFEST.tmp"
+  {
+    printf 'TARGET_CLOSURE_HASH=%s\n' "$(target_closure_hash)"
+    printf 'PORTAGE_CONFIG_HASH=%s\n' "$(portage_config_hash)"
+    printf 'BUILD_PROFILE=%s\n' "$BUILD_PROFILE"
+    printf 'VERSION=%s\n' "$VERSION"
+    printf 'SNAPSHOT_DATE=%s\n' "${SNAPSHOT_DATE:-}"
+    printf 'SNAPSHOT_SHA256=%s\n' "${SNAPSHOT_SHA256:-}"
+    printf 'VDB_COUNT=%s\n' "$n"
+    printf 'TIMESTAMP_UTC=%s\n' "$(date -u '+%Y-%m-%d %H:%M UTC')"
+  } > "$mtmp"
+  mv -f -- "$mtmp" "$TARGET_SNAP_MANIFEST"
+  log "target snapshot written: $TARGET_SNAP ($n packages, $(du -sh -- "$TARGET_SNAP" | cut -f1)) — the next stage-30 re-run restores it instead of re-merging"
+}
+
+# snapshot_restore — replace $TARGET with $TARGET_SNAP when the live target is not a merge base,
+# and only then: a target with a VDB and a current closure hash is merged into incrementally, with
+# no snapshot read and no cost. "Not a merge base" means the target is absent, its VDB is gone
+# (stage 50 ran, the volume was partly wiped), or its recorded closure hash is stale (guard 2's
+# condition — the snapshot restores there too, by design: a restored root owes a reconcile, which
+# stage 30 runs after the emerge, so "--changed-use cannot remove packages" stops being a reason
+# to refuse). An invalid or absent snapshot degrades to today's no-snapshot behaviour with one
+# warning naming the escape; it never dies, because a broken optional cache should not stop a
+# build that would succeed without it.
+#
+# The restore itself mirrors the write: copy into $TARGET_RESTORE_TMP, ASSERT the restored VDB's
+# atom count against the manifest, and only then rm the old target and mv the new one into place
+# — mv within one volume is rename(2), atomic and free. A snapshot whose content disagrees with
+# its manifest is corruption rather than a cache miss, and dies loudly BEFORE anything
+# destructive happens. $TARGET_HASH_FILE is rewritten from the manifest so guard 2 reads the
+# fingerprint of the tree that is actually there. An interrupted restore leaves only a tmp
+# directory, discarded on the next attempt; the live target is never the half-restored one.
+# Sets SNAPSHOT_RESTORED=1 for the caller's guard logic (guard 2 dies only when no restore
+# happened).
+snapshot_restore() {
+  SNAPSHOT_RESTORED=0
+  [[ ${NO_TARGET_SNAPSHOT:-0} == 1 ]] && return 0
+  local reason="" prev cur
+  if   [[ ! -d $TARGET ]]; then
+    reason="target absent"
+  elif [[ $(vdb_count "$TARGET") == 0 ]]; then
+    reason="VDB missing"
+  else
+    prev="$(cat "$TARGET_HASH_FILE" 2>/dev/null || printf none)"
+    cur="$(target_closure_hash)"
+    [[ $prev != none && $prev != "$cur" ]] && reason="closure stale"
+  fi
+  [[ -n $reason ]] || return 0
+  if ! snapshot_manifest_valid; then
+    # A snapshot directory with no usable manifest gets one warning; a manifest with no directory
+    # (an interrupted write between the rm and the mv) is simply absent, like a first build.
+    [[ -e $TARGET_SNAP ]] && warn "target snapshot manifest missing or unreadable — ignoring $TARGET_SNAP (delete it, or set NO_TARGET_SNAPSHOT=1)"
+    return 0
+  fi
+  local want got
+  want=$(snapshot_manifest_get VDB_COUNT)
+  log "live target is not a merge base ($reason) — restoring the snapshot taken $(snapshot_manifest_get TIMESTAMP_UTC) ($want packages)"
+  rm -rf -- "$TARGET_RESTORE_TMP"
+  rsync -aHAX --numeric-ids "$TARGET_SNAP/" "$TARGET_RESTORE_TMP/" \
+    || die "snapshot restore: rsync from $TARGET_SNAP failed (leaving $TARGET untouched)"
+  got=$(vdb_count "$TARGET_RESTORE_TMP")
+  [[ $got == "$want" ]] \
+    || die "snapshot restore: $TARGET_SNAP holds $got packages but its manifest claims $want — the snapshot is corrupt; delete it, or set NO_TARGET_SNAPSHOT=1 and wipe the target ($TARGET was NOT replaced)"
+  rm -rf -- "$TARGET"
+  mv -- "$TARGET_RESTORE_TMP" "$TARGET"
+  printf '%s' "$(snapshot_manifest_get TARGET_CLOSURE_HASH)" > "$TARGET_HASH_FILE"
+  log "restored target holds $got packages; matches the manifest"
+  SNAPSHOT_RESTORED=1
+}
+
+# reconcile_drop_list — atoms installed in $TARGET's VDB that the locked-image set does not
+# name: what stage 30's reconcile step unmerges after the emerge (plan/34 §5). Both sides go
+# through the same normalizers the lock machinery uses (vdb_atoms, lock_atoms), so the two
+# spellings of an atom — VDB directories and lock lines — cannot disagree; a difference here is
+# a difference of PACKAGE, never of formatting.
+reconcile_drop_list() {
+  local set="$CONFIG_ROOT/etc/portage/sets/locked-image"
+  [[ -f $set ]] || return 1
+  comm -23 <(vdb_atoms "$TARGET") <(lock_atoms "$set") | sed '/^$/d'
 }
 
 # ---- the ebuild tree pin (plan/15) -----------------------------------------------------

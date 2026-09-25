@@ -235,6 +235,13 @@ one. **The emerge clears the target's `world_sets` first**: stage 30 records `@l
 there, portage enforces it on every later emerge into that root, and a relaxed set placed beside
 it simply loses to the pins it still carries — silently, with `Total: 0 packages` and exit 0.
 
+A third, about that same deleted VDB: **the re-resolve emerge needs a live target root**, so a
+relock after a finished build rebuilds the target first with `build.sh --only 20 &&
+build.sh --only 30` — never `--from 20`, which re-runs stage 50 (nothing downstream skips on
+stamps) and deletes the VDB all over again. Since [plan/34](34-target-snapshot.md), that
+rebuild is stage 30 restoring its snapshot and merging the delta: minutes, not the
+50-minute binpkg re-merge this step used to cost.
+
 Output follows the flow `expected-packages.txt` already establishes: write
 `out/reports/image.lock.generated` and `out/reports/lock.diff`, then stop. Nothing is committed
 for you.
