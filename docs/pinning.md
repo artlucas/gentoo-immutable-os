@@ -50,7 +50,7 @@ Header keys of an image lock:
 | `PROFILE` | The portage profile in effect |
 | `PORTAGE_CONFIG_HASH` | `portage_config_hash()` at generation time — the fingerprint of the config the atoms answer to |
 | `INCLUDE_CJK_FONTS`, `INCLUDE_PRINTING`, `INCLUDE_DISTROBOX` | Build switches that change the closure through set markers (`#cjk`, `#printing`, `#distrobox`) |
-| `PROFILE_ROLE` | `target` or `live`; recorded for provenance only — since [plan/34 §6](../plan/34-installer-sysext.md) it no longer changes set membership. There is no `#not-live` marker any more: a `live` profile's tree must be the matching `target` profile's tree plus its own tail, at identical versions, because the tail ships as a `systemd-sysext` difference that cannot represent a deletion |
+| `PROFILE_ROLE` | `target` or `live`; recorded for provenance only — since plan/34 §6 it no longer changes set membership. There is no `#not-live` marker any more: a `live` profile's tree must be the matching `target` profile's tree plus its own tail, at identical versions, because the tail ships as a `systemd-sysext` difference that cannot represent a deletion |
 | `BUILD_PROFILE`, `PROFILE_SETS` | Which profile file and which set names produced the closure |
 
 `builder.lock` records only the two `SNAPSHOT_*` keys. The builder resolves against an `/etc/portage` that `builder/Dockerfile` writes inline and reads nothing from `config/portage`, so the other keys do not describe it. The omission also protects the build cache: the Dockerfile copies `builder.lock`, and Docker keys that layer — and roughly an hour of source builds behind it — on the file's content. A `PORTAGE_CONFIG_HASH` line in the file would rebuild the builder for every comment edit under `config/portage`.

@@ -76,7 +76,7 @@ bash scripts/run-vm.sh out/immos-<v>-installer.img.extra-disk.qcow2 --writable  
 
 ### The installer, end to end
 
-Since [plan/34](../plan/34-installer-sysext.md) the medium *is* the desktop, and Calamares ships
+Since plan/34 the medium *is* the desktop, and Calamares ships
 as a `systemd-sysext` extension on the stick's own `/var` rather than in any root image
 (plan/34 §3). None of this has an automated boot test in stage 70 — it is driven by hand with
 `run-vm.sh`, the way the reinstall walkthrough below is. An erase install has been verified end

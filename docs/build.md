@@ -29,7 +29,7 @@ bash scripts/build.sh --list-profiles  # table of build profiles
 |---|---|---|---|
 | `desktop` (default) | `target` | `base hardware domain desktop` | The product image |
 | `console` | `target` | `base hardware domain` | systemd + getty, no desktop |
-| `installer` | `live` | `base hardware domain desktop installer` | Live installer/desktop medium: the `desktop` profile's own root EROFS, byte for byte, plus Calamares and its dependency tail as a systemd system extension on the medium's own `/var` ([plan/34](../plan/34-installer-sysext.md)) |
+| `installer` | `live` | `base hardware domain desktop installer` | Live installer/desktop medium: the `desktop` profile's own root EROFS, byte for byte, plus Calamares and its dependency tail as a systemd system extension on the medium's own `/var` (plan/34) |
 
 ```sh
 bash scripts/build.sh --profile console
@@ -38,7 +38,7 @@ bash scripts/build.sh --profile installer
 
 Rules:
 
-- The `installer` profile requires a completed `desktop` build at the same `VERSION`, named `BASE_PROFILE`: its own root partition *is* the desktop's root EROFS, dd'd there by stage 60 rather than staged as a file; stage 40 stages the desktop's UKI and a `var-base.tar.zst` (the desktop's own `/var` minus the Flatpak store, which is unpacked into the medium's own `/var/lib/flatpak` instead) as what an install seeds a fresh disk's `/var` from. All three are what `imagedeploy` writes to the target disk ([plan/34](../plan/34-installer-sysext.md) §7, §9).
+- The `installer` profile requires a completed `desktop` build at the same `VERSION`, named `BASE_PROFILE`: its own root partition *is* the desktop's root EROFS, dd'd there by stage 60 rather than staged as a file; stage 40 stages the desktop's UKI and a `var-base.tar.zst` (the desktop's own `/var` minus the Flatpak store, which is unpacked into the medium's own `/var/lib/flatpak` instead) as what an install seeds a fresh disk's `/var` from. All three are what `imagedeploy` writes to the target disk (plan/34 §7, §9).
 - A `live` profile is never released; stage 80 skips it by design. A `target` profile with a single root slot is refused — an installable image needs both A/B slots.
 - Per-build state is profile-suffixed: the target root, stamps, reports and images carry `-<profile>`. Artifacts the installed system can see — the UKI filename and the `root_<version>` GPT partlabel — never carry the profile.
 
@@ -74,9 +74,9 @@ Every stage reached by the dispatcher runs. Stages are idempotent and cache-back
 | Path | Content |
 |---|---|
 | `out/immos-<version>[-<profile>].img` and `.img.zst` | Disk image, raw and zstd-compressed |
-| `out/immos_<version>[-<profile>].root.erofs` | Root filesystem image — `target` profiles (`desktop`, `console`) only. A `live` profile's medium carries no root EROFS of its own: stage 60 dd's `BASE_PROFILE`'s artifact straight into the medium's root partition instead ([plan/34](../plan/34-installer-sysext.md) §7.2) |
-| `out/uki[-<profile>]/immos_<version>.efi` | Unified kernel image. For `installer`, this is the **live** UKI — `BASE_PROFILE`'s own UKI re-wrapped with `live_*` cmdline labels, byte-identical to it in every other section ([plan/34](../plan/34-installer-sysext.md) §8) |
-| `out/immos_<version>[-<profile>].var.tar.zst` | `/var` template — `target` profiles only. A `live` profile stages a `var-base.tar.zst` (the base profile's template minus the Flatpak store) inside its own image instead; it is never published to `out/` separately ([plan/34](../plan/34-installer-sysext.md) §7.1) |
+| `out/immos_<version>[-<profile>].root.erofs` | Root filesystem image — `target` profiles (`desktop`, `console`) only. A `live` profile's medium carries no root EROFS of its own: stage 60 dd's `BASE_PROFILE`'s artifact straight into the medium's root partition instead (plan/34 §7.2) |
+| `out/uki[-<profile>]/immos_<version>.efi` | Unified kernel image. For `installer`, this is the **live** UKI — `BASE_PROFILE`'s own UKI re-wrapped with `live_*` cmdline labels, byte-identical to it in every other section (plan/34 §8) |
+| `out/immos_<version>[-<profile>].var.tar.zst` | `/var` template — `target` profiles only. A `live` profile stages a `var-base.tar.zst` (the base profile's template minus the Flatpak store) inside its own image instead; it is never published to `out/` separately (plan/34 §7.1) |
 | `out/release/<channel>/` | Release channel layout for `systemd-sysupdate` (stage 80) |
 | `out/vendor/immos-<version>/` | Offline release archive (stage 90, `--vendor`) |
 | `out/logs*/` | Per-stage logs |
