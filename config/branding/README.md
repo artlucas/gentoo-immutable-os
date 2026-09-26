@@ -10,6 +10,7 @@ into the artefacts that ship:
 | `splash.bin` (sprite tiles) | `/usr/share/<distro>/` on the root filesystem | first modeset → greeter, drawn by `config/splash/splash.c` |
 | the theme's `images/*.svg` + `Design.qml` | `/usr/share/plasma/look-and-feel/<distro>/contents/splash/` | login → painted desktop, drawn by `ksplashqml` ([plan/17](../../plan/17-animated-splash.md)) |
 | `logo.png`, `slide.png` | `/etc/calamares/branding/installer/` | the installer's sidebar and progress page ([plan/16](../../plan/16-installer.md)) |
+| `about-mark.svg` | `/usr/share/<distro>/about-mark.svg` | KInfoCenter's "About this System" page, whenever it is opened — the logomark as a **vector**, through `LogoPath` in `/etc/xdg/kcm-about-distrorc` ([config/plasma/README.md](../plasma/README.md)) |
 
 The rasterised PNGs never enter the image, and that is still the point for the two boot-time
 artefacts: they ship as pre-composited pixels, so the image needs no font, no image decoder and
@@ -54,6 +55,17 @@ the row the **installer** draws under `--lockup`: the mark, the gap, the wordmar
 cropped to the mark's own ink rather than to `MARK_BOX`. A 224px sidebar rail is a strip and the
 column rendered 22 pixels wide in it. The boundary between the two is the one `--bg` already
 draws — see "The two grounds" below.
+
+The mark has a third consumer, and it is the one that arrives as a **vector**: KInfoCenter's
+About page. `build_mark_svg()` composes the same slabs (through the same `reshade_tree()` the
+theme's slabs get) into one transparent SVG. The canvas is the mark's full-bleed ink box and the
+mark draws at `ABOUT_MARK_SCALE` (85%) inside it, centred — Kirigami.Icon scales the file to the
+icon box edge-to-edge, so the breathing room has to be baked into the file. The wordmark is left
+off: the page's headline is `Name`, from the very rc file that points at this logo, so a wordmark
+would say the same thing twice — and the slabs are the teal accent, which needs no ink tuned to a
+colour scheme the build cannot predict. It does not take `--bg`, because its
+canvas is left **transparent**: the module paints over the user's colour scheme, and `Kirigami.Icon`
+does not recolor.
 
 ## Two ways to shade one slab
 

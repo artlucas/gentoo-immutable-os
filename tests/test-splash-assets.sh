@@ -435,6 +435,91 @@ assert lockup[0] > 2 * lockup[1], ("the lockup is not a row", lockup)
 # rail gets back, since this file is drawn to a height.
 assert lockup[1] < stack[1], (stack, lockup)' "$TMP/logo-default.png" "$TMP/logo-default-lockup.png"
 
+        # ---- the About module's vector mark ---------------------------------------------------
+        # KInfoCenter's "About this System" is branded by /etc/xdg/kcm-about-distrorc, whose
+        # LogoPath stage 40 points at --mark-svg's output. That mark is composed from the SVG
+        # SOURCES rather than from the rasterised PNGs, so it is checked against them directly:
+        # the same shading the theme's slabs get (through the same reshade_tree()), nothing but
+        # slab fills anywhere in the file, and the sources' own ink shape.
+        assert_true "the generator emits --mark-svg" \
+            python3 "$GEN" --svg-dir "$SRC" --mark-svg "$TMP/about-mark.svg" \
+            >/dev/null 2>&1 || _fail "the generator fails on --mark-svg"
+        assert_true "the About mark is well-formed XML" \
+            python3 -c 'import sys,xml.dom.minidom as m; m.parse(sys.argv[1])' "$TMP/about-mark.svg"
+        assert_true "the About mark is a column on a transparent canvas" \
+            python3 - "$TMP/about-mark.svg" <<'PYEOF'
+import sys
+import xml.etree.ElementTree as ET
+root = ET.parse(sys.argv[1]).getroot()
+w, h = float(root.get("width")), float(root.get("height"))
+assert h > w, (w, h)  # the mark is the three slabs stacked, not the lockup's row
+assert root.find("{http://www.w3.org/2000/svg}rect") is None, \
+    "the mark carries a background — it must composite over the user's colour scheme"
+PYEOF
+        assert_true "the About mark re-shades exactly, and nothing but slabs" \
+            python3 - "$GEN" "$SRC" "$TMP/about-mark.svg" <<'PYEOF'
+import importlib.util, sys
+import xml.etree.ElementTree as ET
+from pathlib import Path
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("gen", sys.argv[1])
+g = importlib.util.module_from_spec(spec); spec.loader.exec_module(g)
+# The fills the slabs should carry, derived from the sources the way the theme test below
+# derives its own: every polygon's opacity through shaded_face().
+src = Path(sys.argv[2])
+want = {g.shaded_face(float(el.get("opacity", "1")))
+        for slab in g.SLABS
+        for el in ET.parse(src / f"{slab[:-len('.png')]}.svg").getroot().iter()
+        if el.tag.endswith("polygon")}
+root = ET.parse(sys.argv[3]).getroot()
+polys = [e for e in root.iter() if e.tag.endswith("polygon")]
+assert polys, "no polygons in the mark"
+assert all(e.get("opacity") is None for e in polys), "a polygon still carries opacity"
+assert {e.get("fill") for e in polys} == want, ({e.get("fill") for e in polys}, want)
+# A wordmark — the thing this artefact deliberately leaves out — would carry a fill the slabs
+# never produce, and so would any future element. Nothing in the file may be coloured outside
+# the three face colours.
+fills = {e.get("fill") for e in root.iter() if e.get("fill")}
+assert fills <= want, (fills, want)
+PYEOF
+        rsvg-convert -z 2 -o "$TMP/about-mark.png" "$TMP/about-mark.svg"
+        assert_true "the vector mark has the sources' own shape, inset to ABOUT_MARK_SCALE" \
+            python3 - "$GEN" "$SRC" "$TMP/about-mark.png" <<'PYEOF'
+import importlib.util, sys
+import xml.etree.ElementTree as ET
+from pathlib import Path
+from PIL import Image
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("gen", sys.argv[1])
+g = importlib.util.module_from_spec(spec); spec.loader.exec_module(g)
+# The sources' ink extent, straight from the polygon coordinates: width over height. The canvas
+# is that box composed at scale, so the rendered mark's aspect has to agree to antialiasing,
+# not to opinion.
+src = Path(sys.argv[2])
+xs, ys = [], []
+for slab in g.SLABS:
+    for el in ET.parse(src / f"{slab[:-len('.png')]}.svg").getroot().iter():
+        if el.tag.endswith("polygon"):
+            for pair in el.get("points").split():
+                x, _, y = pair.partition(",")
+                xs.append(float(x)); ys.append(float(y))
+want = (max(xs) - min(xs)) / (max(ys) - min(ys))
+svg = Image.open(sys.argv[3]).convert("RGBA")
+box = svg.getchannel("A").point(lambda v: 255 if v > g.INK_ALPHA else 0).getbbox()
+assert box is not None, "the vector mark rasterised to nothing"
+got = (box[2] - box[0]) / (box[3] - box[1])
+assert abs(got - want) / want < 0.02, (got, want)
+# THE INSET IS THE POINT OF THE PADDING: the ink must fill ABOUT_MARK_SCALE of the canvas in
+# BOTH dimensions, or the mark silently grew back to full bleed — invisible in the file, very
+# visible as a decal at 128px. Uniform scale keeps the aspect honest above while saying nothing
+# about how much of the canvas the mark occupies, so this is stated separately.
+for axis, span, want_frac in (("width", box[2] - box[0], svg.width),
+                              ("height", box[3] - box[1], svg.height)):
+    frac = span / want_frac
+    assert abs(frac - g.ABOUT_MARK_SCALE) < 0.01, (axis, frac, g.ABOUT_MARK_SCALE)
+PYEOF
+
+
         # A malformed --bg stops the run rather than falling back to a default, because an
         # artefact built on a mistyped colour is merely wrong and a build that stops is not.
         assert_false "a malformed --bg is refused rather than defaulted" \
@@ -556,6 +641,22 @@ assert_true "it is a Plasma/LookAndFeel package" \
 assert_false "the splash package ships no desktop layout script of its own" \
     test -e "$LNF/contents/layouts"
 
+render_template "$PLASMA/kcm-about-distrorc.in" "$TMP/distrorc"
+assert_false "no unresolved tokens in kcm-about-distrorc" \
+    grep -qE '@[A-Z][A-Z0-9_]*@' "$TMP/distrorc"
+assert_eq "[General]" "$(grep '^\[' "$TMP/distrorc" | head -1)" \
+    "kcm-about-distrorc addresses the [General] group the module reads"
+assert_true "the About module is pointed at the generated mark" \
+    grep -qx "LogoPath=/usr/share/$DISTRO_ID/about-mark.svg" "$TMP/distrorc"
+assert_true "the About module's Website is build.conf's HOME_URL" \
+    grep -qx "Website=$HOME_URL" "$TMP/distrorc"
+assert_true "the About module's Name is DISTRO_NAME" \
+    grep -qx "Name=$DISTRO_NAME" "$TMP/distrorc"
+# Keys the template must NOT set, because the module's os-release fallbacks already answer them
+# better than a second rendered copy would: Version/Variant from VERSION_ID/VARIANT.
+assert_false "kcm-about-distrorc does not shadow os-release's version" \
+    grep -qE '^(UseOSReleaseVersion|Version|Variant)=' "$TMP/distrorc"
+
 QML="$LNF/contents/splash/Splash.qml"
 assert_true "the splash script is the QML ksplashqml loads by property" grep -q 'property int stage' "$QML"
 assert_true "it reveals itself on a stage change" grep -q 'onStageChanged' "$QML"
@@ -593,6 +694,14 @@ assert_true "stage 40 asserts kwin's login effect is present and enabled by defa
     grep -q 'kwin-wayland/effects/login/metadata.json' "$STAGE40"
 assert_true "stage 40 asserts ksplashqml itself is in the image" \
     grep -q 'usr/bin/ksplashqml' "$STAGE40"
+# KInfoCenter's About module (see the mark tests above): stage 40 renders the rc file, points
+# its LogoPath at the vector mark, and guards all of it behind the same desktop set.
+assert_true "stage 40 renders kcm-about-distrorc" \
+    grep -qF 'render_template "$PLASMA_SRC/kcm-about-distrorc.in" "$TARGET/etc/xdg/kcm-about-distrorc"' "$STAGE40"
+assert_true "stage 40 generates the About mark SVG" \
+    grep -qF -- '--mark-svg "$ABOUT_MARK"' "$STAGE40"
+assert_true "stage 40 asserts the mark and the rc file agree on its path" \
+    grep -qF 'LogoPath=/usr/share/$DISTRO_ID/about-mark.svg' "$STAGE40"
 
 # ---- the initrd GPU assertion must not fire on config files -------------------------------
 # plan/14's guard exists to catch a dracut module dragging the DRM tree back into the initrd —

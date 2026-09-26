@@ -11,6 +11,8 @@ Run by stage 40, after the rasterise pass, emitting whichever outputs were asked
   --slide     the Calamares progress-page slide (plan/16); --lockup applies to it too.
   --theme     the Plasma splash theme's contents (plan/17): the vectors and the design
               constants the QML that runs at login lays itself out with.
+  --mark-svg   the logomark alone — the three slabs, no wordmark — as a vector for KInfoCenter's
+              "About this System" module, cropped to the mark's ink on one transparent canvas.
 
 They are produced by ONE script from ONE set of sources on purpose. The pieces meet on screen
 at two hand-offs — the first modeset, and the login that follows it — and any drift in geometry,
@@ -192,6 +194,14 @@ MAX_TILES = 32
 TEAL = (0x0E, 0x9C, 0x8A)  # --accent, the fill every polygon uses
 BAKED_TOP, BAKED_LEFT, BAKED_RIGHT = 153, 255, 209
 FACE_SHADE = {BAKED_TOP: 1.00, BAKED_LEFT: 0.82, BAKED_RIGHT: 0.66}
+
+# The About mark draws at this fraction of its own canvas, centred — 15% of the linear size
+# handed back as whitespace. Kirigami.Icon scales whatever LogoPath points at to the requested
+# icon size edge-to-edge, so a file cropped flush to the ink lands tight against the page at
+# 128px; the margin is what keeps it looking like a mark in a slot rather than a decal. The
+# canvas itself stays the mark's full-bleed ink box, so the icon's footprint does not change —
+# only how much of it the mark fills.
+ABOUT_MARK_SCALE = 0.85
 
 # The slab SVGs' shared viewBox extent, and the two y values that separate one slab's band from
 # the next. The three slabs occupy 6..23, 24..41 and 42..59 of that box, so the midpoints of the
@@ -581,23 +591,126 @@ def build_slide(theme: Path, output: Path, scale: float, size: tuple[int, int],
     print(f"make-splash-assets: {output} ({canvas.width}x{canvas.height}, block scale {scale})")
 
 
-# ---- the Plasma splash theme's images --------------------------------------------------------
+# ---- the vector mark -------------------------------------------------------------------------
 
-def reshade_svg(src: Path, dst: Path) -> None:
-    """Rewrite one slab SVG with its shading carried in colour instead of in opacity.
+def _svg_attr_num(el: ET.Element, name: str, src: Path) -> float:
+    try:
+        return float(el.get(name, ""))
+    except (TypeError, ValueError):
+        sys.exit(f"make-splash-assets: {src} has no numeric {name} to size the mark by")
 
-    The vector twin of reshade_slab(). The Plasma splash animates each slab's opacity in QML, so
-    it needs slabs whose own alpha is 1 everywhere the ink is — otherwise the theme would be
-    multiplying its animation over the SVG's baked face opacities and the faces would drift
-    apart as the slab dimmed, which is precisely the "shading runs backwards" failure the raster
-    path re-shades to avoid.
 
-    Done by transforming the committed SVG rather than by writing a new one, so the geometry has
-    exactly one source and a change to the mark cannot reach one splash and not the other.
+def _fmt(v: float) -> str:
+    """Four decimals, then the trailing zeroes and dot gone: 105.6250 -> '105.625'."""
+    return f"{v:.4f}".rstrip("0").rstrip(".")
+
+
+def build_mark_svg(svg_dir: Path, output: Path) -> None:
+    """The logomark alone — the three slabs, no wordmark — as a VECTOR, on transparent.
+
+    KInfoCenter's "About this System" module (kcm_about-distro) is the consumer. It renders its
+    LogoPath through Kirigami.Icon, which scales whatever it is given to the requested icon size
+    — so the file it gets should be an outline rather than a raster, for the same reason the
+    Plasma splash theme ships vectors: there is a Qt session with QtSvg on the other end, and a
+    crisp mark at any scale factor is worth more than a tile per size. The canvas is left
+    TRANSPARENT rather than flattened, and that is a difference from every raster artefact with
+    a reason: the module paints over the desktop's colour scheme, which the user can change and
+    the build cannot predict.
+
+    THE MARK, NOT THE LOCKUP, because the page already says the name: its headline is Name, from
+    the very rc file that points here, so a wordmark in the logo would say it twice. Dropping it
+    also drops the wordmark-ink problem the raster lockup carries — see --ink — because the
+    slabs are the teal --accent and read on light and dark schemes alike; nothing in this file
+    needs an ink tuned to a colour scheme the build cannot predict.
+
+    THE SAME DRAWING, from the SVG sources rather than from the rasterised PNGs. The raster
+    lockup composes load_marks()'s pixels; this composes the same three slabs — through the SAME
+    reshade_tree() the splash theme's slabs get — as element trees. The canvas is the mark's
+    full-bleed ink box, computed rather than restated, and the mark draws at ABOUT_MARK_SCALE
+    inside it, centred: the padding is IN the file, because Kirigami.Icon gives an SVG no
+    margins of its own.
+
+    The units: the slabs state their geometry in the SLAB_VIEWBOX box but are RENDERED at the
+    size their width/height declare (130px at the design baseline), so one viewBox unit is
+    slab_width / SLAB_VIEWBOX design pixels.
     """
     ET.register_namespace("", "http://www.w3.org/2000/svg")
-    tree = ET.parse(src)
-    root = tree.getroot()
+
+    # The three slabs share one SLAB_VIEWBOX coordinate space and are drawn in register; the
+    # mark is all three of them at once. Re-shade each, then collect every polygon's points —
+    # the mark's ink box is their combined extent, computed rather than restated.
+    polys: list[tuple[str, str]] = []
+    slab_px = 0.0
+    for slab in SLABS:
+        src = svg_dir / f"{slab[:-len('.png')]}.svg"
+        if not src.is_file():
+            sys.exit(f"make-splash-assets: missing slab source {src}")
+        root = ET.parse(src).getroot()
+        w = _svg_attr_num(root, "width", src)
+        if slab_px == 0.0:
+            slab_px = w
+        elif w != slab_px:
+            sys.exit(f"make-splash-assets: {src} declares width {w}, but {SLABS[0]} declares "
+                     f"{slab_px} — the slabs have to render at one size for the mark to stack")
+        # The points are trusted as the ink box only while nothing between them and the canvas
+        # moves them. A transform added to the mark's sources would silently invalidate every
+        # offset below, so refuse rather than compose a lockup with the mark somewhere else.
+        for el in root.iter():
+            if el.get("transform") is not None:
+                sys.exit(f"make-splash-assets: {src} carries a transform — build_mark_svg's "
+                         f"ink box reads raw polygon coordinates and would be wrong")
+        reshade_tree(root, src)
+        for el in root.iter():
+            if el.tag.endswith("}polygon") or el.tag == "polygon":
+                polys.append((el.get("points", ""), el.get("fill", "")))
+    if not polys:
+        sys.exit("make-splash-assets: no polygons collected from the slab SVGs")
+
+    xs: list[float] = []
+    ys: list[float] = []
+    for points, _ in polys:
+        for pair in points.split():
+            x, sep, y = pair.partition(",")
+            if not sep:
+                sys.exit(f"make-splash-assets: slab polygon point {pair!r} is not 'x,y'")
+            xs.append(float(x))
+            ys.append(float(y))
+    k = slab_px / SLAB_VIEWBOX
+    ink_l, ink_t = min(xs) * k, min(ys) * k
+    ink_w, ink_h = (max(xs) - min(xs)) * k, (max(ys) - min(ys)) * k
+
+    # The canvas is the mark's FULL-BLEED ink box; the mark inside it draws at
+    # ABOUT_MARK_SCALE, centred — the whitespace is inside the file, not around it.
+    width, height = ink_w, ink_h
+    scale = k * ABOUT_MARK_SCALE
+    tx = (width - ink_w * ABOUT_MARK_SCALE) / 2 - ink_l * ABOUT_MARK_SCALE
+    ty = (height - ink_h * ABOUT_MARK_SCALE) / 2 - ink_t * ABOUT_MARK_SCALE
+
+    poly_lines = "\n".join(f'    <polygon points="{p}" fill="{f}"/>' for p, f in polys)
+    # A GENERATED comment, and no double hyphen in it: '--mark-svg' inside an XML comment is
+    # illegal XML, and expat, libxml2 and resvg all refuse the file over it.
+    svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="{_fmt(width)}" height="{_fmt(height)}" viewBox="0 0 {_fmt(width)} {_fmt(height)}">
+  <!-- GENERATED by config/branding/make-splash-assets.py (mark SVG). Do not edit. -->
+  <g transform="translate({_fmt(tx)} {_fmt(ty)}) scale({_fmt(scale)})">
+{poly_lines}
+  </g>
+</svg>
+'''
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(svg, encoding="utf-8")
+    print(f"make-splash-assets: {output} ({_fmt(width)}x{_fmt(height)}, mark SVG)")
+
+
+# ---- the Plasma splash theme's images --------------------------------------------------------
+
+def reshade_tree(root: ET.Element, src: Path) -> None:
+    """Rewrite one slab SVG's tree with its shading carried in colour instead of in opacity.
+
+    The shared half of reshade_svg() below, and of build_mark_svg() — the Plasma splash gets
+    the reshaded slabs as standalone files, the About mark embeds them in one canvas, and both
+    have to be the same rewrite or the mark is two different drawings on screens a user sees
+    minutes apart.
+    """
     touched = 0
     for el in root.iter():
         if not el.tag.endswith("}polygon") and el.tag != "polygon":
@@ -613,6 +726,23 @@ def reshade_svg(src: Path, dst: Path) -> None:
     for el in root.iter():
         if (el.tag.endswith("}g") or el.tag == "g") and "fill" in el.attrib:
             del el.attrib["fill"]
+
+
+def reshade_svg(src: Path, dst: Path) -> None:
+    """Rewrite one slab SVG with its shading carried in colour instead of in opacity.
+
+    The vector twin of reshade_slab(). The Plasma splash animates each slab's opacity in QML, so
+    it needs slabs whose own alpha is 1 everywhere the ink is — otherwise the theme would be
+    multiplying its animation over the SVG's baked face opacities and the faces would drift
+    apart as the slab dimmed, which is precisely the "shading runs backwards" failure the raster
+    path re-shades to avoid.
+
+    Done by transforming the committed SVG rather than by writing a new one, so the geometry has
+    exactly one source and a change to the mark cannot reach one splash and not the other.
+    """
+    ET.register_namespace("", "http://www.w3.org/2000/svg")
+    tree = ET.parse(src)
+    reshade_tree(tree.getroot(), src)
     dst.parent.mkdir(parents=True, exist_ok=True)
     tree.write(dst, encoding="unicode", xml_declaration=False)
     dst.write_text(dst.read_text().rstrip() + "\n", encoding="utf-8")
@@ -720,10 +850,10 @@ def main() -> None:
     ap.add_argument(
         "--ink",
         default=None,
-        help="#rrggbb for the WORDMARK in --logo and --slide (default: the colour it is baked "
-             "with in wordmark.svg, which is the dark theme's --text-strong). Pass it with --bg: "
-             "a light ground needs a dark wordmark or the two are the same colour and the "
-             "wordmark is simply not there.",
+        help="#rrggbb for the WORDMARK in --logo and --slide (default: the colour "
+             "it is baked with in wordmark.svg, which is the dark theme's --text-strong). Pass "
+             "it with --bg: a light ground needs a dark wordmark or the two are the same colour "
+             "and the wordmark is simply not there.",
     )
     ap.add_argument(
         "--lockup",
@@ -737,6 +867,14 @@ def main() -> None:
     ap.add_argument("--theme", type=Path,
                     help="write the Plasma splash theme's generated contents (images/ and "
                          "Design.qml) into here")
+    ap.add_argument(
+        "--mark-svg",
+        type=Path,
+        help="write the logomark — the three slabs, no wordmark — as a VECTOR here, for "
+             "KInfoCenter's About module. Composed from the SVG sources, so pass --svg-dir. "
+             "The canvas is transparent: the module paints it over whatever colour scheme the "
+             "user runs, so no ground can be baked in.",
+    )
     ap.add_argument(
         "--slide-size",
         default="640x360",
@@ -760,13 +898,15 @@ def main() -> None:
     args = ap.parse_args()
 
     raster = (args.bmp, args.sprites, args.logo, args.slide)
-    if not any(raster) and not args.theme:
-        sys.exit("make-splash-assets: nothing to do — pass --bmp, --sprites, --logo, --slide "
-                 "and/or --theme")
+    if not any(raster) and not args.theme and not args.mark_svg:
+        sys.exit("make-splash-assets: nothing to do — pass --bmp, --sprites, --logo, --slide, "
+                 "--theme and/or --mark-svg")
     if any(raster) and not args.asset_dir:
         sys.exit("make-splash-assets: --asset-dir is required for the raster outputs")
     if args.theme and not args.svg_dir:
         sys.exit("make-splash-assets: --theme needs --svg-dir (the branding SVG sources)")
+    if args.mark_svg and not args.svg_dir:
+        sys.exit("make-splash-assets: --mark-svg needs --svg-dir (the branding SVG sources)")
     if args.scale <= 0:
         sys.exit("make-splash-assets: --scale must be positive")
     if args.logo_scale <= 0:
@@ -801,6 +941,8 @@ def main() -> None:
                     installer_ink, args.lockup)
     if args.theme:
         build_theme(args.svg_dir, args.theme)
+    if args.mark_svg:
+        build_mark_svg(args.svg_dir, args.mark_svg)
 
 
 if __name__ == "__main__":

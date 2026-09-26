@@ -1105,6 +1105,34 @@ if profile_has_set desktop; then
       || die "verify: $SPLASH_LNF_DIR/contents/splash/$f is missing or empty"
   done
 
+  # ---- KInfoCenter's "About this System" ------------------------------------------------
+  # kcm_about-distro brands its page from exactly one file, /etc/xdg/kcm-about-distrorc —
+  # without it the module falls back through os-release's LOGO (which our os-release does not
+  # set) to the hardcoded "start-here-kde", and the page draws somebody else's mark. The
+  # template's header says what each key overrides and which ones are deliberately left to
+  # os-release.
+  render_template "$PLASMA_SRC/kcm-about-distrorc.in" "$TARGET/etc/xdg/kcm-about-distrorc"
+  chmod 0644 -- "$TARGET/etc/xdg/kcm-about-distrorc"
+
+  # The logo the page draws: the logomark — the three slabs, no wordmark — as a VECTOR, composed
+  # from the same SVG sources as the splash theme above. Kirigami.Icon scales whatever it is
+  # given, so an outline stays crisp at any scale factor where a raster would blur. The canvas is
+  # left transparent because the page paints it over the user's colour scheme, and the mark needs
+  # no ink for the same reason: the slabs are the teal --accent, which reads on light and dark
+  # schemes alike. The wordmark is left off because the page already says the name — Name, from
+  # this same rc file, is the page's headline.
+  ABOUT_MARK="$SPLASH_SHARE/about-mark.svg"
+  python3 "$REPO/config/branding/make-splash-assets.py" \
+    --svg-dir "$REPO/config/branding" \
+    --mark-svg "$ABOUT_MARK" \
+    || die "KInfoCenter About: mark SVG generation failed"
+  [[ -s $ABOUT_MARK ]] || die "verify: $ABOUT_MARK is missing or empty"
+  grep -qx "LogoPath=/usr/share/$DISTRO_ID/about-mark.svg" "$TARGET/etc/xdg/kcm-about-distrorc" \
+    || die "verify: /etc/xdg/kcm-about-distrorc does not point LogoPath at the generated mark"
+  grep -qx "Website=$HOME_URL" "$TARGET/etc/xdg/kcm-about-distrorc" \
+    || die "verify: /etc/xdg/kcm-about-distrorc does not carry Website=$HOME_URL — the About
+  page's link and os-release's HOME_URL have to agree, and both render from build.conf."
+
   # ksplashqml is what loads all of the above, and it is a plasma-workspace binary rather than
   # anything this build produces — so it is exactly the kind of thing that can leave with a USE
   # flag change and take the splash with it, silently.
@@ -1130,10 +1158,12 @@ if profile_has_set desktop; then
   decide the snap is acceptable — see plan/17."
 
   log "Plasma splash: /usr/share/plasma/look-and-feel/$SPLASH_LNF_ID, selected for all users by /etc/xdg/ksplashrc"
+  log "KInfoCenter About: /etc/xdg/kcm-about-distrorc, mark at /usr/share/$DISTRO_ID/about-mark.svg"
 else
   # The converse, for the same reason the installer block has one: nothing above runs on a
   # console image, so anything here came from a stale work volume rather than from this build.
-  for leak in "usr/share/plasma/look-and-feel/$DISTRO_ID" etc/xdg/ksplashrc etc/xdg/kdeglobals; do
+  for leak in "usr/share/plasma/look-and-feel/$DISTRO_ID" etc/xdg/ksplashrc etc/xdg/kdeglobals \
+              etc/xdg/kcm-about-distrorc "usr/share/$DISTRO_ID/about-mark.svg"; do
     [[ -e $TARGET/$leak ]] \
       && die "verify: $BUILD_PROFILE has no desktop, but /$leak exists in the target. Wipe the
   work volume and rebuild — a stale target is carrying Plasma config into a console image."

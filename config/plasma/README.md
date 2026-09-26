@@ -10,23 +10,25 @@ ships nowhere else. Designed in [plan/17](../../plan/17-animated-splash.md).
 |---|---|---|
 | `kdeglobals.in` | `/etc/xdg/kdeglobals` | names the package below as the session's Look-and-Feel package — **this is what selects the splash** |
 | `ksplashrc.in` | `/etc/xdg/ksplashrc` | names the same package for the reads that never reach a Plasma session |
+| `kcm-about-distrorc.in` | `/etc/xdg/kcm-about-distrorc` | brands KInfoCenter's "About this System" module — logo, Name, Website |
 | `lookandfeel/**` | `/usr/share/plasma/look-and-feel/<id>/` | the Plasma/LookAndFeel package both files name |
 
-[Stage 40](../../scripts/stages/40-configure.sh) installs all three only when the build profile's
-sets include `desktop`. A console image has no Plasma to configure.
+[Stage 40](../../scripts/stages/40-configure.sh) installs all of these only when the build
+profile's sets include `desktop`. A console image has no Plasma to configure.
 
 The package's `contents/splash/images/*.svg`, `contents/splash/Design.qml` and
 `contents/previews/splash.png` are **not in this directory**: they are generated at build time by
 `config/branding/make-splash-assets.py`, from the same sources and the same layout function that
-compose the boot splash. That is the whole design — see
+compose the boot splash. So is the About page's logo — the logomark as a vector, written
+beside `splash.bin` in `/usr/share/<id>/`. That is the whole design — see
 [config/branding/README.md](../branding/README.md).
 
 ## The /etc/xdg layer defaults every user
 
-Two files under `/etc/xdg` and nothing else. `$XDG_CONFIG_DIRS` cascades underneath `~/.config`,
+Three files under `/etc/xdg` and nothing else. `$XDG_CONFIG_DIRS` cascades underneath `~/.config`,
 so they are the image's defaults for anyone who has not chosen otherwise, and System Settings →
 Appearance → Splash Screen still writes a user's own choice to `~/.config/ksplashrc` and wins over
-both.
+the splash's two.
 
 That covers every account this project produces without a skel copy, a first-login hook or a
 Calamares job:
@@ -43,6 +45,26 @@ medium's desktop shortcut, which stage 40 installs straight into the live home b
 hand-ported from `ec691b9` on the unmerged `installer-desktop-shortcut` branch). A document on
 one account's desktop has no `/etc/xdg` cascade to ride and exactly one reader, so the position
 above — which is about Plasma *config* — does not apply to it.
+
+## About this System
+
+KInfoCenter's "About this System" module (`kcm_about-distro`) brands its page from exactly one
+file, `kcm-about-distrorc`, read with `KConfig::NoGlobals` — no cascade, no per-user copy to worry
+about. Every key it takes is an override of an os-release fallback, and without the file the
+fallback chain for the logo runs to a hardcoded `start-here-kde`: somebody else's mark on our
+About page. The template's header states what each key overrides and which are deliberately left
+to os-release (`Version`, `Variant`).
+
+Two of the choices are not free, and both trace back to the same fact: the page paints the logo
+over **whatever colour scheme the user runs**, and `Kirigami.Icon` does not recolor its source.
+
+* The logo is generated **transparent** — no ground is baked in, so the mark composites onto
+  light and dark schemes alike. That is a deliberate difference from the installer's `logo.png`,
+  which is flattened onto `--surface-page` because Calamares' sidebar colour is ours to set.
+* The logo is the **mark alone**, no wordmark. A wordmark would need an ink that reads on a
+  scheme the build cannot predict (the dark `--text-strong` it is baked with is invisible on a
+  dark one), while the teal slabs read on any — and the page's headline is `Name` from the rc
+  file anyway, so the wordmark would say the same thing twice.
 
 ## LookAndFeelPackage, not Theme
 
